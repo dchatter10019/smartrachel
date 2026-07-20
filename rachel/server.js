@@ -286,8 +286,10 @@ app.post('/chat', async (req, res) => {
         ? '\n\nFor mixers I can add: still water, sparkling water, soda (Coke/Sprite/Tonic), ice bags, and plastic cups. Which would you like?'
         : '\n\nFor mixers I can add: still water, sparkling water, soda, ice bags, and cups. Which would you like?');
     }
-    
-    if (!hasCTA && mixerKeywords.includes(lastMsg) && messages.length >= 2) {
+
+    // Only append CTA if a package was actually shown (output contains product total or grand total)
+    const packageWasShown = output.includes('Product total') || output.includes('Grand total') || output.includes('grand total') || output.includes('Estimated grand total');
+    if (!hasCTA && mixerKeywords.includes(lastMsg) && messages.length >= 2 && packageWasShown) {
       const cta = format === 'slack'
         ? '\n\nWould you like to *place the order*, *generate a PDF proposal*, or make any changes?'
         : '\n\nWould you like to place the order, generate a PDF proposal, or make any changes?';
