@@ -332,20 +332,56 @@ async function executeTool(name, input) {
       const remaining = productBudget - currentTotal;
       if (remaining > 30 && items.length > 0) {
         const budgetPerItem = productBudget / items.length;
+        const usedNamesPass1 = new Set(items.map(function(p) { return p.name; }));
         for (var ii = 0; ii < items.length; ii++) {
           const item = items[ii];
           const targetPrice = budgetPerItem / item.qty;
           if (targetPrice > item.price * 1.3) {
-            const searchTerm = (item.label || item.name).split(' ').slice(0,2).join(' ');
+            // Search by category to find most expensive available — not just same brand
+            const itemCat = (item.category || item.label || '').toLowerCase();
+            const searchTerm = itemCat.includes('wine') ? 'wine' :
+              itemCat.includes('champagne') || itemCat.includes('sparkling') ? 'champagne' :
+              itemCat.includes('beer') || itemCat.includes('lager') ? 'beer' :
+              (item.label || item.name).split(' ').slice(0,2).join(' ');
             const candidates = await searchWithFallbacks(loc.kitchen, loc.client, searchTerm, 20);
             const better = candidates
-              .map(function(p) { return { name: p.name, price: p.salePrice||p.price||0, upc: p.upc||'', url: p.url||'', product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'', establishmentId: p.establishmentId||'' }; })
-              .filter(function(p) { return p.price > item.price && p.price <= targetPrice * 1.2; })
+              .map(function(p) { return { name: p.name, price: p.salePrice||p.price||0, upc: p.upc||'', url: p.url||'', product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'', establishmentId: p.establishmentId||'', subcategory: p.subCategory||p.subcategory||item.subcategory||'' }; })
+              .filter(function(p) { const n=(p.name||'').toLowerCase(); const sub=(p.subCategory||p.subcategory||'').toLowerCase(); return p.price > item.price && p.price <= targetPrice && !usedNamesPass1.has(p.name) && !n.includes('port') && !sub.includes('port') && !n.includes('tawny') && !n.includes('sherry') && !sub.includes('fortified'); })
               .sort(function(a,b) { return b.price - a.price; });
             if (better.length > 0) {
               const best = better[0];
               console.log('[shopping-agent] menu_build upgrading', item.name, '$'+item.price, '->', best.name, '$'+best.price);
+              usedNamesPass1.delete(item.name);
               Object.assign(item, best);
+              usedNamesPass1.add(item.name);
+            }
+          }
+        }
+        // Second pass: use remaining budget to upgrade cheapest items further
+        let runningTotal2 = items.reduce(function(sum,p) { return sum+p.qty*p.price; }, 0);
+        let remaining2 = productBudget - runningTotal2;
+        const usedNames = new Set(items.map(function(p) { return p.name; }));
+        if (remaining2 > 30) {
+          const byPrice = items.slice().sort(function(a,b) { return a.price - b.price; });
+          for (var jj = 0; jj < byPrice.length && remaining2 > 30; jj++) {
+            const item = byPrice[jj];
+            const itemCat2 = (item.category || item.label || '').toLowerCase();
+            // Skip beer upgrades — keep beer as beer
+            if (itemCat2.includes('beer') || itemCat2.includes('lager') || itemCat2.includes('ale')) continue;
+            const maxForItem = item.price + remaining2 / item.qty;
+            const term2 = itemCat2.includes('champagne') || itemCat2.includes('sparkling') ? 'champagne' : 
+                          itemCat2.includes('wine') ? 'wine' : (item.label||item.name).split(' ').slice(0,2).join(' ');
+            const cands2 = await searchProducts(loc.kitchen, loc.client, term2, 50, item.price + 1, maxForItem);
+            const best2 = cands2.map(function(p) { return {name:p.name,price:p.salePrice||p.price||0,upc:p.upc||'',url:p.url||'',product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'',establishmentId:p.establishmentId||'',subcategory:p.subCategory||p.subcategory||item.subcategory||''}; })
+              .filter(function(p) { const n=(p.name||'').toLowerCase(); const sub=(p.subCategory||p.subcategory||'').toLowerCase(); return p.price > item.price && p.price <= maxForItem && !usedNames.has(p.name) && !n.includes('port') && !sub.includes('port') && !n.includes('tawny') && !n.includes('sherry') && !sub.includes('fortified'); })
+              .sort(function(a,b) { return b.price - a.price; });
+            if (best2.length > 0) {
+              console.log('[shopping-agent] pass2 upgrading', item.name, '$'+item.price, '->', best2[0].name, '$'+best2[0].price);
+              usedNames.delete(item.name);
+              Object.assign(item, best2[0]);
+              usedNames.add(item.name);
+              runningTotal2 = items.reduce(function(sum,p) { return sum+p.qty*p.price; }, 0);
+              remaining2 = productBudget - runningTotal2;
             }
           }
         }
@@ -415,6 +451,7 @@ async function executeTool(name, input) {
 
       if (remaining > 30 && items.length > 0) {
         const budgetPerItem = productBudget / items.length;
+        const usedNamesPass1 = new Set(items.map(function(p) { return p.name; }));
         for (var ii = 0; ii < items.length; ii++) {
           const item = items[ii];
           const targetPrice = budgetPerItem / item.qty;
