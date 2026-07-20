@@ -337,16 +337,25 @@ async function executeTool(name, input) {
           const item = items[ii];
           const targetPrice = budgetPerItem / item.qty;
           if (targetPrice > item.price * 1.3) {
-            // Search by category to find most expensive available — not just same brand
-            const itemCat = (item.category || item.label || '').toLowerCase();
-            const searchTerm = itemCat.includes('wine') ? 'wine' :
-              itemCat.includes('champagne') || itemCat.includes('sparkling') ? 'champagne' :
-              itemCat.includes('beer') || itemCat.includes('lager') ? 'beer' :
+            // Use item label (Red Wine/White Wine) for precise subcategory search
+            const itemLabel = (item.label || item.category || '').toLowerCase();
+            const searchTerm = itemLabel === 'red wine' ? 'Red Wine' :
+              itemLabel === 'white wine' ? 'White Wine' :
+              itemLabel.includes('champagne') ? 'champagne' :
+              itemLabel.includes('beer') || itemLabel.includes('lager') ? 'beer' :
               (item.label || item.name).split(' ').slice(0,2).join(' ');
             const candidates = await searchWithFallbacks(loc.kitchen, loc.client, searchTerm, 20);
             const better = candidates
               .map(function(p) { return { name: p.name, price: p.salePrice||p.price||0, upc: p.upc||'', url: p.url||'', product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'', establishmentId: p.establishmentId||'', subcategory: p.subCategory||p.subcategory||item.subcategory||'' }; })
-              .filter(function(p) { const n=(p.name||'').toLowerCase(); const sub=(p.subCategory||p.subcategory||'').toLowerCase(); return p.price > item.price && p.price <= targetPrice && !usedNamesPass1.has(p.name) && !n.includes('port') && !sub.includes('port') && !n.includes('tawny') && !n.includes('sherry') && !sub.includes('fortified'); })
+              .filter(function(p) {
+                const n=(p.name||'').toLowerCase();
+                const sub=(p.subCategory||p.subcategory||'').toLowerCase();
+                if (p.price <= item.price || p.price > targetPrice || usedNamesPass1.has(p.name)) return false;
+                if (n.includes('port') || sub.includes('port') || n.includes('tawny') || n.includes('sherry') || n.includes('sake') || sub.includes('fortified')) return false;
+                if (itemLabel === 'red wine' && sub && !sub.includes('red') && !sub.includes('cabernet') && !sub.includes('merlot') && !sub.includes('pinot noir') && !sub.includes('blend') && !sub.includes('chianti') && !sub.includes('bordeaux') && !sub.includes('barolo')) return false;
+                if (itemLabel === 'white wine' && sub && (sub.includes('red') || sub.includes('champagne') || sub.includes('sparkling') || sub.includes('sake') || sub.includes('port'))) return false;
+                return true;
+              })
               .sort(function(a,b) { return b.price - a.price; });
             if (better.length > 0) {
               const best = better[0];
@@ -369,11 +378,23 @@ async function executeTool(name, input) {
             // Skip beer upgrades — keep beer as beer
             if (itemCat2.includes('beer') || itemCat2.includes('lager') || itemCat2.includes('ale')) continue;
             const maxForItem = item.price + remaining2 / item.qty;
-            const term2 = itemCat2.includes('champagne') || itemCat2.includes('sparkling') ? 'champagne' : 
-                          itemCat2.includes('wine') ? 'wine' : (item.label||item.name).split(' ').slice(0,2).join(' ');
+            const itemLabel2 = (item.label || item.category || '').toLowerCase();
+            const term2 = itemLabel2 === 'red wine' ? 'Red Wine' :
+                          itemLabel2 === 'white wine' ? 'White Wine' :
+                          itemLabel2.includes('champagne') ? 'champagne' :
+                          itemLabel2.includes('beer') || itemLabel2.includes('lager') ? 'beer' :
+                          (item.label||item.name).split(' ').slice(0,2).join(' ');
             const cands2 = await searchProducts(loc.kitchen, loc.client, term2, 50, item.price + 1, maxForItem);
             const best2 = cands2.map(function(p) { return {name:p.name,price:p.salePrice||p.price||0,upc:p.upc||'',url:p.url||'',product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'',establishmentId:p.establishmentId||'',subcategory:p.subCategory||p.subcategory||item.subcategory||''}; })
-              .filter(function(p) { const n=(p.name||'').toLowerCase(); const sub=(p.subCategory||p.subcategory||'').toLowerCase(); return p.price > item.price && p.price <= maxForItem && !usedNames.has(p.name) && !n.includes('port') && !sub.includes('port') && !n.includes('tawny') && !n.includes('sherry') && !sub.includes('fortified'); })
+              .filter(function(p) {
+                const n=(p.name||'').toLowerCase();
+                const sub=(p.subCategory||p.subcategory||'').toLowerCase();
+                if (p.price <= item.price || p.price > maxForItem || usedNames.has(p.name)) return false;
+                if (n.includes('port') || sub.includes('port') || n.includes('tawny') || n.includes('sherry') || n.includes('sake') || sub.includes('fortified')) return false;
+                if (itemLabel2 === 'red wine' && sub && !sub.includes('red') && !sub.includes('cabernet') && !sub.includes('merlot') && !sub.includes('pinot noir') && !sub.includes('blend') && !sub.includes('chianti') && !sub.includes('bordeaux') && !sub.includes('barolo')) return false;
+                if (itemLabel2 === 'white wine' && sub && (sub.includes('red') || sub.includes('champagne') || sub.includes('sparkling') || sub.includes('sake') || sub.includes('port'))) return false;
+                return true;
+              })
               .sort(function(a,b) { return b.price - a.price; });
             if (best2.length > 0) {
               console.log('[shopping-agent] pass2 upgrading', item.name, '$'+item.price, '->', best2[0].name, '$'+best2[0].price);
