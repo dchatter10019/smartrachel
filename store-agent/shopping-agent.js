@@ -325,6 +325,7 @@ async function executeTool(name, input) {
     if (result.success !== 'true') return { success: false, error: result.error };
 
     // Price scaling: upgrade products to fill budget
+    const swaps = [];
     if (input.budget && input.budget > 0) {
       const items = JSON.parse(result.line_items || '[]');
       const productBudget = Math.round((input.budget - 25) / 1.25 * 100) / 100;
@@ -360,6 +361,7 @@ async function executeTool(name, input) {
             if (better.length > 0) {
               const best = better[0];
               console.log('[shopping-agent] menu_build upgrading', item.name, '$'+item.price, '->', best.name, '$'+best.price);
+              swaps.push({ from: item.name, to: best.name, label: item.label || item.category });
               usedNamesPass1.delete(item.name);
               Object.assign(item, best);
               usedNamesPass1.add(item.name);
@@ -398,6 +400,7 @@ async function executeTool(name, input) {
               .sort(function(a,b) { return b.price - a.price; });
             if (best2.length > 0) {
               console.log('[shopping-agent] pass2 upgrading', item.name, '$'+item.price, '->', best2[0].name, '$'+best2[0].price);
+              swaps.push({ from: item.name, to: best2[0].name, label: item.label || item.category });
               usedNames.delete(item.name);
               Object.assign(item, best2[0]);
               usedNames.add(item.name);
@@ -444,6 +447,7 @@ async function executeTool(name, input) {
       estimated_grand_total: result.estimated_grand_total,
       preferred_brands: result.preferred_brands,
       unavailable: result.unavailable,
+      swaps: swaps,
       total_drinks: result.total_drinks
     };
   }
