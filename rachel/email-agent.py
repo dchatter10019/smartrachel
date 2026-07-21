@@ -16,7 +16,7 @@ POLL_INTERVAL = 60
 THREAD_SESSIONS = {}  # thread_id -> session_id for Rachel chat continuity
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s',
-    handlers=[logging.FileHandler('/home/ubuntu/logs/email-agent.log'), logging.StreamHandler()])
+    handlers=[logging.FileHandler('/home/ubuntu/logs/email-agent.log')])
 log = logging.getLogger(__name__)
 
 SCOPES = ['https://www.googleapis.com/auth/gmail.modify']
@@ -85,13 +85,37 @@ def chat_with_rachel(message, session_id, sender_email):
         return None
 
 def build_package(order, sender_email):
-    session_id = f'email-build-{int(time.time())}'
-    msg = f"I need a beverage package for {order.get('guests', 50)} guests"
-    if order.get('budget'): msg += f", budget ${order['budget']}"
-    if order.get('event_type'): msg += f", {order['event_type']}"
-    if order.get('event_date'): msg += f" on {order['event_date']}"
-    response = chat_with_rachel(msg, session_id, sender_email)
-    return {'session_id': session_id, 'response': response, 'estimated_grand_total': order.get('budget', 0)}
+    """Call ShoppingAgent MCP directly to build a beverage package"""
+    try:
+        payload = {
+            "jsonrpc": "2.0",
+            "method": "tools/call",
+            "params": {
+                "name": "menu_build",
+                "arguments": {
+                    "zip": "10010",
+                    "email": sender_email,
+                    "guests": order.get('guests', 20),
+                    "hours": order.get('hours', 3),
+                    "budget": order.get('budget', 1000),
+                    "categories": order.get('categories', ['wine', 'beer', 'spirits']),
+                    "intent": "menu_build"
+                }
+            },
+            "id": 1
+        }
+        r = requests.post('http://127.0.0.1:8300/mcp', json=payload, timeout=120)
+        text = r.text.strip()
+        if text.startswith('data: '): text = text[6:]
+        result = json.loads(text).get('result', {})
+        content = result.get('content', [{}])
+        if isinstance(content, list) and len(content) > 0:
+            data = json.loads(content[0].get('text', '{}'))
+            return data
+        return None
+    except Exception as e:
+        log.error(f'ShoppingAgent error: {e}')
+        return None
 
 def gen_pdf(package, client_name, event_date):
     try:
@@ -109,9 +133,39 @@ def gen_pdf(package, client_name, event_date):
     return None
 
 def format_package(package, order):
-    if package and package.get('response'):
-        return package['response']
-    return "Thank you for your inquiry. Please contact orders@getbevvi.com for assistance."
+    if not package or not package.get('success'):
+        return "Thank you for your inquiry. Please contact orders@getbevvi.com for assistance."
+    try:
+        items = json.loads(package['line_items']) if isinstance(package.get('line_items'), str) else package.get('line_items', [])
+        lines = []
+        lines.append(f"Hi {order.get('client_name', 'there')},")
+        lines.append(f"\nThank you for reaching out to Bevvi! Here is your beverage proposal for {order.get('guests', '?')} guests.\n")
+        
+        # Group by category
+        by_cat = {}
+        for item in items:
+            cat = item.get('label', item.get('category', 'Other'))
+            by_cat.setdefault(cat, []).append(item)
+        
+        for cat, cat_items in by_cat.items():
+            lines.append(f"--- {cat.upper()} ---")
+            for item in cat_items:
+                subtotal = round(item['qty'] * item['price'], 2)
+                lines.append(f"  {item['qty']}x {item['name']} ({item['size']}) — ${item['price']} ea = ${subtotal}")
+            lines.append("")
+        
+        lines.append(f"Product Total:     ${package.get('product_total', '?')}")
+        lines.append(f"Estimated Tax:     ${package.get('estimated_tax', '?')}")
+        lines.append(f"Service Fee:       ${package.get('estimated_service', '?')}")
+        lines.append(f"Delivery:          ${package.get('delivery_fee', '?')}")
+        lines.append(f"GRAND TOTAL:       ${package.get('estimated_grand_total', '?')}")
+        lines.append(f"\nTotal drinks: ~{package.get('total_drinks', '?')}")
+        lines.append("\nReply to this email to place your order or request any changes.")
+        lines.append("\nCheers,\nRachel\nBevvi Beverage Specialist")
+        return "\n".join(lines)
+    except Exception as e:
+        log.error(f"format_package error: {e}")
+        return "Thank you for your inquiry. Please contact orders@getbevvi.com for assistance."
 
 def format_clarification(order, missing):
     fields = ', '.join(missing)

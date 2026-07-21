@@ -81,7 +81,9 @@ async function getD2CSession(userEmail) {
       last_search:      fm.last_search || '',
       last_basket:      fm.last_basket ? JSON.parse(fm.last_basket) : null,
       last_basket_total: fm.last_basket_total || '',
-      last_seen:        fm.last_seen || ''
+      last_seen:        fm.last_seen || '',
+      last_channel:     fm.last_channel || '',
+      last_thread_id:   fm.last_thread_id || ''
     };
   } catch(e) {
     return null;
@@ -107,6 +109,8 @@ async function saveD2CSession(userEmail, sessionData) {
       `last_basket: '${basket.replace(/'/g, '"')}'`,
       `last_basket_total: "${sessionData.last_basket_total || ''}"`,
       `last_seen: "${now}"`,
+      `last_channel: "${sessionData.last_channel || ''}"`,
+      `last_thread_id: "${sessionData.last_thread_id || ''}"`,
       '---'
     ].join('\n');
 
