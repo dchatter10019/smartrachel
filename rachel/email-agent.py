@@ -119,15 +119,21 @@ def build_package(order, sender_email):
 
 def gen_pdf(package, client_name, event_date):
     try:
-        r = requests.post('http://127.0.0.1:8300/generate-pdf', json={
-            'package': package,
-            'client_name': client_name,
-            'event_date': event_date
-        }, timeout=60)
-        if r.status_code == 200:
-            path = f'/tmp/proposal-{int(time.time())}.pdf'
-            with open(path, 'wb') as f: f.write(r.content)
-            return path
+        ts = int(time.time())
+        out = f'/home/ubuntu/logs/bevvi-proposal-email-{ts}.pdf'
+        data = json.dumps({
+            'client_name': client_name or 'Valued Client',
+            'event_date': event_date or '',
+            'line_items': package.get('line_items', '[]'),
+            'notes': ''
+        })
+        r = subprocess.run(
+            ['node', '/home/ubuntu/rachel/generate-proposal.js', data, out],
+            cwd='/home/ubuntu/rachel', capture_output=True, text=True, timeout=30
+        )
+        if r.returncode == 0 and os.path.exists(out):
+            return out
+        log.error(f'PDF gen failed: {r.stderr}')
     except Exception as e:
         log.error(f'PDF gen error: {e}')
     return None
