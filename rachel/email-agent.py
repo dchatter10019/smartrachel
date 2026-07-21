@@ -16,6 +16,7 @@ RACHEL_EMAIL = 'rachelai@getbevvi.com'
 ANTHROPIC_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 SHOPPING_AGENT_URL = 'http://127.0.0.1:8300/mcp'
 POLL_INTERVAL = 60
+THREAD_SESSIONS = {}  # thread_id -> session_id for Rachel chat continuity
 LOG_FILE = '/home/ubuntu/logs/email-agent.log'
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s',
@@ -129,6 +130,47 @@ def format_clarification(order, missing):
         "\nBest regards,\nRachel\nBevvi AI Beverage Specialist\nrachelai@getbevvi.com"])
     return '\n'.join(lines)
 
+def chat_with_rachel(message, session_id, sender_email, zip_code='10010'):
+    """Send message to Rachel chat endpoint"""
+    try:
+        r = requests.post('http://127.0.0.1:3500/chat', json={
+            'message': message,
+            'session_id': session_id,
+            'format': 'plain',
+            'context': {
+                'kitchen_location': '',
+                'client_id': 'fooda',
+                'account_id': '',
+                'user_email': sender_email,
+                'age_verified': True
+            }
+        }, timeout=60)
+        return r.json().get('text', '')
+    except Exception as e:
+        log.error(f'Rachel chat error: {e}')
+        return None
+
+def extract_pdf_from_response(rachel_response):
+    """Check if Rachel's response contains a proposal PDF link"""
+    import re
+    # Look for proposal URL in response
+    match = re.search(r'http://[^\s]+proposals/[^\s]+\.pdf', rachel_response)
+    return match.group(0) if match else None
+
+def download_pdf(url):
+    """Download PDF from Rachel's proposal server"""
+    try:
+        r = requests.get(url, timeout=10)
+        if r.status_code == 200:
+            import tempfile
+            tmp = tempfile.mktemp(suffix='.pdf')
+            with open(tmp, 'wb') as f:
+                f.write(r.content)
+            return tmp
+    except Exception as e:
+        log.error(f'PDF download error: {e}')
+    return None
+
 def process(service, email):
     log.info(f"Processing: {email['from']} | {email['subject']}")
     sender = email['from']
@@ -140,24 +182,96 @@ def process(service, email):
         log.info(f'Skipping automated email from {sender_email}')
         service.users().messages().modify(userId='me',id=email['id'],body={'removeLabelIds':['UNREAD']}).execute()
         return
+
+    thread_id = email['thread_id']
+    subject = email['subject']
+    body = email['body']
     
-    order = parse_with_claude(email['from'], email['subject'], email['body'])
-    order['sender_email'] = sender_email
-    log.info(f"Parsed: confidence={order.get('confidence')}, guests={order.get('guests')}, budget={order.get('budget')}")
+    # Check if this is a reply to existing thread (modification request)
+    is_reply = thread_id in THREAD_SESSIONS
     
-    if order.get('confidence') == 'low':
-        body = format_clarification(order, order.get('missing_fields',['event details']))
-        send_reply(service, email['thread_id'], sender_email, email['subject'], body)
-    else:
-        package = build_package(order, sender_email)
-        if not package:
-            send_reply(service, email['thread_id'], sender_email, email['subject'],
-                "I apologize, I couldn't build a package. Please contact orders@getbevvi.com.")
+    if is_reply:
+        # Route through Rachel chat for conversational handling
+        session_id = THREAD_SESSIONS[thread_id]
+        log.info(f'Reply in thread {thread_id[:8]}... routing to Rachel chat session {session_id}')
+        
+        rachel_response = chat_with_rachel(body, session_id, sender_email)
+        if not rachel_response:
+            send_reply(service, thread_id, sender_email, subject,
+                "I apologize, I had trouble processing your request. Please try again.")
+            service.users().messages().modify(userId='me',id=email['id'],body={'removeLabelIds':['UNREAD']}).execute()
             return
-        pdf = gen_pdf(package, order.get('client_name', sender_email.split('@')[0]), order.get('event_date',''))
-        body = format_package(package, order)
-        send_reply(service, email['thread_id'], sender_email, email['subject'], body, pdf)
-        log.info(f"Proposal sent: ${package.get('estimated_grand_total')}")
+        
+        log.info(f'Rachel response: {rachel_response[:100]}...')
+        
+        # Check if Rachel generated a new proposal PDF
+        pdf_url = extract_pdf_from_response(rachel_response)
+        pdf_path = download_pdf(pdf_url) if pdf_url else None
+        
+        # Clean up response for email (remove URLs)
+        import re
+        clean_response = re.sub(r'http://\S+proposals/\S+\.pdf', '', rachel_response).strip()
+        
+        if pdf_path:
+            clean_response += '\n\nAn updated PDF proposal is attached.'
+        
+        send_reply(service, thread_id, sender_email, subject, clean_response, pdf_path)
+        
+    else:
+        # New email — parse and build initial package
+        order = parse_with_claude(email['from'], subject, body)
+        order['sender_email'] = sender_email
+        log.info(f"Parsed: confidence={order.get('confidence')}, guests={order.get('guests')}, budget={order.get('budget')}")
+        
+        # Create Rachel session for this thread
+        session_id = f'email-{thread_id[:12]}-{sender_email.split("@")[0]}'
+        
+        if order.get('confidence') == 'low':
+            # Send clarification via Rachel chat
+            initial_msg = f"I received an email from {sender_email} about: {subject}. Body: {body[:500]}"
+            rachel_response = chat_with_rachel(initial_msg, session_id, sender_email)
+            
+            if rachel_response:
+                send_reply(service, thread_id, sender_email, subject, rachel_response)
+            else:
+                clarification = format_clarification(order, order.get('missing_fields',['event details']))
+                send_reply(service, thread_id, sender_email, subject, clarification)
+        else:
+            # Build package via Rachel chat for full conversational context
+            order_msg = (
+                f"I need a beverage package for {order.get('guests',0)} people, "
+                f"{order.get('hours',3)} hours, ${order.get('budget',1000)} budget, "
+                f"categories: {', '.join(order.get('categories',[]) or ['wine','beer','spirits'])}. "
+                f"Delivery to {order.get('delivery_address','11 Madison Ave New York NY 10010')}. "
+                f"Client: {order.get('client_name','')}"
+            )
+            
+            rachel_response = chat_with_rachel(order_msg, session_id, sender_email)
+            
+            if not rachel_response:
+                send_reply(service, thread_id, sender_email, subject,
+                    "I apologize, I couldn't process your order. Please contact orders@getbevvi.com.")
+                service.users().messages().modify(userId='me',id=email['id'],body={'removeLabelIds':['UNREAD']}).execute()
+                return
+            
+            # Generate PDF proposal
+            package = build_package(order, sender_email)
+            pdf_path = None
+            if package:
+                pdf_path = gen_pdf(package,
+                    order.get('client_name', sender_email.split('@')[0]),
+                    order.get('event_date',''))
+            
+            email_body = format_package(package, order) if package else rachel_response
+            if pdf_path:
+                email_body += '\n\nA PDF proposal is attached.'
+            
+            send_reply(service, thread_id, sender_email, subject, email_body, pdf_path)
+            log.info(f"Initial proposal sent: ${package.get('estimated_grand_total') if package else 'N/A'}")
+        
+        # Save session for this thread
+        THREAD_SESSIONS[thread_id] = session_id
+        log.info(f'Thread {thread_id[:8]}... → session {session_id}')
     
     service.users().messages().modify(userId='me',id=email['id'],body={'removeLabelIds':['UNREAD']}).execute()
 
