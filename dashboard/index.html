@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bevvi Agent Workbench</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:#0f0f0f;color:#e0e0e0;min-height:100vh}
+header{padding:16px 24px;border-bottom:1px solid #222;display:flex;align-items:center;gap:12px}
+header h1{font-size:16px;font-weight:500;color:#fff}
+.sub{font-size:13px;color:#555}
+.badge{font-size:11px;padding:2px 8px;border-radius:99px;font-weight:500}
+.badge.up{background:#0d2b1a;color:#3db87a}
+.badge.down{background:#2b0d0d;color:#e05555}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;padding:20px 24px}
+.card{background:#181818;border:1px solid #222;border-radius:10px;padding:14px 16px;cursor:pointer;transition:border-color .15s}
+.card:hover{border-color:#444}
+.card.selected{border-color:#3db87a}
+.card-header{display:flex;align-items:center;gap:10px}
+.dot{width:8px;height:8px;border-radius:50%;flex-shrink:0;transition:background .3s}
+.dot.up{background:#3db87a}
+.dot.down{background:#e05555}
+.dot.unknown{background:#444}
+.card-name{font-size:14px;font-weight:500;color:#fff}
+.card-port{font-size:12px;color:#444;margin-left:auto;font-family:monospace}
+.card-meta{font-size:12px;color:#555;margin-top:5px}
+.log-panel{border-top:1px solid #222;display:none;flex-direction:column}
+.log-header{padding:10px 24px;border-bottom:1px solid #1a1a1a;display:flex;align-items:center;gap:10px}
+.log-title{font-size:14px;font-weight:500;color:#ccc}
+.log-status{font-size:12px;color:#555}
+.log-status.up{color:#3db87a}
+.btn{font-size:12px;padding:4px 10px;border-radius:6px;border:1px solid #333;background:transparent;color:#666;cursor:pointer}
+.btn:hover{background:#222;color:#ccc}
+.btn.on{background:#0d2b1a;border-color:#3db87a;color:#3db87a}
+.log-body{height:400px;overflow-y:auto;overflow-x:auto;padding:12px 24px;font-family:'SF Mono',monospace;font-size:12px;line-height:1.7;background:#0a0a0a}
+.ll{white-space:pre;color:#888}
+.ll.ok{color:#4eff91}
+.ll.err{color:#ff5f5f}
+.ll.warn{color:#ffc53d}
+.ll.hi{color:#ffffff}
+.statusbar{padding:8px 24px;border-top:1px solid #1a1a1a;font-size:11px;color:#444;background:#0f0f0f}
+</style>
+</head>
+<body>
+<header>
+  <div class="dot up"></div>
+  <h1>Bevvi Agent Workbench</h1>
+  <span class="sub">3.138.180.46</span>
+  <span id="hdr" class="badge up" style="margin-left:auto">checking</span>
+  <span class="sub" id="last-check"></span>
+</header>
+
+<div class="grid" id="grid"></div>
+
+<div class="log-panel" id="log-panel">
+  <div class="log-header">
+    <span class="log-title" id="log-title">-</span>
+    <span class="log-status" id="log-status"></span>
+    <div style="margin-left:auto;display:flex;gap:6px">
+      <button class="btn" id="btn-live" onclick="toggleLive()">live</button>
+      <button class="btn" onclick="clearLog()">clear</button>
+      <button class="btn" onclick="closeLog()">close x</button>
+    </div>
+  </div>
+  <div class="log-body" id="log-body"></div>
+  <div class="statusbar" id="statusbar">select a service to view logs</div>
+</div>
+
+<script>
+var SVCS = [
+  {name:'Rachel AI',       port:3500, log:'rachel.log',                service:'rachel'},
+  {name:'Rachel MCP',      port:3600, log:'rachel-mcp.log',            service:'rachel-mcp'},
+  {name:'Rachel Slack',    port:null, log:'slack-rachel.log',          service:'rachel-slack'},
+  {name:'Rachel Email',    port:null, log:'email-agent.log',           service:'rachel-email'},
+  {name:'Shopping Agent',  port:8300, log:'shopping-agent.log',        service:'shopping-agent'},
+  {name:'Orchestrator',    port:8200, log:'orchestrator.log',          service:'orchestrator'},
+  {name:'GBrain MCP',      port:7700, log:'gbrain-mcp.log',           service:'gbrain-mcp'},
+  {name:'Manor NYC',       port:8101, log:'store-agent-manor.log',     service:'store-agent-manor'},
+  {name:'LiquorMaster NJ', port:8102, log:'store-agent-liqmaster.log', service:'store-agent-liqmaster'}
+];
+
+var active = null, es = null, live = false, health = {};
+
+function colorClass(line) {
+  var l = line.toLowerCase();
+  if (l.indexOf('error') > -1 || l.indexOf('failed') > -1 || l.indexOf('exception') > -1) return 'err';
+  if (l.indexOf('warn') > -1) return 'warn';
+  if (l.indexOf('sent') > -1 || l.indexOf('success') > -1 || l.indexOf('connected') > -1 || l.indexOf('saved') > -1 || l.indexOf('reply') > -1 || l.indexOf('running') > -1) return 'ok';
+  if (l.indexOf('===') > -1 || l.indexOf('starting') > -1 || l.indexOf('port') > -1) return 'hi';
+  return '';
+}
+
+function appendLines(text) {
+  var body = document.getElementById('log-body');
+  text.split('\n').filter(function(l){return l.trim();}).forEach(function(line) {
+    var d = document.createElement('div');
+    d.className = 'll ' + colorClass(line);
+    d.textContent = line;
+    body.appendChild(d);
+  });
+  body.scrollTop = body.scrollHeight;
+}
+
+function clearLog() { document.getElementById('log-body').innerHTML = ''; }
+
+function closeLog() {
+  document.getElementById('log-panel').style.display = 'none';
+  document.querySelectorAll('.card').forEach(function(c){c.classList.remove('selected');});
+  if (es) { es.close(); es = null; }
+  active = null;
+}
+
+function toggleLive() {
+  live = !live;
+  document.getElementById('btn-live').classList.toggle('on', live);
+  if (!live && es) { es.close(); es = null; }
+  if (live && active) startStream();
+}
+
+function startStream() {
+  if (es) es.close();
+  es = new EventSource('/api/stream?svc=' + active.service);
+  es.onmessage = function(e) { appendLines(JSON.parse(e.data)); };
+  es.onerror = function() { document.getElementById('statusbar').textContent = 'stream error - retrying'; };
+}
+
+function selectSvc(svc) {
+  active = svc;
+  document.querySelectorAll('.card').forEach(function(c){c.classList.remove('selected');});
+  document.getElementById('card-' + svc.service).classList.add('selected');
+  var panel = document.getElementById('log-panel');
+  panel.style.display = 'flex';
+  panel.style.flexDirection = 'column';
+  document.getElementById('log-title').textContent = svc.name;
+  var up = health[svc.service];
+  var ls = document.getElementById('log-status');
+  ls.textContent = up ? '● online' : '○ offline';
+  ls.className = 'log-status ' + (up ? 'up' : '');
+  clearLog();
+  fetch('/api/logs?svc=' + svc.service).then(function(r){return r.text();}).then(function(t){
+    appendLines(t);
+    document.getElementById('statusbar').textContent = svc.log + ' · last 100 lines · ' + new Date().toLocaleTimeString();
+  });
+  if (live) startStream();
+}
+
+function renderGrid(data) {
+  var grid = document.getElementById('grid');
+  var prev = active ? active.service : null;
+  grid.innerHTML = '';
+  SVCS.forEach(function(svc) {
+    var h = data ? data.find(function(d){return d.service === svc.service;}) : null;
+    var up = h ? h.up : null;
+    health[svc.service] = up;
+    var card = document.createElement('div');
+    card.className = 'card' + (prev === svc.service ? ' selected' : '');
+    card.id = 'card-' + svc.service;
+    card.onclick = function() { selectSvc(svc); };
+    var dotClass = up === true ? 'up' : up === false ? 'down' : 'unknown';
+    var statusHtml = up === true ? '<span style="color:#3db87a">running</span>' : up === false ? '<span style="color:#e05555">offline</span>' : '<span style="color:#444">checking</span>';
+    card.innerHTML = '<div class="card-header"><div class="dot ' + dotClass + '"></div><div class="card-name">' + svc.name + '</div>' + (svc.port ? '<span class="card-port">:' + svc.port + '</span>' : '') + '</div><div class="card-meta">' + svc.service + ' · ' + statusHtml + '</div>';
+    grid.appendChild(card);
+  });
+}
+
+function fetchHealth() {
+  fetch('/api/health').then(function(r){return r.json();}).then(function(data) {
+    renderGrid(data);
+    var up = data.filter(function(s){return s.up;}).length;
+    var hdr = document.getElementById('hdr');
+    hdr.textContent = up + '/' + data.length + ' online';
+    hdr.className = 'badge ' + (up === data.length ? 'up' : 'down');
+    document.getElementById('last-check').textContent = new Date().toLocaleTimeString();
+    if (active) {
+      var s = data.find(function(d){return d.service === active.service;});
+      if (s) {
+        var ls = document.getElementById('log-status');
+        ls.textContent = s.up ? '● online' : '○ offline';
+        ls.className = 'log-status ' + (s.up ? 'up' : '');
+      }
+    }
+  }).catch(function() { document.getElementById('hdr').textContent = 'unreachable'; });
+}
+
+renderGrid(null);
+fetchHealth();
+setInterval(fetchHealth, 15000);
+</script>
+</body>
+</html>

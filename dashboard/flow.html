@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bevvi Flow</title>
+<script src="/react.js"></script>
+<script src="/react-dom.js"></script>
+<link rel="stylesheet" href="/reactflow.css">
+<script src="/reactflow.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#f5f5f3;color:#1a1a1a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;height:100vh;display:flex;flex-direction:column}
+header{padding:12px 20px;border-bottom:1px solid #e8e8e5;display:flex;align-items:center;gap:12px;flex-shrink:0;background:#ffffff}
+header h1{font-size:14px;font-weight:500;color:#1a1a1a}
+.sub{font-size:12px;color:#aaa}
+.badge{font-size:11px;padding:2px 8px;border-radius:99px;font-weight:500}
+.badge.up{background:#0d2b1a;color:#4eff91}
+.badge.down{background:#2b0d0d;color:#ff5f5f}
+#canvas{flex:1;position:relative}
+.react-flow__background{background:#f5f5f3}
+.react-flow__edge-path{stroke:#2a2a2a;stroke-width:2}
+.react-flow__edge.animated path{stroke:#2a2a2a;stroke-dasharray:5;animation:dashmove 1s linear infinite}
+@keyframes dashmove{to{stroke-dashoffset:-10}}
+
+/* Node styles */
+.svc-node{background:#ffffff;border:1px solid #e0e0dc;border-radius:10px;padding:12px 16px;min-width:160px;cursor:pointer;transition:border-color .15s,box-shadow .15s}
+.svc-node:hover{border-color:#aaa}
+.svc-node.selected{border-color:#4eff91;box-shadow:0 0 0 1px #4eff9133}
+.svc-node.down{border-color:#ff5f5f33}
+.node-header{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.ndot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.ndot.up{background:#4eff91}
+.ndot.down{background:#ff5f5f}
+.ndot.unknown{background:#333}
+.node-name{font-size:13px;font-weight:500;color:#1a1a1a}
+.node-port{font-size:11px;color:#aaa;font-family:monospace;margin-left:auto}
+.node-svc{font-size:11px;color:#aaa;margin-top:2px}
+.node-status{font-size:11px;margin-top:2px}
+.node-status.up{color:#4eff91}
+.node-status.down{color:#ff5f5f}
+
+/* Group label */
+.group-label{font-size:10px;font-weight:500;color:#222;text-transform:uppercase;letter-spacing:.08em;padding:6px 10px;background:#ffffff;border:1px solid #e8e8e5;border-radius:6px}
+
+/* Side panel */
+#panel{position:absolute;top:0;right:0;width:340px;height:100%;background:#ffffff;border-left:1px solid #e8e8e5;display:none;flex-direction:column;z-index:10}
+#panel.open{display:flex}
+.panel-header{padding:14px 16px;border-bottom:1px solid #e8e8e5;display:flex;align-items:center;gap:8px}
+.panel-title{font-size:14px;font-weight:500;color:#1a1a1a;flex:1}
+.close-btn{font-size:18px;color:#aaa;cursor:pointer;line-height:1;padding:2px 6px;border-radius:4px}
+.close-btn:hover{color:#222;background:#e8e8e5}
+.panel-meta{padding:12px 16px;border-bottom:1px solid #e8e8e5;display:flex;flex-direction:column;gap:6px}
+.meta-row{display:flex;justify-content:space-between;font-size:12px}
+.meta-key{color:#888}
+.meta-val{color:#222;font-family:monospace}
+.log-head{padding:8px 16px;border-bottom:1px solid #e8e8e5;display:flex;align-items:center;gap:8px}
+.log-head span{font-size:12px;color:#888;flex:1}
+.log-btn{font-size:11px;padding:3px 8px;border-radius:5px;border:1px solid #e0e0dc;background:transparent;color:#888;cursor:pointer}
+.log-btn:hover{background:#e8e8e5;color:#222}
+.log-btn.on{background:#0d2b1a;border-color:#4eff91;color:#4eff91}
+.tab-btn.active{background:#f0f0ee;border-color:#ccc;color:#222}
+.log-body{flex:1;overflow-y:auto;overflow-x:auto;padding:10px 16px;font-family:'SF Mono',monospace;font-size:11px;line-height:1.7;background:#f5f5f3}
+.ll{white-space:pre;display:block;color:#888}
+.ll.ok{color:#4eff91}
+.ll.err{color:#ff5f5f}
+.ll.warn{color:#ffc53d}
+.ll.hi{color:#1a1a1a}
+.panel-footer{padding:8px 16px;border-top:1px solid #e8e8e5;font-size:11px;color:#222}
+</style>
+</head>
+<body>
+<header>
+  <div style="width:7px;height:7px;border-radius:50%;background:#4eff91"></div>
+  <h1>Bevvi Agent Flow</h1>
+  <span class="sub">3.138.180.46</span>
+  <a href="/" style="font-size:12px;color:#aaa;margin-left:8px;text-decoration:none">dashboard</a>
+  <span id="hdr" class="badge up" style="margin-left:auto">checking</span>
+  <span class="sub" id="ts"></span>
+</header>
+
+<div id="canvas">
+  <div id="flow-root" style="width:100%;height:100%"></div>
+  <div id="panel-resize" onmousedown="startPanelResize(event)" style="position:absolute;top:0;width:4px;height:100%;cursor:col-resize;background:transparent;z-index:11;display:none;transition:background .15s"></div>
+  <div id="panel">
+    <div class="panel-header">
+      <span class="panel-title" id="p-title">-</span>
+      <span class="close-btn" onclick="closePanel()">x</span>
+    </div>
+    <div class="panel-meta" id="p-meta"></div>
+    <div class="log-head">
+      <button class="log-btn tab-btn active" id="tab-logs" onclick="switchTab('logs')">logs</button>
+      <button class="log-btn tab-btn" id="tab-code" onclick="switchTab('code')">code</button>
+      <button class="log-btn tab-btn" id="tab-prompt" onclick="switchTab('prompt')">prompt</button>
+      <button class="log-btn tab-btn" id="tab-config" onclick="switchTab('config')">config</button>
+      <div style="margin-left:auto;display:flex;gap:4px">
+        <button class="log-btn" id="btn-live" onclick="toggleLive()">live</button>
+        <button class="log-btn" onclick="clearLog()">clear</button>
+      </div>
+    </div>
+    <div id="resize-handle" style="height:4px;background:#e0e0dc;cursor:row-resize;flex-shrink:0;transition:background .15s" onmousedown="startResize(event)"></div>
+    <div class="log-body" id="log-body"></div>
+    <div class="panel-footer" id="p-footer">-</div>
+  </div>
+</div>
+
+<script>
+var h = window.ReactFlow || window.ReactFlowLib || {};
+var {
+  ReactFlow, ReactFlowProvider, Background, Controls, MiniMap,
+  Handle, Position, useNodesState, useEdgesState, useReactFlow
+} = h;
+
+var SVCS = [
+  {id:'rachel',             name:'Rachel AI',       port:3500, log:'rachel.log',                group:'core',    x:320, y:220},
+  {id:'rachel-mcp',         name:'Rachel MCP',      port:3600, log:'rachel-mcp.log',            group:'core',    x:320, y:340},
+  {id:'rachel-slack',       name:'Slack',           port:null, log:'slack-rachel.log',          group:'channel', x:60,  y:160},
+  {id:'rachel-email',       name:'Email',           port:null, log:'email-agent.log',           group:'channel', x:60,  y:280},
+  {id:'voiceflow',          name:'Voiceflow',       port:null, log:null,                        group:'channel', x:60,  y:400},
+  {id:'shopping-agent',     name:'Shopping Agent',  port:8300, log:'shopping-agent.log',        group:'core',    x:580, y:220},
+  {id:'orchestrator',       name:'Orchestrator',    port:8200, log:'orchestrator.log',          group:'core',    x:580, y:340},
+  {id:'gbrain-mcp',         name:'GBrain',          port:7700, log:'gbrain-mcp.log',           group:'infra',   x:320, y:480},
+  {id:'store-agent-manor',  name:'Manor NYC',       port:8101, log:'store-agent-manor.log',     group:'store',   x:820, y:160},
+  {id:'store-agent-liqmaster',name:'LiquorMaster',  port:8102, log:'store-agent-liqmaster.log', group:'store',   x:820, y:280},
+  {id:'dallas',             name:'Dallas TX',       port:null, log:null,                        group:'store',   x:820, y:400},
+  {id:'chicago',            name:'Chicago IL',      port:null, log:null,                        group:'store',   x:820, y:520},
+];
+
+var EDGES = [
+  {id:'e1', source:'rachel-slack',       target:'rachel',               animated:true},
+  {id:'e2', source:'rachel-email',       target:'rachel',               animated:true},
+  {id:'e3', source:'voiceflow',          target:'rachel',               animated:true},
+  {id:'e4', source:'rachel',             target:'shopping-agent',       animated:true},
+  {id:'e5', source:'shopping-agent',     target:'orchestrator',         animated:true, label:'place_order'},
+  {id:'e6', source:'shopping-agent',     target:'gbrain-mcp',           animated:true},
+  {id:'e7', source:'rachel',             target:'gbrain-mcp',           animated:true},
+  {id:'e8', source:'orchestrator',       target:'store-agent-manor',    animated:true},
+  {id:'e9', source:'orchestrator',       target:'store-agent-liqmaster',animated:true},
+  {id:'e10',source:'orchestrator',       target:'dallas',               animated:false},
+  {id:'e11',source:'orchestrator',       target:'chicago',              animated:false},
+];
+
+var health = {};
+var activeSvc = null;
+var es = null;
+var live = false;
+var setNodesExt = null;
+
+function colorClass(line) {
+  var l = line.toLowerCase();
+  if (l.indexOf('error')>-1||l.indexOf('failed')>-1||l.indexOf('exception')>-1) return 'err';
+  if (l.indexOf('warn')>-1) return 'warn';
+  if (l.indexOf('sent')>-1||l.indexOf('success')>-1||l.indexOf('connected')>-1||l.indexOf('saved')>-1||l.indexOf('reply')>-1||l.indexOf('running')>-1||l.indexOf('started')>-1) return 'ok';
+  if (l.indexOf('===')>-1||l.indexOf('starting')>-1||l.indexOf('port')>-1||l.indexOf('listening')>-1) return 'hi';
+  return '';
+}
+
+function appendLines(text) {
+  var body = document.getElementById('log-body');
+  text.split('\n').filter(function(l){return l.trim();}).forEach(function(line){
+    var d = document.createElement('span');
+    d.className = 'll ' + colorClass(line);
+    d.textContent = line + '\n';
+    body.appendChild(d);
+  });
+  body.scrollTop = body.scrollHeight;
+}
+
+function clearLog() { document.getElementById('log-body').innerHTML = ''; }
+
+var currentTab = 'logs';
+
+function switchTab(tab) {
+  currentTab = tab;
+  document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.remove('active'); });
+  document.getElementById('tab-' + tab).classList.add('active');
+  clearLog();
+  if (tab === 'logs') {
+    if (activeSvc) {
+      fetch('/api/logs?svc=' + activeSvc.id).then(function(r){return r.text();}).then(function(t){
+        appendLines(t);
+        document.getElementById('p-footer').textContent = activeSvc.log + ' · ' + new Date().toLocaleTimeString();
+      });
+    }
+    document.getElementById('btn-live').style.display = '';
+  } else {
+    if (es) { es.close(); es = null; }
+    document.getElementById('btn-live').style.display = 'none';
+    fetch('/api/file?type=' + tab + '&svc=' + activeSvc.id).then(function(r){return r.text();}).then(function(t){
+      appendLines(t);
+      document.getElementById('p-footer').textContent = tab + ' · ' + activeSvc.id;
+    });
+  }
+}
+
+function closePanel() {
+  document.getElementById('panel').classList.remove('open');
+  document.getElementById('panel-resize').style.display = 'none';
+  if (es) { es.close(); es = null; }
+  activeSvc = null;
+  live = false;
+  document.getElementById('btn-live').classList.remove('on');
+}
+
+function toggleLive() {
+  live = !live;
+  document.getElementById('btn-live').classList.toggle('on', live);
+  if (!live && es) { es.close(); es = null; }
+  if (live && activeSvc && activeSvc.log) startStream();
+}
+
+function startStream() {
+  if (es) es.close();
+  es = new EventSource('/api/stream?svc=' + activeSvc.id);
+  es.onmessage = function(e) { appendLines(JSON.parse(e.data)); };
+}
+
+function openPanel(svc) {
+  activeSvc = svc;
+  if (es) { es.close(); es = null; }
+  document.getElementById('panel').classList.add('open');
+  var pw = document.getElementById('panel').offsetWidth;
+  var pr = document.getElementById('panel-resize');
+  pr.style.right = pw + 'px';
+  pr.style.display = 'block';
+  document.getElementById('p-title').textContent = svc.name;
+  var up = health[svc.id];
+  var meta = document.getElementById('p-meta');
+  meta.innerHTML = [
+    '<div class="meta-row"><span class="meta-key">service</span><span class="meta-val">' + svc.id + '</span></div>',
+    '<div class="meta-row"><span class="meta-key">port</span><span class="meta-val">' + (svc.port || '—') + '</span></div>',
+    '<div class="meta-row"><span class="meta-key">status</span><span class="meta-val" style="color:' + (up===true?'#4eff91':up===false?'#ff5f5f':'#444') + '">' + (up===true?'running':up===false?'offline':'unknown') + '</span></div>',
+    svc.log ? '<div class="meta-row"><span class="meta-key">log</span><span class="meta-val">' + svc.log + '</span></div>' : '',
+  ].join('');
+  currentTab = 'logs';
+  document.querySelectorAll('.tab-btn').forEach(function(b){ b.classList.remove('active'); });
+  document.getElementById('tab-logs').classList.add('active');
+  document.getElementById('btn-live').style.display = '';
+  clearLog();
+  if (svc.log) {
+    fetch('/api/logs?svc=' + svc.id).then(function(r){return r.text();}).then(function(t){
+      appendLines(t);
+      document.getElementById('p-footer').textContent = svc.log + ' · ' + new Date().toLocaleTimeString();
+    });
+  } else {
+    document.getElementById('log-body').innerHTML = '<span class="ll" style="color:#222">no log file</span>';
+    document.getElementById('p-footer').textContent = 'external service';
+  }
+  if (live) startStream();
+}
+
+function SvcNode(props) {
+  var data = props.data;
+  var svc = data.svc;
+  var up = health[svc.id];
+  var dotClass = up===true?'up':up===false?'down':'unknown';
+  var statusText = up===true?'running':up===false?'offline':'—';
+  var statusColor = up===true?'#4eff91':up===false?'#ff5f5f':'#444';
+  return React.createElement('div', {
+    className: 'svc-node' + (up===false?' down':''),
+    onClick: function(){ openPanel(svc); }
+  },
+    React.createElement(Handle, {type:'target', position:Position.Left, style:{background:'#333',border:'none',width:6,height:6}}),
+    React.createElement('div', {className:'node-header'},
+      React.createElement('div', {className:'ndot ' + dotClass}),
+      React.createElement('div', {className:'node-name'}, data.label),
+      svc.port ? React.createElement('span', {className:'node-port'}, ':'+svc.port) : null
+    ),
+    React.createElement('div', {className:'node-status up', style:{color:statusColor}}, statusText),
+    React.createElement(Handle, {type:'source', position:Position.Right, style:{background:'#333',border:'none',width:6,height:6}})
+  );
+}
+
+var nodeTypes = { svc: SvcNode };
+
+function FlowApp() {
+  var initNodes = SVCS.map(function(svc) {
+    return { id: svc.id, type:'svc', position:{x:svc.x, y:svc.y}, data:{label:svc.name, svc:svc} };
+  });
+
+  var initEdges = EDGES.map(function(e) {
+    return Object.assign({}, e, {style:{stroke:'#cccccc',strokeWidth:1.5}, markerEnd:{type:'arrowclosed',color:'#cccccc'}});
+  });
+
+  var nodesState = useNodesState(initNodes);
+  var nodes = nodesState[0], setNodes = nodesState[1];
+  var edgesState = useEdgesState(initEdges);
+  var edges = edgesState[0], onEdgesChange = edgesState[2];
+
+  setNodesExt = setNodes;
+
+  return React.createElement(ReactFlow, {
+    nodes: nodes,
+    edges: edges,
+    onNodesChange: nodesState[2],
+    onEdgesChange: onEdgesChange,
+    nodeTypes: nodeTypes,
+    fitView: true,
+    minZoom: 0.3,
+    style: {background:'#f5f5f3'}
+  },
+    React.createElement(Background, {color:'#cccccc', gap:24, size:1}),
+    React.createElement(Controls, {style:{background:'#ffffff',border:'1px solid #e0e0dc',borderRadius:8}}),
+    React.createElement(MiniMap, {
+      style:{background:'#ffffff',border:'1px solid #e0e0dc',borderRadius:8},
+      nodeColor: function(n){ var up=health[n.id]; return up===true?'#4eff91':up===false?'#ff5f5f':'#2a2a2a'; }
+    })
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('flow-root')).render(
+  React.createElement(ReactFlowProvider, null, React.createElement(FlowApp))
+);
+
+function fetchHealth() {
+  fetch('/api/health').then(function(r){return r.json();}).then(function(data){
+    data.forEach(function(s){ health[s.service] = s.up; });
+    var up = data.filter(function(s){return s.up;}).length;
+    var hdr = document.getElementById('hdr');
+    hdr.textContent = up+'/'+data.length+' online';
+    hdr.className = 'badge '+(up===data.length?'up':'down');
+    document.getElementById('ts').textContent = new Date().toLocaleTimeString();
+    if (setNodesExt) {
+      setNodesExt(function(nodes){
+        return nodes.map(function(n){ return Object.assign({},n,{data:Object.assign({},n.data)}); });
+      });
+    }
+  });
+}
+
+fetchHealth();
+setInterval(fetchHealth, 15000);
+
+// Panel width resize
+var panelResizing = false, panelStartX = 0, panelStartW = 0;
+function startPanelResize(e) {
+  panelResizing = true;
+  panelStartX = e.clientX;
+  panelStartW = document.getElementById('panel').offsetWidth;
+  document.getElementById('panel-resize').style.background = '#aaa';
+  document.addEventListener('mousemove', doPanelResize);
+  document.addEventListener('mouseup', stopPanelResize);
+  e.preventDefault();
+}
+function doPanelResize(e) {
+  if (!panelResizing) return;
+  var newW = Math.max(280, Math.min(900, panelStartW + (panelStartX - e.clientX)));
+  document.getElementById('panel').style.width = newW + 'px';
+  document.getElementById('panel-resize').style.right = newW + 'px';
+}
+function stopPanelResize() {
+  panelResizing = false;
+  document.getElementById('panel-resize').style.background = 'transparent';
+  document.removeEventListener('mousemove', doPanelResize);
+  document.removeEventListener('mouseup', stopPanelResize);
+}
+
+// Resizable panel
+var resizing = false, startY = 0, startH = 0;
+function startResize(e) {
+  resizing = true;
+  startY = e.clientY;
+  startH = document.getElementById('log-body').offsetHeight;
+  document.getElementById('resize-handle').style.background = '#aaa';
+  document.addEventListener('mousemove', doResize);
+  document.addEventListener('mouseup', stopResize);
+  e.preventDefault();
+}
+function doResize(e) {
+  if (!resizing) return;
+  var newH = Math.max(80, startH + (e.clientY - startY));
+  document.getElementById('log-body').style.height = newH + 'px';
+}
+function stopResize() {
+  resizing = false;
+  document.getElementById('resize-handle').style.background = '#e0e0dc';
+  document.removeEventListener('mousemove', doResize);
+  document.removeEventListener('mouseup', stopResize);
+}
+</script>
+</body>
+</html>
