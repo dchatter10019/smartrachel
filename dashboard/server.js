@@ -107,6 +107,86 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/activity/stream') {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+    res.write(':ok\n\n');
+
+    // Tail multiple logs and emit structured activity events
+    const logs = [
+      { file: 'rachel.log',         svc: 'rachel' },
+      { file: 'slack-rachel.log',   svc: 'rachel-slack' },
+      { file: 'email-agent.log',    svc: 'rachel-email' },
+      { file: 'shopping-agent.log', svc: 'shopping-agent' },
+    ];
+
+    const tails = logs.map(l => {
+      const tail = spawn('tail', ['-f', '-n', '0', path.join(LOG_DIR, l.file)]);
+      tail.stdout.on('data', d => {
+        const lines = d.toString().split('\n').filter(Boolean);
+        lines.forEach(line => {
+          let event = null;
+          // Rachel receiving a message
+          if (l.svc === 'rachel-slack' && line.includes('channel from') || line.includes('mention from')) {
+            event = { type: 'message', from: 'rachel-slack', to: 'rachel' };
+          } else if (l.svc === 'rachel-email' && line.includes('Processing:')) {
+            event = { type: 'message', from: 'rachel-email', to: 'rachel' };
+          } else if (l.svc === 'rachel' && line.includes('[tool] ShoppingAgent')) {
+            const intent = line.match(/"intent":"([^"]+)"/);
+            event = { type: 'tool', from: 'rachel', to: 'shopping-agent', intent: intent ? intent[1] : '' };
+          } else if (l.svc === 'shopping-agent' && line.includes('place_order via orchestrator')) {
+            event = { type: 'order', from: 'shopping-agent', to: 'orchestrator' };
+          } else if (l.svc === 'rachel' && line.includes('[tool] GetD2CSession')) {
+            event = { type: 'tool', from: 'rachel', to: 'gbrain-mcp' };
+          } else if (l.svc === 'rachel' && line.includes('chat —') && line.includes('session:')) {
+            const match = line.match(/session: (\S+)/);
+            const channel = match && match[1].startsWith('slack') ? 'rachel-slack' : match && match[1].startsWith('email') ? 'rachel-email' : null;
+            if (channel) event = { type: 'session', channel, active: true };
+          }
+          if (event) res.write('data: ' + JSON.stringify(event) + '\n\n');
+        });
+      });
+      return tail;
+    });
+
+    const ka = setInterval(() => res.write(':ping\n\n'), 15000);
+    req.on('close', () => { tails.forEach(t => t.kill()); clearInterval(ka); });
+    return;
+  }
+
+  if (url.pathname === '/api/orders') {
+    // Return last N orders from orders.jsonl
+    try {
+      const lines = execSync('tail -n 20 /home/ubuntu/logs/orders.jsonl 2>/dev/null').toString().trim().split('\n').filter(Boolean);
+      const orders = lines.map(l => { try { return JSON.parse(l); } catch(e) { return null; } }).filter(Boolean).reverse();
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify(orders));
+    } catch(e) { res.end('[]'); }
+    return;
+  }
+
+  if (url.pathname === '/api/orders/stream') {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+    res.write(':ok\n\n');
+    const tail = spawn('tail', ['-f', '-n', '0', '/home/ubuntu/logs/orders.jsonl']);
+    tail.stdout.on('data', d => {
+      const lines = d.toString().trim().split('\n').filter(Boolean);
+      lines.forEach(line => {
+        try { res.write('data: ' + line + '\n\n'); } catch(e) {}
+      });
+    });
+    const ka = setInterval(() => res.write(':ping\n\n'), 15000);
+    req.on('close', () => { tail.kill(); clearInterval(ka); });
+    return;
+  }
+
   if (url.pathname === '/api/save-file' && req.method === 'POST') {
     let body = '';
     req.on('data', d => body += d);

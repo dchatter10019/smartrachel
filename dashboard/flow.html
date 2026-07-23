@@ -21,6 +21,7 @@ header h1{font-size:14px;font-weight:500;color:#1a1a1a}
 .react-flow__background{background:#f5f5f3}
 .react-flow__edge-path{stroke:#2a2a2a;stroke-width:2}
 .react-flow__edge.animated path{stroke:#2a2a2a;stroke-dasharray:5;animation:dashmove 1s linear infinite}
+.react-flow__edge.active-flow path{stroke:#4eff91 !important;stroke-width:2.5 !important;filter:drop-shadow(0 0 3px #4eff91)}
 @keyframes dashmove{to{stroke-dashoffset:-10}}
 
 /* Node styles */
@@ -67,6 +68,18 @@ header h1{font-size:14px;font-weight:500;color:#1a1a1a}
 .ll.warn{color:#ffc53d}
 .ll.hi{color:#1a1a1a}
 .panel-footer{padding:8px 16px;border-top:1px solid #e8e8e5;font-size:11px;color:#222}
+.order-toast{background:#fff;border:1px solid #e0e0dc;border-radius:10px;padding:10px 14px;pointer-events:auto;box-shadow:0 2px 8px rgba(0,0,0,0.08);animation:slideIn .3s ease;border-left:3px solid #4eff91}
+@keyframes slideIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+.order-toast .ot-store{font-size:12px;font-weight:500;color:#1a1a1a}
+.order-toast .ot-amount{font-size:16px;font-weight:500;color:#1a1a1a;margin:2px 0}
+.order-toast .ot-meta{font-size:11px;color:#888}
+.order-toast .ot-id{font-size:10px;color:#aaa;margin-top:4px;font-family:monospace}
+.order-toast{background:#fff;border:1px solid #e0e0dc;border-radius:10px;padding:10px 14px;pointer-events:auto;box-shadow:0 2px 8px rgba(0,0,0,0.08);animation:slideIn .3s ease;border-left:3px solid #4eff91}
+@keyframes slideIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+.order-toast .ot-store{font-size:12px;font-weight:500;color:#1a1a1a}
+.order-toast .ot-amount{font-size:16px;font-weight:500;color:#1a1a1a;margin:2px 0}
+.order-toast .ot-meta{font-size:11px;color:#888}
+.order-toast .ot-id{font-size:10px;color:#aaa;margin-top:4px;font-family:monospace}
 </style>
 </head>
 <body>
@@ -99,6 +112,12 @@ header h1{font-size:14px;font-weight:500;color:#1a1a1a}
     </div>
     <div id="deploy-status" style="margin-top:10px;font-size:12px;color:#888"></div>
   </div>
+</div>
+
+<div id="order-feed" style="position:fixed;bottom:20px;right:20px;width:320px;z-index:20;display:flex;flex-direction:column;gap:6px;pointer-events:none">
+</div>
+
+<div id="order-feed" style="position:fixed;bottom:20px;right:20px;width:320px;z-index:20;display:flex;flex-direction:column;gap:6px;pointer-events:none">
 </div>
 
 <div id="canvas">
@@ -170,6 +189,8 @@ var EDGES = [
 
 var health = {};
 var activeSvc = null;
+var activeEdges = {};
+var sessions = {};
 var es = null;
 var live = false;
 var setNodesExt = null;
@@ -306,6 +327,7 @@ function SvcNode(props) {
       svc.port ? React.createElement('span', {className:'node-port'}, ':'+svc.port) : null
     ),
     React.createElement('div', {className:'node-status up', style:{color:statusColor}}, statusText),
+    svc.group === 'channel' && sessions[svc.id] > 0 ? React.createElement('div', {style:{fontSize:'10px',color:'#888',marginTop:'2px'}}, sessions[svc.id] + ' active session' + (sessions[svc.id]>1?'s':'')) : null,
     React.createElement(Handle, {type:'source', position:Position.Right, style:{background:'#333',border:'none',width:6,height:6}})
   );
 }
@@ -340,10 +362,7 @@ function FlowApp() {
   },
     React.createElement(Background, {color:'#cccccc', gap:24, size:1}),
     React.createElement(Controls, {style:{background:'#ffffff',border:'1px solid #e0e0dc',borderRadius:8}}),
-    React.createElement(MiniMap, {
-      style:{background:'#ffffff',border:'1px solid #e0e0dc',borderRadius:8},
-      nodeColor: function(n){ var up=health[n.id]; return up===true?'#4eff91':up===false?'#ff5f5f':'#2a2a2a'; }
-    })
+
   );
 }
 
@@ -512,6 +531,170 @@ function cancelPromptEdit() {
   document.getElementById('log-body').innerText=promptOriginal;
   document.getElementById('prompt-save-bar').style.display='none';
 }
+
+// Live order feed
+var orderEs = null;
+
+function showOrderToast(order) {
+  var feed = document.getElementById('order-feed');
+  var toast = document.createElement('div');
+  toast.className = 'order-toast';
+  var time = new Date(order.ts).toLocaleTimeString();
+  toast.innerHTML = '<div class="ot-store">✓ ' + (order.store || 'Order placed') + '</div>' +
+    '<div class="ot-amount">$' + parseFloat(order.amount || 0).toFixed(2) + '</div>' +
+    '<div class="ot-meta">' + (order.email || '') + ' · ' + time + '</div>' +
+    '<div class="ot-id">' + (order.order_id || '') + '</div>';
+  feed.appendChild(toast);
+  // Flash the winning store node
+  var storeId = Object.keys(health).find(function(id){ return id.toLowerCase().includes((order.store||'').toLowerCase().split(' ')[0].toLowerCase()); });
+  if (storeId && setNodesExt) {
+    var orig = health[storeId];
+    health[storeId] = 'flash';
+    if (setNodesExt) setNodesExt(function(nodes){ return nodes.map(function(n){ return Object.assign({},n,{data:Object.assign({},n.data)}); }); });
+    setTimeout(function(){ health[storeId]=orig; if(setNodesExt) setNodesExt(function(nodes){ return nodes.map(function(n){ return Object.assign({},n,{data:Object.assign({},n.data)}); }); }); }, 1000);
+  }
+  // Auto remove after 8 seconds
+  setTimeout(function(){ if (toast.parentNode) toast.parentNode.removeChild(toast); }, 8000);
+}
+
+function startOrderFeed() {
+  if (orderEs) orderEs.close();
+  orderEs = new EventSource('/api/orders/stream');
+  orderEs.onmessage = function(e) {
+    try { showOrderToast(JSON.parse(e.data)); } catch(err) {}
+  };
+}
+
+// Activity stream — edge animation + session counters
+var activityEs = null;
+var edgeTimers = {};
+
+function flashEdge(edgeId) {
+  var el = document.querySelector('[data-id="' + edgeId + '"]');
+  if (el) el.classList.add('active-flow');
+  if (edgeTimers[edgeId]) clearTimeout(edgeTimers[edgeId]);
+  edgeTimers[edgeId] = setTimeout(function(){
+    var el2 = document.querySelector('[data-id="' + edgeId + '"]');
+    if (el2) el2.classList.remove('active-flow');
+  }, 1500);
+}
+
+function startActivityStream() {
+  if (activityEs) activityEs.close();
+  activityEs = new EventSource('/api/activity/stream');
+  activityEs.onmessage = function(e) {
+    try {
+      var ev = JSON.parse(e.data);
+      if (ev.type === 'message' || ev.type === 'tool' || ev.type === 'order') {
+        // Find edge between from and to
+        var edgeId = 'e' + Object.keys(EDGES).find(function(k){
+          var edge = EDGES[k];
+          return edge && edge.source === ev.from && edge.target === ev.to;
+        });
+        // Search by source/target
+        for (var i = 0; i < EDGES.length; i++) {
+          if (EDGES[i].source === ev.from && EDGES[i].target === ev.to) {
+            flashEdge(EDGES[i].id);
+            break;
+          }
+        }
+      }
+      if (ev.type === 'session') {
+        if (ev.active) {
+          sessions[ev.channel] = (sessions[ev.channel] || 0) + 1;
+        } else {
+          sessions[ev.channel] = Math.max(0, (sessions[ev.channel] || 1) - 1);
+        }
+        if (setNodesExt) setNodesExt(function(nodes){ return nodes.map(function(n){ return Object.assign({},n,{data:Object.assign({},n.data)}); }); });
+      }
+    } catch(err) {}
+  };
+}
+
+startActivityStream();
+startOrderFeed();
+
+// Live order feed
+var orderEs = null;
+
+function showOrderToast(order) {
+  var feed = document.getElementById('order-feed');
+  var toast = document.createElement('div');
+  toast.className = 'order-toast';
+  var time = new Date(order.ts).toLocaleTimeString();
+  toast.innerHTML = '<div class="ot-store">✓ ' + (order.store || 'Order placed') + '</div>' +
+    '<div class="ot-amount">$' + parseFloat(order.amount || 0).toFixed(2) + '</div>' +
+    '<div class="ot-meta">' + (order.email || '') + ' · ' + time + '</div>' +
+    '<div class="ot-id">' + (order.order_id || '') + '</div>';
+  feed.appendChild(toast);
+  // Flash the winning store node
+  var storeId = Object.keys(health).find(function(id){ return id.toLowerCase().includes((order.store||'').toLowerCase().split(' ')[0].toLowerCase()); });
+  if (storeId && setNodesExt) {
+    var orig = health[storeId];
+    health[storeId] = 'flash';
+    if (setNodesExt) setNodesExt(function(nodes){ return nodes.map(function(n){ return Object.assign({},n,{data:Object.assign({},n.data)}); }); });
+    setTimeout(function(){ health[storeId]=orig; if(setNodesExt) setNodesExt(function(nodes){ return nodes.map(function(n){ return Object.assign({},n,{data:Object.assign({},n.data)}); }); }); }, 1000);
+  }
+  // Auto remove after 8 seconds
+  setTimeout(function(){ if (toast.parentNode) toast.parentNode.removeChild(toast); }, 8000);
+}
+
+function startOrderFeed() {
+  if (orderEs) orderEs.close();
+  orderEs = new EventSource('/api/orders/stream');
+  orderEs.onmessage = function(e) {
+    try { showOrderToast(JSON.parse(e.data)); } catch(err) {}
+  };
+}
+
+// Activity stream — edge animation + session counters
+var activityEs = null;
+var edgeTimers = {};
+
+function flashEdge(edgeId) {
+  var el = document.querySelector('[data-id="' + edgeId + '"]');
+  if (el) el.classList.add('active-flow');
+  if (edgeTimers[edgeId]) clearTimeout(edgeTimers[edgeId]);
+  edgeTimers[edgeId] = setTimeout(function(){
+    var el2 = document.querySelector('[data-id="' + edgeId + '"]');
+    if (el2) el2.classList.remove('active-flow');
+  }, 1500);
+}
+
+function startActivityStream() {
+  if (activityEs) activityEs.close();
+  activityEs = new EventSource('/api/activity/stream');
+  activityEs.onmessage = function(e) {
+    try {
+      var ev = JSON.parse(e.data);
+      if (ev.type === 'message' || ev.type === 'tool' || ev.type === 'order') {
+        // Find edge between from and to
+        var edgeId = 'e' + Object.keys(EDGES).find(function(k){
+          var edge = EDGES[k];
+          return edge && edge.source === ev.from && edge.target === ev.to;
+        });
+        // Search by source/target
+        for (var i = 0; i < EDGES.length; i++) {
+          if (EDGES[i].source === ev.from && EDGES[i].target === ev.to) {
+            flashEdge(EDGES[i].id);
+            break;
+          }
+        }
+      }
+      if (ev.type === 'session') {
+        if (ev.active) {
+          sessions[ev.channel] = (sessions[ev.channel] || 0) + 1;
+        } else {
+          sessions[ev.channel] = Math.max(0, (sessions[ev.channel] || 1) - 1);
+        }
+        if (setNodesExt) setNodesExt(function(nodes){ return nodes.map(function(n){ return Object.assign({},n,{data:Object.assign({},n.data)}); }); });
+      }
+    } catch(err) {}
+  };
+}
+
+startActivityStream();
+startOrderFeed();
 </script>
 </body>
 </html>
