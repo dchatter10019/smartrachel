@@ -75,9 +75,31 @@ header h1{font-size:14px;font-weight:500;color:#1a1a1a}
   <h1>Bevvi Agent Flow</h1>
   <span class="sub">3.138.180.46</span>
   <a href="/" style="font-size:12px;color:#aaa;margin-left:8px;text-decoration:none">dashboard</a>
-  <span id="hdr" class="badge up" style="margin-left:auto">checking</span>
+  <button class="log-btn" onclick="openDeploy()" style="margin-left:auto;font-size:12px;padding:4px 12px">+ store agent</button>
+  <span id="hdr" class="badge up" style="margin-left:8px">checking</span>
   <span class="sub" id="ts"></span>
 </header>
+
+<div id="deploy-modal" style="display:none;position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.3);z-index:100;align-items:center;justify-content:center">
+  <div style="background:#fff;border:1px solid #e0e0dc;border-radius:12px;padding:24px;width:420px;max-width:90vw">
+    <div style="display:flex;align-items:center;margin-bottom:16px">
+      <span style="font-size:14px;font-weight:500;color:#1a1a1a;flex:1">Deploy store agent</span>
+      <span onclick="closeDeploy()" style="cursor:pointer;color:#aaa;font-size:18px">x</span>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px;font-size:13px">
+      <label style="color:#888">Store name<input id="d-name" placeholder="Dallas Fine Wine" style="display:block;width:100%;margin-top:4px;padding:6px 8px;border:1px solid #e0e0dc;border-radius:6px;font-size:13px"></label>
+      <label style="color:#888">Kitchen location<input id="d-kitchen" placeholder="Dallas - TX" style="display:block;width:100%;margin-top:4px;padding:6px 8px;border:1px solid #e0e0dc;border-radius:6px;font-size:13px"></label>
+      <label style="color:#888">Client name<input id="d-client" placeholder="fooda" style="display:block;width:100%;margin-top:4px;padding:6px 8px;border:1px solid #e0e0dc;border-radius:6px;font-size:13px"></label>
+      <label style="color:#888">Port<input id="d-port" placeholder="8103" type="number" style="display:block;width:100%;margin-top:4px;padding:6px 8px;border:1px solid #e0e0dc;border-radius:6px;font-size:13px"></label>
+      <label style="color:#888">Delivery zips (comma-separated)<input id="d-zips" placeholder="75201,75202,75203" style="display:block;width:100%;margin-top:4px;padding:6px 8px;border:1px solid #e0e0dc;border-radius:6px;font-size:13px"></label>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:16px;justify-content:flex-end">
+      <button onclick="closeDeploy()" class="log-btn">Cancel</button>
+      <button onclick="deployStore()" id="deploy-btn" class="log-btn on" style="padding:6px 16px">Deploy</button>
+    </div>
+    <div id="deploy-status" style="margin-top:10px;font-size:12px;color:#888"></div>
+  </div>
+</div>
 
 <div id="canvas">
   <div id="flow-root" style="width:100%;height:100%"></div>
@@ -85,6 +107,7 @@ header h1{font-size:14px;font-weight:500;color:#1a1a1a}
   <div id="panel">
     <div class="panel-header">
       <span class="panel-title" id="p-title">-</span>
+      <button id="btn-restart" class="log-btn" onclick="restartService()" style="font-size:11px;padding:3px 10px;color:#ff5f5f;border-color:#ff5f5f">restart</button>
       <span class="close-btn" onclick="closePanel()">x</span>
     </div>
     <div class="panel-meta" id="p-meta"></div>
@@ -100,6 +123,11 @@ header h1{font-size:14px;font-weight:500;color:#1a1a1a}
     </div>
     <div id="resize-handle" style="height:4px;background:#e0e0dc;cursor:row-resize;flex-shrink:0;transition:background .15s" onmousedown="startResize(event)"></div>
     <div class="log-body" id="log-body"></div>
+    <div id="prompt-save-bar" style="display:none;padding:8px 16px;border-top:1px solid #e0e0dc;background:#f9f9f8;gap:8px;align-items:center">
+      <span style="font-size:11px;color:#888;flex:1">editing prompt.md</span>
+      <button class="log-btn on" onclick="savePrompt()" style="padding:4px 12px">save + restart</button>
+      <button class="log-btn" onclick="cancelPromptEdit()">cancel</button>
+    </div>
     <div class="panel-footer" id="p-footer">-</div>
   </div>
 </div>
@@ -122,7 +150,7 @@ var SVCS = [
   {id:'gbrain-mcp',         name:'GBrain',          port:7700, log:'gbrain-mcp.log',           group:'infra',   x:320, y:480},
   {id:'store-agent-manor',  name:'Manor NYC',       port:8101, log:'store-agent-manor.log',     group:'store',   x:820, y:160},
   {id:'store-agent-liqmaster',name:'LiquorMaster',  port:8102, log:'store-agent-liqmaster.log', group:'store',   x:820, y:280},
-  {id:'dallas',             name:'Dallas TX',       port:null, log:null,                        group:'store',   x:820, y:400},
+  {id:'store-agent-dallas-fine-wine', name:'Dallas Fine Wine',port:8103, log:'store-agent-dallas-fine-wine.log', group:'store', x:820, y:400},
   {id:'chicago',            name:'Chicago IL',      port:null, log:null,                        group:'store',   x:820, y:520},
 ];
 
@@ -136,7 +164,7 @@ var EDGES = [
   {id:'e7', source:'rachel',             target:'gbrain-mcp',           animated:true},
   {id:'e8', source:'orchestrator',       target:'store-agent-manor',    animated:true},
   {id:'e9', source:'orchestrator',       target:'store-agent-liqmaster',animated:true},
-  {id:'e10',source:'orchestrator',       target:'dallas',               animated:false},
+  {id:'e10',source:'orchestrator',       target:'store-agent-dallas-fine-wine', animated:true},
   {id:'e11',source:'orchestrator',       target:'chicago',              animated:false},
 ];
 
@@ -187,7 +215,18 @@ function switchTab(tab) {
     if (es) { es.close(); es = null; }
     document.getElementById('btn-live').style.display = 'none';
     fetch('/api/file?type=' + tab + '&svc=' + activeSvc.id).then(function(r){return r.text();}).then(function(t){
-      appendLines(t);
+      var body = document.getElementById('log-body');
+      if (tab === 'prompt') {
+        promptOriginal = t;
+        body.innerText = t;
+        body.contentEditable = 'true';
+        body.style.outline = 'none';
+        document.getElementById('prompt-save-bar').style.display = 'flex';
+      } else {
+        body.contentEditable = 'false';
+        document.getElementById('prompt-save-bar').style.display = 'none';
+        appendLines(t);
+      }
       document.getElementById('p-footer').textContent = tab + ' · ' + activeSvc.id;
     });
   }
@@ -331,6 +370,57 @@ function fetchHealth() {
 fetchHealth();
 setInterval(fetchHealth, 15000);
 
+function openDeploy() {
+  document.getElementById('deploy-modal').style.display = 'flex';
+}
+function closeDeploy() {
+  document.getElementById('deploy-modal').style.display = 'none';
+  document.getElementById('deploy-status').textContent = '';
+}
+function deployStore() {
+  var btn = document.getElementById('deploy-btn');
+  var status = document.getElementById('deploy-status');
+  var cfg = {
+    store_name:       document.getElementById('d-name').value.trim(),
+    kitchen_location: document.getElementById('d-kitchen').value.trim(),
+    client_name:      document.getElementById('d-client').value.trim(),
+    port:             document.getElementById('d-port').value.trim(),
+    delivery_zips:    document.getElementById('d-zips').value.trim()
+  };
+  if (!cfg.store_name || !cfg.kitchen_location || !cfg.port) {
+    status.textContent = 'Store name, kitchen location and port are required.';
+    status.style.color = '#ff5f5f';
+    return;
+  }
+  btn.textContent = 'Deploying...';
+  btn.disabled = true;
+  status.textContent = 'Creating service...';
+  status.style.color = '#888';
+  fetch('/api/deploy-store', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(cfg)
+  }).then(function(r){return r.json();}).then(function(data){
+    if (data.success) {
+      status.textContent = 'Deployed! Service: ' + data.service + ' on port ' + data.port;
+      status.style.color = '#4eff91';
+      btn.textContent = 'Deploy';
+      btn.disabled = false;
+      setTimeout(function(){ closeDeploy(); fetchHealth(); }, 2000);
+    } else {
+      status.textContent = 'Error: ' + data.error;
+      status.style.color = '#ff5f5f';
+      btn.textContent = 'Deploy';
+      btn.disabled = false;
+    }
+  }).catch(function(e){
+    status.textContent = 'Error: ' + e.message;
+    status.style.color = '#ff5f5f';
+    btn.textContent = 'Deploy';
+    btn.disabled = false;
+  });
+}
+
 // Panel width resize
 var panelResizing = false, panelStartX = 0, panelStartW = 0;
 function startPanelResize(e) {
@@ -376,6 +466,51 @@ function stopResize() {
   document.getElementById('resize-handle').style.background = '#e0e0dc';
   document.removeEventListener('mousemove', doResize);
   document.removeEventListener('mouseup', stopResize);
+}
+
+function restartService() {
+  if (!activeSvc) return;
+  var btn = document.getElementById('btn-restart');
+  btn.textContent = 'restarting...';
+  btn.disabled = true;
+  health[activeSvc.id] = false;
+  if (setNodesExt) setNodesExt(function(nodes){ return nodes.map(function(n){ return Object.assign({},n,{data:Object.assign({},n.data)}); }); });
+  fetch('/api/restart', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({service:activeSvc.id})})
+    .then(function(r){return r.json();}).then(function(data){
+      btn.textContent = 'restart';
+      btn.disabled = false;
+      if (data.success) { setTimeout(fetchHealth, 2000); }
+      else { alert('Restart failed: ' + data.error); }
+    }).catch(function(e){ btn.textContent='restart'; btn.disabled=false; alert('Error: '+e.message); });
+}
+
+var promptOriginal = '';
+function savePrompt() {
+  var content = document.getElementById('log-body').innerText;
+  var btn = document.querySelector('#prompt-save-bar .log-btn.on');
+  if (btn) { btn.textContent = 'saving...'; btn.disabled = true; }
+  fetch('/api/save-file', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({svc:activeSvc.id,type:'prompt',content:content})})
+    .then(function(r){return r.json();}).then(function(data){
+      if (btn) { btn.textContent = 'save + restart'; btn.disabled = false; }
+      if (data.success) {
+        document.getElementById('log-body').contentEditable='false';
+        document.getElementById('prompt-save-bar').style.display='none';
+        document.getElementById('p-footer').textContent='saved — restarting Rachel...';
+        setTimeout(function(){
+          fetchHealth();
+          document.getElementById('p-footer').textContent='prompt saved and Rachel restarted';
+        }, 3000);
+      } else { alert('Save failed: ' + data.error); }
+    }).catch(function(e){
+      if (btn) { btn.textContent = 'save + restart'; btn.disabled = false; }
+      alert('Error: ' + e.message);
+    });
+}
+
+function cancelPromptEdit() {
+  document.getElementById('log-body').contentEditable='false';
+  document.getElementById('log-body').innerText=promptOriginal;
+  document.getElementById('prompt-save-bar').style.display='none';
 }
 </script>
 </body>

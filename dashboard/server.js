@@ -16,6 +16,7 @@ const SERVICES = [
   { name: 'GBrain MCP',      port: 7700, log: 'gbrain-mcp.log',           service: 'gbrain-mcp' },
   { name: 'Manor NYC',       port: 8101, log: 'store-agent-manor.log',     service: 'store-agent-manor' },
   { name: 'LiquorMaster NJ', port: 8102, log: 'store-agent-liqmaster.log',service: 'store-agent-liqmaster' },
+  { name: 'Dallas Fine Wine', port: 8103, log: 'store-agent-dallas-fine-wine.log', service: 'store-agent-dallas-fine-wine' },
 ];
 
 function checkHealth(port) {
@@ -103,6 +104,127 @@ const server = http.createServer(async (req, res) => {
       res.setHeader('Content-Type', 'text/plain');
       res.end(content);
     } catch(e) { res.writeHead(404); res.end('file not found: ' + svcFiles[type]); }
+    return;
+  }
+
+  if (url.pathname === '/api/save-file' && req.method === 'POST') {
+    let body = '';
+    req.on('data', d => body += d);
+    req.on('end', () => {
+      try {
+        const { svc, type, content } = JSON.parse(body);
+        const FILES = {
+          'rachel':       { prompt: '/home/ubuntu/rachel/prompt.md' },
+          'rachel-mcp':   { prompt: '/home/ubuntu/rachel/prompt.md' },
+          'rachel-slack': { prompt: '/home/ubuntu/rachel/prompt.md' },
+          'rachel-email': { prompt: '/home/ubuntu/rachel/prompt.md' },
+        };
+        const svcFiles = FILES[svc];
+        if (!svcFiles || !svcFiles[type]) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ success: false, error: 'not editable' }));
+          return;
+        }
+        fs.writeFileSync(svcFiles[type], content, 'utf8');
+        // Restart rachel after prompt save
+        execSync('sudo systemctl restart rachel 2>&1');
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ success: true }));
+      } catch(e) {
+        res.writeHead(500);
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ success: false, error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (url.pathname === '/api/restart' && req.method === 'POST') {
+    let body = '';
+    req.on('data', d => body += d);
+    req.on('end', () => {
+      try {
+        const { service } = JSON.parse(body);
+        if (!service || !service.match(/^[a-z0-9-]+$/)) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ success: false, error: 'Invalid service name' }));
+          return;
+        }
+        execSync('sudo systemctl restart ' + service + ' 2>&1');
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ success: true }));
+      } catch(e) {
+        res.writeHead(500);
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ success: false, error: e.message }));
+      }
+    });
+    return;
+  }
+
+  if (url.pathname === '/api/deploy-store' && req.method === 'POST') {
+    let body = '';
+    req.on('data', d => body += d);
+    req.on('end', async () => {
+      try {
+        const cfg = JSON.parse(body);
+        const slug = cfg.store_name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+        const envPath = '/home/ubuntu/store-agent/' + slug + '.env';
+        const svcName = 'store-agent-' + slug;
+        const logFile = '/home/ubuntu/logs/' + svcName + '.log';
+
+        const clients = cfg.clients && cfg.clients.length > 0 ? cfg.clients : [cfg.client_name || 'fooda'];
+        const envContent = [
+          'STORE_NAME=' + cfg.store_name,
+          'KITCHEN_LOCATION=' + cfg.kitchen_location,
+          'CLIENT_NAME=' + clients[0],
+          'CLIENT_NAMES=' + clients.join(','),
+          'PORT=' + cfg.port,
+          'DELIVERY_ZIPS=' + cfg.delivery_zips
+        ].join('\n');
+        fs.writeFileSync(envPath, envContent);
+
+        const svcContent = [
+          '[Unit]',
+          'Description=Bevvi Store Agent - ' + cfg.store_name,
+          'After=network.target',
+          '',
+          '[Service]',
+          'Type=simple',
+          'User=ubuntu',
+          'WorkingDirectory=/home/ubuntu/store-agent',
+          'EnvironmentFile=' + envPath,
+          'ExecStart=/usr/bin/node /home/ubuntu/store-agent/agent.js',
+          'Restart=always',
+          'RestartSec=10',
+          'StandardOutput=append:' + logFile,
+          'StandardError=append:' + logFile,
+          '',
+          '[Install]',
+          'WantedBy=multi-user.target'
+        ].join('\n');
+        fs.writeFileSync('/tmp/' + svcName + '.service', svcContent);
+        execSync('sudo cp /tmp/' + svcName + '.service /etc/systemd/system/' + svcName + '.service');
+        execSync('sudo systemctl daemon-reload');
+        execSync('sudo systemctl enable ' + svcName);
+        execSync('sudo systemctl start ' + svcName);
+
+        const orchPath = '/home/ubuntu/store-agent/orchestrator.js';
+        let orch = fs.readFileSync(orchPath, 'utf8');
+        const zips = cfg.delivery_zips.split(',').map(z => "'" + z.trim() + "'").join(',');
+        const newEntry = "  {\n    name: '" + cfg.store_name + "',\n    url:  'http://127.0.0.1:" + cfg.port + "',\n    zips: [" + zips + "]\n  },";
+        orch = orch.replace('  // Add more stores here as they come online', newEntry + '\n  // Add more stores here as they come online');
+        fs.writeFileSync(orchPath, orch);
+        execSync('sudo systemctl restart orchestrator');
+
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ success: true, service: svcName, port: cfg.port }));
+      } catch(e) {
+        res.writeHead(500);
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ success: false, error: e.message }));
+      }
+    });
     return;
   }
 
