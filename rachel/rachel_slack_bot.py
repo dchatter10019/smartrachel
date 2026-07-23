@@ -150,6 +150,7 @@ def ask_rachel(user_id: str, text: str, customer_context: str = "", user_email: 
             "message": text,
             "session_id": f"slack-{user_id}",
             "format": "slack",
+            "gbrain_context": customer_context,
             "context": {
                 "kitchen_location": "",
                 "client_id": "airculinaire",
@@ -204,7 +205,17 @@ def handle(event: dict, say, client):
     # Special commands
     if text.lower() in ("reset", "start over", "clear"):
         clear_history(user_id)
-        say("How can I help with your beverage needs today?")
+        gbrain_cache.pop(user_id, None)
+        # Get greeting via rachel so age badge shows
+        try:
+            profile = client.users_info(user=user_id)["user"]["profile"]
+            user_email = profile.get("email", "")
+        except Exception:
+            user_email = ""
+        if user_id not in gbrain_cache:
+            gbrain_cache[user_id] = get_customer_context(client, user_id)
+        reply = ask_rachel(user_id, "__greeting__", gbrain_cache.get(user_id, ""), user_email, True)
+        say(reply)
         return
 
     log.info(f"[{user_id}] {text[:80]}")

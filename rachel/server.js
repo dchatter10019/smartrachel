@@ -179,6 +179,13 @@ app.post('/chat', async (req, res) => {
       return res.json({ text: msg, response: msg });
     }
 
+    // Handle greeting trigger
+    if (message === '__greeting__') {
+      let greet = 'Hi! How can I help with your beverage needs today?';
+      if (context.age_verified) greet = '\u2713 Age verified. You are over 21\n\n' + greet;
+      return res.json({ text: greet, response: greet });
+    }
+
     const isFirstMessage = messages.length === 0;
     if (skip_gbrain && gbrain_context) {
       gbrainContext = gbrain_context;
