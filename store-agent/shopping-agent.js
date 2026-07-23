@@ -631,10 +631,61 @@ async function executeTool(name, input) {
   if (name === 'place_order') {
     const zip = input.zip || (input.customer && input.customer.zipcode) || '';
     const loc = resolveLocation(zip);
-    const { createOrder } = require('/home/ubuntu/rachel/functions.js');
     const products = JSON.parse(input.line_items || '[]');
-    const establishmentId = products[0] && products[0].establishmentId ? products[0].establishmentId : '';
     const c = input.customer || {};
+
+    // Try orchestrator first — broadcast RFQ to find best store
+    try {
+      const rfqBasket = products.map(function(item) {
+        return { name: item.name, category: item.category || item.label || '', quantity: item.qty || 1, max_price: (item.price || 0) * 1.3, upc: item.upc || '' };
+      });
+      const rfqRes = await fetch('http://127.0.0.1:8200/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'broadcast_rfq', arguments: { delivery_zip: zip || '10010', basket: rfqBasket } } })
+      });
+      const rfqText = await rfqRes.text();
+      const rfqLine = rfqText.split('\n').find(function(l){ return l.startsWith('data:'); });
+      if (rfqLine) {
+        const rfqMsg = JSON.parse(rfqLine.replace('data:', '').trim());
+        const rfqResult = JSON.parse(rfqMsg.result.content[0].text);
+        if (rfqResult.success && rfqResult.winner && rfqResult.winner.coverage_pct >= 80) {
+          const winner = rfqResult.winner;
+          console.log('[shopping-agent] place_order via orchestrator → winner:', winner.store, '$' + winner.estimated_grand_total);
+          // Place order via winning store agent
+          const orderRes = await fetch('http://127.0.0.1:8200/mcp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'place_winning_order', arguments: {
+              store_url: winner.store_url,
+              products: (function() {
+                console.log('[shopping-agent] bid_items:', JSON.stringify(winner.bid_items.slice(0,2)));
+                return winner.bid_items.filter(function(i){ return i.available; }).map(function(i){ return { name: i.matched || i.name, upc: i.upc, qty: i.quantity }; });
+              })(),
+              customer: { firstName: c.firstName||c.first_name||'', lastName: c.lastName||c.last_name||'', email: c.email||'', address: c.address||'', city: c.city||'', state: c.state||'', zipcode: c.zipcode||zip||'', phone: c.phone||c.phoneNumber||'' },
+              tip_amount: input.tip_amount || 0,
+              delivery_datetime: input.delivery_datetime || '',
+              delivery_instructions: input.delivery_instructions || ''
+            }}})
+          });
+          const orderText = await orderRes.text();
+          const orderLine = orderText.split('\n').find(function(l){ return l.startsWith('data:'); });
+          if (orderLine) {
+            const orderMsg = JSON.parse(orderLine.replace('data:', '').trim());
+            const orderResult = JSON.parse(orderMsg.result.content[0].text);
+            return Object.assign({}, orderResult, { winning_store: winner.store, all_bids: rfqResult.all_bids });
+          }
+        } else {
+          console.log('[shopping-agent] orchestrator: no winner (coverage < 80%), falling back to direct createOrder');
+        }
+      }
+    } catch(e) {
+      console.error('[shopping-agent] orchestrator place_order error:', e.message, '— falling back to direct createOrder');
+    }
+
+    // Fallback: direct createOrder via Bevvi API
+    const { createOrder } = require('/home/ubuntu/rachel/functions.js');
+    const establishmentId = products[0] && products[0].establishmentId ? products[0].establishmentId : '';
     const result = await createOrder({
       products: products,
       customerData: {
