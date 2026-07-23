@@ -187,6 +187,10 @@ app.post('/chat', async (req, res) => {
     }
 
     const isFirstMessage = messages.length === 0;
+    // Clear address confirmation on new session
+    if (isFirstMessage && global.addrConfirmed) {
+      global.addrConfirmed.delete(sessionKey + ':addr');
+    }
     if (skip_gbrain && gbrain_context) {
       gbrainContext = gbrain_context;
       console.log('[gbrain] skipped — using pre-built context (' + gbrainContext.length + ' chars)');
@@ -222,7 +226,33 @@ app.post('/chat', async (req, res) => {
     }
     if (!context.kitchen_location) {
       if (context.saved_address) {
-        addressRule += '\n\n## DELIVERY ADDRESS — MANDATORY CONFIRMATION\nCustomer has a saved delivery address: "' + context.saved_address + '" (zip: ' + context.saved_zip + ').\nYou MUST ask this BEFORE calling ShoppingAgent for ANY reason (search, recommendation, package build, proposal): "I have your delivery address on file as ' + context.saved_address + ' — shall I use this for your order?"\nDO NOT call ShoppingAgent until customer confirms. This applies to ALL intents including recommendations and product searches.\nIf customer says no, ask for new address then call GetZipCode + SaveD2CSession.';
+        const addrConfirmKey = sessionKey + ':addr';
+        if (!global.addrConfirmed) global.addrConfirmed = new Set();
+        if (!global.addrConfirmed.has(addrConfirmKey)) {
+          // Check if customer already confirmed in this session
+          const confirmWords = ['yes','yeah','yep','correct','sure','ok','okay','confirmed','use it','that works','go ahead'];
+          let addrAskIdx = -1;
+          for (let i = 0; i < messages.length; i++) {
+            const c = typeof messages[i].content === 'string' ? messages[i].content : JSON.stringify(messages[i].content);
+            if (c.includes('shall I use this') || c.includes('delivery address on file') || c.includes('use this for your order')) addrAskIdx = i;
+          }
+          if (addrAskIdx >= 0) {
+            for (let i = addrAskIdx + 1; i < messages.length; i++) {
+              if (messages[i].role === 'user') {
+                const c = typeof messages[i].content === 'string' ? messages[i].content : JSON.stringify(messages[i].content);
+                if (confirmWords.some(w => c.toLowerCase().includes(w))) {
+                  global.addrConfirmed.add(addrConfirmKey);
+                  break;
+                }
+              }
+            }
+          }
+        }
+        if (!global.addrConfirmed || !global.addrConfirmed.has(addrConfirmKey)) {
+          addressRule += '\n\n## DELIVERY ADDRESS — REQUIRED\nBefore ANY product search or package build, ask ONCE: "I have your delivery address on file as ' + context.saved_address + ' — shall I use this for your order?" Once customer confirms, use zip ' + context.saved_zip + ' for all searches. Never ask again after confirmation.';
+        } else {
+          addressRule += '\n\n## DELIVERY ADDRESS CONFIRMED\nUse zip ' + context.saved_zip + ' for all ShoppingAgent calls. Never ask about address again.';
+        }
       } else {
         addressRule = '\n\n## MANDATORY ADDRESS COLLECTION\nNo delivery address on file. You MUST ask for the customer delivery address BEFORE doing any product search. Do NOT search until you have an address and zip code.';
       }
@@ -281,7 +311,7 @@ app.post('/chat', async (req, res) => {
     const lastMsg = message.toLowerCase().trim();
     const yesKeywords = ['yes', 'yeah', 'sure', 'yep', 'please', 'ok', 'okay'];
     const noKeywords = ['no', 'nope', 'no thanks', 'no worries', "that's all", 'thats all', "i'm good", 'im good', 'nothing else'];
-    const mixerKeywords = [...yesKeywords, ...noKeywords];
+    const mixerKeywords = [...noKeywords]; // removed yesKeywords to avoid CTA loop on 'yes'
     const hasProposal = output.includes('proposals/bevvi-proposal') || output.includes('proposal is ready') || output.includes('Download') || output.toLowerCase().includes('your proposal');
     const hasCTA = output.includes('place the order') || output.includes('PDF proposal') || output.includes('generate a proposal');
     
@@ -296,7 +326,25 @@ app.post('/chat', async (req, res) => {
 
     // Only append CTA if a package was actually shown (output contains product total or grand total)
     const packageWasShown = output.includes('Product total') || output.includes('Grand total') || output.includes('grand total') || output.includes('Estimated grand total');
-    if (!hasCTA && mixerKeywords.includes(lastMsg) && messages.length >= 2 && packageWasShown) {
+    // Check if mixer question was already asked and answered with no in entire session
+    const fullHistory = JSON.stringify(messages);
+    const mixerWasAsked = fullHistory.includes('mixers');
+    const customerSaidNoToMixer = mixerWasAsked && messages.some(function(m, idx) {
+      if (m.role !== 'user') return false;
+      const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+      if (!noKeywords.some(k => content.toLowerCase().includes(k))) return false;
+      // Check that a previous assistant message asked about mixers
+      for (let i = idx - 1; i >= 0; i--) {
+        if (messages[i].role === 'assistant') {
+          const ac = typeof messages[i].content === 'string' ? messages[i].content : JSON.stringify(messages[i].content);
+          if (ac.includes('mixer')) return true;
+          break;
+        }
+      }
+      return false;
+    });
+    const mixerAlreadyAnswered = customerSaidNoToMixer;
+    if (!hasCTA && mixerKeywords.includes(lastMsg) && messages.length >= 2 && packageWasShown && !mixerAlreadyAnswered) {
       const cta = format === 'slack'
         ? '\n\nWould you like to *place the order*, *generate a PDF proposal*, or make any changes?'
         : '\n\nWould you like to place the order, generate a PDF proposal, or make any changes?';

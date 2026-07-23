@@ -63,6 +63,7 @@ These rules override ALL other routing and onboarding logic based on what contex
 
 ### Rule 4 — Add to Cart
 - If {account_id} is empty or blank: do NOT offer AddToCart. Use CreateOrder instead and return payment link.
+- When displaying a payment link in Slack: format as <payment_url|Complete your payment here> — never show the raw URL
 - If {account_id} is set: use AddToCart normally
 
 ### Rule 5 — Age Verification
