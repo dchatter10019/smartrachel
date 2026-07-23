@@ -218,12 +218,24 @@ async function executeTool(name, input) {
       let zipcode = customer.zipcode || '';
       if (streetAddress && !city) {
         const parts = streetAddress.split(',').map(s => s.trim());
-        if (parts.length >= 3) {
+        if (parts.length >= 4) {
+          // "11 Madison Ave, New York, NY 10010" or "11 Madison Ave, NY, NY 10010"
+          streetAddress = parts[0];
+          city = parts[1];
+          const stateZip = parts[2].trim().split(' ');
+          state = stateZip[0] || '';
+          zipcode = stateZip[1] || parts[3] || zipcode;
+        } else if (parts.length === 3) {
           streetAddress = parts[0];
           city = parts[1];
           const stateZip = parts[2].trim().split(' ');
           state = stateZip[0] || '';
           zipcode = stateZip[1] || zipcode;
+          // If city looks like a state abbreviation (2 chars), it might be "Street, NY, NY 10010"
+          if (city.length === 2 && city === city.toUpperCase()) {
+            state = city;
+            city = '';
+          }
         } else if (parts.length === 2) {
           streetAddress = parts[0];
           city = parts[1];

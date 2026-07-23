@@ -673,6 +673,19 @@ async function executeTool(name, input) {
           if (orderLine) {
             const orderMsg = JSON.parse(orderLine.replace('data:', '').trim());
             const orderResult = JSON.parse(orderMsg.result.content[0].text);
+            if (orderResult && orderResult.success) {
+              const orderLog = JSON.stringify({
+                ts: new Date().toISOString(),
+                order_id: orderResult.order_id || '',
+                store: winner.store,
+                store_id: winner.store_url,
+                amount: winner.estimated_grand_total,
+                email: input.email || '',
+                zip: input.zip || ''
+              });
+              console.log('[order-placed] ' + orderLog);
+              require('fs').appendFileSync('/home/ubuntu/logs/orders.jsonl', orderLog + '\n');
+            }
             return Object.assign({}, orderResult, { winning_store: winner.store, all_bids: rfqResult.all_bids });
           }
         } else {
