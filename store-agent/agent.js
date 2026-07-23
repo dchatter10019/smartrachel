@@ -211,20 +211,39 @@ async function executeTool(name, input) {
   if (name === 'place_order') {
     const { products, customer, tip_amount, delivery_datetime, delivery_instructions } = input;
     try {
+      // Parse address string into components if city/state not provided
+      let streetAddress = customer.address || '';
+      let city = customer.city || '';
+      let state = customer.state || '';
+      let zipcode = customer.zipcode || '';
+      if (streetAddress && !city) {
+        const parts = streetAddress.split(',').map(s => s.trim());
+        if (parts.length >= 3) {
+          streetAddress = parts[0];
+          city = parts[1];
+          const stateZip = parts[2].trim().split(' ');
+          state = stateZip[0] || '';
+          zipcode = stateZip[1] || zipcode;
+        } else if (parts.length === 2) {
+          streetAddress = parts[0];
+          city = parts[1];
+        }
+      }
+
       const body = {
         products: products.map(p => ({ name: p.name, upc: p.upc, qty: p.qty || 1 })),
         customerData: {
-          firstName:   customer.firstName || '',
-          lastName:    customer.lastName  || '',
-          email:       customer.email     || '',
-          address:     customer.address   || '',
-          suiteNumber: '',
-          streetAddress: '',
-          city:        '',
-          state:       '',
-          zipcode:     customer.zipcode   || '',
-          phoneNumber: (customer.phone || '').replace(/\D/g, ''),
-          companyName: ''
+          firstName:     customer.firstName || '',
+          lastName:      customer.lastName  || '',
+          email:         customer.email     || '',
+          address:       streetAddress,
+          suiteNumber:   '',
+          streetAddress: streetAddress,
+          city:          city,
+          state:         state,
+          zipcode:       zipcode,
+          phoneNumber:   (customer.phone || customer.phoneNumber || '').replace(/\D/g, ''),
+          companyName:   ''
         },
         tipAmount:            tip_amount || 0,
         deliveryDateTime:     delivery_datetime || '',
