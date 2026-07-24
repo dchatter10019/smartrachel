@@ -607,10 +607,15 @@ async function executeTool(name, input) {
   }
 
   if (name === 'generate_proposal') {
-    const { getPackage } = require('/home/ubuntu/rachel/gbrain.js');
+    console.log('[generate_proposal] line_items:', JSON.stringify(input.line_items || 'none').slice(0,200));
+    const { getPackage, saveBasket } = require('/home/ubuntu/rachel/gbrain.js');
     const { generateProposal } = require('/home/ubuntu/rachel/generate-proposal.js');
-    const lineItems = await getPackage(input.email, input.channel || 'slack');
-    if (!lineItems) return { success: false, error: 'No active package found. Build a package first.' };
+    let lineItems = input.line_items || null;
+    if (!lineItems) lineItems = await getPackage(input.email, input.channel || 'slack');
+    if (!lineItems) return { success: false, error: 'No active package. Provide line_items.' };
+    if (input.line_items) {
+      try { await saveBasket(input.email, input.line_items, '', input.channel || 'slack'); } catch(e) {}
+    }
     const timestamp = Date.now();
     const filename = 'bevvi-proposal-' + timestamp + '.pdf';
     const outputPath = '/home/ubuntu/logs/' + filename;
@@ -624,6 +629,7 @@ async function executeTool(name, input) {
       success: true,
       filename,
       download_url: 'http://3.138.180.46/proposals/' + filename,
+      download_text: 'Download proposal',
       message: 'Proposal generated for ' + input.client_name
     };
   }
