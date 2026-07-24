@@ -177,7 +177,7 @@ app.post('/chat', async (req, res) => {
 
     // ── D2C flow — state machine ───────────────────────────────────────────
     const state = getState(sessionKey);
-    const msgLower = message.toLowerCase().trim();
+    const msgLower = message.toLowerCase().trim().replace(/\*/g, '').replace(/_/g, '');
     const yesWords = ['yes', 'yeah', 'yep', 'sure', 'ok', 'okay', 'correct', 'confirmed', 'use it', 'go ahead', 'absolutely', 'i am', 'i\'m over', 'over 21'];
     const noWords = ['no', 'nope', 'not yet', 'i\'m not', 'im not', 'under 21'];
 
@@ -317,6 +317,156 @@ app.post('/chat', async (req, res) => {
       return res.json({ text: ask, response: ask });
     }
 
+    // ── Order state machine ────────────────────────────────────────────────────
+    const orderTriggers = ['place the order', 'place order', 'order it', 'buy it', 'purchase', 'order this', 'checkout'];
+    if (orderTriggers.some(t => msgLower.includes(t)) && !state.orderStep && !state.proposalStep) {
+      state.orderStep = 'qty';
+      state.orderData = {};
+      saveFlowState();
+      const ask = 'How many bottles would you like to order?';
+      return res.json({ text: ask, response: ask });
+    }
+
+    if (state.orderStep === 'qty') {
+      const qtyMatch = message.match(/\b(\d+)\b/);
+      state.orderData.qty = qtyMatch ? parseInt(qtyMatch[1]) : 1;
+      state.orderStep = 'name';
+      saveFlowState();
+      // Load basket to get product info
+      if (email && !state.lastLineItems) {
+        try {
+          const { getPackage } = require('./gbrain.js');
+          const basket = await getPackage(email, format || 'slack');
+          if (basket) { state.lastLineItems = typeof basket === 'string' ? basket : JSON.stringify(basket); saveFlowState(); }
+        } catch(e) {}
+      }
+      const ask = 'What is your full name? (first and last)';
+      return res.json({ text: ask, response: ask });
+    }
+
+    if (state.orderStep === 'name') {
+      state.orderData.name = message.trim();
+      state.orderStep = 'phone';
+      saveFlowState();
+      const ask = 'What is your phone number?';
+      return res.json({ text: ask, response: ask });
+    }
+
+    if (state.orderStep === 'phone') {
+      state.orderData.phone = message.replace(/\D/g, '');
+      state.orderStep = 'email_confirm';
+      saveFlowState();
+      const ask = format === 'slack'
+        ? 'Your email on file is *' + email + '* — shall I use this for the order, or would you like to use a different one?'
+        : 'Your email on file is ' + email + ' — shall I use this, or provide a different one?';
+      return res.json({ text: ask, response: ask });
+    }
+
+    if (state.orderStep === 'email_confirm') {
+      // If yes or empty, use existing email. Otherwise use provided email
+      if (yesWords.some(w => msgLower.includes(w))) {
+        state.orderData.email = email;
+      } else {
+        const emailMatch = message.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+        state.orderData.email = emailMatch ? emailMatch[0] : email;
+      }
+      state.orderStep = 'details';
+      saveFlowState();
+      const ask = 'What delivery date and time would you like?';
+      return res.json({ text: ask, response: ask });
+    }
+
+    if (state.orderStep === 'details') {
+      state.orderData.delivery_datetime = message.trim();
+      state.orderStep = 'confirm';
+      saveFlowState();
+      // Build order summary
+      let productName = 'Product';
+      let unitPrice = 0;
+      if (state.lastLineItems) {
+        try {
+          const items = typeof state.lastLineItems === 'string' ? JSON.parse(state.lastLineItems) : state.lastLineItems;
+          if (items && items.length > 0) {
+            productName = items[0].name || 'Product';
+            unitPrice = parseFloat(items[0].price || items[0].unit_price || 0);
+          }
+        } catch(e) {}
+      }
+      const qty = state.orderData.qty;
+      const productTotal = Math.round(unitPrice * qty * 100) / 100;
+      const tax = Math.round(productTotal * 0.10 * 100) / 100;
+      const service = Math.round(productTotal * 0.10 * 100) / 100;
+      const tip = Math.round(productTotal * 0.05 * 100) / 100;
+      const delivery = 25.00;
+      const grandTotal = Math.round((productTotal + tax + service + tip + delivery) * 100) / 100;
+      state.orderData.grandTotal = grandTotal;
+      state.orderData.productName = productName;
+      state.orderData.unitPrice = unitPrice;
+      state.orderData.productTotal = productTotal;
+      state.orderData.tax = tax;
+      state.orderData.service = service;
+      state.orderData.tip = tip;
+      saveFlowState();
+      const summary = format === 'slack'
+        ? '*Order Summary*\n\n' +
+          productName + ' x' + qty + ' — $' + unitPrice.toFixed(2) + ' ea = $' + productTotal.toFixed(2) + '\n' +
+          'Delivery to: ' + state.address + '\n' +
+          'Delivery: ' + state.orderData.delivery_datetime + '\n\n' +
+          'Product total: $' + productTotal.toFixed(2) + '\n' +
+          'Estimated tax (10%): $' + tax.toFixed(2) + '\n' +
+          'Service charge (10%): $' + service.toFixed(2) + '\n' +
+          'Tip (5%): $' + tip.toFixed(2) + '\n' +
+          'Delivery: $' + delivery.toFixed(2) + '\n' +
+          '*Estimated grand total: $' + grandTotal.toFixed(2) + '*\n\n' +
+          'Shall I go ahead and place this order?'
+        : 'Order summary ready. Grand total: $' + grandTotal.toFixed(2) + '. Confirm?';
+      return res.json({ text: summary, response: summary });
+    }
+
+    if (state.orderStep === 'confirm') {
+      if (yesWords.some(w => msgLower.includes(w))) {
+        state.orderStep = 'placing';
+        saveFlowState();
+        // Build place_order message for Rachel with all details
+        const od = state.orderData;
+        const nameParts = (od.name || '').split(' ');
+        const firstName = nameParts[0] || '';
+        const lastName = nameParts.slice(1).join(' ') || '';
+        // Update line_items with correct qty
+        let updatedLineItems = state.lastLineItems;
+        if (updatedLineItems) {
+          try {
+            const items = typeof updatedLineItems === 'string' ? JSON.parse(updatedLineItems) : updatedLineItems;
+            items.forEach(item => { item.qty = od.qty; item.quantity = od.qty; });
+            updatedLineItems = JSON.stringify(items);
+          } catch(e) {}
+        }
+        const placeMsg = 'Place order now with these exact details - call ShoppingAgent intent=place_order: line_items=' + (updatedLineItems || '[]') + ' customer={firstName:' + firstName + ',lastName:' + lastName + ',email:' + (od.email || email) + ',phone:' + od.phone + ',address:' + state.address + ',zipcode:' + state.zip + '} delivery_datetime=' + od.delivery_datetime + ' zip=' + state.zip;
+        const fp2 = fingerprint(placeMsg);
+        state.lastFingerprint = fp2;
+        const gbrainCtx = email ? await getCustomerContext('', '', context?.client_id || 'airculinaire', email).catch(() => '') : '';
+        context.saved_zip = state.zip;
+        const addrRule2 = '\n\n## DELIVERY\nZip: ' + state.zip + '. Address: ' + state.address + '. Age verified. Place order immediately — all details confirmed.';
+        const orderOutput = await callRachel({ sessionKey, message: placeMsg, context, format, gbrainContext: gbrainCtx, addressRule: addrRule2, email });
+        state.orderStep = null;
+        state.orderData = null;
+        saveFlowState();
+        return res.json({ text: orderOutput, response: orderOutput });
+      } else if (noWords.some(w => msgLower.includes(w))) {
+        state.orderStep = null;
+        state.orderData = null;
+        saveFlowState();
+        const cancel = 'No problem! Would you like to make any changes, or is there anything else I can help with?';
+        return res.json({ text: cancel, response: cancel });
+      } else {
+        // Re-show confirmation
+        const od = state.orderData;
+        const reconfirm = 'Please confirm — shall I place the order for ' + od.productName + ' x' + od.qty + ' for $' + (od.grandTotal || 0).toFixed(2) + '? (yes/no)';
+        return res.json({ text: reconfirm, response: reconfirm });
+      }
+    }
+
+    // ── Order state machine ────────────────────────────────────────────────────
     // ── Proposal state machine ──────────────────────────────────────────────
     const proposalTriggers = ['generate a pdf', 'generate proposal', 'pdf proposal', 'create a proposal', 'make a proposal', 'send a proposal'];
     if (proposalTriggers.some(t => msgLower.includes(t)) && !state.proposalStep) {
