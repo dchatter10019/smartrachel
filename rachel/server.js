@@ -1,397 +1,404 @@
 const express = require('express');
+const { rachelChat } = require('./rachel.js');
+const { getCustomerContext, getD2CSession, saveD2CSession, saveBasket, getPackage } = require('./gbrain.js');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
 
-// ── Kitchen location to client name mapping ────────────────────────────────
 const KITCHEN_TO_CLIENT = {
   'Celonis - NYC': 'fooda',
   'Teterboro - NJ': 'airculinaire',
   'San Diego - CA': 'airculinaire',
-  // Add more as needed
 };
-function getClientForKitchen(kitchen_location, default_client) {
-  return KITCHEN_TO_CLIENT[kitchen_location] || default_client || 'airculinaire';
-}
-
-const { rachelChat } = require('./rachel.js');
-const { getCustomerContext, getD2CSession, saveD2CSession } = require('./gbrain.js');
-const fs = require('fs');
-const path = require('path');
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
 
 const PORT = process.env.RACHEL_PORT || 3500;
-const sessions = {};
-const packageCache = {}; // L1 cache for active packages
 
+// ── Session stores ─────────────────────────────────────────────────────────
+const sessions = {};       // sessionKey -> messages[]
+const flowState = {};      // sessionKey -> { step, ageVerified, addrConfirmed, zip, address, pendingIntent }
+const packageCache = {};   // cacheKey -> line_items (L1)
+
+// ── Prompt ─────────────────────────────────────────────────────────────────
 const RACHEL_PROMPT_PATH = path.join(__dirname, 'prompt.md');
 let RACHEL_PROMPT = '';
 try {
   RACHEL_PROMPT = fs.readFileSync(RACHEL_PROMPT_PATH, 'utf8');
   console.log(`[rachel] Loaded prompt (${RACHEL_PROMPT.length} chars)`);
-} catch (e) {
-  console.error('[rachel] WARNING: prompt.md not found');
+} catch(e) {
+  console.error('[rachel] Failed to load prompt:', e.message);
+}
+fs.watch(RACHEL_PROMPT_PATH, () => {
+  try {
+    RACHEL_PROMPT = fs.readFileSync(RACHEL_PROMPT_PATH, 'utf8');
+    console.log(`[rachel] Prompt reloaded (${RACHEL_PROMPT.length} chars)`);
+  } catch(e) {}
+});
+
+// ── Cache helpers ──────────────────────────────────────────────────────────
+function makeCacheKey(email, zip, fingerprint) {
+  return email + ':' + zip + ':' + fingerprint;
 }
 
+function fingerprint(message) {
+  return crypto.createHash('md5').update(message.toLowerCase().trim()).digest('hex').slice(0, 8);
+}
 
+function clearCache(email, channel) {
+  // Clear L1
+  Object.keys(packageCache).forEach(k => {
+    if (k.startsWith(email + ':')) delete packageCache[k];
+  });
+  // Clear L2 async
+  try {
+    saveBasket(email, null, '', channel || 'slack').catch(() => {});
+  } catch(e) {}
+  console.log('[cache] cleared for:', email);
+}
+
+// ── Flow state helpers ─────────────────────────────────────────────────────
+function getState(sessionKey) {
+  if (!flowState[sessionKey]) {
+    flowState[sessionKey] = { step: 'age', ageVerified: false, addrConfirmed: false, zip: '', address: '', pendingIntent: null, lastFingerprint: '', lastZip: '' };
+  }
+  return flowState[sessionKey];
+}
+
+function resetState(sessionKey, email) {
+  flowState[sessionKey] = { step: 'age', ageVerified: false, addrConfirmed: false, zip: '', address: '', pendingIntent: null, lastFingerprint: '', lastZip: '' };
+  sessions[sessionKey] = [];
+  // Clear L1 cache for this user
+  if (email) Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; });
+}
+
+// ── Format helpers ─────────────────────────────────────────────────────────
 function formatResponse(text, format) {
-  // Claude now outputs in the correct format natively via channel notes.
-  // This function is a lightweight safety net only.
-  if (format === 'html') {
-    return text
-      // Catch any remaining markdown that Claude missed
-      .replace(/^#{1,3} (.+)$/gm, '<b>$1</b>')
-      .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
-      .replace(/\n\[View\]\(([^)]+)\)/g, ' | <a href="$1" target="_blank">View</a>')
-      .replace(/\[ \] /g, '')           // Remove checkboxes
-      .replace(/^---+$/gm, '<hr>')         // Convert --- to hr
-      .replace(/ \*$/gm, '')              // Remove trailing *
-      .replace(/ \* /g, ' ')             // Remove inline *
-      .replace(/[⭐➕★]/g, '')
-      .replace(/\n{2,}/g, '\n')
-      .replace(/\n/g, '<br>')
-      .replace(/<ul><br>/g, '<ul>')
-      .replace(/<br><\/ul>/g, '</ul>')
-      .replace(/<br><li>/g, '<li>')
-      .replace(/<\/li><br>/g, '</li>');
+  if (!text) return '';
+  if (format === 'voiceflow') {
+    return text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/\*(.*?)\*/g, '<b>$1</b>');
   }
-  if (format === 'slack') {
-    return text
-      .replace(/\*\*(.+?)\*\*/g, '*$1*')           // **bold** → *bold*
-      .replace(/<b>(.*?)<\/b>/g, '*$1*')             // <b>text</b> → *text*
-      .replace(/ \| \[View\]\([^)]+\)/g, '')        // remove | [View](url)
-      .replace(/\[View\]\([^)]+\)/g, '')             // remove [View](url)
-      .replace(/ \| <a href[^>]+>View<\/a>/g, '')    // remove | <a>View</a>
-      .replace(/<a href[^>]+>([^<]+)<\/a>/g, '$1')   // strip other links
-      .replace(/<[^>]+>/g, '')                        // strip remaining HTML
-      .replace(/&nbsp;/g, ' ')                        // decode &nbsp;
-      .replace(/\[([^\]]+)\]\((http[^)]+proposals[^)]+)\)/g, '<$2|$1>')  // convert proposal links to Slack format
-      .replace(/[Tt]o add everything to your cart[^.\n]*[.\n]?/g, '')  // remove cart suggestion
-      .replace(/just say ["']add all to cart["'][^.\n]*[.\n]?/gi, '')  // remove cart instruction
-      .replace(/["']add all to cart["']/gi, '');          // remove cart phrase
-  }
-  if (format === 'webchat') {
-    // Strip all links
-    return text
-      .replace(/\[View\]\([^)]+\)/g, '')
-      .replace(/ \| \[View\]\([^)]+\)/g, '')
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
-      .replace(/<a href[^>]+>([^<]+)<\/a>/g, '$1')
-      .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-      .replace(/\n/g, '<br>');
-  }
-  if (format === 'plain') {
-    return text
-      .replace(/\*\*(.+?)\*\*/g, '$1')
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1');
-  }
-  if (format === 'webchat') {
-    return text
-      .replace(/\*\*(.+?)\*\*/g, '<b>$1</b>')
-      .replace(/^#{1,3} (.+)$/gm, '<b>$1</b>')
-      .replace(/\[View\]\([^)]+\)/g, '')
-      .replace(/ \| \[View\]\([^)]+\)/g, '')
-      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
-      .replace(/^---+$/gm, '<hr>')
-      .replace(/^[-•] \[ \] /gm, '')
-      .replace(/^[-•] /gm, '')
-      .replace(/[⭐➕★]/g, '')
-      .replace(/\n{2,}/g, '\n')
-      .replace(/\n/g, '<br>');
-  }
-  return text; // markdown default
+  if (format === 'slack') return text;
+  return text;
 }
 
-app.use((err, req, res, next) => {
-  if (err.type === 'entity.parse.failed') {
-    console.error('[rachel] JSON parse error:', err.message);
-    return res.status(400).json({ error: 'Invalid JSON in request body' });
-  }
-  next(err);
-});
+const channelNotes = {
+  slack: `\n\n## OUTPUT FORMAT: SLACK\n- Use *bold* for product names and totals\n- Use line breaks between sections\n- No HTML tags\n- Keep responses concise\n- For payment links use: <url|Complete your payment here>\n- NEVER mention AddToCart or cart operations`,
+  voiceflow: `\n\n## OUTPUT FORMAT: VOICEFLOW\n- Use <b>bold</b> for emphasis\n- Use <br> for line breaks`,
+  plain: `\n\n## OUTPUT FORMAT: PLAIN TEXT\n- No formatting whatsoever`
+};
 
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', prompt_loaded: RACHEL_PROMPT.length > 0, prompt_chars: RACHEL_PROMPT.length, version: '1.0.0', sessions: Object.keys(sessions).length });
-});
-
-app.get('/sessions', (req, res) => {
-  res.json({ keys: Object.keys(sessions) });
-});
-
-app.post('/chat', async (req, res) => {
-  const { message, context, gbrain_context, session_id, format = 'markdown', skip_gbrain = false, suggested_products = [] } = req.body;
-    console.log('[rachel] format:', format, 'session:', session_id);
-    // Override client_id based on kitchen_location
-    if (context?.kitchen_location && KITCHEN_TO_CLIENT[context.kitchen_location]) {
-      context.client_id = KITCHEN_TO_CLIENT[context.kitchen_location];
+// ── Rachel chat wrapper ────────────────────────────────────────────────────
+async function callRachel({ sessionKey, message, context, format, gbrainContext, addressRule, email }) {
+  const messages = sessions[sessionKey] || [];
+  const channelNote = channelNotes[format] || channelNotes.plain;
+  const result = await rachelChat({
+    messages: [...messages, { role: 'user', content: message }],
+    context,
+    rachelPrompt: RACHEL_PROMPT,
+    gbrain_context: gbrainContext || '',
+    address_rule: addressRule + channelNote,
+    channel_format: format,
+    onPackageBuilt: (em, lineItems, fmt) => {
+      const state = getState(sessionKey);
+      const key = makeCacheKey(em || email, state.zip, state.lastFingerprint);
+      packageCache[key] = lineItems;
+      console.log('[package] L1 cached:', key);
+      // Save to L2
+      try { saveBasket(em || email, lineItems, '', fmt || format).catch(() => {}); } catch(e) {}
     }
-    console.log('[rachel] context:', JSON.stringify({kitchen_location: context?.kitchen_location, client_id: context?.client_id, account_id: context?.account_id, user_email: context?.user_email}));
+  });
+  sessions[sessionKey] = result.messages;
+  return formatResponse(result.response, format);
+}
+
+// ── POST /chat ─────────────────────────────────────────────────────────────
+app.post('/chat', async (req, res) => {
+  const { message, context, gbrain_context, session_id, format = 'markdown', skip_gbrain = false } = req.body;
 
   if (!message) return res.status(400).json({ error: 'message required' });
-  // Rule 3: client_id optional — handled via URL stripping if empty
 
-  const sessionKey = session_id || `${context.account_id || 'anon'}-${context.kitchen_location}`;
+  if (context && context.kitchen_location && KITCHEN_TO_CLIENT[context.kitchen_location]) {
+    context.client_id = KITCHEN_TO_CLIENT[context.kitchen_location];
+  }
+
+  console.log(`[rachel] format: ${format} session: ${session_id}`);
+  console.log(`[rachel] context:`, JSON.stringify({ kitchen_location: context?.kitchen_location, client_id: context?.client_id, user_email: context?.user_email }));
+
+  const sessionKey = session_id || `${context?.account_id || 'anon'}-${context?.kitchen_location || 'noloc'}`;
   if (!sessions[sessionKey]) sessions[sessionKey] = [];
-  const messages = sessions[sessionKey];
 
-  console.log(`[rachel] chat — session: ${sessionKey} messages: ${messages.length} — "${message}"`);
+  const email = context?.user_email || '';
+  const isD2C = !context?.kitchen_location;
+
+  console.log(`[rachel] chat — session: ${sessionKey} messages: ${sessions[sessionKey].length} — "${message}"`);
 
   try {
-
-    // ── Pre-flight: load D2C session zip if no kitchen_location ────────────
-    if (!context.kitchen_location && context.user_email) {
-      try {
-        const { getD2CSession } = require('./gbrain.js');
-        const d2cSession = await getD2CSession(context.user_email);
-        if (d2cSession && d2cSession.delivery_zip) {
-          context.saved_zip = d2cSession.delivery_zip;
-          context.age_verified = d2cSession.age_verified || false;
-          context.saved_address = d2cSession.delivery_address;
-          console.log('[rachel] D2C session found — saved zip:', d2cSession.delivery_zip);
-          // Load saved package
-          try {
-// L1 cache first, L2 GBrain fallback
-            const cacheKey = context.user_email + ':' + (format || 'slack');
-            if (packageCache[cacheKey]) {
-              context.saved_package = packageCache[cacheKey];
-              console.log('[package] loaded from L1 cache');
-            } else {
-              try {
-                const { getPackage } = require('./gbrain.js');
-                const savedPkg = await getPackage(context.user_email, format || 'slack');
-                if (savedPkg) {
-                  context.saved_package = savedPkg;
-                  packageCache[cacheKey] = savedPkg; // warm L1
-                  console.log('[package] loaded from GBrain L2');
-                }
-              } catch(e) {}
-            }
-          } catch(e) {}
+    // ── B2B flow (kitchen_location set) — pass straight to Rachel ─────────
+    if (!isD2C) {
+      let gbrainContext = '';
+      if (email) {
+        gbrainContext = await getCustomerContext(context.account_id || context.client_id, context.kitchen_location, context.client_id, email);
+      }
+      const result = await rachelChat({
+        messages: [...sessions[sessionKey], { role: 'user', content: message }],
+        context,
+        rachelPrompt: RACHEL_PROMPT,
+        gbrain_context: skip_gbrain ? gbrain_context : (gbrainContext || gbrain_context || ''),
+        address_rule: '',
+        channel_format: format,
+        onPackageBuilt: (em, lineItems, fmt) => {
+          packageCache[(em || email) + ':b2b'] = lineItems;
         }
-      } catch(e) {}
-    }
-    // Query GBrain — skip if proactive agent already provided context or if D2C channel first message
-    let gbrainContext = '';
-    const isD2C = format === 'slack' || format === 'webchat' || format === 'plain';
-    // Rule 2: No email — ask for it on first message
-    if (!context.user_email && messages.length === 0) {
-      const msg = 'Before I can help, could I get your email address?';
-      return res.json({ text: msg, response: msg });
+      });
+      sessions[sessionKey] = result.messages;
+      return res.json({ text: formatResponse(result.response, format), response: formatResponse(result.response, format) });
     }
 
-    // Handle greeting trigger
+    // ── D2C flow — state machine ───────────────────────────────────────────
+    const state = getState(sessionKey);
+    const msgLower = message.toLowerCase().trim();
+    const yesWords = ['yes', 'yeah', 'yep', 'sure', 'ok', 'okay', 'correct', 'confirmed', 'use it', 'go ahead', 'absolutely', 'i am', 'i\'m over', 'over 21'];
+    const noWords = ['no', 'nope', 'not yet', 'i\'m not', 'im not', 'under 21'];
+
+    // ── GREETING ──────────────────────────────────────────────────────────
     if (message === '__greeting__') {
-      let greet = 'Hi! How can I help with your beverage needs today?';
-      if (context.age_verified) greet = '\u2713 Age verified. You are over 21\n\n' + greet;
+      resetState(sessionKey, email);
+      const s = getState(sessionKey);
+
+      // Load D2C session
+      if (email) {
+        try {
+          const d2c = await getD2CSession(email);
+          if (d2c) {
+            s.ageVerified = d2c.age_verified || false;
+            s.zip = d2c.delivery_zip || '';
+            s.address = d2c.delivery_address || '';
+          }
+        } catch(e) {}
+      }
+
+      let greet = "Hi! I\'m Rachel, your personal beverage specialist. I can help you find the perfect wines, spirits, and beers for any occasion.\n\n";
+
+      if (s.ageVerified) {
+        s.step = s.address ? 'ready' : 'addr_new';
+        greet += '\u2713 Age verified.\n\nHow can I help you today?';
+      } else {
+        s.step = 'age';
+        greet += 'Before we get started — are you 21 or older?';
+      }
+
       return res.json({ text: greet, response: greet });
     }
 
-    const isFirstMessage = messages.length === 0;
-    // Clear address confirmation on new session
-    if (isFirstMessage && global.addrConfirmed) {
-      global.addrConfirmed.delete(sessionKey + ':addr');
-    }
-    if (skip_gbrain && gbrain_context) {
-      gbrainContext = gbrain_context;
-      console.log('[gbrain] skipped — using pre-built context (' + gbrainContext.length + ' chars)');
-    } else if (!context.user_email) {
-      console.log('[gbrain] skipped — no user email');
-    } else {
-      gbrainContext = await getCustomerContext(
-        context.account_id || context.client_id,
-        context.kitchen_location,
-        context.client_id,
-        context.user_email
-      );
-      if (gbrainContext) console.log('[gbrain] context loaded:', gbrainContext.length, 'chars');
+    // ── Load D2C session if not already loaded ─────────────────────────────
+    if (!state.zip && email) {
+      try {
+        const d2c = await getD2CSession(email);
+        if (d2c) {
+          state.ageVerified = state.ageVerified || d2c.age_verified || false;
+          if (!state.zip) state.zip = d2c.delivery_zip || '';
+          if (!state.address) state.address = d2c.delivery_address || '';
+        }
+      } catch(e) {}
     }
 
-    // Build address verification rule
-    // Slack hard rule: no cart operations
-    if (format === 'slack') {
-      const slackRule = '\n\nSLACK RULE: Never mention "add to cart", "cart", or "AddToCart". For orders use CreateOrder only. Never suggest cart operations on this channel.';
-      // Append to system prompt via addressRule
-    }
-    let addressRule = '';
-    // Add post-package CTA rule
-    addressRule += '\n\n## AFTER PACKAGE PRESENTATION\nWhen customer says no/yes to the mixers question: respond with ONLY the CTA — do NOT ask what they want to change, do NOT list options, do NOT say anything else. Just say: "Would you like to *place the order*, *generate a PDF proposal*, or make any changes?"';
-
-    // Add age verification status
-    if (context.age_verified) {
-      addressRule += '\n\n## AGE VERIFICATION\nCustomer age is verified (21+). Never ask for age again. Do not add any age verification message yourself — it is handled automatically.';
-    }
-    // Inject saved package for brand swap reference
-    if (context.saved_package) {
-      addressRule += '\n\n## ACTIVE PACKAGE\nThe customer has an active package. line_items: ' + context.saved_package + '\nFor brand swaps: use these line_items, keep quantities unchanged, swap only the requested item. Call ShoppingAgent intent=custom_list with updated named_products keeping same qty.';
-    }
-    if (!context.kitchen_location) {
-      if (context.saved_address) {
-        const addrConfirmKey = sessionKey + ':addr';
-        if (!global.addrConfirmed) global.addrConfirmed = new Set();
-        if (!global.addrConfirmed.has(addrConfirmKey)) {
-          // Check if customer already confirmed in this session
-          const confirmWords = ['yes','yeah','yep','correct','sure','ok','okay','confirmed','use it','that works','go ahead'];
-          let addrAskIdx = -1;
-          for (let i = 0; i < messages.length; i++) {
-            const c = typeof messages[i].content === 'string' ? messages[i].content : JSON.stringify(messages[i].content);
-            if (c.includes('shall I use this') || c.includes('delivery address on file') || c.includes('use this for your order')) addrAskIdx = i;
-          }
-          if (addrAskIdx >= 0) {
-            for (let i = addrAskIdx + 1; i < messages.length; i++) {
-              if (messages[i].role === 'user') {
-                const c = typeof messages[i].content === 'string' ? messages[i].content : JSON.stringify(messages[i].content);
-                if (confirmWords.some(w => c.toLowerCase().includes(w))) {
-                  global.addrConfirmed.add(addrConfirmKey);
-                  break;
-                }
-              }
-            }
-          }
+    // ── STATE: age ─────────────────────────────────────────────────────────
+    if (state.step === 'age') {
+      if (state.ageVerified) {
+        state.step = state.address ? 'ready' : 'addr_new';
+      } else if (yesWords.some(w => msgLower.includes(w))) {
+        state.ageVerified = true;
+        state.step = state.address ? 'ready' : 'addr_new';
+        // Save to GBrain
+        if (email) {
+          try {
+            const d2c = await getD2CSession(email) || {};
+            await saveD2CSession(email, Object.assign({}, d2c, { age_verified: true, onboarded: true }));
+          } catch(e) {}
         }
-        if (!global.addrConfirmed || !global.addrConfirmed.has(addrConfirmKey)) {
-          addressRule += '\n\n## DELIVERY ADDRESS — REQUIRED\nBefore ANY product search or package build, ask ONCE: "I have your delivery address on file as ' + context.saved_address + ' — shall I use this for your order?" Once customer confirms, use zip ' + context.saved_zip + ' for all searches. Never ask again after confirmation.';
-        } else {
-          addressRule += '\n\n## DELIVERY ADDRESS CONFIRMED\nUse zip ' + context.saved_zip + ' for all ShoppingAgent calls. Never ask about address again.';
-        }
+      } else if (noWords.some(w => msgLower === w || msgLower.startsWith(w + ' '))) {
+        const bye = 'I\'m sorry, I can only assist customers who are 21 or older. Have a great day!';
+        return res.json({ text: bye, response: bye });
       } else {
-        addressRule = '\n\n## MANDATORY ADDRESS COLLECTION\nNo delivery address on file. You MUST ask for the customer delivery address BEFORE doing any product search. Do NOT search until you have an address and zip code.';
+        const ask = 'Before we get started — are you 21 or older?';
+        return res.json({ text: ask, response: ask });
       }
     }
 
-    const result = await rachelChat({
-      onPackageBuilt: (email, lineItems, fmt) => {
-        const key = (email || '') + ':' + (fmt || 'slack');
-
-        // Detect swaps by comparing old vs new package
-        if (packageCache[key] && email) {
+    // ── STATE: addr_new ────────────────────────────────────────────────────
+    if (state.step === 'addr_new') {
+      const zipMatch = message.match(/\b(\d{5})\b/);
+      if (zipMatch) {
+        state.zip = zipMatch[1];
+        state.address = message;
+        state.addrConfirmed = true;
+        state.step = 'ready';
+        // Save to GBrain
+        if (email) {
           try {
-            const oldItems = JSON.parse(packageCache[key]);
-            const newItems = JSON.parse(lineItems);
-            // Only detect swaps if same number of items (pure swap, not rebuild)
-            if (oldItems.length === newItems.length) {
-              for (let i = 0; i < oldItems.length; i++) {
-                const o = oldItems[i];
-                const n = newItems[i];
-                if (o.name !== n.name && o.qty === n.qty) {
-                  const signal = {
-                    ts: new Date().toISOString(), email,
-                    category: o.category || "",
-                    from_product: o.name, from_price: o.price,
-                    to_product: n.name, to_price: n.price,
-                    price_direction: n.price > o.price ? "up" : n.price < o.price ? "down" : "same"
-                  };
-                  console.log("[swap-signal]", JSON.stringify(signal));
-                  require("fs").appendFileSync("/home/ubuntu/logs/swap-signals.jsonl", JSON.stringify(signal) + "\n");
-                }
-              }
-            }
-          } catch(e) { console.error("[swap-signal] error:", e.message); }
+            const d2c = await getD2CSession(email) || {};
+            await saveD2CSession(email, Object.assign({}, d2c, { delivery_address: message, delivery_zip: state.zip }));
+          } catch(e) {}
         }
-
-        packageCache[key] = lineItems;
-        console.log('[package] saved to L1 cache:', key);
-      },
-      messages: [...messages, { role: 'user', content: message }],
-      context,
-      rachelPrompt: RACHEL_PROMPT,
-      gbrain_context: gbrainContext || gbrain_context || '',
-      address_rule: addressRule,
-      channel_format: format
-    });
-
-    sessions[sessionKey] = result.messages;
-
-    let output = formatResponse(result.response, format);
-    // Prepend age verified badge on first message of session
-    if (context.age_verified && isFirstMessage) {
-      output = '✓ Age verified. You are over 21\n\n' + output;
+      } else {
+        const ask = 'What is your delivery address? (Please include street, city, state, and zip code)';
+        return res.json({ text: ask, response: ask });
+      }
     }
 
-    // Append CTA after mixer response if not already present
-    const lastMsg = message.toLowerCase().trim();
-    const yesKeywords = ['yes', 'yeah', 'sure', 'yep', 'please', 'ok', 'okay'];
-    const noKeywords = ['no', 'nope', 'no thanks', 'no worries', "that's all", 'thats all', "i'm good", 'im good', 'nothing else'];
-    const mixerKeywords = [...noKeywords]; // removed yesKeywords to avoid CTA loop on 'yes'
-    const hasProposal = output.includes('proposals/bevvi-proposal') || output.includes('proposal is ready') || output.includes('Download') || output.toLowerCase().includes('your proposal');
-    const hasCTA = output.includes('place the order') || output.includes('PDF proposal') || output.includes('generate a proposal');
-    
-    // If customer said yes to mixers but Rachel didn't add them, append a note
-    const prevMsgAskedMixers = messages.length >= 1 && messages[messages.length-1] && 
-      JSON.stringify(messages[messages.length-1]).includes('mixers');
-    if (yesKeywords.includes(lastMsg) && prevMsgAskedMixers && !output.includes('water') && !output.includes('ice') && !output.includes('soda')) {
-      output = output + (format === 'slack' 
-        ? '\n\nFor mixers I can add: still water, sparkling water, soda (Coke/Sprite/Tonic), ice bags, and plastic cups. Which would you like?'
-        : '\n\nFor mixers I can add: still water, sparkling water, soda, ice bags, and cups. Which would you like?');
+    // ── STATE: addr (has saved address, needs confirmation) ────────────────
+    if (state.step === 'addr') {
+      if (yesWords.some(w => msgLower.includes(w))) {
+        state.addrConfirmed = true;
+        state.step = 'ready';
+        // Replay pending intent if any
+        if (state.pendingIntent) {
+          const pending = state.pendingIntent;
+          state.pendingIntent = null;
+          const fp = fingerprint(pending);
+          state.lastFingerprint = fp;
+          state.lastZip = state.zip;
+          const gbrainContext = email ? await getCustomerContext('', '', context?.client_id || 'airculinaire', email).catch(() => '') : '';
+          context.saved_zip = state.zip;
+          const addrRule = `\n\n## DELIVERY\nZip: ${state.zip}. Address: ${state.address}. Use this zip for ALL ShoppingAgent calls. Never ask about address or age.`;
+          const reply = await callRachel({ sessionKey, message: pending, context, format, gbrainContext, addressRule: addrRule, email });
+          const prefix = `Got it! Delivering to ${state.address}.\n\n`;
+          return res.json({ text: prefix + reply, response: prefix + reply });
+        }
+        const ok = `Got it! Delivering to ${state.address}. How can I help you today?`;
+        return res.json({ text: ok, response: ok });
+      } else if (noWords.some(w => msgLower === w)) {
+        state.step = 'addr_new';
+        state.pendingIntent = null;
+        const ask = 'No problem! What is your delivery address? (Include street, city, state, and zip)';
+        return res.json({ text: ask, response: ask });
+      } else {
+        // Store intent and ask for address confirmation
+        state.pendingIntent = message;
+        const addrQ = `I have your delivery address on file as ${state.address} — shall I use this for your order?`;
+        return res.json({ text: addrQ, response: addrQ });
+      }
     }
 
-    // Only append CTA if a package was actually shown (output contains product total or grand total)
-    const packageWasShown = output.includes('Product total') || output.includes('Grand total') || output.includes('grand total') || output.includes('Estimated grand total');
-    // Check if mixer question was already asked and answered with no in entire session
-    const fullHistory = JSON.stringify(messages);
-    const mixerWasAsked = fullHistory.includes('mixers');
-    const customerSaidNoToMixer = mixerWasAsked && messages.some(function(m, idx) {
+    // ── STATE: ready — check if we need address confirmation first ─────────
+    if (state.step === 'ready' && !state.addrConfirmed && state.address) {
+      state.step = 'addr';
+      state.pendingIntent = message;
+      const addrQ = `I have your delivery address on file as ${state.address} — shall I use this for your order?`;
+      return res.json({ text: addrQ, response: addrQ });
+    }
+
+    // ── STATE: ready — pass to Rachel ──────────────────────────────────────
+    if (state.step !== 'ready') {
+      // Shouldn\'t happen but fallback
+      const ask = 'What is your delivery address? (Include street, city, state, and zip)';
+      state.step = 'addr_new';
+      return res.json({ text: ask, response: ask });
+    }
+
+    // Cache invalidation check
+    const fp = fingerprint(message);
+    if (fp !== state.lastFingerprint || state.zip !== state.lastZip) {
+      if (state.lastFingerprint && state.lastZip) {
+        // Request changed — clear cache
+        clearCache(email, format);
+        console.log(`[cache] invalidated: fp changed ${state.lastFingerprint} -> ${fp} or zip ${state.lastZip} -> ${state.zip}`);
+      }
+      state.lastFingerprint = fp;
+      state.lastZip = state.zip;
+    }
+
+    // Load GBrain context
+    let gbrainContext = '';
+    if (email && !skip_gbrain) {
+      gbrainContext = await getCustomerContext('', '', context?.client_id || 'airculinaire', email).catch(() => '');
+    } else if (skip_gbrain && gbrain_context) {
+      gbrainContext = gbrain_context;
+    }
+
+    // Load cached package if available
+    const cacheKey = makeCacheKey(email, state.zip, fp);
+    if (packageCache[cacheKey]) {
+      context.saved_package = packageCache[cacheKey];
+      console.log('[package] L1 cache hit:', cacheKey);
+    }
+
+    // Build address rule for Rachel
+    context.saved_zip = state.zip;
+    const addressRule = `\n\n## DELIVERY ADDRESS\nZip: ${state.zip}. Address: ${state.address}. Use this zip for ALL ShoppingAgent calls. NEVER ask about address or age — both are already confirmed.\n\n## AGE\nCustomer is verified 21+. Never ask for age.`;
+
+    // Append saved package rule if exists
+    let fullAddrRule = addressRule;
+    if (context.saved_package) {
+      fullAddrRule += `\n\n## ACTIVE PACKAGE\nline_items: ${context.saved_package}\nFor brand swaps: keep quantities, swap only requested item. Call ShoppingAgent intent=custom_list with updated named_products.`;
+    }
+
+    // Call Rachel
+    const output = await callRachel({ sessionKey, message, context, format, gbrainContext, addressRule: fullAddrRule, email });
+
+    // Post-process: append mixer question or CTA
+    const lastMsg = msgLower;
+    const yesKw = ['yes', 'yeah', 'sure', 'yep', 'please', 'ok', 'okay'];
+    const noKw = ['no', 'nope', 'no thanks', 'no worries', "that\'s all", 'thats all', "i\'m good", 'im good', 'nothing else'];
+    const hasCTA = output.includes('place the order') || output.includes('PDF proposal') || output.includes('generate a proposal') || output.includes('make any changes');
+    const hasProposal = output.toLowerCase().includes('your proposal') || output.includes('proposals/bevvi-proposal') || output.includes('Download');
+    const isEventPackage = output.includes('Product total') || output.includes('Estimated grand total') || output.includes('grand total');
+    const isSingleProduct = (output.includes('$') && !isEventPackage);
+    const packageWasShown = isEventPackage || (isSingleProduct && (output.includes('Estimated total') || output.includes('estimated total')));
+
+    const prevMsgs = JSON.stringify(sessions[sessionKey].slice(-6));
+    const mixerWasAsked = prevMsgs.includes('mixer') || prevMsgs.includes('water') || prevMsgs.includes('soda');
+    const mixerAnswered = mixerWasAsked && sessions[sessionKey].some((m, idx) => {
       if (m.role !== 'user') return false;
-      const content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-      if (!noKeywords.some(k => content.toLowerCase().includes(k))) return false;
-      // Check that a previous assistant message asked about mixers
+      const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+      if (!noKw.some(w => c.toLowerCase().includes(w))) return false;
       for (let i = idx - 1; i >= 0; i--) {
-        if (messages[i].role === 'assistant') {
-          const ac = typeof messages[i].content === 'string' ? messages[i].content : JSON.stringify(messages[i].content);
+        if (sessions[sessionKey][i].role === 'assistant') {
+          const ac = typeof sessions[sessionKey][i].content === 'string' ? sessions[sessionKey][i].content : JSON.stringify(sessions[sessionKey][i].content);
           if (ac.includes('mixer')) return true;
           break;
         }
       }
       return false;
     });
-    const mixerAlreadyAnswered = customerSaidNoToMixer;
-    if (!hasCTA && mixerKeywords.includes(lastMsg) && messages.length >= 2 && packageWasShown && !mixerAlreadyAnswered) {
-      const cta = format === 'slack'
+
+    let finalOutput = output;
+
+    if (!hasCTA && !hasProposal && packageWasShown && !mixerAnswered) {
+      if (isEventPackage && !mixerWasAsked) {
+        finalOutput += format === 'slack'
+          ? '\n\nWould you also like to add mixers, water, soda, ice, or cups?'
+          : '\n\nWould you also like to add mixers, water, soda, ice, or cups?';
+      } else {
+        finalOutput += format === 'slack'
+          ? '\n\nWould you like to *place the order*, *generate a PDF proposal*, or make any changes?'
+          : '\n\nWould you like to place the order, generate a PDF proposal, or make any changes?';
+      }
+    } else if (!hasCTA && !hasProposal && mixerAnswered) {
+      finalOutput += format === 'slack'
         ? '\n\nWould you like to *place the order*, *generate a PDF proposal*, or make any changes?'
         : '\n\nWould you like to place the order, generate a PDF proposal, or make any changes?';
-      output = output + cta;
     }
-    // After proposal generated, add simplified CTA
-    if (hasProposal) {
-      // Remove any "generate a PDF proposal" CTA that was appended
-      output = output.replace(/\n\nWould you like to \*place the order\*, \*generate a PDF proposal\*, or make any changes\?/g, '');
-      output = output.replace(/\n\nWould you like to place the order, generate a PDF proposal, or make any changes\?/g, '');
-      if (!output.includes('place the order')) {
-        const cta = format === 'slack'
-          ? '\n\nReady to *place the order*, or would you like to make any changes first?'
-          : '\n\nReady to place the order, or would you like to make any changes first?';
-        output = output + cta;
-      }
-    }
-    // Rule 3: No client_id → strip all product URLs
-    if (!context?.client_id) {
-      output = output
-        .replace(/ \| <a href[^>]+>View<\/a>/g, '')
-        .replace(/<a href[^>]+>View<\/a>/g, '')
-        .replace(/ \| \[View\]\([^)]+\)/g, '')
-        .replace(/\[View\]\([^)]+\)/g, '');
-    }
-    // Rule 4: No account_id → AddToCart already removed from tools (no URL stripping needed)
 
-    res.json({
-      text: output,
-      response: output,
-      session_id: sessionKey
-    });
-  } catch (err) {
-    console.error('[rachel] error:', err.message);
-    res.status(500).json({ error: err.message });
+    return res.json({ text: finalOutput, response: finalOutput });
+
+  } catch(e) {
+    console.error('[rachel] error:', e.message);
+    return res.json({ text: 'Sorry, I hit a snag — try again in a second.', response: 'Sorry, I hit a snag — try again in a second.' });
   }
 });
 
-app.post('/session/clear', (req, res) => {
-  const { session_id } = req.body;
-  if (session_id && sessions[session_id]) {
-    delete sessions[session_id];
-    res.json({ cleared: true, session_id });
-  } else {
-    res.json({ cleared: false });
-  }
+// ── POST /reset ────────────────────────────────────────────────────────────
+app.post('/reset', (req, res) => {
+  const { session_id, email } = req.body;
+  if (session_id) resetState(session_id, email);
+  res.json({ success: true });
 });
+
+// ── GET /health ────────────────────────────────────────────────────────────
+app.get('/health', (req, res) => res.json({ status: 'ok', port: PORT }));
 
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`[rachel] Server running on http://127.0.0.1:${PORT}`);
