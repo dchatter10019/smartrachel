@@ -292,6 +292,16 @@ async function executeTool(name, input) {
       const filtered = sorted.slice(0, q.limit || 3).map(formatProduct);
       results.push({ query: q.name, found: filtered.length > 0, products: filtered });
     }
+    // Save first product as basket for proposal/order reuse
+    if (results.length > 0 && results[0].products && results[0].products.length > 0 && input.email) {
+      try {
+        const { saveBasket } = require('/home/ubuntu/rachel/gbrain.js');
+        const firstProduct = results[0].products[0];
+        const basketItem = [{ name: firstProduct.name, price: firstProduct.price || firstProduct.salePrice || 0, qty: 1, size: firstProduct.size || '', category: firstProduct.category || 'wine', url: firstProduct.url || '', product_id: firstProduct.product_id || '', upc: firstProduct.upc || '', establishmentId: firstProduct.establishmentId || '' }];
+        await saveBasket(input.email, JSON.stringify(basketItem), '', input.channel || 'slack');
+        console.log('[shopping-agent] product saved to basket for:', input.email);
+      } catch(e) { console.error('[shopping-agent] basket save error:', e.message); }
+    }
     return { success: true, results: results, kitchen: loc.kitchen, client: loc.client, store: friendlyStore(loc.kitchen), buyer_tier: scoreBuyer(profile).tier };
   }
 
