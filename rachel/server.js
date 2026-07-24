@@ -18,8 +18,19 @@ const PORT = process.env.RACHEL_PORT || 3500;
 
 // ── Session stores ─────────────────────────────────────────────────────────
 const sessions = {};       // sessionKey -> messages[]
-const flowState = {};      // sessionKey -> { step, ageVerified, addrConfirmed, zip, address, pendingIntent }
 const packageCache = {};   // cacheKey -> line_items (L1)
+
+// flowState persisted to disk
+const FLOW_STATE_PATH = '/home/ubuntu/logs/flow-state.json';
+let flowState = {};
+try {
+  flowState = JSON.parse(fs.readFileSync(FLOW_STATE_PATH, 'utf8'));
+  console.log('[flowState] loaded', Object.keys(flowState).length, 'sessions');
+} catch(e) { flowState = {}; }
+
+function saveFlowState() {
+  try { fs.writeFileSync(FLOW_STATE_PATH, JSON.stringify(flowState)); } catch(e) {}
+}
 
 // ── Prompt ─────────────────────────────────────────────────────────────────
 const RACHEL_PROMPT_PATH = path.join(__dirname, 'prompt.md');
@@ -61,9 +72,16 @@ function clearCache(email, channel) {
 // ── Flow state helpers ─────────────────────────────────────────────────────
 function getState(sessionKey) {
   if (!flowState[sessionKey]) {
-    flowState[sessionKey] = { step: 'age', ageVerified: false, addrConfirmed: false, zip: '', address: '', pendingIntent: null, lastFingerprint: '', lastZip: '' };
+    flowState[sessionKey] = { step: 'age', ageVerified: false, addrConfirmed: false, zip: '', address: '', pendingIntent: null, lastFingerprint: '', lastZip: '', mixerAsked: false, mixerAnswered: false, packageShown: false, proposalStep: null };
   }
   return flowState[sessionKey];
+}
+
+function setState(sessionKey, updates) {
+  const state = getState(sessionKey);
+  Object.assign(state, updates);
+  saveFlowState();
+  return state;
 }
 
 function resetState(sessionKey, email) {
@@ -104,8 +122,9 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       const state = getState(sessionKey);
       const key = makeCacheKey(em || email, state.zip, state.lastFingerprint);
       packageCache[key] = lineItems;
+      state.lastLineItems = lineItems;
+      saveFlowState();
       console.log('[package] L1 cached:', key);
-      // Save to L2
       try { saveBasket(em || email, lineItems, '', fmt || format).catch(() => {}); } catch(e) {}
     }
   });
@@ -298,16 +317,120 @@ app.post('/chat', async (req, res) => {
       return res.json({ text: ask, response: ask });
     }
 
+    // ── Proposal state machine ──────────────────────────────────────────────
+    const proposalTriggers = ['generate a pdf', 'generate proposal', 'pdf proposal', 'create a proposal', 'make a proposal', 'send a proposal'];
+    if (proposalTriggers.some(t => msgLower.includes(t)) && !state.proposalStep) {
+      state.proposalStep = 'qty';
+      state.proposalData = {};
+      saveFlowState();
+      const ask = 'How many bottles would you like on the proposal?';
+      return res.json({ text: ask, response: ask });
+    }
+
+    if (state.proposalStep === 'qty') {
+      const qtyMatch = message.match(/\b(\d+)\b/);
+      state.proposalData.qty = qtyMatch ? parseInt(qtyMatch[1]) : 1;
+      state.proposalStep = 'client';
+      saveFlowState();
+      const ask = 'What is the client or company name?';
+      return res.json({ text: ask, response: ask });
+    }
+
+    if (state.proposalStep === 'client') {
+      // Strip any date that might be in the client name
+      state.proposalData.client_name = message.split(',')[0].trim();
+      state.proposalStep = 'date';
+      saveFlowState();
+      const ask = 'What is the event date?';
+      return res.json({ text: ask, response: ask });
+    }
+
+    if (state.proposalStep === 'date') {
+      state.proposalData.event_date = message.trim();
+      state.proposalStep = 'generating';
+      // Load basket now before building summary
+      if (email && !state.lastLineItems) {
+        try {
+          const { getPackage } = require('./gbrain.js');
+          const basket = await getPackage(email, format || 'slack');
+          if (basket) {
+            state.lastLineItems = typeof basket === 'string' ? basket : JSON.stringify(basket);
+            console.log('[proposal] basket loaded:', state.lastLineItems.slice(0,80));
+          }
+        } catch(e) {}
+      }
+      saveFlowState();
+      const pd = state.proposalData;
+      const proposalMsg = `Generate a PDF proposal for client "${pd.client_name}" event date "${pd.event_date}" quantity ${pd.qty} bottles using the last product search results. Pass line_items with qty updated to ${pd.qty}.`;
+      const fp2 = fingerprint(proposalMsg);
+      state.lastFingerprint = fp2;
+      const gbrainContext2 = email ? await getCustomerContext('', '', context?.client_id || 'airculinaire', email).catch(() => '') : '';
+      context.saved_zip = state.zip;
+      const addrRule2 = '\n\n## DELIVERY\nZip: ' + state.zip + '. Address: ' + state.address + '. Never ask about address or age.';
+      const proposalOutput = await callRachel({ sessionKey, message: proposalMsg, context, format, gbrainContext: gbrainContext2, addressRule: addrRule2, email });
+      state.proposalStep = null;
+      state.proposalData = null;
+      state.packageShown = false;
+      state.mixerAsked = false;
+      state.mixerAnswered = false;
+      saveFlowState();
+
+      // Extract download URL from Rachel's response
+      const urlMatch = proposalOutput.match(/http[^\s)|>]+\.pdf/) || proposalOutput.match(/<(http[^|>]+\.pdf)/);
+      const downloadUrl = urlMatch ? urlMatch[0] : '';
+
+      // Build deterministic summary with full fee breakdown
+      console.log('[proposal-debug] lastLineItems:', JSON.stringify(state.lastLineItems || 'null').slice(0,100), 'pd:', JSON.stringify(pd));
+      const qty = pd.qty || 1;
+      let productName = 'Products';
+      let unitPrice = 0;
+      // Use lastLineItems from state if available
+      if (state.lastLineItems) {
+        try {
+          const items = typeof state.lastLineItems === 'string' ? JSON.parse(state.lastLineItems) : state.lastLineItems;
+          if (items && items.length > 0) {
+            productName = items[0].name || items[0].label || 'Products';
+            unitPrice = parseFloat(items[0].price || items[0].unit_price || 0);
+          }
+        } catch(e) {}
+      }
+      const productTotal = Math.round(unitPrice * qty * 100) / 100;
+      const tax = Math.round(productTotal * 0.10 * 100) / 100;
+      const service = Math.round(productTotal * 0.10 * 100) / 100;
+      const tip = Math.round(productTotal * 0.05 * 100) / 100;
+      const delivery = 25.00;
+      const grandTotal = Math.round((productTotal + tax + service + tip + delivery) * 100) / 100;
+
+      const summary = format === 'slack'
+        ? 'Your proposal is ready!\n\n' +
+          '*Client:* ' + pd.client_name + '\n' +
+          '*Event Date:* ' + pd.event_date + '\n\n' +
+          productName + ' x' + qty + ' — $' + unitPrice.toFixed(2) + ' ea = $' + productTotal.toFixed(2) + '\n\n' +
+          'Product total: $' + productTotal.toFixed(2) + '\n' +
+          'Estimated tax (10%): $' + tax.toFixed(2) + '\n' +
+          'Service charge (10%): $' + service.toFixed(2) + '\n' +
+          'Tip (5%): $' + tip.toFixed(2) + '\n' +
+          'Delivery: $' + delivery.toFixed(2) + '\n' +
+          '*Estimated grand total: $' + grandTotal.toFixed(2) + '*' +
+          (downloadUrl ? '\n\n<' + downloadUrl + '|Download proposal>' : '') +
+          '\n\nWould you like to *place the order* or make any changes?'
+        : proposalOutput;
+
+      return res.json({ text: summary, response: summary });
+    }
+
     // Cache invalidation check
     const fp = fingerprint(message);
     if (fp !== state.lastFingerprint || state.zip !== state.lastZip) {
       if (state.lastFingerprint && state.lastZip) {
-        // Request changed — clear cache
+        // Request changed — clear cache and lastLineItems
         clearCache(email, format);
-        console.log(`[cache] invalidated: fp changed ${state.lastFingerprint} -> ${fp} or zip ${state.lastZip} -> ${state.zip}`);
+        state.lastLineItems = null;
+        console.log('[cache] invalidated: new request or zip changed');
       }
       state.lastFingerprint = fp;
       state.lastZip = state.zip;
+      saveFlowState();
     }
 
     // Load GBrain context
@@ -338,48 +461,44 @@ app.post('/chat', async (req, res) => {
     // Call Rachel
     const output = await callRachel({ sessionKey, message, context, format, gbrainContext, addressRule: fullAddrRule, email });
 
-    // Post-process: append mixer question or CTA
-    const lastMsg = msgLower;
-    const yesKw = ['yes', 'yeah', 'sure', 'yep', 'please', 'ok', 'okay'];
-    const noKw = ['no', 'nope', 'no thanks', 'no worries', "that\'s all", 'thats all', "i\'m good", 'im good', 'nothing else'];
-    const hasCTA = output.includes('place the order') || output.includes('PDF proposal') || output.includes('generate a proposal') || output.includes('make any changes');
-    const hasProposal = output.toLowerCase().includes('your proposal') || output.includes('proposals/bevvi-proposal') || output.includes('Download');
+    // ── Post-process: mixer/CTA using explicit state ─────────────────────
+    const noKw = ['no', 'nope', 'no thanks', 'no worries', "that's all", 'thats all', "i'm good", 'im good', 'nothing else'];
+    const hasProposal = output.toLowerCase().includes('your proposal') || output.includes('proposals/bevvi-proposal') || output.includes('download proposal');
     const isEventPackage = output.includes('Product total') || output.includes('Estimated grand total') || output.includes('grand total');
-    const isSingleProduct = (output.includes('$') && !isEventPackage);
-    const packageWasShown = isEventPackage || (isSingleProduct && (output.includes('Estimated total') || output.includes('estimated total')));
+    const packageJustShown = isEventPackage || output.includes('Estimated total') || output.includes('estimated total');
+    const hasCTA = output.includes('place the order') || output.includes('PDF proposal') || output.includes('make any changes');
 
-    const prevMsgs = JSON.stringify(sessions[sessionKey].slice(-6));
-    const mixerWasAsked = prevMsgs.includes('mixer') || prevMsgs.includes('water') || prevMsgs.includes('soda');
-    const mixerAnswered = mixerWasAsked && sessions[sessionKey].some((m, idx) => {
-      if (m.role !== 'user') return false;
-      const c = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-      if (!noKw.some(w => c.toLowerCase().includes(w))) return false;
-      for (let i = idx - 1; i >= 0; i--) {
-        if (sessions[sessionKey][i].role === 'assistant') {
-          const ac = typeof sessions[sessionKey][i].content === 'string' ? sessions[sessionKey][i].content : JSON.stringify(sessions[sessionKey][i].content);
-          if (ac.includes('mixer')) return true;
-          break;
-        }
+    // Update state based on output
+    if (packageJustShown) state.packageShown = true;
+    if (hasProposal) { state.packageShown = false; state.mixerAsked = false; state.mixerAnswered = false; }
+
+    // Detect if customer just answered mixer question
+    if (state.mixerAsked && !state.mixerAnswered) {
+      if (noKw.some(w => msgLower.includes(w)) || yesWords.some(w => msgLower.includes(w))) {
+        state.mixerAnswered = true;
       }
-      return false;
-    });
+    }
+    if (output.includes('mixer') || output.includes('water, soda') || output.includes('ice, or cups')) {
+      state.mixerAsked = true;
+    }
+    saveFlowState();
 
     let finalOutput = output;
 
-    if (!hasCTA && !hasProposal && packageWasShown && !mixerAnswered) {
-      if (isEventPackage && !mixerWasAsked) {
+    if (!hasCTA && !hasProposal && state.packageShown) {
+      if (isEventPackage && !state.mixerAsked) {
+        // Event package — ask about mixers first
         finalOutput += format === 'slack'
           ? '\n\nWould you also like to add mixers, water, soda, ice, or cups?'
           : '\n\nWould you also like to add mixers, water, soda, ice, or cups?';
-      } else {
+        state.mixerAsked = true;
+        saveFlowState();
+      } else if (!isEventPackage || state.mixerAnswered || state.mixerAsked) {
+        // Single product or mixer already handled — show CTA
         finalOutput += format === 'slack'
           ? '\n\nWould you like to *place the order*, *generate a PDF proposal*, or make any changes?'
           : '\n\nWould you like to place the order, generate a PDF proposal, or make any changes?';
       }
-    } else if (!hasCTA && !hasProposal && mixerAnswered) {
-      finalOutput += format === 'slack'
-        ? '\n\nWould you like to *place the order*, *generate a PDF proposal*, or make any changes?'
-        : '\n\nWould you like to place the order, generate a PDF proposal, or make any changes?';
     }
 
     return res.json({ text: finalOutput, response: finalOutput });

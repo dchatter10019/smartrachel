@@ -147,27 +147,14 @@ ${lastBasket ? `\n## Last Basket\n${lastBasket.map(i => `- ${i.qty || i.quantity
 async function saveBasket(userEmail, basket, total, channel) {
   if (!userEmail || !basket) return;
   try {
-    // Save basket to channel-specific page, address/zip stays on shared page
-    const channelSlug = channel || 'default';
-    const existing = await getD2CSession(userEmail) || {};
-    // Update shared page with last_basket_channel reference only
-    await saveD2CSession(userEmail, {
-      ...existing,
-      last_basket_channel: channelSlug,
-      last_basket_total: total || ''
-    });
-    // Save actual basket to channel-specific page
-    const basketSlug = emailToSlug(userEmail) + '-basket-' + channelSlug;
-    const payload = {
-      jsonrpc: '2.0', id: 1, method: 'tools/call',
-      params: { name: 'put_page', arguments: {
-        slug: basketSlug,
-        frontmatter: { email: userEmail, channel: channelSlug, total: total || '', updated: new Date().toISOString() },
-        content: typeof basket === 'string' ? basket : JSON.stringify(basket)
-      }}
-    };
-    const res = await fetch(GBRAIN_URL, { method: 'POST', headers: GBRAIN_HEADERS, body: JSON.stringify(payload) });
-    console.log('[gbrain] basket saved for:', userEmail, 'channel:', channelSlug);
+    const fs = require('fs');
+    const basketFile = '/home/ubuntu/logs/baskets.json';
+    let baskets = {};
+    try { baskets = JSON.parse(fs.readFileSync(basketFile, 'utf8')); } catch(e) {}
+    const key = userEmail + ':' + (channel || 'slack');
+    baskets[key] = { basket: typeof basket === 'string' ? basket : JSON.stringify(basket), total: total || '', updated: new Date().toISOString() };
+    fs.writeFileSync(basketFile, JSON.stringify(baskets));
+    console.log('[gbrain] basket saved for:', userEmail, 'channel:', channel || 'slack');
   } catch(e) {
     console.error('[gbrain] saveBasket error:', e.message);
   }
@@ -233,30 +220,14 @@ async function savePackage(userEmail, lineItems, summary) {
 async function getPackage(userEmail, channel) {
   if (!userEmail) return null;
   try {
-    const channelSlug = channel || 'default';
-    const basketSlug = emailToSlug(userEmail) + '-basket-' + channelSlug;
-    const payload = {
-      jsonrpc: '2.0', id: 1, method: 'tools/call',
-      params: { name: 'get_page', arguments: { slug: basketSlug } }
-    };
-    const res = await fetch(GBRAIN_URL + '/mcp', { method: 'POST', headers: GBRAIN_HEADERS, body: JSON.stringify(payload) });
-    const rawText = await res.text();
-    for (const line of rawText.split('\n')) {
-      if (line.startsWith('data:')) {
-        try {
-          const data = JSON.parse(line.slice(line.indexOf(':')+1).trim());
-          const pageText = data?.result?.content?.[0]?.text;
-          if (pageText) {
-            try {
-              const page = JSON.parse(pageText);
-              return page.compiled_truth || pageText;
-            } catch(e) {
-              return pageText;
-            }
-          }
-        } catch(e) {}
-      }
-    }
+    const fs = require('fs');
+    const basketFile = '/home/ubuntu/logs/baskets.json';
+    const key = userEmail + ':' + (channel || 'slack');
+    let baskets = {};
+    try { baskets = JSON.parse(fs.readFileSync(basketFile, 'utf8')); } catch(e) {}
+    const entry = baskets[key];
+    if (!entry || !entry.basket) return null;
+    return entry.basket;
   } catch(e) { return null; }
   return null;
 }
