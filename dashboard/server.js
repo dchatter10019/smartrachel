@@ -354,6 +354,12 @@ const server = http.createServer(async (req, res) => {
     res.end(fs.readFileSync(path.join(__dirname, 'reactflow.css')));
     return;
   }
+  if (url.pathname === '/evals') {
+    res.setHeader('Content-Type', 'text/html');
+    res.end(fs.readFileSync(path.join(__dirname, 'evals.html'), 'utf8'));
+    return;
+  }
+
   if (url.pathname === '/flow') {
     res.setHeader('Content-Type', 'text/html');
     res.end(fs.readFileSync(path.join(__dirname, 'flow.html'), 'utf8'));
