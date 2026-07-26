@@ -667,6 +667,30 @@ app.post('/chat', async (req, res) => {
       }
     }
 
+    // Log complete session on successful outcome
+    if (finalOutput.includes('BEV-') || finalOutput.includes('seaforth.getbevvi.com') ||
+        finalOutput.includes('Download proposal') || finalOutput.includes('bevvi-proposal')) {
+      try {
+        const fs2 = require('fs');
+        const convLog = {
+          ts: new Date().toISOString(),
+          session_id: sessionKey,
+          email: email,
+          channel: format,
+          outcome: finalOutput.includes('BEV-') || finalOutput.includes('seaforth') ? 'order_placed' : 'proposal_generated',
+          messages: (sessions[sessionKey] || []).map(function(m) {
+            return {
+              role: m.role,
+              content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content)
+            };
+          }),
+          final_response: finalOutput.slice(0, 500)
+        };
+        fs2.appendFileSync('/home/ubuntu/logs/conversations.jsonl', JSON.stringify(convLog) + '\n');
+        console.log('[conv] logged', convLog.outcome, 'for', email);
+      } catch(e) { console.error('[conv] log error:', e.message); }
+    }
+
     return res.json({ text: finalOutput, response: finalOutput });
 
   } catch(e) {
