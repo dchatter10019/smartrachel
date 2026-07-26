@@ -240,6 +240,7 @@ RULES:
     const response = await client.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 4096,
+      temperature: 0.3,
       system: fullSystem,
       tools,
       messages: claudeMessages
