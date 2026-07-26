@@ -187,6 +187,32 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/evals/results') {
+    try {
+      const results = fs.readFileSync('/home/ubuntu/evals/eval-results.json', 'utf8');
+      res.setHeader('Content-Type', 'application/json');
+      res.end(results);
+    } catch(e) { res.end('[]'); }
+    return;
+  }
+
+  if (url.pathname === '/api/evals/run' && req.method === 'POST') {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+    res.write(':ok\n\n');
+    const proc = spawn('python3', ['/home/ubuntu/evals/run_evals.py'], {cwd: '/home/ubuntu/evals'});
+    proc.stdout.on('data', d => res.write('data: ' + JSON.stringify(d.toString()) + '\n\n'));
+    proc.stderr.on('data', d => res.write('data: ' + JSON.stringify(d.toString()) + '\n\n'));
+    proc.on('close', code => {
+      res.write('data: ' + JSON.stringify('__done__') + '\n\n');
+      res.end();
+    });
+    req.on('close', () => proc.kill());
+    return;
+  }
+
   if (url.pathname === '/api/save-file' && req.method === 'POST') {
     let body = '';
     req.on('data', d => body += d);
