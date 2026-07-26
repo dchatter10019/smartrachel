@@ -669,6 +669,7 @@ async function executeTool(name, input) {
           const winner = rfqResult.winner;
           console.log('[shopping-agent] place_order via orchestrator → winner:', winner.store, '$' + winner.estimated_grand_total);
           // Place order via winning store agent
+          console.log('[shopping-agent] calling place_winning_order on:', winner.store_url);
           const orderRes = await fetch('http://127.0.0.1:8200/mcp', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -676,7 +677,7 @@ async function executeTool(name, input) {
               store_url: winner.store_url,
               products: (function() {
                 console.log('[shopping-agent] bid_items:', JSON.stringify(winner.bid_items.slice(0,2)));
-                return winner.bid_items.filter(function(i){ return i.available; }).map(function(i){ return { name: i.matched || i.name, upc: i.upc, qty: i.quantity }; });
+                return winner.bid_items.filter(function(i){ return i.available; }).map(function(i){ return { name: i.matched || i.name, upc: i.upc, qty: i.quantity, product_id: i.product_id || '', establishmentId: i.establishmentId || '' }; });
               })(),
               customer: { firstName: c.firstName||c.first_name||'', lastName: c.lastName||c.last_name||'', email: c.email||'', address: c.address||'', city: c.city||'', state: c.state||'', zipcode: c.zipcode||zip||'', phone: c.phone||c.phoneNumber||'' },
               tip_amount: input.tip_amount || 0,
@@ -685,6 +686,7 @@ async function executeTool(name, input) {
             }}})
           });
           const orderText = await orderRes.text();
+          console.log('[shopping-agent] place_winning_order response:', orderText.slice(0,200));
           const orderLine = orderText.split('\n').find(function(l){ return l.startsWith('data:'); });
           if (orderLine) {
             const orderMsg = JSON.parse(orderLine.replace('data:', '').trim());

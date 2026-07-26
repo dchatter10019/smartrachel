@@ -98,6 +98,7 @@ async function callStoreAgent(storeUrl, toolName, args) {
       timeout: 10000
     });
     const text = await res.text();
+    console.log('[orchestrator] callStoreAgent', toolName, 'response:', text.slice(0,200));
     const line = text.split('\n').find(l => l.startsWith('data:'));
     if (!line) return null;
     const msg = JSON.parse(line.replace('data:', '').trim());

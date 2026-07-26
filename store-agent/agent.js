@@ -100,14 +100,15 @@ async function searchBevviProducts(query, minPrice, maxPrice, limit) {
         return price > 0 && p.name;
       })
       .map(p => ({
-        name:       p.name,
-        upc:        p.upc || '',
-        price:      p.salePrice || p.price || 0,
-        size:       p.size && p.units ? `${p.size}${p.units}` : '',
-        url:        p.url || (p.slug ? `https://airculinaire.getbevvi.com/productdetail/${p.slug}` : ''),
-        product_id: (p.corpProductFilter && p.corpProductFilter.corpProductId) || p.id || '',
-        category:   p.category || '',
-        in_stock:   true
+        name:            p.name,
+        upc:             p.upc || '',
+        price:           p.salePrice || p.price || 0,
+        size:            p.size && p.units ? `${p.size}${p.units}` : '',
+        url:             p.url || (p.slug ? `https://airculinaire.getbevvi.com/productdetail/${p.slug}` : ''),
+        product_id:      (p.corpProductFilter && p.corpProductFilter.corpProductId) || p.id || '',
+        establishmentId: p.establishmentId || '',
+        category:        p.category || '',
+        in_stock:        true
       }));
   } catch(e) {
     console.error('[store-agent] search error:', e.message);
@@ -166,16 +167,17 @@ async function executeTool(name, input) {
         const best = results[0];
         const lineTotal = best.price * item.quantity;
         bidItems.push({
-          requested:    item.name,
-          matched:      best.name,
-          upc:          best.upc,
-          unit_price:   best.price,
-          quantity:     item.quantity,
-          line_total:   lineTotal,
-          size:         best.size,
-          url:          best.url,
-          product_id:   best.product_id,
-          available:    true
+          requested:       item.name,
+          matched:         best.name,
+          upc:             best.upc,
+          unit_price:      best.price,
+          quantity:        item.quantity,
+          line_total:      lineTotal,
+          size:            best.size,
+          url:             best.url,
+          product_id:      best.product_id,
+          establishmentId: best.establishmentId || '',
+          available:       true
         });
         bidTotal += lineTotal;
         fulfilled++;
@@ -210,6 +212,7 @@ async function executeTool(name, input) {
 
   if (name === 'place_order') {
     const { products, customer, tip_amount, delivery_datetime, delivery_instructions } = input;
+    console.log('[place_order] products:', JSON.stringify((products||[]).slice(0,1)));
     try {
       // Parse address string into components if city/state not provided
       let streetAddress = customer.address || '';
@@ -243,26 +246,31 @@ async function executeTool(name, input) {
       }
 
       const body = {
-        products: products.map(p => ({ name: p.name, upc: p.upc, qty: p.qty || 1 })),
+        email: customer.email || '',
+        products: products.map(p => ({
+          productId:       p.product_id || p.productId || '',
+          upc:             p.upc || '',
+          name:            p.name || '',
+          quantity:        p.qty || p.quantity || 1,
+          establishmentId: p.establishmentId || ''
+        })),
         customerData: {
           firstName:     customer.firstName || '',
           lastName:      customer.lastName  || '',
           email:         customer.email     || '',
-          address:       streetAddress,
-          suiteNumber:   '',
           streetAddress: streetAddress,
+          aptSuiteNum:   '',
           city:          city,
           state:         state,
           zipcode:       zipcode,
-          phoneNumber:   (customer.phone || customer.phoneNumber || '').replace(/\D/g, ''),
-          companyName:   ''
+          phoneNumber:   (customer.phone || customer.phoneNumber || '').replace(/\D/g, '')
         },
         tipAmount:            tip_amount || 0,
         deliveryDateTime:     delivery_datetime || '',
         deliveryInstructions: delivery_instructions || ''
       };
 
-      const res = await fetch('https://api.getbevvi.com/api/bevvibot/createOrder', {
+      const res = await fetch('https://api-client.getbevvi.com/api/bevvibot/createCorpOrder', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(body)
@@ -271,10 +279,10 @@ async function executeTool(name, input) {
       const data = await res.json();
       const arr  = Array.isArray(data) ? data[0] : data;
       const orderId    = arr.orderNumber || arr.order_id || '';
-      const paymentUrl = arr.orderLink   || arr.payment_url || '';
-      const success    = arr.success === true || arr.success === 'true';
+      const paymentUrl = arr.url || arr.orderLink || arr.payment_url || '';
+      const success    = arr.success === true || arr.success === 'true' || !!paymentUrl;
 
-      return { success, order_id: orderId, payment_url: paymentUrl, error: success ? '' : (arr.message || 'Order failed') };
+      return { success, order_id: orderId, payment_url: paymentUrl, error: success ? '' : (arr.message || arr.error?.message || 'Order failed') };
     } catch(e) {
       return { success: false, order_id: '', payment_url: '', error: e.message };
     }
@@ -332,8 +340,13 @@ const server = http.createServer(async (req, res) => {
         res.end();
       } catch(e) {
         console.error('[store-agent] error:', e.message);
-        res.writeHead(500);
-        res.end(JSON.stringify({ error: e.message }));
+        if (!res.headersSent) {
+          res.writeHead(500);
+          res.end(JSON.stringify({ error: e.message }));
+        } else {
+          sendSSE(res, { jsonrpc: '2.0', id: 1, error: { code: -32000, message: e.message } });
+          res.end();
+        }
       }
     });
     return;
