@@ -318,7 +318,7 @@ app.post('/chat', async (req, res) => {
     }
 
     // ── Order state machine ────────────────────────────────────────────────────
-    const orderTriggers = ['place the order', 'place order', 'order it', 'buy it', 'purchase', 'order this', 'checkout'];
+    const orderTriggers = ['place the order', 'place order', 'place an order', 'order it', 'buy it', 'purchase', 'order this', 'checkout', 'i want to order', 'want to place'];
     if (orderTriggers.some(t => msgLower.includes(t)) && !state.orderStep && !state.proposalStep) {
       state.orderStep = 'qty';
       state.orderData = {};
@@ -441,12 +441,28 @@ app.post('/chat', async (req, res) => {
             updatedLineItems = JSON.stringify(items);
           } catch(e) {}
         }
-        const placeMsg = 'Place order now with these exact details - call ShoppingAgent intent=place_order: line_items=' + (updatedLineItems || '[]') + ' customer={firstName:' + firstName + ',lastName:' + lastName + ',email:' + (od.email || email) + ',phone:' + od.phone + ',address:' + state.address + ',zipcode:' + state.zip + '} delivery_datetime=' + od.delivery_datetime + ' zip=' + state.zip;
+        const customerObj = {
+          firstName: firstName,
+          lastName: lastName,
+          email: od.email || email,
+          phone: od.phone,
+          address: state.address,
+          city: state.address.split(',').length > 1 ? state.address.split(',')[1].trim() : '',
+          state: 'NY',
+          zipcode: state.zip
+        };
+        const placeMsg = JSON.stringify({
+          _system: 'place_order',
+          line_items: updatedLineItems || '[]',
+          customer: customerObj,
+          delivery_datetime: od.delivery_datetime,
+          zip: state.zip
+        });
         const fp2 = fingerprint(placeMsg);
         state.lastFingerprint = fp2;
         const gbrainCtx = email ? await getCustomerContext('', '', context?.client_id || 'airculinaire', email).catch(() => '') : '';
         context.saved_zip = state.zip;
-        const addrRule2 = '\n\n## DELIVERY\nZip: ' + state.zip + '. Address: ' + state.address + '. Age verified. Place order immediately — all details confirmed.';
+        const addrRule2 = '\n\n## DELIVERY\nZip: ' + state.zip + '. Address: ' + state.address + '. Age and address verified.\n\n## ORDER INSTRUCTION\nThe user message contains a JSON system instruction. Parse it and immediately call ShoppingAgent with intent=place_order using the line_items, customer, delivery_datetime and zip from the JSON. Do not ask for any more information.';
         const orderOutput = await callRachel({ sessionKey, message: placeMsg, context, format, gbrainContext: gbrainCtx, addressRule: addrRule2, email });
         state.orderStep = null;
         state.orderData = null;
