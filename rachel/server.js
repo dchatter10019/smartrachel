@@ -201,6 +201,8 @@ app.post('/chat', async (req, res) => {
       let greet = "Hi! I\'m Rachel, your personal beverage specialist. I can help you find the perfect wines, spirits, and beers for any occasion.\n\n";
 
       if (s.ageVerified) {
+        s.addrConfirmed = !!s.address; // auto-confirm if address exists
+        s.zip = s.zip || '';
         s.step = s.address ? 'ready' : 'addr_new';
         greet += '\u2713 Age verified.\n\nHow can I help you today?';
       } else {
@@ -631,11 +633,13 @@ app.post('/chat', async (req, res) => {
     const noKw = ['no', 'nope', 'no thanks', 'no worries', "that's all", 'thats all', "i'm good", 'im good', 'nothing else'];
     const hasProposal = output.toLowerCase().includes('your proposal') || output.includes('proposals/bevvi-proposal') || output.includes('download proposal');
     const isEventPackage = output.includes('Product total') || output.includes('Estimated grand total') || output.includes('grand total');
+    const isSingleProduct = !isEventPackage && output.includes('$') && (output.match(/\d+ML/i) !== null || output.match(/\d+L\b/) !== null) && output.split('$').length <= 3;
     const packageJustShown = isEventPackage || output.includes('Estimated total') || output.includes('estimated total');
     const hasCTA = output.includes('place the order') || output.includes('PDF proposal') || output.includes('make any changes');
 
     // Update state based on output
     if (packageJustShown) state.packageShown = true;
+    if (isSingleProduct) state.packageShown = true;
     if (hasProposal) { state.packageShown = false; state.mixerAsked = false; state.mixerAnswered = false; }
 
     // Detect if customer just answered mixer question
