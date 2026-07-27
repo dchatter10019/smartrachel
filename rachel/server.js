@@ -655,7 +655,8 @@ app.post('/chat', async (req, res) => {
 
     let finalOutput = output;
 
-    if (!hasCTA && !hasProposal && state.packageShown) {
+    const packageWasShown = isEventPackage || output.includes('Estimated total') || output.includes('estimated total') || (output.includes('$') && !hasCTA && !hasProposal);
+    if (!hasCTA && !hasProposal && (state.packageShown || packageWasShown)) {
       if (isEventPackage && !state.mixerAsked) {
         // Event package — ask about mixers first
         finalOutput += format === 'slack'
