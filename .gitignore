@@ -67,3 +67,4 @@ rachel/store-agent.service
 rachel/store_agent.py
 store-agent/package-lock.json
 store-agent/shopping-agent-v2.js
+images2.tar.gz
