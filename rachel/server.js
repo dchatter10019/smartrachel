@@ -1,9 +1,122 @@
+
+// ── Store coverage check via Orchestrator ──────────────────────────────
+const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || 'http://127.0.0.1:8200';
+
+async function checkStoreCoverage(zip) {
+  try {
+    const fetchFn = (...args) => import('node-fetch').then(({default: f}) => f(...args));
+    const res = await fetchFn(`${ORCHESTRATOR_URL}/mcp`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1,
+        method: 'tools/call',
+        params: { name: 'get_stores_for_zip', arguments: { zip } }
+      })
+    });
+    const text = await res.text();
+    const line = text.split('\n').find(l => l.startsWith('data:'));
+    if (!line) return null;
+    const msg = JSON.parse(line.replace('data:', '').trim());
+    return JSON.parse(msg.result.content[0].text);
+  } catch (e) {
+    console.error('[rachel] checkStoreCoverage error:', e.message);
+    return null; // null = "couldn't verify" — treated as fail-open below
+  }
+}
+
 const express = require('express');
 const { rachelChat } = require('./rachel.js');
 const { getCustomerContext, getD2CSession, saveD2CSession, saveBasket, getPackage } = require('./gbrain.js');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const { google } = require('googleapis');
+const chrono = require('chrono-node');
+
+// ── Delivery time-slot validation ───────────────────────────────────────
+function parseTimeWindow(windowStr) {
+  const m = windowStr.match(/(\d{1,2}):(\d{2})\s*(AM|PM)\s*-\s*(\d{1,2}):(\d{2})\s*(AM|PM)/i);
+  if (!m) return null;
+  const to24 = (h, mm, ap) => {
+    h = parseInt(h, 10);
+    if (ap.toUpperCase() === 'PM' && h !== 12) h += 12;
+    if (ap.toUpperCase() === 'AM' && h === 12) h = 0;
+    return h + parseInt(mm, 10) / 60;
+  };
+  return { start: to24(m[1], m[2], m[3]), end: to24(m[4], m[5], m[6]) };
+}
+
+async function checkDeliveryAvailability(establishmentId, dateStr) {
+  try {
+    const fetchFn = (...args) => import('node-fetch').then(({default: f}) => f(...args));
+    const url = 'https://api-client.getbevvi.com/api/bevviutils/getDeliveryDateTimes?accountId=rachel&establishmentId=' + encodeURIComponent(establishmentId) + '&date=' + encodeURIComponent(dateStr);
+    const res = await fetchFn(url);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    console.error('[delivery-check] checkDeliveryAvailability error:', e.message);
+    return null;
+  }
+}
+
+// ── Channel capabilities config (live-reloaded) ─────────────────────────────
+const CHANNEL_CONFIG_PATH = '/home/ubuntu/rachel/channel-capabilities.json';
+let channelConfigCache = null;
+let channelConfigMtime = 0;
+
+function getChannelConfig() {
+  try {
+    const stat = fs.statSync(CHANNEL_CONFIG_PATH);
+    if (!channelConfigCache || stat.mtimeMs !== channelConfigMtime) {
+      channelConfigCache = JSON.parse(fs.readFileSync(CHANNEL_CONFIG_PATH, 'utf8'));
+      channelConfigMtime = stat.mtimeMs;
+      console.log('[channel-config] (re)loaded, mtime:', stat.mtimeMs);
+    }
+  } catch (e) {
+    console.error('[channel-config] failed to load, falling back to permissive defaults:', e.message);
+    channelConfigCache = null;
+  }
+  return channelConfigCache;
+}
+
+function getCapabilities(format) {
+  const config = getChannelConfig();
+  const defaults = { can_place_order: true, can_generate_proposal: true, can_add_to_cart: true, can_email_support: true, requires_age_verification: true, mention_saved_address: false };
+  if (!config) return defaults;
+  return Object.assign({}, defaults, config[format] || {});
+}
+
+// ── Support email sender (Gmail API, service account, reuses email-agent's identity) ──
+const GMAIL_SERVICE_ACCOUNT_FILE = '/home/ubuntu/config/gmail-service-account.json';
+const RACHEL_SENDER_EMAIL = 'rachelai@getbevvi.com';
+const SUPPORT_EMAIL = 'bevvi-support@getbevvi.com';
+
+async function sendSupportEmail(subject, bodyText) {
+  const auth = new google.auth.GoogleAuth({
+    keyFile: GMAIL_SERVICE_ACCOUNT_FILE,
+    scopes: ['https://www.googleapis.com/auth/gmail.send'],
+    clientOptions: { subject: RACHEL_SENDER_EMAIL }
+  });
+  const authClient = await auth.getClient();
+  const gmail = google.gmail({ version: 'v1', auth: authClient });
+
+  const messageParts = [
+    `From: ${RACHEL_SENDER_EMAIL}`,
+    `To: ${SUPPORT_EMAIL}`,
+    `Subject: ${subject}`,
+    'Content-Type: text/plain; charset=utf-8',
+    '',
+    bodyText
+  ];
+  const raw = Buffer.from(messageParts.join('\n'))
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+
+  await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
+}
 
 const KITCHEN_TO_CLIENT = {
   'Celonis - NYC': 'fooda',
@@ -85,7 +198,7 @@ function setState(sessionKey, updates) {
 }
 
 function resetState(sessionKey, email) {
-  flowState[sessionKey] = { step: 'age', ageVerified: false, addrConfirmed: false, zip: '', address: '', pendingIntent: null, lastFingerprint: '', lastZip: '' };
+  flowState[sessionKey] = { step: 'age', ageVerified: false, addrConfirmed: false, zip: '', address: '', pendingIntent: null, lastFingerprint: '', lastZip: '', mixerAsked: false, mixerAnswered: false, packageShown: false, proposalStep: null, proposalData: null, orderStep: null, orderData: null };
   sessions[sessionKey] = [];
   // Clear L1 cache for this user
   if (email) Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; });
@@ -101,16 +214,52 @@ function formatResponse(text, format) {
   return text;
 }
 
-const channelNotes = {
+const CHANNEL_FORMAT_NOTES = {
   slack: `\n\n## OUTPUT FORMAT: SLACK\n- Use *bold* for product names and totals\n- Use line breaks between sections\n- No HTML tags\n- Keep responses concise\n- For payment links use: <url|Complete your payment here>\n- NEVER mention AddToCart or cart operations`,
   voiceflow: `\n\n## OUTPUT FORMAT: VOICEFLOW\n- Use <b>bold</b> for emphasis\n- Use <br> for line breaks`,
+  webchat: `\n\n## OUTPUT FORMAT: WEBCHAT\n- Use <b>bold</b> for emphasis, <br> for line breaks`,
   plain: `\n\n## OUTPUT FORMAT: PLAIN TEXT\n- No formatting whatsoever`
 };
 
+function scrubDisabledOffers(text, format) {
+  if (!text) return text;
+  const caps = getCapabilities(format);
+  if (caps.can_place_order && caps.can_generate_proposal) return text;
+
+  const disabledPhrases = [];
+  if (!caps.can_place_order) disabledPhrases.push('place (the |an |your )?order', 'checkout', 'complete (your |)purchase');
+  if (!caps.can_generate_proposal) disabledPhrases.push('generate (a |the |)(pdf )?proposal', '(pdf |)proposal');
+  if (disabledPhrases.length === 0) return text;
+
+  const combined = disabledPhrases.join('|');
+  // Remove any "...would you like to ... <disabled action> ...?" clause, up to the next sentence boundary or newline
+  const ctaRegex = new RegExp('would you like to[^.!?\\n]*(' + combined + ')[^.!?\\n]*[.!?]?', 'gi');
+  let cleaned = text.replace(ctaRegex, '');
+  // Also catch shorter standalone offers not phrased as "would you like to..." (e.g. "Shall I place the order?")
+  const shortRegex = new RegExp('[^.!?\\n]*\\b(' + combined + ')\\b[^.!?\\n]*\\?', 'gi');
+  cleaned = cleaned.replace(shortRegex, '');
+  // Collapse resulting blank lines/spaces from removed clauses
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n').replace(/[ \t]{2,}/g, ' ').trim();
+  return cleaned;
+}
+
+function getChannelNote(format) {
+  const base = CHANNEL_FORMAT_NOTES[format] || CHANNEL_FORMAT_NOTES.plain;
+  const caps = getCapabilities(format);
+  let restrictions = '';
+  if (!caps.can_place_order) {
+    restrictions += '\n- Do NOT offer to place the order, finalize checkout, or mention completing a purchase as a next step on this channel — these actions are not available here. If the customer explicitly asks to place an order anyway, let them know checkout isn\'t available on this channel and suggest completing it through the Bevvi app or website instead.';
+  }
+  if (!caps.can_generate_proposal) {
+    restrictions += '\n- Do NOT offer to generate a PDF proposal as a next step on this channel — this action is not available here. If the customer explicitly asks for one anyway, let them know that isn\'t available on this channel and suggest contacting bevvi-support@getbevvi.com for a formal proposal.';
+  }
+  return base + (restrictions ? '\n\n## CHANNEL RESTRICTIONS' + restrictions : '');
+}
+
 // ── Rachel chat wrapper ────────────────────────────────────────────────────
-async function callRachel({ sessionKey, message, context, format, gbrainContext, addressRule, email }) {
+async function callRachel({ sessionKey, message, context, format, gbrainContext, addressRule, email, onProposalGenerated, alreadyConfirmed }) {
   const messages = sessions[sessionKey] || [];
-  const channelNote = channelNotes[format] || channelNotes.plain;
+  const channelNote = getChannelNote(format);
   const result = await rachelChat({
     messages: [...messages, { role: 'user', content: message }],
     context,
@@ -118,6 +267,9 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
     gbrain_context: gbrainContext || '',
     address_rule: addressRule + channelNote,
     channel_format: format,
+    onProposalGenerated: onProposalGenerated || null,
+    customerMessage: message,
+    alreadyConfirmed: alreadyConfirmed || false,
     onPackageBuilt: (em, lineItems, fmt) => {
       const state = getState(sessionKey);
       const key = makeCacheKey(em || email, state.zip, state.lastFingerprint);
@@ -125,11 +277,16 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       state.lastLineItems = lineItems;
       saveFlowState();
       console.log('[package] L1 cached:', key);
-      try { saveBasket(em || email, lineItems, '', fmt || format).catch(() => {}); } catch(e) {}
+      const caps = getCapabilities(fmt || format);
+      if (caps.can_add_to_cart) {
+        try { saveBasket(em || email, lineItems, '', fmt || format).catch(() => {}); } catch(e) {}
+      } else {
+        console.log('[package] cart persistence skipped (can_add_to_cart disabled for channel):', fmt || format);
+      }
     }
   });
   sessions[sessionKey] = result.messages;
-  return formatResponse(result.response, format);
+  return scrubDisabledOffers(formatResponse(result.response, format), format);
 }
 
 // ── POST /chat ─────────────────────────────────────────────────────────────
@@ -200,11 +357,21 @@ app.post('/chat', async (req, res) => {
 
       let greet = "Hi! I\'m Rachel, your personal beverage specialist. I can help you find the perfect wines, spirits, and beers for any occasion.\n\n";
 
-      if (s.ageVerified) {
-        s.addrConfirmed = !!s.address; // auto-confirm if address exists
+      const capsGreet = getCapabilities(format);
+      if (s.ageVerified || !capsGreet.requires_age_verification) {
         s.zip = s.zip || '';
+        if (s.address && capsGreet.mention_saved_address) {
+          // Don't auto-confirm — let the existing 'addr' state ask to confirm,
+          // check store coverage, and replay the customer's first real request.
+          s.addrConfirmed = false;
+        } else {
+          s.addrConfirmed = !!s.address;
+        }
         s.step = s.address ? 'ready' : 'addr_new';
-        greet += '\u2713 Age verified.\n\nHow can I help you today?';
+        if (s.ageVerified && capsGreet.requires_age_verification) {
+          greet += '\u2713 Age verified.\n\n';
+        }
+        greet += 'How can I help you today?';
       } else {
         s.step = 'age';
         greet += 'Before we get started — are you 21 or older?';
@@ -227,7 +394,10 @@ app.post('/chat', async (req, res) => {
 
     // ── STATE: age ─────────────────────────────────────────────────────────
     if (state.step === 'age') {
-      if (state.ageVerified) {
+      const capsAge = getCapabilities(format);
+      if (!capsAge.requires_age_verification) {
+        state.step = state.address ? 'ready' : 'addr_new';
+      } else if (state.ageVerified) {
         state.step = state.address ? 'ready' : 'addr_new';
       } else if (yesWords.some(w => msgLower.includes(w))) {
         state.ageVerified = true;
@@ -252,7 +422,13 @@ app.post('/chat', async (req, res) => {
     if (state.step === 'addr_new') {
       const zipMatch = message.match(/\b(\d{5})\b/);
       if (zipMatch) {
-        state.zip = zipMatch[1];
+        const candidateZip = zipMatch[1];
+        const coverage = await checkStoreCoverage(candidateZip);
+        if (coverage && coverage.store_count === 0) {
+          const noStoreMsg = `Sorry, it looks like we don't currently have a store serving the ${candidateZip} zip code, so I'm unable to fulfill orders there yet. I'd recommend reaching out to our support team at bevvi-support@getbevvi.com — they can look into delivery options for your area. Would you like to try a different delivery address?`;
+          return res.json({ text: noStoreMsg, response: noStoreMsg });
+        }
+        state.zip = candidateZip;
         state.address = message;
         state.addrConfirmed = true;
         state.step = 'ready';
@@ -272,6 +448,13 @@ app.post('/chat', async (req, res) => {
     // ── STATE: addr (has saved address, needs confirmation) ────────────────
     if (state.step === 'addr') {
       if (yesWords.some(w => msgLower.includes(w))) {
+        const coverage = await checkStoreCoverage(state.zip);
+        if (coverage && coverage.store_count === 0) {
+          state.step = 'addr_new';
+          state.pendingIntent = null;
+          const noStoreMsg = `Sorry, it looks like we don't currently have a store serving the ${state.zip} zip code on file. Could you provide a different delivery address? Or reach out to bevvi-support@getbevvi.com for help.`;
+          return res.json({ text: noStoreMsg, response: noStoreMsg });
+        }
         state.addrConfirmed = true;
         state.step = 'ready';
         // Replay pending intent if any
@@ -284,20 +467,107 @@ app.post('/chat', async (req, res) => {
           const gbrainContext = email ? await getCustomerContext('', '', context?.client_id || 'airculinaire', email).catch(() => '') : '';
           context.saved_zip = state.zip;
           const addrRule = `\n\n## DELIVERY\nZip: ${state.zip}. Address: ${state.address}. Use this zip for ALL ShoppingAgent calls. Never ask about address or age.`;
-          const reply = await callRachel({ sessionKey, message: pending, context, format, gbrainContext, addressRule: addrRule, email });
+          let reply = await callRachel({ sessionKey, message: pending, context, format, gbrainContext, addressRule: addrRule, email });
+          // Apply the same CTA logic as the main flow, since this replay path bypasses it otherwise
+          const replayHasProposal = reply.toLowerCase().includes('your proposal') || reply.includes('proposals/bevvi-proposal') || reply.includes('download proposal');
+          const replayIsEventPackage = reply.includes('Product total') || reply.includes('Estimated grand total') || reply.includes('grand total');
+          const replayIsSingleProduct = !replayIsEventPackage && reply.includes('$') && (reply.match(/\d+ML/i) !== null || reply.match(/\d+L\b/) !== null) && reply.split('$').length <= 3;
+          const replayHasCTA = reply.includes('place the order') || reply.includes('PDF proposal') || reply.includes('make any changes');
+          if (replayIsEventPackage || replayIsSingleProduct) state.packageShown = true;
+          if (replayHasProposal) { state.packageShown = false; state.mixerAsked = false; state.mixerAnswered = false; }
+          const replayHasMixerQuestion = reply.toLowerCase().includes('add mixers') || reply.toLowerCase().includes('mixers, water, soda');
+          if (replayHasMixerQuestion) state.mixerAsked = true;
+          if (!replayHasCTA && !replayHasProposal && !replayHasMixerQuestion && (state.packageShown || replayIsEventPackage || reply.includes('$'))) {
+            if (replayIsEventPackage && !state.mixerAsked) {
+              reply += '\n\nWould you also like to add mixers, water, soda, ice, or cups?';
+              state.mixerAsked = true;
+            } else if (!replayIsEventPackage || state.mixerAnswered || state.mixerAsked) {
+              const replayCaps = getCapabilities(format);
+              const replayCtaActions = [];
+              if (replayCaps.can_place_order) replayCtaActions.push(format === 'slack' ? '*place the order*' : 'place the order');
+              if (replayCaps.can_generate_proposal) replayCtaActions.push(format === 'slack' ? '*generate a PDF proposal*' : 'generate a PDF proposal');
+              if (replayCtaActions.length > 0) {
+                reply += '\n\nWould you like to ' + replayCtaActions.join(' or ') + ', or make any changes?';
+              } else {
+                reply += '\n\nWould you like to make any changes, or is there anything else I can help with?';
+              }
+            }
+          }
+          saveFlowState();
           const prefix = `Got it! Delivering to ${state.address}.\n\n`;
           return res.json({ text: prefix + reply, response: prefix + reply });
         }
         const ok = `Got it! Delivering to ${state.address}. How can I help you today?`;
         return res.json({ text: ok, response: ok });
-      } else if (noWords.some(w => msgLower === w)) {
+      } else if (noWords.some(w => msgLower === w || msgLower.startsWith(w + ' '))) {
         state.step = 'addr_new';
-        state.pendingIntent = null;
+        // Keep pendingIntent as-is so the original request can still be replayed once a new address is confirmed
         const ask = 'No problem! What is your delivery address? (Include street, city, state, and zip)';
         return res.json({ text: ask, response: ask });
+      } else if (/\b\d{5}\b/.test(message)) {
+        // Customer provided a brand-new address directly (with or without "no" framing) — treat it as a new address instead of re-asking
+        const zipMatch = message.match(/\b(\d{5})\b/);
+        const candidateZip = zipMatch[1];
+        const coverage = await checkStoreCoverage(candidateZip);
+        if (coverage && coverage.store_count === 0) {
+          const noStoreMsg = `Sorry, it looks like we don't currently have a store serving the ${candidateZip} zip code, so I'm unable to fulfill orders there yet. I'd recommend reaching out to our support team at bevvi-support@getbevvi.com. Would you like to try a different delivery address?`;
+          return res.json({ text: noStoreMsg, response: noStoreMsg });
+        }
+        state.zip = candidateZip;
+        state.address = message;
+        state.addrConfirmed = true;
+        state.step = 'ready';
+        if (email) {
+          try {
+            const d2c = await getD2CSession(email) || {};
+            await saveD2CSession(email, Object.assign({}, d2c, { delivery_address: message, delivery_zip: state.zip }));
+          } catch(e) {}
+        }
+        if (state.pendingIntent) {
+          const pending = state.pendingIntent;
+          state.pendingIntent = null;
+          const fp = fingerprint(pending);
+          state.lastFingerprint = fp;
+          state.lastZip = state.zip;
+          const gbrainContext = email ? await getCustomerContext('', '', context?.client_id || 'airculinaire', email).catch(() => '') : '';
+          context.saved_zip = state.zip;
+          const addrRule = `\n\n## DELIVERY\nZip: ${state.zip}. Address: ${state.address}. Use this zip for ALL ShoppingAgent calls. Never ask about address or age.`;
+          let reply = await callRachel({ sessionKey, message: pending, context, format, gbrainContext, addressRule: addrRule, email });
+          const replayHasProposal = reply.toLowerCase().includes('your proposal') || reply.includes('proposals/bevvi-proposal') || reply.includes('download proposal');
+          const replayIsEventPackage = reply.includes('Product total') || reply.includes('Estimated grand total') || reply.includes('grand total');
+          const replayIsSingleProduct = !replayIsEventPackage && reply.includes('$') && (reply.match(/\d+ML/i) !== null || reply.match(/\d+L\b/) !== null) && reply.split('$').length <= 3;
+          const replayHasCTA = reply.includes('place the order') || reply.includes('PDF proposal') || reply.includes('make any changes');
+          if (replayIsEventPackage || replayIsSingleProduct) state.packageShown = true;
+          if (replayHasProposal) { state.packageShown = false; state.mixerAsked = false; state.mixerAnswered = false; }
+          const replayHasMixerQuestion = reply.toLowerCase().includes('add mixers') || reply.toLowerCase().includes('mixers, water, soda');
+          if (replayHasMixerQuestion) state.mixerAsked = true;
+          if (!replayHasCTA && !replayHasProposal && !replayHasMixerQuestion && (state.packageShown || replayIsEventPackage || reply.includes('$'))) {
+            if (replayIsEventPackage && !state.mixerAsked) {
+              reply += '\n\nWould you also like to add mixers, water, soda, ice, or cups?';
+              state.mixerAsked = true;
+            } else if (!replayIsEventPackage || state.mixerAnswered || state.mixerAsked) {
+              const replayCaps = getCapabilities(format);
+              const replayCtaActions = [];
+              if (replayCaps.can_place_order) replayCtaActions.push(format === 'slack' ? '*place the order*' : 'place the order');
+              if (replayCaps.can_generate_proposal) replayCtaActions.push(format === 'slack' ? '*generate a PDF proposal*' : 'generate a PDF proposal');
+              if (replayCtaActions.length > 0) {
+                reply += '\n\nWould you like to ' + replayCtaActions.join(' or ') + ', or make any changes?';
+              } else {
+                reply += '\n\nWould you like to make any changes, or is there anything else I can help with?';
+              }
+            }
+          }
+          saveFlowState();
+          const prefix = `Got it! Delivering to ${state.address}.\n\n`;
+          return res.json({ text: prefix + reply, response: prefix + reply });
+        }
+        const ok = `Got it! Delivering to ${state.address}. How can I help you today?`;
+        return res.json({ text: ok, response: ok });
       } else {
-        // Store intent and ask for address confirmation
-        state.pendingIntent = message;
+        // Store intent and ask for address confirmation (only if not already set, so we don't lose the original request)
+        if (!state.pendingIntent) {
+          state.pendingIntent = message;
+        }
         const addrQ = `I have your delivery address on file as ${state.address} — shall I use this for your order?`;
         return res.json({ text: addrQ, response: addrQ });
       }
@@ -319,11 +589,71 @@ app.post('/chat', async (req, res) => {
       return res.json({ text: ask, response: ask });
     }
 
+    // ── Email support request ───────────────────────────────────────────────
+    const emailSupportTriggers = ['email support', 'contact support', 'notify the team', 'notify support', 'request this product', 'can you email support', 'reach out to support', 'request that we carry'];
+    if (emailSupportTriggers.some(t => msgLower.includes(t)) && !state.orderStep && !state.proposalStep) {
+      const caps = getCapabilities(format);
+      if (!caps.can_email_support) {
+        const noEmail = 'I\'m not able to send a request to our support team from this channel right now — you can reach them directly at bevvi-support@getbevvi.com. Anything else I can help with?';
+        return res.json({ text: noEmail, response: noEmail });
+      }
+      try {
+        const subject = 'Customer request via Rachel (' + format + ')';
+        const body = 'Channel: ' + format + '\n' +
+          'Customer email: ' + (email || 'unknown') + '\n' +
+          'Location: ' + (context?.kitchen_location || 'unknown') + '\n' +
+          'Delivery zip: ' + (state.zip || 'unknown') + '\n' +
+          'Delivery address: ' + (state.address || 'unknown') + '\n' +
+          'Timestamp: ' + new Date().toISOString() + '\n\n' +
+          'Customer message:\n' + message;
+        await sendSupportEmail(subject, body);
+        const confirmMsg = 'Done — I\'ve sent your request to our support team at bevvi-support@getbevvi.com. They\'ll follow up with you directly. Anything else I can help with?';
+        return res.json({ text: confirmMsg, response: confirmMsg });
+      } catch (e) {
+        console.error('[email-support] send failed:', e.message);
+        const errMsg = 'Sorry, I ran into an issue sending that to our support team — you can reach them directly at bevvi-support@getbevvi.com. Anything else I can help with?';
+        return res.json({ text: errMsg, response: errMsg });
+      }
+    }
+
     // ── Order state machine ────────────────────────────────────────────────────
-    const orderTriggers = ['place the order', 'place order', 'place an order', 'order it', 'buy it', 'purchase', 'order this', 'checkout', 'i want to order', 'want to place'];
+    const orderTriggers = ['place the order', 'place order', 'place an order', 'order it', 'buy it', 'purchase', 'order this', 'checkout', 'i want to order', 'want to place', 'create the order', 'create order', 'create an order', 'want to create the order', 'submit the order', 'go ahead with the order', 'proceed with the order'];
     if (orderTriggers.some(t => msgLower.includes(t)) && !state.orderStep && !state.proposalStep) {
-      state.orderStep = 'qty';
+      const caps = getCapabilities(format);
+      if (!caps.can_place_order) {
+        // Capability disabled — never start the real order state machine. Let Rachel
+        // respond naturally instead of a canned message (channel restriction is in her prompt).
+        let gbrainContextOB = '';
+        if (email && !skip_gbrain) {
+          gbrainContextOB = await getCustomerContext('', '', context?.client_id || 'airculinaire', email).catch(() => '');
+        }
+        const addressRuleOB = `\n\n## DELIVERY ADDRESS\nZip: ${state.zip}. Address: ${state.address}. Use this zip for ALL ShoppingAgent calls. NEVER ask about address or age — both are already confirmed.\n\n## AGE\nCustomer is verified 21+. Never ask for age.`;
+        const outputOB = await callRachel({ sessionKey, message, context, format, gbrainContext: gbrainContextOB, addressRule: addressRuleOB, email });
+        return res.json({ text: outputOB, response: outputOB });
+      }
       state.orderData = {};
+      // Hydrate basket up front so we know if this is a multi-item package order
+      if (email && !state.lastLineItems) {
+        try {
+          const { getPackage } = require('./gbrain.js');
+          const basket = await getPackage(email, format || 'slack');
+          if (basket) { state.lastLineItems = typeof basket === 'string' ? basket : JSON.stringify(basket); }
+        } catch(e) {}
+      }
+      let basketItemCount = 0;
+      try {
+        const bi = typeof state.lastLineItems === 'string' ? JSON.parse(state.lastLineItems) : state.lastLineItems;
+        basketItemCount = (bi && bi.length) || 0;
+      } catch(e) {}
+      if (basketItemCount > 1) {
+        // Multi-item package: quantities are already per-line in the basket. Skip qty.
+        state.orderData.qty = null;
+        state.orderStep = 'name';
+        saveFlowState();
+        const ask = 'What is your full name? (first and last)';
+        return res.json({ text: ask, response: ask });
+      }
+      state.orderStep = 'qty';
       saveFlowState();
       const ask = 'How many bottles would you like to order?';
       return res.json({ text: ask, response: ask });
@@ -379,7 +709,47 @@ app.post('/chat', async (req, res) => {
     }
 
     if (state.orderStep === 'details') {
-      state.orderData.delivery_datetime = message.trim();
+      const parsedResults = chrono.parse(message, new Date(), { forwardDate: true });
+      if (!parsedResults.length || !parsedResults[0].start.isCertain('hour')) {
+        const ask = 'Could you give me a specific delivery date and time? (e.g. \"tomorrow at 5pm\" or \"August 5th at 2pm\")';
+        return res.json({ text: ask, response: ask });
+      }
+      const parsedDate = parsedResults[0].start.date();
+      const requestedHour = parsedDate.getHours() + parsedDate.getMinutes() / 60;
+      const dateStr = parsedDate.toISOString().slice(0, 10);
+
+      let establishmentId = '';
+      try {
+        const items = typeof state.lastLineItems === 'string' ? JSON.parse(state.lastLineItems) : state.lastLineItems;
+        if (items && items.length > 0) establishmentId = items[0].establishmentId || '';
+      } catch(e) {}
+
+      let finalDeliveryText = message.trim();
+      if (establishmentId) {
+        const avail = await checkDeliveryAvailability(establishmentId, dateStr);
+        if (avail && Array.isArray(avail.deliveryTimes)) {
+          if (avail.deliveryTimes.length === 0) {
+            const ask = 'Looks like there\'s no delivery availability on ' + dateStr + ' for this store. Could you try a different date?';
+            return res.json({ text: ask, response: ask });
+          }
+          let matchedWindow = null;
+          for (const w of avail.deliveryTimes) {
+            const win = parseTimeWindow(w.deliveryTime);
+            if (win && requestedHour >= win.start && requestedHour < win.end) {
+              matchedWindow = w;
+              break;
+            }
+          }
+          if (!matchedWindow) {
+            const optionsText = avail.deliveryTimes.map(w => w.displayTime).join(', ');
+            const ask = 'That time isn\'t available on ' + dateStr + '. Here are the available delivery windows: ' + optionsText + '. Which one works for you?';
+            return res.json({ text: ask, response: ask });
+          }
+          finalDeliveryText = matchedWindow.deliveryTime;
+        }
+      }
+
+      state.orderData.delivery_datetime = finalDeliveryText;
       state.orderStep = 'confirm';
       saveFlowState();
       // Build order summary
@@ -395,7 +765,23 @@ app.post('/chat', async (req, res) => {
         } catch(e) {}
       }
       const qty = state.orderData.qty;
-      const productTotal = Math.round(unitPrice * qty * 100) / 100;
+      // Multi-item basket: sum all lines and build an itemized summary
+      let multiLines = null;
+      let multiTotal = 0;
+      try {
+        const allItems = typeof state.lastLineItems === 'string' ? JSON.parse(state.lastLineItems) : state.lastLineItems;
+        if (allItems && allItems.length > 1) {
+          multiLines = allItems.map(it => {
+            const q = it.qty || it.quantity || 1;
+            const p = parseFloat(it.price || it.unit_price || 0);
+            const lt = Math.round(q * p * 100) / 100;
+            multiTotal += lt;
+            return q + 'x ' + (it.name || it.label) + ' — $' + p.toFixed(2) + ' ea = $' + lt.toFixed(2);
+          });
+          multiTotal = Math.round(multiTotal * 100) / 100;
+        }
+      } catch(e) {}
+      const productTotal = multiLines ? multiTotal : Math.round(unitPrice * qty * 100) / 100;
       const tax = Math.round(productTotal * 0.10 * 100) / 100;
       const service = Math.round(productTotal * 0.10 * 100) / 100;
       const tip = Math.round(productTotal * 0.05 * 100) / 100;
@@ -411,7 +797,7 @@ app.post('/chat', async (req, res) => {
       saveFlowState();
       const summary = format === 'slack'
         ? '*Order Summary*\n\n' +
-          productName + ' x' + qty + ' — $' + unitPrice.toFixed(2) + ' ea = $' + productTotal.toFixed(2) + '\n' +
+          (multiLines ? multiLines.join('\n') : productName + ' x' + qty + ' — $' + unitPrice.toFixed(2) + ' ea = $' + productTotal.toFixed(2)) + '\n' +
           'Delivery to: ' + state.address + '\n' +
           'Delivery: ' + state.orderData.delivery_datetime + '\n\n' +
           'Product total: $' + productTotal.toFixed(2) + '\n' +
@@ -439,7 +825,13 @@ app.post('/chat', async (req, res) => {
         if (updatedLineItems) {
           try {
             const items = typeof updatedLineItems === 'string' ? JSON.parse(updatedLineItems) : updatedLineItems;
-            items.forEach(item => { item.qty = od.qty; item.quantity = od.qty; });
+            // Only overwrite qty for single-item orders where the customer was asked "how many".
+            // Multi-item packages already carry per-line quantities — leave them untouched.
+            if (od.qty && items.length === 1) {
+              items.forEach(item => { item.qty = od.qty; item.quantity = od.qty; });
+            } else {
+              items.forEach(item => { item.qty = item.qty || item.quantity || 1; item.quantity = item.quantity || item.qty || 1; });
+            }
             updatedLineItems = JSON.stringify(items);
           } catch(e) {}
         }
@@ -465,7 +857,7 @@ app.post('/chat', async (req, res) => {
         const gbrainCtx = email ? await getCustomerContext('', '', context?.client_id || 'airculinaire', email).catch(() => '') : '';
         context.saved_zip = state.zip;
         const addrRule2 = '\n\n## DELIVERY\nZip: ' + state.zip + '. Address: ' + state.address + '. Age and address verified.\n\n## ORDER INSTRUCTION\nThe user message contains a JSON system instruction. Parse it and immediately call ShoppingAgent with intent=place_order using the line_items, customer, delivery_datetime and zip from the JSON. Do not ask for any more information.';
-        const orderOutput = await callRachel({ sessionKey, message: placeMsg, context, format, gbrainContext: gbrainCtx, addressRule: addrRule2, email });
+        const orderOutput = await callRachel({ sessionKey, message: placeMsg, context, format, gbrainContext: gbrainCtx, addressRule: addrRule2, email, alreadyConfirmed: true });
         state.orderStep = null;
         state.orderData = null;
         saveFlowState();
@@ -488,6 +880,46 @@ app.post('/chat', async (req, res) => {
     // ── Proposal state machine ──────────────────────────────────────────────
     const proposalTriggers = ['generate a pdf', 'generate proposal', 'pdf proposal', 'create a proposal', 'make a proposal', 'send a proposal'];
     if (proposalTriggers.some(t => msgLower.includes(t)) && !state.proposalStep) {
+      const caps = getCapabilities(format);
+      if (!caps.can_generate_proposal) {
+        // Capability disabled — never start the real proposal state machine. Let Rachel
+        // respond naturally instead of a canned message (channel restriction is in her prompt).
+        let gbrainContextPB = '';
+        if (email && !skip_gbrain) {
+          gbrainContextPB = await getCustomerContext('', '', context?.client_id || 'airculinaire', email).catch(() => '');
+        }
+        const addressRulePB = `\n\n## DELIVERY ADDRESS\nZip: ${state.zip}. Address: ${state.address}. Use this zip for ALL ShoppingAgent calls. NEVER ask about address or age — both are already confirmed.\n\n## AGE\nCustomer is verified 21+. Never ask for age.`;
+        const outputPB = await callRachel({ sessionKey, message, context, format, gbrainContext: gbrainContextPB, addressRule: addressRulePB, email });
+        return res.json({ text: outputPB, response: outputPB });
+      }
+      // Skip the quantity question when a real basket already exists — each item already
+      // has its own specified quantity, so a single "how many bottles" number doesn't apply
+      // and would incorrectly overwrite per-item quantities in a multi-item order.
+      // state.lastLineItems may have been cleared by cache invalidation since it was last set,
+      // so reload it from the persisted GBrain basket first if it's currently empty.
+      if (!state.lastLineItems && email) {
+        try {
+          const { getPackage } = require('./gbrain.js');
+          const reloadedBasket = await getPackage(email, format || 'slack');
+          if (reloadedBasket) {
+            state.lastLineItems = typeof reloadedBasket === 'string' ? reloadedBasket : JSON.stringify(reloadedBasket);
+          }
+        } catch(e) {}
+      }
+      let existingItemCount = 0;
+      if (state.lastLineItems) {
+        try {
+          const existingItems = typeof state.lastLineItems === 'string' ? JSON.parse(state.lastLineItems) : state.lastLineItems;
+          existingItemCount = Array.isArray(existingItems) ? existingItems.length : 0;
+        } catch(e) {}
+      }
+      if (existingItemCount > 1) {
+        state.proposalStep = 'client';
+        state.proposalData = { qty: null };
+        saveFlowState();
+        const ask = 'What is the client or company name?';
+        return res.json({ text: ask, response: ask });
+      }
       state.proposalStep = 'qty';
       state.proposalData = {};
       saveFlowState();
@@ -529,13 +961,24 @@ app.post('/chat', async (req, res) => {
       }
       saveFlowState();
       const pd = state.proposalData;
-      const proposalMsg = `Generate a PDF proposal for client "${pd.client_name}" event date "${pd.event_date}" quantity ${pd.qty} bottles using the last product search results. Pass line_items with qty updated to ${pd.qty}.`;
+      let existingItemsForProposal = [];
+      if (state.lastLineItems) {
+        try {
+          existingItemsForProposal = typeof state.lastLineItems === 'string' ? JSON.parse(state.lastLineItems) : state.lastLineItems;
+          if (!Array.isArray(existingItemsForProposal)) existingItemsForProposal = [];
+        } catch(e) {}
+      }
+      const isMultiItemProposal = existingItemsForProposal.length > 1;
+      const proposalMsg = isMultiItemProposal
+        ? `Generate a PDF proposal for client "${pd.client_name}" event date "${pd.event_date}" using the existing line items from the last product search results exactly as-is — do NOT change any quantities.`
+        : `Generate a PDF proposal for client "${pd.client_name}" event date "${pd.event_date}" quantity ${pd.qty} bottles using the last product search results. Pass line_items with qty updated to ${pd.qty}.`;
       const fp2 = fingerprint(proposalMsg);
       state.lastFingerprint = fp2;
       const gbrainContext2 = email ? await getCustomerContext('', '', context?.client_id || 'airculinaire', email).catch(() => '') : '';
       context.saved_zip = state.zip;
       const addrRule2 = '\n\n## DELIVERY\nZip: ' + state.zip + '. Address: ' + state.address + '. Never ask about address or age.';
-      const proposalOutput = await callRachel({ sessionKey, message: proposalMsg, context, format, gbrainContext: gbrainContext2, addressRule: addrRule2, email });
+      let capturedProposalUrl = '';
+      const proposalOutput = await callRachel({ sessionKey, message: proposalMsg, context, format, gbrainContext: gbrainContext2, addressRule: addrRule2, email, onProposalGenerated: (url) => { capturedProposalUrl = url; } });
       state.proposalStep = null;
       state.proposalData = null;
       state.packageShown = false;
@@ -543,46 +986,53 @@ app.post('/chat', async (req, res) => {
       state.mixerAnswered = false;
       saveFlowState();
 
-      // Extract download URL from Rachel's response
+      // Prefer the URL captured directly from the Shopping Agent's tool result — reliable regardless
+      // of whether the LLM happened to restate it in its own text. Regex extraction is kept only as a fallback.
       const urlMatch = proposalOutput.match(/http[^\s)|>]+\.pdf/) || proposalOutput.match(/<(http[^|>]+\.pdf)/);
-      const downloadUrl = urlMatch ? urlMatch[0] : '';
+      const downloadUrl = capturedProposalUrl || (urlMatch ? urlMatch[0] : '');
 
-      // Build deterministic summary with full fee breakdown
-      console.log('[proposal-debug] lastLineItems:', JSON.stringify(state.lastLineItems || 'null').slice(0,100), 'pd:', JSON.stringify(pd));
-      const qty = pd.qty || 1;
-      let productName = 'Products';
-      let unitPrice = 0;
-      // Use lastLineItems from state if available
-      if (state.lastLineItems) {
-        try {
-          const items = typeof state.lastLineItems === 'string' ? JSON.parse(state.lastLineItems) : state.lastLineItems;
-          if (items && items.length > 0) {
-            productName = items[0].name || items[0].label || 'Products';
-            unitPrice = parseFloat(items[0].price || items[0].unit_price || 0);
-          }
-        } catch(e) {}
+      let summary;
+      if (isMultiItemProposal) {
+        // Multi-item basket — use Rachel's own comprehensive summary (which correctly lists every
+        // item with its real quantity) rather than the single-product template below, which only
+        // ever shows one item. Still guarantee the download link is present either way.
+        summary = (downloadUrl && !proposalOutput.includes(downloadUrl))
+          ? proposalOutput + (format === 'slack' ? '\n\n<' + downloadUrl + '|Download proposal>' : '\n\nDownload proposal: ' + downloadUrl)
+          : proposalOutput;
+      } else {
+        // Build deterministic summary with full fee breakdown
+        console.log('[proposal-debug] lastLineItems:', JSON.stringify(state.lastLineItems || 'null').slice(0,100), 'pd:', JSON.stringify(pd));
+        const qty = pd.qty || 1;
+        let productName = 'Products';
+        let unitPrice = 0;
+        if (existingItemsForProposal.length > 0) {
+          productName = existingItemsForProposal[0].name || existingItemsForProposal[0].label || 'Products';
+          unitPrice = parseFloat(existingItemsForProposal[0].price || existingItemsForProposal[0].unit_price || 0);
+        }
+        const productTotal = Math.round(unitPrice * qty * 100) / 100;
+        const tax = Math.round(productTotal * 0.10 * 100) / 100;
+        const service = Math.round(productTotal * 0.10 * 100) / 100;
+        const tip = Math.round(productTotal * 0.05 * 100) / 100;
+        const delivery = 25.00;
+        const grandTotal = Math.round((productTotal + tax + service + tip + delivery) * 100) / 100;
+
+        summary = format === 'slack'
+          ? 'Your proposal is ready!\n\n' +
+            '*Client:* ' + pd.client_name + '\n' +
+            '*Event Date:* ' + pd.event_date + '\n\n' +
+            productName + ' x' + qty + ' — $' + unitPrice.toFixed(2) + ' ea = $' + productTotal.toFixed(2) + '\n\n' +
+            'Product total: $' + productTotal.toFixed(2) + '\n' +
+            'Estimated tax (10%): $' + tax.toFixed(2) + '\n' +
+            'Service charge (10%): $' + service.toFixed(2) + '\n' +
+            'Tip (5%): $' + tip.toFixed(2) + '\n' +
+            'Delivery: $' + delivery.toFixed(2) + '\n' +
+            '*Estimated grand total: $' + grandTotal.toFixed(2) + '*' +
+            (downloadUrl ? '\n\n<' + downloadUrl + '|Download proposal>' : '') +
+            '\n\nWould you like to *place the order* or make any changes?'
+          : (downloadUrl && !proposalOutput.includes(downloadUrl)
+              ? proposalOutput + '\n\nDownload proposal: ' + downloadUrl
+              : proposalOutput);
       }
-      const productTotal = Math.round(unitPrice * qty * 100) / 100;
-      const tax = Math.round(productTotal * 0.10 * 100) / 100;
-      const service = Math.round(productTotal * 0.10 * 100) / 100;
-      const tip = Math.round(productTotal * 0.05 * 100) / 100;
-      const delivery = 25.00;
-      const grandTotal = Math.round((productTotal + tax + service + tip + delivery) * 100) / 100;
-
-      const summary = format === 'slack'
-        ? 'Your proposal is ready!\n\n' +
-          '*Client:* ' + pd.client_name + '\n' +
-          '*Event Date:* ' + pd.event_date + '\n\n' +
-          productName + ' x' + qty + ' — $' + unitPrice.toFixed(2) + ' ea = $' + productTotal.toFixed(2) + '\n\n' +
-          'Product total: $' + productTotal.toFixed(2) + '\n' +
-          'Estimated tax (10%): $' + tax.toFixed(2) + '\n' +
-          'Service charge (10%): $' + service.toFixed(2) + '\n' +
-          'Tip (5%): $' + tip.toFixed(2) + '\n' +
-          'Delivery: $' + delivery.toFixed(2) + '\n' +
-          '*Estimated grand total: $' + grandTotal.toFixed(2) + '*' +
-          (downloadUrl ? '\n\n<' + downloadUrl + '|Download proposal>' : '') +
-          '\n\nWould you like to *place the order* or make any changes?'
-        : proposalOutput;
 
       return res.json({ text: summary, response: summary });
     }
@@ -665,10 +1115,16 @@ app.post('/chat', async (req, res) => {
         state.mixerAsked = true;
         saveFlowState();
       } else if (!isEventPackage || state.mixerAnswered || state.mixerAsked) {
-        // Single product or mixer already handled — show CTA
-        finalOutput += format === 'slack'
-          ? '\n\nWould you like to *place the order*, *generate a PDF proposal*, or make any changes?'
-          : '\n\nWould you like to place the order, generate a PDF proposal, or make any changes?';
+        // Single product or mixer already handled — show CTA (capability-aware)
+        const ctaCaps = getCapabilities(format);
+        const ctaActions = [];
+        if (ctaCaps.can_place_order) ctaActions.push(format === 'slack' ? '*place the order*' : 'place the order');
+        if (ctaCaps.can_generate_proposal) ctaActions.push(format === 'slack' ? '*generate a PDF proposal*' : 'generate a PDF proposal');
+        if (ctaActions.length > 0) {
+          finalOutput += '\n\nWould you like to ' + ctaActions.join(' or ') + ', or make any changes?';
+        } else {
+          finalOutput += '\n\nWould you like to make any changes, or is there anything else I can help with?';
+        }
       }
     }
 
@@ -699,7 +1155,7 @@ app.post('/chat', async (req, res) => {
     return res.json({ text: finalOutput, response: finalOutput });
 
   } catch(e) {
-    console.error('[rachel] error:', e.message);
+    console.error('[rachel] error:', e.message, '\n', e.stack);
     return res.json({ text: 'Sorry, I hit a snag — try again in a second.', response: 'Sorry, I hit a snag — try again in a second.' });
   }
 });

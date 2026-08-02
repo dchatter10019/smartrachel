@@ -158,7 +158,7 @@ def ask_rachel(user_id: str, text: str, customer_context: str = "", user_email: 
                 "account_id": ""
             }
         }
-        r = httpx.post("http://127.0.0.1:3500/chat", json=payload, timeout=60)
+        r = httpx.post("http://127.0.0.1:3500/chat", json=payload, timeout=180)
         data = r.json()
         reply = data.get("text", "Sorry, I hit a snag — try again in a second.")
         return reply
@@ -253,6 +253,10 @@ def handle(event: dict, say, client):
 def handle_message(event, say, client, ack=None):
     if ack:
         ack()
+    # Ignore Slack system messages (channel joins/leaves, edits, deletions, bot messages, etc.)
+    # These come through as "message" events with a subtype, not real customer messages.
+    if event.get("subtype"):
+        return
     # Fast dedup check BEFORE any async work
     msg_id = event.get("client_msg_id") or event.get("event_ts") or event.get("ts", "")
     text_check = event.get("text", "").strip().lower()

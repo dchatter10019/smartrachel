@@ -211,7 +211,7 @@ async function executeTool(name, input) {
   }
 
   if (name === 'place_order') {
-    const { products, customer, tip_amount, delivery_datetime, delivery_instructions } = input;
+    const { products, customer, tip_amount, delivery_datetime, delivery_instructions, account_email } = input;
     console.log('[place_order] products:', JSON.stringify((products||[]).slice(0,1)));
     try {
       // Parse address string into components if city/state not provided
@@ -246,7 +246,9 @@ async function executeTool(name, input) {
       }
 
       const body = {
-        email: customer.email || '',
+        // account_email = registered corp account (requester). customer.email may be the
+        // delivery recipient's contact and is not guaranteed to be a Bevvi account.
+        email: account_email || customer.email || '',
         products: products.map(p => ({
           productId:       p.product_id || p.productId || '',
           upc:             p.upc || '',
@@ -270,6 +272,7 @@ async function executeTool(name, input) {
         deliveryInstructions: delivery_instructions || ''
       };
 
+      console.log('[place_order] createCorpOrder body:', JSON.stringify(body).slice(0, 1200));
       const res = await fetch('https://api-client.getbevvi.com/api/bevvibot/createCorpOrder', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },

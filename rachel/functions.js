@@ -950,10 +950,11 @@ async function buildPackage(iv) {
       var best=found[0];
       var dpu=catN==="wine"?5:catN==="spirits"?16:(parseInt(np.pack_size)||beerPackSize);
       var perProd=drinksPerCat/byCat[catN].length;
-      var qty=Math.max(1,Math.ceil(perProd/dpu));
+      var hasExplicitQty=np.qty && parseInt(np.qty) > 0;
+      var qty=hasExplicitQty ? parseInt(np.qty) : Math.max(1,Math.ceil(perProd/dpu));
       var n2=Math.max(1,byCat[catN].length);
       var cap2=catN==="wine"?Math.max(1,Math.ceil((guests*hours*0.6)/n2)):catN==="beer"?Math.max(1,Math.ceil((guests*hours*0.5)/n2)):Math.max(1,Math.ceil((guests/10+1)/n2));
-      if(qty>cap2) qty=cap2;
+      if(!hasExplicitQty && qty>cap2) qty=cap2;
       lineItems.push({label:np.name,name:best.name,qty:qty,price:best.price,size:best.sizeStr,url:best.url,product_id:best.product_id,upc:best.upc||"",establishmentId:best.establishmentId||"",category:catN});
     }
     summaryBits.push("CUSTOM | "+guests+" guests | "+hours+"h | "+(isQuoteMode?"QUOTE":"$"+totalBudget));

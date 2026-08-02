@@ -19,12 +19,14 @@ const ZIP_MAP = {
   '07072':'Teterboro - NJ','07073':'Teterboro - NJ','07074':'Teterboro - NJ',
   '10001':'Celonis - NYC','10002':'Celonis - NYC','10003':'Celonis - NYC',
   '10010':'Celonis - NYC','10011':'Celonis - NYC','10016':'Celonis - NYC',
-  '10019':'Celonis - NYC','10022':'Celonis - NYC','10028':'Celonis - NYC'
+  '10019':'Celonis - NYC','10022':'Celonis - NYC','10028':'Celonis - NYC',
+  '01730':'Revere - MA','01731':'Revere - MA','01741':'Revere - MA','01742':'Revere - MA','01760':'Revere - MA','01770':'Revere - MA','01773':'Revere - MA','01776':'Revere - MA','01778':'Revere - MA','01801':'Revere - MA','01803':'Revere - MA','01805':'Revere - MA','01813':'Revere - MA','01815':'Revere - MA','01821':'Revere - MA','01822':'Revere - MA','01825':'Revere - MA','01862':'Revere - MA','01864':'Revere - MA','01865':'Revere - MA','01866':'Revere - MA','01867':'Revere - MA','01876':'Revere - MA','01880':'Revere - MA','01887':'Revere - MA','01888':'Revere - MA','01889':'Revere - MA','01890':'Revere - MA','01901':'Revere - MA','01902':'Revere - MA','01903':'Revere - MA','01904':'Revere - MA','01905':'Revere - MA','01906':'Revere - MA','01907':'Revere - MA','01908':'Revere - MA','01910':'Revere - MA','01915':'Revere - MA','01923':'Revere - MA','01937':'Revere - MA','01940':'Revere - MA','01945':'Revere - MA','01949':'Revere - MA','01960':'Revere - MA','01965':'Revere - MA','01970':'Revere - MA','01982':'Revere - MA','01983':'Revere - MA','01984':'Revere - MA','02018':'Revere - MA','02021':'Revere - MA','02025':'Revere - MA','02026':'Revere - MA','02027':'Revere - MA','02030':'Revere - MA','02032':'Revere - MA','02040':'Revere - MA','02043':'Revere - MA','02044':'Revere - MA','02045':'Revere - MA','02052':'Revere - MA','02055':'Revere - MA','02060':'Revere - MA','02061':'Revere - MA','02062':'Revere - MA','02066':'Revere - MA','02067':'Revere - MA','02072':'Revere - MA','02081':'Revere - MA','02090':'Revere - MA','02108':'Revere - MA','02109':'Revere - MA','02110':'Revere - MA','02111':'Revere - MA','02112':'Revere - MA','02113':'Revere - MA','02114':'Revere - MA','02115':'Revere - MA','02116':'Revere - MA','02117':'Revere - MA','02118':'Revere - MA','02119':'Revere - MA','02120':'Revere - MA','02121':'Revere - MA','02122':'Revere - MA','02123':'Revere - MA','02124':'Revere - MA','02125':'Revere - MA','02126':'Revere - MA','02127':'Revere - MA','02128':'Revere - MA','02129':'Revere - MA','02130':'Revere - MA','02131':'Revere - MA','02132':'Revere - MA','02133':'Revere - MA','02134':'Revere - MA','02135':'Revere - MA','02136':'Revere - MA','02137':'Revere - MA','02138':'Revere - MA','02139':'Revere - MA','02140':'Revere - MA','02141':'Revere - MA','02142':'Revere - MA','02143':'Revere - MA','02144':'Revere - MA','02145':'Revere - MA','02148':'Revere - MA','02149':'Revere - MA','02150':'Revere - MA','02151':'Revere - MA','02152':'Revere - MA','02153':'Revere - MA','02155':'Revere - MA','02156':'Revere - MA','02163':'Revere - MA','02169':'Revere - MA','02170':'Revere - MA','02171':'Revere - MA','02176':'Revere - MA','02180':'Revere - MA','02184':'Revere - MA','02185':'Revere - MA','02186':'Revere - MA','02187':'Revere - MA','02188':'Revere - MA','02189':'Revere - MA','02190':'Revere - MA','02191':'Revere - MA','02196':'Revere - MA','02199':'Revere - MA','02201':'Revere - MA','02203':'Revere - MA','02204':'Revere - MA','02205':'Revere - MA','02206':'Revere - MA','02210':'Revere - MA','02211':'Revere - MA','02212':'Revere - MA','02215':'Revere - MA','02217':'Revere - MA','02222':'Revere - MA','02238':'Revere - MA','02241':'Revere - MA','02266':'Revere - MA','02269':'Revere - MA','02283':'Revere - MA','02284':'Revere - MA','02293':'Revere - MA','02297':'Revere - MA','02298':'Revere - MA','02302':'Revere - MA','02303':'Revere - MA','02304':'Revere - MA','02305':'Revere - MA','02322':'Revere - MA','02339':'Revere - MA','02343':'Revere - MA','02351':'Revere - MA','02368':'Revere - MA','02370':'Revere - MA','02420':'Revere - MA','02421':'Revere - MA','02445':'Revere - MA','02446':'Revere - MA','02447':'Revere - MA','02451':'Revere - MA','02452':'Revere - MA','02453':'Revere - MA','02454':'Revere - MA','02455':'Revere - MA','02457':'Revere - MA','02458':'Revere - MA','02459':'Revere - MA','02460':'Revere - MA','02461':'Revere - MA','02462':'Revere - MA','02464':'Revere - MA','02465':'Revere - MA','02466':'Revere - MA','02467':'Revere - MA','02468':'Revere - MA','02471':'Revere - MA','02472':'Revere - MA','02474':'Revere - MA','02475':'Revere - MA','02476':'Revere - MA','02477':'Revere - MA','02478':'Revere - MA','02479':'Revere - MA','02481':'Revere - MA','02482':'Revere - MA','02492':'Revere - MA','02493':'Revere - MA','02494':'Revere - MA','02495':'Revere - MA'
 };
 
 const CLIENT_MAP = {
   'Teterboro - NJ': 'airculinaire',
-  'Celonis - NYC': 'fooda'
+  'Celonis - NYC': 'fooda',
+  'Revere - MA': 'airculinaire'
 };
 
 function resolveLocation(zip) {
@@ -38,7 +40,8 @@ const STORE_DISPLAY_MAP = {
   'Teterboro - NJ': 'New Jersey',
   'San Diego - CA': 'San Diego',
   'Dallas - TX': 'Dallas',
-  'Chicago - IL': 'Chicago'
+  'Chicago - IL': 'Chicago',
+  'Revere - MA': 'Boston'
 };
 
 function friendlyStore(kitchen) {
@@ -292,14 +295,29 @@ async function executeTool(name, input) {
       const filtered = sorted.slice(0, q.limit || 3).map(formatProduct);
       results.push({ query: q.name, found: filtered.length > 0, products: filtered });
     }
-    // Save first product as basket for proposal/order reuse
+    // Save first product as basket for proposal/order reuse — but ONLY if there isn't
+    // already a multi-item basket in progress, since overwriting a real multi-item order
+    // with a single search result (e.g. a routine follow-up availability check) would
+    // silently destroy the rest of the customer's order.
     if (results.length > 0 && results[0].products && results[0].products.length > 0 && input.email) {
       try {
-        const { saveBasket } = require('/home/ubuntu/rachel/gbrain.js');
-        const firstProduct = results[0].products[0];
-        const basketItem = [{ name: firstProduct.name, price: firstProduct.price || firstProduct.salePrice || 0, qty: 1, size: firstProduct.size || '', category: firstProduct.category || 'wine', url: firstProduct.url || '', product_id: firstProduct.product_id || '', upc: firstProduct.upc || '', establishmentId: firstProduct.establishmentId || '' }];
-        await saveBasket(input.email, JSON.stringify(basketItem), '', input.channel || 'slack');
-        console.log('[shopping-agent] product saved to basket for:', input.email);
+        const { saveBasket, getPackage } = require('/home/ubuntu/rachel/gbrain.js');
+        let existingCount = 0;
+        try {
+          const existing = await getPackage(input.email, input.channel || 'slack');
+          if (existing) {
+            const existingItems = typeof existing === 'string' ? JSON.parse(existing) : existing;
+            existingCount = Array.isArray(existingItems) ? existingItems.length : 0;
+          }
+        } catch(e) {}
+        if (existingCount > 1) {
+          console.log('[shopping-agent] skipped basket overwrite — existing multi-item basket (' + existingCount + ' items) preserved for:', input.email);
+        } else {
+          const firstProduct = results[0].products[0];
+          const basketItem = [{ name: firstProduct.name, price: firstProduct.price || firstProduct.salePrice || 0, qty: 1, size: firstProduct.size || '', category: firstProduct.category || 'wine', url: firstProduct.url || '', product_id: firstProduct.product_id || '', upc: firstProduct.upc || '', establishmentId: firstProduct.establishmentId || '' }];
+          await saveBasket(input.email, JSON.stringify(basketItem), '', input.channel || 'slack');
+          console.log('[shopping-agent] product saved to basket for:', input.email);
+        }
       } catch(e) { console.error('[shopping-agent] basket save error:', e.message); }
     }
     return { success: true, results: results, kitchen: loc.kitchen, client: loc.client, store: friendlyStore(loc.kitchen), buyer_tier: scoreBuyer(profile).tier };
@@ -633,7 +651,9 @@ async function executeTool(name, input) {
       client_name: input.client_name,
       event_date: input.event_date || '',
       line_items: lineItems,
-      notes: input.notes || ''
+      notes: input.notes || '',
+      tax_exempt: input.tax_exempt || false,
+      tax_rate: typeof input.tax_rate === 'number' ? input.tax_rate : undefined
     }, outputPath);
     return {
       success: true,
@@ -680,6 +700,7 @@ async function executeTool(name, input) {
                 return winner.bid_items.filter(function(i){ return i.available; }).map(function(i){ return { name: i.matched || i.name, upc: i.upc, qty: i.quantity, product_id: i.product_id || '', establishmentId: i.establishmentId || '' }; });
               })(),
               customer: { firstName: c.firstName||c.first_name||'', lastName: c.lastName||c.last_name||'', email: c.email||'', address: c.address||'', city: c.city||'', state: c.state||'', zipcode: c.zipcode||zip||'', phone: c.phone||c.phoneNumber||'' },
+              account_email: input.email || '',
               tip_amount: input.tip_amount || 0,
               delivery_datetime: input.delivery_datetime || '',
               delivery_instructions: input.delivery_instructions || ''

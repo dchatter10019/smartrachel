@@ -32,13 +32,14 @@ function groupByCategory(lineItems) {
 }
 
 function generateHTML(proposal) {
-  const { client_name, event_date, line_items, notes } = proposal;
+  const { client_name, event_date, line_items, notes, tax_exempt, tax_rate } = proposal;
   const items = typeof line_items === 'string' ? JSON.parse(line_items) : line_items;
   const groups = groupByCategory(items);
   
   items.forEach(p => { p.qty = p.qty || p.quantity || 1; p.price = parseFloat(p.price) || 0; });
   const productTotal = items.reduce((sum, p) => sum + (p.qty * p.price), 0);
-  const tax = Math.round(productTotal * 0.10 * 100) / 100;
+  const effectiveTaxRate = tax_exempt ? 0 : (typeof tax_rate === 'number' ? tax_rate : 0.10);
+  const tax = Math.round(productTotal * effectiveTaxRate * 100) / 100;
   const service = Math.round(productTotal * 0.10 * 100) / 100;
   const tip = Math.round(productTotal * 0.05 * 100) / 100;
   const delivery = 25.00;
@@ -116,7 +117,7 @@ function generateHTML(proposal) {
   ${notes ? `<div class="notes">${notes}</div>` : ''}
   <div style="margin-top:16px;padding:12px 16px;background:#f9f9f9;border:1px solid #eee;border-radius:4px;font-size:13px">
     <div style="display:flex;justify-content:space-between;padding:4px 0"><span>Product total</span><span>$${productTotal.toFixed(2)}</span></div>
-    <div style="display:flex;justify-content:space-between;padding:4px 0"><span>Estimated tax (10%)</span><span>$${tax.toFixed(2)}</span></div>
+    <div style="display:flex;justify-content:space-between;padding:4px 0"><span>Estimated tax (${Math.round(effectiveTaxRate * 100)}%)</span><span>$${tax.toFixed(2)}</span></div>
     <div style="display:flex;justify-content:space-between;padding:4px 0"><span>Service charge (10%)</span><span>$${service.toFixed(2)}</span></div>
     <div style="display:flex;justify-content:space-between;padding:4px 0"><span>Tip (5%)</span><span>$${tip.toFixed(2)}</span></div>
     <div style="display:flex;justify-content:space-between;padding:4px 0"><span>Delivery</span><span>$${delivery.toFixed(2)}</span></div>

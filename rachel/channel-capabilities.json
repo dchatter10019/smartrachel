@@ -1,0 +1,34 @@
+{
+  "webchat": {
+    "can_place_order": false,
+    "can_generate_proposal": false,
+    "can_add_to_cart": true,
+    "can_email_support": true,
+    "requires_age_verification": true,
+    "mention_saved_address": true
+  },
+  "voiceflow": {
+    "can_place_order": false,
+    "can_generate_proposal": false,
+    "can_add_to_cart": true,
+    "can_email_support": true,
+    "requires_age_verification": false,
+    "mention_saved_address": true
+  },
+  "slack": {
+    "can_place_order": true,
+    "can_generate_proposal": true,
+    "can_add_to_cart": true,
+    "can_email_support": true,
+    "requires_age_verification": true,
+    "mention_saved_address": true
+  },
+  "email": {
+    "can_place_order": true,
+    "can_generate_proposal": true,
+    "can_add_to_cart": true,
+    "can_email_support": true,
+    "requires_age_verification": true,
+    "mention_saved_address": true
+  }
+}

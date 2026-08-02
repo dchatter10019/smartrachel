@@ -31,7 +31,7 @@ const ALL_TOOLS = [
   },
   {
     name: "ShoppingAgent",
-    description: "THE single interface for ALL product and order operations. Use for: product search (do you have X), menu building (event packages), custom lists (named products with qty), recommendations (suggest something), placing orders, and generating proposals. Pass intent + customer context. Never use BuildPackage or CreateOrder directly.\n\nintents:\nintent=\"product_query\" → search for specific products (do you have X, show me X)\nintent=\"recommendation\" → use when customer asks for suggestions (show me some nice tequila, recommend a wine) — uses purchase history\nintent=\"menu_build\" → build standard event package when customer says generic categories\nintent=\"custom_list\" → USE THIS when customer names specific products OR specific spirits (bourbon not just spirits)\nintent=\"place_order\" → place order after customer confirms\nintent=\"generate_proposal\" → generate PDF proposal — call when customer asks for a proposal/PDF/quote",
+    description: "THE single interface for ALL product and order operations. Use for: product search (do you have X), menu building (event packages), custom lists (named products with qty), recommendations (suggest something), placing orders, and generating proposals. Pass intent + customer context. Never use BuildPackage or CreateOrder directly.\n\nintents:\nintent=\"product_query\" → search for specific products (do you have X, show me X)\nintent=\"recommendation\" → use when customer asks for suggestions (show me some nice tequila, recommend a wine) — uses purchase history\nintent=\"menu_build\" → build standard event package when customer says generic categories\nintent=\"custom_list\" → USE THIS when customer names specific products OR specific spirits (bourbon not just spirits)\nintent=\"place_order\" → place order after customer confirms\nintent=\"generate_proposal\" → generate PDF proposal — call when customer asks for a proposal/PDF/quote. If the customer states the order is tax-exempt (e.g. \"no tax on alcohol in this state\", \"set tax to 0\", \"no sales tax\") pass tax_exempt=true on the ShoppingAgent call — this actually zeroes the tax on the generated PDF. Do NOT just say $0 tax in your reply without also passing tax_exempt=true; the PDF is built by a separate template and won't reflect a change you only mention in text.",
     input_schema: {
       type: "object",
       properties: {
@@ -55,6 +55,8 @@ const ALL_TOOLS = [
         client_name: { type: "string", description: "For generate_proposal: client/company name" },
         event_date:  { type: "string", description: "For generate_proposal: event date" },
         notes:       { type: "string", description: "For generate_proposal: additional notes" },
+        tax_exempt:  { type: "boolean", description: "For generate_proposal: set true if the customer states the order/location is tax-exempt (e.g. no state tax on alcohol) — this sets tax to $0 on the actual PDF, not just in your reply text" },
+        tax_rate:    { type: "number", description: "For generate_proposal: override the tax rate as a decimal (e.g. 0.0625 for 6.25%). Only use if the customer specifies an exact rate; use tax_exempt instead for a flat $0." },
         min_price: { type: "number" },
         max_price:  { type: "number" }
       },
@@ -96,7 +98,9 @@ const ALL_TOOLS = [
 
 // ─── TOOL EXECUTOR ────────────────────────────────────────────────────────────
 
-async function executeTool(toolName, toolInput, onPackageBuilt) {
+const ORDER_CONFIRMATION_WORDS = ['yes', 'yeah', 'yep', 'yup', 'confirm', 'confirmed', 'go ahead', 'place it', 'place the order', 'sounds good', 'that works', 'correct', 'do it', 'please place', 'looks good', 'lgtm', 'proceed', 'ok place', 'okay place'];
+
+async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, onProposalGenerated, customerMessage, alreadyConfirmed, requesterEmail) {
   console.log(`[tool] ${toolName}`, JSON.stringify(toolInput).slice(0, 500));
   try {
     switch (toolName) {
@@ -104,19 +108,37 @@ async function executeTool(toolName, toolInput, onPackageBuilt) {
         return await addToCart(toolInput);
 
       case 'ShoppingAgent': {
+        const saInput = Object.assign({}, toolInput, { channel: channelFormat || toolInput.channel || 'slack' });
+        if (requesterEmail) {
+          if (saInput.email && saInput.email !== requesterEmail) {
+            console.log('[ShoppingAgent] overriding LLM-supplied email', saInput.email, '->', requesterEmail);
+          }
+          saInput.email = requesterEmail;
+        }
+        if (saInput.intent === 'place_order' && !alreadyConfirmed) {
+          const msgLowerForConfirm = (customerMessage || '').toLowerCase();
+          const hasExplicitConfirmation = ORDER_CONFIRMATION_WORDS.some(w => msgLowerForConfirm.includes(w));
+          if (!hasExplicitConfirmation) {
+            console.log('[order-confirm-gate] BLOCKED place_order — no explicit confirmation in customer message:', JSON.stringify(customerMessage || '').slice(0, 100));
+            return { success: false, order_id: '', payment_url: '', error: 'Order placement blocked: no explicit customer confirmation detected for this turn.', action_required: 'Ask the customer to explicitly confirm (e.g. "yes, place the order") before calling place_order again.' };
+          }
+        }
         const saRes = await fetch('http://127.0.0.1:8300/mcp', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: toolInput.intent, arguments: toolInput } })
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: saInput.intent, arguments: saInput } })
         });
         const saText = await saRes.text();
         const saLine = saText.split('\n').find(l => l.startsWith('data:'));
         if (!saLine) return { success: false, error: 'No response from shopping agent' };
         const saData = JSON.parse(saLine.replace('data:', '').trim());
         const result = JSON.parse(saData.result.content[0].text);
-        console.log('[ShoppingAgent] intent:', toolInput.intent, 'success:', result.success);
-        if (result.success && result.line_items && ['menu_build','custom_list'].includes(toolInput.intent) && onPackageBuilt) {
-          onPackageBuilt(toolInput.email || '', result.line_items);
+        console.log('[ShoppingAgent] intent:', saInput.intent, 'channel:', saInput.channel, 'success:', result.success);
+        if (result.success && result.line_items && ['menu_build','custom_list'].includes(saInput.intent) && onPackageBuilt) {
+          onPackageBuilt(saInput.email || '', result.line_items, saInput.channel);
+        }
+        if (result.success && result.download_url && saInput.intent === 'generate_proposal' && onProposalGenerated) {
+          onProposalGenerated(result.download_url);
         }
         return result;
       }
@@ -175,7 +197,7 @@ const path = require('path');
 
 const MAX_ITERATIONS = 10;
 
-async function rachelChat({ messages, context, rachelPrompt, gbrain_context = '', channel_format = 'voiceflow', address_rule = '', onPackageBuilt = null }) {
+async function rachelChat({ messages, context, rachelPrompt, gbrain_context = '', channel_format = 'voiceflow', address_rule = '', onPackageBuilt = null, onProposalGenerated = null, customerMessage = '', alreadyConfirmed = false }) {
   const channelNotes = {
     html: `
 
@@ -258,7 +280,7 @@ RULES:
       const toolResults = [];
       for (const block of response.content) {
         if (block.type === 'tool_use') {
-          const result = await executeTool(block.name, block.input, onPackageBuilt);
+          const result = await executeTool(block.name, block.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '');
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,

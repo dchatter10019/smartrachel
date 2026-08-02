@@ -187,6 +187,40 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (url.pathname === '/api/channels/get') {
+    try {
+      const config = fs.readFileSync('/home/ubuntu/rachel/channel-capabilities.json', 'utf8');
+      res.setHeader('Content-Type', 'application/json');
+      res.end(config);
+    } catch(e) {
+      res.writeHead(500);
+      res.end(JSON.stringify({ error: e.message }));
+    }
+    return;
+  }
+
+  if (url.pathname === '/api/channels/save' && req.method === 'POST') {
+    let body = '';
+    req.on('data', d => body += d);
+    req.on('end', () => {
+      try {
+        const config = JSON.parse(body);
+        // Validate shape before writing — must be an object of channel -> capability object
+        if (typeof config !== 'object' || config === null || Array.isArray(config)) {
+          throw new Error('Invalid config shape');
+        }
+        fs.writeFileSync('/home/ubuntu/rachel/channel-capabilities.json', JSON.stringify(config, null, 2), 'utf8');
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ success: true }));
+      } catch(e) {
+        res.writeHead(500);
+        res.setHeader('Content-Type', 'application/json');
+        res.end(JSON.stringify({ success: false, error: e.message }));
+      }
+    });
+    return;
+  }
+
   if (url.pathname === '/api/evals/results') {
     try {
       const results = fs.readFileSync('/home/ubuntu/evals/eval-results.json', 'utf8');
@@ -357,6 +391,12 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/evals') {
     res.setHeader('Content-Type', 'text/html');
     res.end(fs.readFileSync(path.join(__dirname, 'evals.html'), 'utf8'));
+    return;
+  }
+
+  if (url.pathname === '/channels') {
+    res.setHeader('Content-Type', 'text/html');
+    res.end(fs.readFileSync(path.join(__dirname, 'channels.html'), 'utf8'));
     return;
   }
 
