@@ -257,8 +257,21 @@ async function executeTool(name, input) {
       let city = customer.city || '';
       let state = customer.state || '';
       let zipcode = customer.zipcode || '';
+      let aptSuiteNum = customer.aptSuiteNum || '';
       if (streetAddress && !city) {
-        const parts = streetAddress.split(',').map(s => s.trim());
+        let parts = streetAddress.split(',').map(s => s.trim()).filter(Boolean);
+
+        // Pull out any apt/suite/floor/unit segment first — these should never be
+        // treated as a city, and previously "Floor 6" was landing in the city field
+        // while the real city/state/zip got shifted out or lost entirely.
+        const aptPattern = /^(floor|fl\.?|suite|ste\.?|apt\.?|unit|#)\s*[\w-]*$/i;
+        const aptParts = [];
+        parts = parts.filter(p => {
+          if (aptPattern.test(p)) { aptParts.push(p); return false; }
+          return true;
+        });
+        if (aptParts.length > 0) aptSuiteNum = aptParts.join(', ');
+
         if (parts.length >= 4) {
           // "11 Madison Ave, New York, NY 10010" or "11 Madison Ave, NY, NY 10010"
           streetAddress = parts[0];
@@ -278,8 +291,35 @@ async function executeTool(name, input) {
             city = '';
           }
         } else if (parts.length === 2) {
+          // "Street, City State Zip" (state/zip may be crammed into the last segment)
           streetAddress = parts[0];
-          city = parts[1];
+          const rest = parts[1].trim();
+          const zipMatch = rest.match(/\b(\d{5})(-\d{4})?\b\s*$/);
+          if (zipMatch) {
+            zipcode = zipMatch[1];
+            const beforeZip = rest.slice(0, zipMatch.index).trim();
+            const stTokens = beforeZip.split(' ');
+            const lastTok = stTokens[stTokens.length - 1] || '';
+            if (lastTok.length === 2 && lastTok === lastTok.toUpperCase()) {
+              state = lastTok;
+              city = stTokens.slice(0, -1).join(' ');
+            } else {
+              city = beforeZip;
+            }
+          } else {
+            city = rest;
+          }
+        } else if (parts.length === 1) {
+          // No commas left after removing apt/floor — try to pull city/state/zip
+          // out of the tail of a single string like "100 Federal Street Boston MA 02110".
+          const rest = parts[0];
+          const zipMatch = rest.match(/\b(\d{5})(-\d{4})?\b\s*$/);
+          if (zipMatch) {
+            zipcode = zipMatch[1];
+            streetAddress = rest.slice(0, zipMatch.index).trim();
+          } else {
+            streetAddress = rest;
+          }
         }
       }
 
@@ -299,7 +339,7 @@ async function executeTool(name, input) {
           lastName:      customer.lastName  || '',
           email:         customer.email     || '',
           streetAddress: streetAddress,
-          aptSuiteNum:   '',
+          aptSuiteNum:   aptSuiteNum,
           city:          city,
           state:         state,
           zipcode:       zipcode,
