@@ -488,27 +488,14 @@ async function getProductURLByZip({ product_name, zipcode, client_id, min_price,
 
   const sparklingKeywords = ['brut','champagne','prosecco','cava','cremant','sparkling','ruinart','veuve clicquot','dom perignon','moet','krug','taittinger','bollinger','mumm'];
 
-  const KITCHEN_TO_CLIENT_D2C = {
-    'Teterboro - NJ': 'airculinaire',
-    'Celonis - NYC': 'fooda'
-  };
-  const ZIP_TO_KITCHEN_D2C = {
-    '07608': 'Teterboro - NJ', '07631': 'Teterboro - NJ', '07652': 'Teterboro - NJ',
-    '07666': 'Teterboro - NJ', '07670': 'Teterboro - NJ', '07024': 'Teterboro - NJ',
-    '07010': 'Teterboro - NJ', '07026': 'Teterboro - NJ', '07047': 'Teterboro - NJ',
-    '07072': 'Teterboro - NJ', '07073': 'Teterboro - NJ', '07074': 'Teterboro - NJ',
-    '10001': 'Celonis - NYC', '10002': 'Celonis - NYC', '10003': 'Celonis - NYC',
-    '10010': 'Celonis - NYC', '10011': 'Celonis - NYC', '10016': 'Celonis - NYC',
-    '10019': 'Celonis - NYC', '10022': 'Celonis - NYC', '10028': 'Celonis - NYC'
-  };
-  const kitchenForZip = ZIP_TO_KITCHEN_D2C[zipcode];
   try {
     let data = [];
-    console.log('[getProductURLByZip] zipcode:', zipcode, 'kitchenForZip:', kitchenForZip, 'product_name:', product_name);
-    if (kitchenForZip) {
-      // Use searchCorpProducts for mapped zips (more complete catalog)
-      const effectiveClient = KITCHEN_TO_CLIENT_D2C[kitchenForZip] || client_id || 'airculinaire';
-      const scUrl = 'https://api.getbevvi.com/api/corpproducts/searchCorpProducts?location=' + encodeURIComponent(kitchenForZip) + '&searchBy=' + encodeURIComponent(product_name || '') + '&limit=100&client=' + encodeURIComponent(effectiveClient) + (min_price > 0.01 ? '&min='+min_price : '') + (max_price < 9999 ? '&max='+max_price : '');
+    console.log('[getProductURLByZip] zipcode:', zipcode, 'product_name:', product_name);
+    {
+      // Direct zipcode-based search — API now resolves the store from zipcode itself,
+      // no kitchen_location mapping needed.
+      const effectiveClient = client_id || 'airculinaire';
+      const scUrl = 'https://api.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode=' + encodeURIComponent(zipcode) + '&searchBy=' + encodeURIComponent(product_name || '') + '&limit=100&client=' + encodeURIComponent(effectiveClient) + (min_price > 0.01 ? '&min='+min_price : '') + (max_price < 9999 ? '&max='+max_price : '');
       const scRes = await fetch(scUrl);
       if (scRes.ok) {
         const scData = await scRes.json();
@@ -522,10 +509,11 @@ async function getProductURLByZip({ product_name, zipcode, client_id, min_price,
             product_id: (p.corpProductFilter && p.corpProductFilter.corpProductId) || p.id || '',
             upc: p.upc || ''
           }));
-          return { product_found: true, result_count: mapped.length, products_json: JSON.stringify(mapped), product_id: mapped[0]?.product_id || '', upc: mapped[0]?.upc || '', debug_info: 'sc:' + kitchenForZip };
+          return { product_found: true, result_count: mapped.length, products_json: JSON.stringify(mapped), product_id: mapped[0]?.product_id || '', upc: mapped[0]?.upc || '', debug_info: 'zip:' + zipcode };
         }
       }
-    } else {
+    }
+    {
       // Fall back to getProducts API for unmapped zips
       const url = 'https://api.getbevvi.com/api/corpproducts/getProducts?zipcode=' + encodeURIComponent(zipcode);
       const response = await fetch(url);

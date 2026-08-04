@@ -79,6 +79,19 @@ const TOOLS = {
 
 // ── Tool Implementations ───────────────────────────────────────────────────────
 
+function tokenOverlapScore(a, b) {
+  const norm = s => (s || '').toLowerCase().replace(/[^a-z0-9%.\s]/g, ' ').split(/\s+/).filter(Boolean);
+  const ta = new Set(norm(a));
+  const tb = new Set(norm(b));
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let overlap = 0;
+  for (const t of ta) if (tb.has(t)) overlap++;
+  // Overlap relative to the smaller token set — lets a short specific query like
+  // "High Noon Pool Pack" score well against a longer catalog name like
+  // "High Noon Variety Pool Pack 8pk 12 OZ Can 4.5% ABV".
+  return overlap / Math.min(ta.size, tb.size);
+}
+
 async function searchBevviProducts(query, minPrice, maxPrice, limit) {
   try {
     const url = `https://api.getbevvi.com/api/corpproducts/searchCorpProducts` +
@@ -163,8 +176,16 @@ async function executeTool(name, input) {
 
     for (const item of basket) {
       const results = await searchBevviProducts(item.name, 0, item.max_price || 999999, 5);
-      if (results.length > 0) {
-        const best = results[0];
+      // Score every candidate against the requested name instead of trusting the
+      // search API's own ranking — it sometimes returns an unrelated product first.
+      let best = null;
+      let bestScore = 0;
+      for (const r of results) {
+        const s = tokenOverlapScore(item.name, r.name);
+        if (s > bestScore) { bestScore = s; best = r; }
+      }
+      const CONFIDENCE_THRESHOLD = 0.5;
+      if (best && bestScore >= CONFIDENCE_THRESHOLD) {
         const lineTotal = best.price * item.quantity;
         bidItems.push({
           requested:       item.name,
@@ -177,10 +198,27 @@ async function executeTool(name, input) {
           url:             best.url,
           product_id:      best.product_id,
           establishmentId: best.establishmentId || '',
+          match_score:     Math.round(bestScore * 100) / 100,
           available:       true
         });
         bidTotal += lineTotal;
         fulfilled++;
+      } else if (best) {
+        // Something came back but it doesn't confidently match what was asked for.
+        // Surface it as a low-confidence candidate rather than silently substituting
+        // it or silently declaring "not available" — shopping-agent can re-query or
+        // ask the customer to confirm.
+        bidItems.push({
+          requested:      item.name,
+          matched:        null,
+          low_confidence_match: best.name,
+          low_confidence_upc:   best.upc,
+          low_confidence_url:   best.url,
+          low_confidence_product_id: best.product_id,
+          match_score:    Math.round(bestScore * 100) / 100,
+          available:      false,
+          quantity:       item.quantity
+        });
       } else {
         bidItems.push({
           requested:    item.name,

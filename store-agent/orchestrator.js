@@ -154,7 +154,7 @@ async function executeTool(name, input) {
     );
 
     const rawBids = await Promise.all(bidPromises);
-    const bids = rawBids.filter(b => b !== null && b.can_fulfill);
+    let bids = rawBids.filter(b => b !== null && b.can_fulfill);
 
     if (bids.length === 0) {
       return {
@@ -164,6 +164,48 @@ async function executeTool(name, input) {
         winner: null
       };
     }
+
+    // ── Re-query pass: don't trust a single search_products call's "not available" ──
+    // For items the store agent couldn't confidently match, strip pack-size/ABV/can
+    // suffixes and try again against that same store before accepting it as missing.
+    function loosenQuery(name) {
+      return (name || '')
+        .replace(/\b\d+(\.\d+)?\s*%\s*ABV\b/gi, '')
+        .replace(/\b\d+\s*x\s*\d+(\.\d+)?\s*OZ\b/gi, '')
+        .replace(/\b\d+\s*(pk|pack)\b/gi, '')
+        .replace(/\b\d+(\.\d+)?\s*(OZ|ML|L)\b/gi, '')
+        .replace(/\b(can|bottle|cans|bottles)\b/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+
+    await Promise.all(bids.map(async (bid) => {
+      if (!bid.bid_items) return;
+      for (let i = 0; i < bid.bid_items.length; i++) {
+        const item = bid.bid_items[i];
+        if (item.available) continue;
+        const loosened = loosenQuery(item.requested);
+        if (!loosened || loosened.toLowerCase() === (item.requested || '').toLowerCase()) continue;
+        try {
+          const reRes = await callStoreAgent(bid.store_url, 'search_products', { query: loosened, limit: 5 });
+          const candidates = (reRes && Array.isArray(reRes.products)) ? reRes.products : (Array.isArray(reRes) ? reRes : []);
+          if (candidates.length > 0) {
+            // Surface the best re-query candidate without silently marking it available —
+            // let shopping-agent/Rachel confirm with the customer, since this is a
+            // loosened match and may not be exactly what they asked for.
+            bid.bid_items[i] = Object.assign({}, item, {
+              requeried: true,
+              requery_candidate: candidates[0].name,
+              requery_upc: candidates[0].upc || '',
+              requery_url: candidates[0].url || '',
+              requery_product_id: candidates[0].product_id || ''
+            });
+          }
+        } catch (e) {
+          console.error('[orchestrator] re-query failed for', item.requested, '—', e.message);
+        }
+      }
+    }));
 
     // Rank: 1) highest coverage, 2) lowest grand total
     bids.sort((a, b) => {

@@ -137,6 +137,35 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         if (result.success && result.line_items && ['menu_build','custom_list'].includes(saInput.intent) && onPackageBuilt) {
           onPackageBuilt(saInput.email || '', result.line_items, saInput.channel);
         }
+        // product_query / recommendation return `products` (or `results[].products`), not
+        // `line_items`. Capture what was just shown to the customer as the active context —
+        // otherwise a later "create the order" falls back to a stale saved basket instead of
+        // the single item just discussed.
+        if (result.success && onPackageBuilt && ['product_query','recommendation'].includes(saInput.intent)) {
+          let flatProducts = [];
+          if (Array.isArray(result.products)) {
+            flatProducts = result.products;
+          } else if (Array.isArray(result.results)) {
+            for (const r of result.results) {
+              if (r && Array.isArray(r.products)) flatProducts = flatProducts.concat(r.products);
+            }
+          }
+          if (flatProducts.length > 0) {
+            const asLineItems = flatProducts.map(p => ({
+              label: p.name || p.label || '',
+              name: p.name || '',
+              qty: 1,
+              price: p.salePrice || p.price || 0,
+              size: p.size || '',
+              url: p.url || '',
+              product_id: p.product_id || p.id || '',
+              upc: p.upc || '',
+              establishmentId: p.establishmentId || '',
+              category: p.category || ''
+            }));
+            onPackageBuilt(saInput.email || '', JSON.stringify(asLineItems), saInput.channel);
+          }
+        }
         if (result.success && result.download_url && saInput.intent === 'generate_proposal' && onProposalGenerated) {
           onProposalGenerated(result.download_url);
         }

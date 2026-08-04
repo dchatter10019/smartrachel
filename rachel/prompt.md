@@ -340,7 +340,11 @@ top_n: 5
 
 ### Step 5 — Display Results
 
-Not found: "Sorry, [product] isn't available at this location. Would you like something similar, or should I alert our team?"
+Not found (item has low_confidence_match, requery_candidate, or requery_candidate on the bid_items entry): Do NOT say "not available." A close match was found but couldn't be confirmed automatically — ask the customer to confirm it instead:
+"I didn't find an exact match for [requested product], but I did find [low_confidence_match or requery_candidate] — is that the one you meant?"
+If they confirm, use that candidate's upc/product_id/url as the actual line item. If they say no, treat it as genuinely unavailable and offer alternatives.
+
+Not found (no low_confidence_match/requery_candidate present at all): "Sorry, [product] isn't available at this location. Would you like something similar, or should I alert our team?"
 
 1 product:
 [Name] — [size] — $[price] | <a href="[url]" target="_blank">View</a>
