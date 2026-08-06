@@ -30,12 +30,25 @@ const ALL_TOOLS = [
     }
   },
   {
-    name: "ShoppingAgent",
-    description: "THE single interface for ALL product and order operations. Use for: product search (do you have X), menu building (event packages), custom lists (named products with qty), recommendations (suggest something), placing orders, and generating proposals. Pass intent + customer context. Never use BuildPackage or CreateOrder directly.\n\nintents:\nintent=\"product_query\" → search for specific products (do you have X, show me X)\nintent=\"recommendation\" → use when customer asks for suggestions (show me some nice tequila, recommend a wine) — uses purchase history\nintent=\"menu_build\" → build standard event package when customer says generic categories\nintent=\"custom_list\" → USE THIS when customer names specific products OR specific spirits (bourbon not just spirits)\nintent=\"place_order\" → place order after customer confirms\nintent=\"generate_proposal\" → generate PDF proposal — call when customer asks for a proposal/PDF/quote. If the customer states the order is tax-exempt (e.g. \"no tax on alcohol in this state\", \"set tax to 0\", \"no sales tax\") pass tax_exempt=true on the ShoppingAgent call — this actually zeroes the tax on the generated PDF. Do NOT just say $0 tax in your reply without also passing tax_exempt=true; the PDF is built by a separate template and won't reflect a change you only mention in text.",
+    name: "SendEmail",
+    description: "Send an email. Use when the customer asks to email a proposal, package, or any other information to one or more recipients. If a proposal was just generated, include its download link in the body — use {last_proposal_url} in the body text and it will be substituted automatically. ONLY claim the email was sent after this tool returns success=true; if it returns success=false, tell the customer the email failed and share the link directly instead.",
     input_schema: {
       type: "object",
       properties: {
-        intent:    { type: "string", enum: ["product_query","menu_build","custom_list","recommendation","place_order","generate_proposal"] },
+        to:      { type: "array", items: { type: "string" }, description: "Recipient email addresses" },
+        subject: { type: "string", description: "Email subject line" },
+        body:    { type: "string", description: "Plain text email body. Use {last_proposal_url} as a placeholder for the most recently generated proposal's download link if relevant." }
+      },
+      required: ["to", "subject", "body"]
+    }
+  },
+  {
+    name: "ShoppingAgent",
+    description: "THE single interface for ALL product and order operations. Use for: product search (do you have X), menu building (event packages), custom lists (named products with qty), recommendations (suggest something), placing orders, and generating proposals. Pass intent + customer context. Never use BuildPackage or CreateOrder directly.\n\nintents:\nintent=\"product_query\" → search for specific products (do you have X, show me X)\nintent=\"recommendation\" → use when customer asks for suggestions (show me some nice tequila, recommend a wine) — uses purchase history\nintent=\"menu_build\" → build standard event package when customer says generic categories\nintent=\"custom_list\" → USE THIS when customer names specific products OR specific spirits (bourbon not just spirits)\nintent=\"place_order\" → place order after customer confirms\nintent=\"order_history\" → use when customer asks what they bought before, their past orders, order history, or wants to reorder something from a previous order. Returns itemized past orders with dates, products, and totals.\nintent=\"generate_proposal\" → generate PDF proposal — call when customer asks for a proposal/PDF/quote. If the customer states the order is tax-exempt (e.g. \"no tax on alcohol in this state\", \"set tax to 0\", \"no sales tax\") pass tax_exempt=true on the ShoppingAgent call — this actually zeroes the tax on the generated PDF. Do NOT just say $0 tax in your reply without also passing tax_exempt=true; the PDF is built by a separate template and won't reflect a change you only mention in text.",
+    input_schema: {
+      type: "object",
+      properties: {
+        intent:    { type: "string", enum: ["product_query","menu_build","custom_list","recommendation","place_order","generate_proposal","order_history"] },
         zip:       { type: "string", description: "Delivery zip code" },
         email:     { type: "string", description: "Customer email" },
         queries:   { type: "array",  description: "For product_query: [{name, category, limit}]" },
@@ -100,12 +113,27 @@ const ALL_TOOLS = [
 
 const ORDER_CONFIRMATION_WORDS = ['yes', 'yeah', 'yep', 'yup', 'confirm', 'confirmed', 'go ahead', 'place it', 'place the order', 'sounds good', 'that works', 'correct', 'do it', 'please place', 'looks good', 'lgtm', 'proceed', 'ok place', 'okay place'];
 
-async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, onProposalGenerated, customerMessage, alreadyConfirmed, requesterEmail) {
+async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, onProposalGenerated, customerMessage, alreadyConfirmed, requesterEmail, sendEmailFn, lastProposalUrl) {
   console.log(`[tool] ${toolName}`, JSON.stringify(toolInput).slice(0, 500));
   try {
     switch (toolName) {
       case 'AddToCart':
         return await addToCart(toolInput);
+
+      case 'SendEmail': {
+        if (!sendEmailFn) return { success: false, error: 'Email sending is not configured.' };
+        const to = Array.isArray(toolInput.to) ? toolInput.to : [toolInput.to].filter(Boolean);
+        if (to.length === 0) return { success: false, error: 'No recipient email address provided.' };
+        let body = toolInput.body || '';
+        if (lastProposalUrl) body = body.replace(/\{last_proposal_url\}/g, lastProposalUrl);
+        try {
+          await sendEmailFn(to, toolInput.subject || '(no subject)', body);
+          return { success: true, sent_to: to };
+        } catch (e) {
+          console.error('[SendEmail] error:', e.message);
+          return { success: false, error: 'Email send failed: ' + e.message };
+        }
+      }
 
       case 'ShoppingAgent': {
         const saInput = Object.assign({}, toolInput, { channel: channelFormat || toolInput.channel || 'slack' });
@@ -226,7 +254,7 @@ const path = require('path');
 
 const MAX_ITERATIONS = 10;
 
-async function rachelChat({ messages, context, rachelPrompt, gbrain_context = '', channel_format = 'voiceflow', address_rule = '', onPackageBuilt = null, onProposalGenerated = null, customerMessage = '', alreadyConfirmed = false }) {
+async function rachelChat({ messages, context, rachelPrompt, gbrain_context = '', channel_format = 'voiceflow', address_rule = '', onPackageBuilt = null, onProposalGenerated = null, sendEmailFn = null, lastProposalUrl = '', customerMessage = '', alreadyConfirmed = false }) {
   const channelNotes = {
     html: `
 
@@ -309,7 +337,7 @@ RULES:
       const toolResults = [];
       for (const block of response.content) {
         if (block.type === 'tool_use') {
-          const result = await executeTool(block.name, block.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '');
+          const result = await executeTool(block.name, block.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl);
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,

@@ -32,7 +32,12 @@ const CLIENT_MAP = {
 function resolveLocation(zip) {
   const kitchen = ZIP_MAP[zip] || '';
   const client = CLIENT_MAP[kitchen] || 'airculinaire';
-  return { kitchen, client };
+  if (kitchen) return { kitchen, client, zip };
+  // No hardcoded kitchen_location mapping for this zip — the search API can now
+  // resolve directly from zipcode, so fall back to a zip-sentinel instead of
+  // failing outright. searchProducts() detects the 'zip:' prefix and switches
+  // from ?location= to ?zipcode= in the API call.
+  return { kitchen: 'zip:' + zip, client, zip, unmapped: true };
 }
 
 const STORE_DISPLAY_MAP = {
@@ -45,6 +50,7 @@ const STORE_DISPLAY_MAP = {
 };
 
 function friendlyStore(kitchen) {
+  if (kitchen && kitchen.indexOf('zip:') === 0) return 'your area';
   return STORE_DISPLAY_MAP[kitchen] || kitchen;
 }
 
@@ -201,7 +207,13 @@ function scoreBuyer(profile) {
 
 async function searchProducts(location, client, query, limit, minPrice, maxPrice) {
   try {
-    let url = BEVVI_API + '/api/corpproducts/searchCorpProducts?location=' + encodeURIComponent(location) + '&searchBy=' + encodeURIComponent(query) + '&client=' + encodeURIComponent(client) + '&limit=' + (limit || 10);
+    let url;
+    if (location && location.indexOf('zip:') === 0) {
+      const zipVal = location.slice(4);
+      url = BEVVI_API + '/api/corpproducts/searchCorpProducts?zipcode=' + encodeURIComponent(zipVal) + '&searchBy=' + encodeURIComponent(query) + '&client=' + encodeURIComponent(client) + '&limit=' + (limit || 10);
+    } else {
+      url = BEVVI_API + '/api/corpproducts/searchCorpProducts?location=' + encodeURIComponent(location) + '&searchBy=' + encodeURIComponent(query) + '&client=' + encodeURIComponent(client) + '&limit=' + (limit || 10);
+    }
     if (minPrice !== undefined && minPrice > 0) url += '&min=' + minPrice;
     if (maxPrice !== undefined && maxPrice < 10000) url += '&max=' + maxPrice;
     console.log('[searchProducts]', url);
@@ -664,6 +676,72 @@ async function executeTool(name, input) {
     };
   }
 
+  if (name === 'order_history') {
+    const email = (input.email || '').toLowerCase();
+    const limit = input.limit || 5;
+    if (!email) return { success: false, error: 'email required' };
+    try {
+      const fs = require('fs');
+      const path = '/home/ubuntu/logs/order_history.jsonl';
+      if (!fs.existsSync(path)) return { success: true, orders: [], order_count: 0, message: 'No order history found.' };
+      const lines = fs.readFileSync(path, 'utf8').split('\n').filter(Boolean);
+      const matching = [];
+      for (const line of lines) {
+        try {
+          const entry = JSON.parse(line);
+          if (entry.email === email) matching.push(entry);
+        } catch(e) {}
+      }
+      // Most recent first
+      matching.sort(function(a, b) { return new Date(b.ts) - new Date(a.ts); });
+      const trimmed = matching.slice(0, limit).map(function(o) {
+        return {
+          order_id: o.order_id,
+          date: o.ts,
+          store: o.store,
+          items: o.items,
+          grand_total: o.grand_total
+        };
+      });
+      return { success: true, orders: trimmed, order_count: matching.length, showing: trimmed.length };
+    } catch(e) {
+      return { success: false, error: 'order_history lookup failed: ' + e.message };
+    }
+  }
+
+  if (name === 'order_history') {
+    const email = (input.email || '').toLowerCase();
+    const limit = input.limit || 5;
+    if (!email) return { success: false, error: 'email required' };
+    try {
+      const fs = require('fs');
+      const path = '/home/ubuntu/logs/order_history.jsonl';
+      if (!fs.existsSync(path)) return { success: true, orders: [], order_count: 0, message: 'No order history found.' };
+      const lines = fs.readFileSync(path, 'utf8').split('\n').filter(Boolean);
+      const matching = [];
+      for (const line of lines) {
+        try {
+          const entry = JSON.parse(line);
+          if (entry.email === email) matching.push(entry);
+        } catch(e) {}
+      }
+      // Most recent first
+      matching.sort(function(a, b) { return new Date(b.ts) - new Date(a.ts); });
+      const trimmed = matching.slice(0, limit).map(function(o) {
+        return {
+          order_id: o.order_id,
+          date: o.ts,
+          store: o.store,
+          items: o.items,
+          grand_total: o.grand_total
+        };
+      });
+      return { success: true, orders: trimmed, order_count: matching.length, showing: trimmed.length };
+    } catch(e) {
+      return { success: false, error: 'order_history lookup failed: ' + e.message };
+    }
+  }
+
   if (name === 'place_order') {
     const zip = input.zip || (input.customer && input.customer.zipcode) || '';
     const loc = resolveLocation(zip);
@@ -724,6 +802,32 @@ async function executeTool(name, input) {
               });
               console.log('[order-placed] ' + orderLog);
               require('fs').appendFileSync('/home/ubuntu/logs/orders.jsonl', orderLog + '\n');
+
+              // Itemized history — separate from the summary log above, so "what did I
+              // buy" queries can answer with actual products, not just order totals.
+              try {
+                const items = (winner.bid_items || []).filter(function(i){ return i.available; }).map(function(i){
+                  return {
+                    name: i.matched || i.name || i.requested || '',
+                    upc: i.upc || '',
+                    qty: i.quantity || 1,
+                    unit_price: i.unit_price || 0,
+                    line_total: i.line_total || 0
+                  };
+                });
+                const historyEntry = JSON.stringify({
+                  ts: new Date().toISOString(),
+                  order_id: orderResult.order_id || '',
+                  email: (input.email || '').toLowerCase(),
+                  store: winner.store,
+                  zip: input.zip || '',
+                  delivery_datetime: input.delivery_datetime || '',
+                  items: items,
+                  item_count: items.length,
+                  grand_total: winner.estimated_grand_total
+                });
+                require('fs').appendFileSync('/home/ubuntu/logs/order_history.jsonl', historyEntry + '\n');
+              } catch(e) { console.error('[order-history] log error:', e.message); }
             }
             return Object.assign({}, orderResult, { winning_store: winner.store, all_bids: rfqResult.all_bids });
           }
@@ -768,7 +872,9 @@ const TOOLS = [
   { name: 'custom_list', description: 'Build package from named product list with quantities.', inputSchema: { type: 'object', properties: { named_products: { type: 'array' }, zip: { type: 'string' }, email: { type: 'string' }, budget: { type: 'number' } }, required: ['named_products', 'zip'] } },
   { name: 'recommendation', description: 'Get personalized recommendations based on occasion and customer history.', inputSchema: { type: 'object', properties: { occasion: { type: 'string' }, category: { type: 'string' }, zip: { type: 'string' }, email: { type: 'string' }, budget_per_bottle: { type: 'number' } }, required: ['zip'] } },
   { name: 'generate_proposal', description: 'Generate a PDF proposal from the active basket. Returns download URL.', inputSchema: { type: 'object', properties: { email: { type: 'string' }, client_name: { type: 'string' }, event_date: { type: 'string' }, notes: { type: 'string' } }, required: ['email', 'client_name'] } },
-  { name: 'place_order', description: 'Place order after customer confirms. Pass line_items from previous result.', inputSchema: { type: 'object', properties: { line_items: { type: 'string' }, customer: { type: 'object' }, tip_amount: { type: 'number' }, delivery_datetime: { type: 'string' }, delivery_instructions: { type: 'string' }, zip: { type: 'string' } }, required: ['line_items', 'customer'] } }
+  { name: 'place_order', description: 'Place order after customer confirms. Pass line_items from previous result.', inputSchema: { type: 'object', properties: { line_items: { type: 'string' }, customer: { type: 'object' }, tip_amount: { type: 'number' }, delivery_datetime: { type: 'string' }, delivery_instructions: { type: 'string' }, zip: { type: 'string' } }, required: ['line_items', 'customer'] } },
+  { name: 'order_history', description: 'Look up what the customer has ordered previously. Use when they ask what they bought before, their past orders, order history, or to reorder something from before.', inputSchema: { type: 'object', properties: { email: { type: 'string' }, limit: { type: 'number', description: 'Max number of past orders to return, most recent first (default 5)' } }, required: ['email'] } },
+  { name: 'order_history', description: 'Look up what the customer has ordered previously. Use when they ask what they bought before, their past orders, order history, or to reorder something from before.', inputSchema: { type: 'object', properties: { email: { type: 'string' }, limit: { type: 'number', description: 'Max number of past orders to return, most recent first (default 5)' } }, required: ['email'] } }
 ];
 
 function sendSSE(res, data) { res.write('data: ' + JSON.stringify(data) + '\n\n'); }

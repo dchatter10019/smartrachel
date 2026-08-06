@@ -13,7 +13,13 @@ async function getProductURL({ product_name, kitchen_location, client_id, min_pr
   kitchen_location = kitchen_location.replace(/–/g, '-');
 
   try {
-    const url = `https://api.getbevvi.com/api/corpproducts/searchCorpProducts?location=${encodeURIComponent(kitchen_location)}&searchBy=${encodeURIComponent(product_name)}&limit=${limit}&client=${encodeURIComponent(client_id || '')}${min_price > 0 ? '&min='+min_price : ''}${max_price < 999999 ? '&max='+max_price : ''}`;
+    // kitchen_location may be a 'zip:XXXXX' sentinel for zips with no hardcoded
+    // kitchen_location mapping (see shopping-agent.js resolveLocation) — the search
+    // API supports resolving directly from zipcode, so use that param instead.
+    const isZipSentinel = kitchen_location.indexOf('zip:') === 0;
+    const url = isZipSentinel
+      ? `https://api.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode=${encodeURIComponent(kitchen_location.slice(4))}&searchBy=${encodeURIComponent(product_name)}&limit=${limit}&client=${encodeURIComponent(client_id || '')}${min_price > 0 ? '&min='+min_price : ''}${max_price < 999999 ? '&max='+max_price : ''}`
+      : `https://api.getbevvi.com/api/corpproducts/searchCorpProducts?location=${encodeURIComponent(kitchen_location)}&searchBy=${encodeURIComponent(product_name)}&limit=${limit}&client=${encodeURIComponent(client_id || '')}${min_price > 0 ? '&min='+min_price : ''}${max_price < 999999 ? '&max='+max_price : ''}`;
     const response = await fetch(url);
     if (!response.ok) return { product_found: false, product_id: "", products_json: "[]", result_count: 0, debug_info: `API HTTP error: ${response.status}` };
 
@@ -778,7 +784,12 @@ async function buildPackage(iv) {
 
   async function doSearch(term) {
     try {
-      var url="https://api.getbevvi.com/api/corpproducts/searchCorpProducts?location="+encodeURIComponent(kitchenLocation)+"&searchBy="+encodeURIComponent(term)+"&limit=100&client="+encodeURIComponent(clientName);
+      // kitchenLocation may be a 'zip:XXXXX' sentinel for zips with no hardcoded
+      // kitchen_location mapping — use the API's zipcode-direct search in that case.
+      var isZipSentinel = kitchenLocation.indexOf('zip:') === 0;
+      var url = isZipSentinel
+        ? "https://api.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode="+encodeURIComponent(kitchenLocation.slice(4))+"&searchBy="+encodeURIComponent(term)+"&limit=100&client="+encodeURIComponent(clientName)
+        : "https://api.getbevvi.com/api/corpproducts/searchCorpProducts?location="+encodeURIComponent(kitchenLocation)+"&searchBy="+encodeURIComponent(term)+"&limit=100&client="+encodeURIComponent(clientName);
       var res=await fetch(url);
       if (!res.ok) return [];
       var data=await res.json();

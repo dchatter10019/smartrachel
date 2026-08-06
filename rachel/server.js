@@ -92,7 +92,9 @@ const GMAIL_SERVICE_ACCOUNT_FILE = '/home/ubuntu/config/gmail-service-account.js
 const RACHEL_SENDER_EMAIL = 'rachelai@getbevvi.com';
 const SUPPORT_EMAIL = 'bevvi-support@getbevvi.com';
 
-async function sendSupportEmail(subject, bodyText) {
+// General-purpose sender — accepts an arbitrary To list, used for both support
+// escalation and customer-facing sends (e.g. emailing a generated proposal).
+async function sendEmail(toList, subject, bodyText) {
   const auth = new google.auth.GoogleAuth({
     keyFile: GMAIL_SERVICE_ACCOUNT_FILE,
     scopes: ['https://www.googleapis.com/auth/gmail.send'],
@@ -101,9 +103,10 @@ async function sendSupportEmail(subject, bodyText) {
   const authClient = await auth.getClient();
   const gmail = google.gmail({ version: 'v1', auth: authClient });
 
+  const toHeader = Array.isArray(toList) ? toList.join(', ') : toList;
   const messageParts = [
     `From: ${RACHEL_SENDER_EMAIL}`,
-    `To: ${SUPPORT_EMAIL}`,
+    `To: ${toHeader}`,
     `Subject: ${subject}`,
     'Content-Type: text/plain; charset=utf-8',
     '',
@@ -116,6 +119,10 @@ async function sendSupportEmail(subject, bodyText) {
     .replace(/=+$/, '');
 
   await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
+}
+
+async function sendSupportEmail(subject, bodyText) {
+  return sendEmail([SUPPORT_EMAIL], subject, bodyText);
 }
 
 const KITCHEN_TO_CLIENT = {
@@ -260,6 +267,7 @@ function getChannelNote(format) {
 async function callRachel({ sessionKey, message, context, format, gbrainContext, addressRule, email, onProposalGenerated, alreadyConfirmed }) {
   const messages = sessions[sessionKey] || [];
   const channelNote = getChannelNote(format);
+  const stateForEmail = getState(sessionKey);
   const result = await rachelChat({
     messages: [...messages, { role: 'user', content: message }],
     context,
@@ -270,6 +278,8 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
     onProposalGenerated: onProposalGenerated || null,
     customerMessage: message,
     alreadyConfirmed: alreadyConfirmed || false,
+    sendEmailFn: sendEmail,
+    lastProposalUrl: stateForEmail.lastProposalUrl || '',
     onPackageBuilt: (em, lineItems, fmt) => {
       const state = getState(sessionKey);
       const key = makeCacheKey(em || email, state.zip, state.lastFingerprint);
@@ -990,6 +1000,10 @@ app.post('/chat', async (req, res) => {
       // of whether the LLM happened to restate it in its own text. Regex extraction is kept only as a fallback.
       const urlMatch = proposalOutput.match(/http[^\s)|>]+\.pdf/) || proposalOutput.match(/<(http[^|>]+\.pdf)/);
       const downloadUrl = capturedProposalUrl || (urlMatch ? urlMatch[0] : '');
+      if (downloadUrl) {
+        state.lastProposalUrl = downloadUrl;
+        saveFlowState();
+      }
 
       let summary;
       if (isMultiItemProposal) {
@@ -1035,6 +1049,31 @@ app.post('/chat', async (req, res) => {
       }
 
       return res.json({ text: summary, response: summary });
+    }
+
+    // ── Deterministic mixer yes/no interception ──────────────────────────
+    // Previously a plain "no" here went straight to the LLM with no structured
+    // package context (cache invalidation below wipes lastLineItems on every new
+    // message), so the LLM would improvise — sometimes re-narrating the whole
+    // package and mixer question from scratch instead of just moving on. Handle
+    // a clear yes/no answer here, deterministically, without an LLM call at all.
+    if (state.mixerAsked && !state.mixerAnswered && state.packageShown) {
+      const mixerNoWords = ['no', 'nope', 'no thanks', 'no worries', "that's all", 'thats all', "i'm good", 'im good', 'nothing else', 'none'];
+      const mixerMsgLower = message.toLowerCase().trim().replace(/\*/g, '');
+      if (mixerNoWords.some(w => mixerMsgLower === w || mixerMsgLower.startsWith(w + ' ') || mixerMsgLower.startsWith(w + ','))) {
+        state.mixerAnswered = true;
+        saveFlowState();
+        const ctaCapsM = getCapabilities(format);
+        const ctaActionsM = [];
+        if (ctaCapsM.can_place_order) ctaActionsM.push(format === 'slack' ? '*place the order*' : 'place the order');
+        if (ctaCapsM.can_generate_proposal) ctaActionsM.push(format === 'slack' ? '*generate a PDF proposal*' : 'generate a PDF proposal');
+        const mixerNoReply = ctaActionsM.length > 0
+          ? 'No problem! Would you like to ' + ctaActionsM.join(' or ') + ', or make any changes?'
+          : 'No problem! Would you like to make any changes, or is there anything else I can help with?';
+        return res.json({ text: mixerNoReply, response: mixerNoReply });
+      }
+      // A clear "yes" still needs a real product search (mixers/water/soda/ice), so
+      // that case intentionally falls through to the normal LLM path below.
     }
 
     // Cache invalidation check
