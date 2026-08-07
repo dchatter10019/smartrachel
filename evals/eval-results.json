@@ -1,0 +1,2245 @@
+[
+  {
+    "id": "E001",
+    "name": "Single product search \u2192 CTA",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "do you have opus one",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nYes! We have Opus One available:\n\n*Opus One* \u2014 750ML \u2014 $486.19\n\nWould you like to see the estimated full price with tax, delivery, and fees \u2014 or anything else?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "Opus One"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains",
+              "value": "486"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains",
+              "value": "place the order"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:46:32.747561"
+  },
+  {
+    "id": "E002",
+    "name": "Event package \u2192 mixers \u2192 CTA",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "no",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nIs there anything I can help you with today? Whether it's finding a specific bottle, building an event package, or getting a recommendation \u2014 just let me know!",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "place the order",
+                "make any changes",
+                "PDF proposal",
+                "anything else",
+                "change",
+                "help",
+                "order",
+                "proposal"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 3,
+        "user": "need a menu for 10 people, 2 hours, $1000 budget, beer wine spirits",
+        "response": "Here's your package for 10 guests, $1,000 budget, 2 hrs:\n\n*WINE \u2014 2 bottles*\n\nRed:\n1x *Vieux Telegraphe Chateauneuf-du-Pape Rouge* \u2014 750ML \u2014 $153.99\n\nWhite:\n1x *Louis Jadot Chablis* \u2014 1.5L \u2014 $76.99\n\nWine total: $230.98\n\n*BEER \u2014 1 pack*\n1x *Stella Artois* \u2014 24x12 oz bottles \u2014 $62.99\n\nBeer total: $62.99\n\n*SPIRITS \u2014 5 bottles*\nVodka: 1x *Belvedere Organic Vodka* \u2b50 \u2014 1.75L \u2014 $59.39\nRum: 1x *Angostura 1824 12yr Rum* \u2014 750ML \u2014 $65.99\nBourbon: 1x *Barrell Vantage Bourbon* \u2014 750ML \u2014 $93.49\nGin: 1x *Monkey 47 Schwarzwald Dry Gin* \u2014 1L \u2014 $84.69\nTequila: 1x *Casa Dragones Reposado* \u2014 750ML \u2014 $181.49\n\nSpirits total: $485.05\n\nProduct total: $779.02\nEstimated Tax (10%): $77.90\nEstimated Delivery Charge: $25.00\nService Charge (10%): $77.90\nTip (5%): $38.95\n*Estimated grand total: $998.78 of your $1,000 budget*\n\n_Tax, service, tip, and delivery are estimates \u2014 actual totals may vary._\n\n\u2b50 = Preferred brand\n\nWould you also like to add mixers, water, soda, ice, or cups?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "Product total"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains",
+              "value": "mixers"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:47:05.407511"
+  },
+  {
+    "id": "E003",
+    "name": "Address confirmation flow",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "show me some red wine",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nHere are some red wines available:\n\n1. *Ruffino Chianti Riserva Ducale Gold* \u2014 750ML \u2014 $40.69 \u2b50\n2. *Ruffino Chianti Riserva Ducale Tan* \u2014 750ML \u2014 $27.45 \u2b50\n3. *Kendall-Jackson Vintner's Reserve Cabernet Sauvignon* \u2014 750ML \u2014 $21.77 \u2b50\n4. *Latour Bourgogne Rouge* \u2014 750ML \u2014 $36.29\n5. *Domaine Clair-Dau Ros\u00e9 de Marsannay* \u2014 750ML \u2014 $23.64\n6. *Sandeman Rich Ruby Porto* \u2014 750ML \u2014 $20.89\n\n\u2b50 = top picks\n\nAnything catch your eye, or would you like me to narrow it down by style, region, or price?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "$"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:47:22.991106"
+  },
+  {
+    "id": "E004",
+    "name": "No address on file \u2192 collect address",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "show me vodka",
+        "response": "What is your delivery address? (Please include street, city, state, and zip code)",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "delivery address",
+                "zip",
+                "address"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "11 Madison Ave, New York, NY 10010",
+        "response": "I'm here and ready to help! What can I get for you today? \ud83e\udd42",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "Got it",
+                "Delivering",
+                "$",
+                "vodka",
+                "search",
+                "help",
+                "How can I",
+                "beverage"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 3,
+        "user": "show me vodka",
+        "response": "Here are 5 vodka options:\n\n1. *Grey Goose L'Orange Vodka* \u2014 1L \u2014 $39.59\n2. *Zyr Organic Vodka* \u2014 750ML \u2014 $32.99\n3. *Stolichnaya Russian Vodka* \u2014 750ML \u2014 $30.79\n4. *Stolichnaya Vodka* \u2014 750ML \u2014 $27.49\n5. *Ketel One* \u2014 375ML \u2014 $18.69\n\nAnything catch your eye, or would you like me to search for a specific brand?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "$"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 4,
+        "user": "show me vodka",
+        "response": "Here are 5 vodka options:\n\n1. *Grey Goose L'Orange Vodka* \u2014 1L \u2014 $39.59\n2. *Zyr Organic Vodka* \u2014 750ML \u2014 $32.99\n3. *Stolichnaya Russian Vodka* \u2014 750ML \u2014 $30.79\n4. *Stolichnaya Vodka* \u2014 750ML \u2014 $27.49\n5. *Ketel One* \u2014 375ML \u2014 $18.69\n\nAnything catch your eye, or would you like me to search for something specific?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "$"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:47:42.476193"
+  },
+  {
+    "id": "E005",
+    "name": "Age verification - new user says yes",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "__greeting__",
+        "response": "Hi! I'm Rachel, your personal beverage specialist. I can help you find the perfect wines, spirits, and beers for any occasion.\n\n\u2713 Age verified.\n\nHow can I help you today?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "Rachel"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "Age verified",
+                "21 or older",
+                "help you today"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "What is your delivery address? (Please include street, city, state, and zip code)",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "address",
+                "help",
+                "deliver",
+                "Age verified"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:47:45.623399"
+  },
+  {
+    "id": "E006",
+    "name": "Age verification - user says no",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "__greeting__",
+        "response": "Hi! I'm Rachel, your personal beverage specialist. I can help you find the perfect wines, spirits, and beers for any occasion.\n\n\u2713 Age verified.\n\nHow can I help you today?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "Rachel"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "no",
+        "response": "What is your delivery address? (Please include street, city, state, and zip code)",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "sorry",
+                "goodbye",
+                "21 or older",
+                "cannot assist",
+                "address",
+                "help"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:47:48.743687"
+  },
+  {
+    "id": "E007",
+    "name": "Order state machine - full flow",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "opus one",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\n*Opus One* \u2014 750ML \u2014 $486.19\n\nAnything else I can help with?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "Opus One",
+                "486",
+                "place the order"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 3,
+        "user": "yes",
+        "response": "To get your order placed, I'll need a few details:\n\n1. What's your first and last name?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "Opus One",
+                "place the order",
+                "bottles",
+                "order"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 4,
+        "user": "place the order",
+        "response": "How many bottles would you like to order?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "bottles"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 5,
+        "user": "1",
+        "response": "What is your full name? (first and last)",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "name",
+                "first"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 6,
+        "user": "John Smith",
+        "response": "What is your phone number?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "phone",
+                "number"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 7,
+        "user": "9174781243",
+        "response": "Your email on file is *eval-test@getbevvi.com* \u2014 shall I use this for the order, or would you like to use a different one?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "email"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 8,
+        "user": "yes",
+        "response": "What delivery date and time would you like?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "delivery",
+                "date",
+                "time"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 9,
+        "user": "tomorrow at 5pm",
+        "response": "*Order Summary*\n\nVieux Telegraphe Ch du Pape Rouge - 750 ML x1 \u2014 $153.99 ea = $153.99\nDelivery to: 11 Madison Ave, New York, NY 10010\nDelivery: 05:00 PM - 06:00 PM EST\n\nProduct total: $153.99\nEstimated tax (10%): $15.40\nService charge (10%): $15.40\nTip (5%): $7.70\nDelivery: $25.00\n*Estimated grand total: $217.49*\n\nShall I go ahead and place this order?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "Order Summary"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains",
+              "value": "grand total"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains",
+              "value": "Shall I"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 10,
+        "user": "yes",
+        "response": "I wasn't able to place the order due to an account ID issue on the backend. Here's what I'd suggest:\n\nPlease reach out to *bevvi-support@getbevvi.com* and they'll get this sorted out quickly. You can reference your order details:\n\n*John Smith* | 11 Madison Ave, New York, NY 10010\nDelivery: 5:00 PM \u2013 6:00 PM EST\n\n*Order Summary:*\n1x Vieux Telegraphe Ch du Pape Rouge \u2014 750ML \u2014 $153.99\n1x Louis Jadot Chablis \u2014 1.5L \u2014 $76.99\n1x Stella Artois 24x12 Oz Bottle \u2014 $62.99\n1x Belvedere Organic Vodka \u2014 1.75L \u2014 $59.39\n1x Angostura 1824 12yr Rum \u2014 750ML \u2014 $65.99\n1x Barrell Vantage Bourbon \u2014 750ML \u2014 $93.49\n1x Monkey 47 Schwarzwald Dry Gin \u2014 1L \u2014 $84.69\n1x Casa Dragones Reposado \u2014 750ML \u2014 $181.49\n\n*Estimated Grand Total: $998.78*\n\nApologies for the inconvenience! Is there anything else I can help with?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "BEV-",
+                "order",
+                "payment",
+                "seaforth"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:48:32.545267"
+  },
+  {
+    "id": "E008",
+    "name": "Proposal state machine - full flow",
+    "passed": false,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "opus one",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\n*Opus One* \u2014 750ML \u2014 $486.19\n\nAnything else I can help with?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "$",
+                "available",
+                "help",
+                "deliver",
+                "address"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 3,
+        "user": "yes",
+        "response": "I'd be happy to help you with Opus One! Just to clarify \u2014 are you looking to:\n\n1. *Place an order* for the Opus One\n2. Get an *estimated full price* breakdown\n3. Keep looking at other options\n\nWhat would you like to do?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "Opus One",
+                "place the order",
+                "bottles",
+                "how many",
+                "order",
+                "proposal",
+                "486"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 4,
+        "user": "generate a PDF proposal",
+        "response": "What is the client or company name?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "bottles",
+                "how many"
+              ]
+            },
+            "passed": false
+          }
+        ],
+        "passed": false
+      },
+      {
+        "turn": 5,
+        "user": "2",
+        "response": "What is the event date?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "client",
+                "company",
+                "name"
+              ]
+            },
+            "passed": false
+          }
+        ],
+        "passed": false
+      },
+      {
+        "turn": 6,
+        "user": "Acme Corp",
+        "response": "It looks like your last message was just \"yes\" \u2014 I want to make sure I help you correctly!\n\nWere you looking to:\n1. *Place an order* for the Opus One?\n2. *Generate a proposal* for it?\n3. Something else?\n\nAlso, here's what I found:\n\n*Opus One* \u2014 750ML \u2014 $486.19\n\nWhat would you like to do?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "date",
+                "event"
+              ]
+            },
+            "passed": false
+          }
+        ],
+        "passed": false
+      },
+      {
+        "turn": 7,
+        "user": "August 5 2026",
+        "response": "It looks like your last message was just \"yes\" \u2014 I want to make sure I help you correctly!\n\nWere you looking to:\n1. *Place an order* for the Opus One?\n2. *Generate a PDF proposal* for the Opus One?\n\nAlso, just to confirm \u2014 here's what came up:\n\n*Opus One* \u2014 750ML \u2014 $486.19\n\nHow many bottles would you like, and what would you like to do?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "Download proposal"
+            },
+            "passed": false
+          },
+          {
+            "check": {
+              "type": "contains",
+              "value": "grand total"
+            },
+            "passed": false
+          }
+        ],
+        "passed": false
+      }
+    ],
+    "timestamp": "2026-08-01T21:48:54.787852"
+  },
+  {
+    "id": "E009",
+    "name": "Custom list - named products",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "I need 2 bottles of Belvedere vodka and 3 bottles of Opus One",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nHere's what I found:\n\n*SPIRITS*\n2x *Belvedere Organic Vodka* \u2014 1.75L \u2014 $59.39 ea = $118.78\n\n*WINE*\n3x *Opus One* \u2014 750ML \u2014 $486.19 ea = $1,458.57\n\nProduct Total: $1,577.35\nEstimated Tax (10%): $157.74\nEstimated Delivery: $25.00\nService Charge (10%): $157.74\nTip (5%): $78.87\n*Estimated Grand Total: $1,996.70*\n\nWould you also like to add mixers, water, soda, ice, or cups?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "$",
+                "available",
+                "help",
+                "deliver",
+                "address"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 3,
+        "user": "yes",
+        "response": "Here's what I found:\n\n*Spirits*\n2x *Belvedere Organic Vodka* \u2014 1.75L \u2014 $59.39 ea = $118.78\n\n*Wine*\n3x *Opus One* \u2014 750ML \u2014 $486.19 ea = $1,458.57\n\nProduct Total: $1,577.35\nEstimated Tax (10%): $157.74\nEstimated Delivery Charge: $25.00\nService Charge (10%): $157.74\nTip (5%): $78.87\n*Estimated Grand Total: $1,996.70*\n\n_Estimated \u2014 actual totals may vary._\n\nWould you also like to add mixers, water, soda, ice, or cups?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "Belvedere",
+                "Opus One",
+                "$"
+              ]
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "tool_called",
+              "value": "custom_list"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:49:11.141116"
+  },
+  {
+    "id": "E010",
+    "name": "Budget edge case - very low budget",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "need a package for 10 people, 2 hours, $50 budget, beer only",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nThe minimum budget for a package is $150. For 10 guests over 2 hours with beer only, here are some options to get you started:\n\n1. *Increase to ~$150* \u2014 I can build a solid beer package that covers your group comfortably\n2. *Fewer hours* \u2014 want to trim to 1 hour and see if that helps?\n3. *Smaller group* \u2014 if the headcount is flexible, I can work with that too\n\nWhat works best for you?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "$",
+                "available",
+                "help",
+                "deliver",
+                "address"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 3,
+        "user": "yes",
+        "response": "For 10 guests over 2 hours, a $50 budget is quite tight after fees (delivery alone is $25, plus tax and service charges). Here are some options:\n\n1. *Increase to ~$150* \u2014 that gives us a workable product budget for beer\n2. *Reduce the duration* \u2014 though with 10 guests, 2 hours is already short\n3. *Tell me your max* \u2014 what's the most you could stretch to?\n\nWhat works best for you?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "budget",
+                "$",
+                "limited",
+                "beer",
+                "available",
+                "package",
+                "low",
+                "hours",
+                "Delivering"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:49:25.800423"
+  },
+  {
+    "id": "E011",
+    "name": "Product not available \u2192 alternative",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "do you have Pappy Van Winkle 23 year",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nUnfortunately, *Pappy Van Winkle 23 Year* isn't available at this location right now. The closest options we do have in the Pappy lineup are:\n\n1. *Pappy Van Winkle 12 Year Bourbon* \u2014 750ML \u2014 $1,319.99\n2. *Pappy Van Winkle 10 Year Bourbon* \u2014 750ML \u2014 $1,099.99\n\nWould you like to go with one of these, or would you like me to alert our team about the 23 Year?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "$",
+                "available",
+                "help",
+                "deliver",
+                "address"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 3,
+        "user": "yes",
+        "response": "Unfortunately, the *Pappy Van Winkle 23 Year* isn't available at this location. The closest options we have are:\n\n1. *Pappy Van Winkle 12 Year* \u2014 750ml \u2014 $1,319.99\n2. *Pappy Van Winkle 10 Year* \u2014 750ml \u2014 $1,099.99\n\nWould you like to go with one of these, or would you like me to alert our team about the 23 Year?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "not available",
+                "alternative",
+                "similar",
+                "suggest",
+                "bourbon",
+                "$"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:49:45.338134"
+  },
+  {
+    "id": "E012",
+    "name": "Cache invalidation - different product",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "show me opus one",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nHere's what I found:\n\n*Opus One* \u2014 750ML \u2014 $486.19\n\nAnything else I can help with?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "$",
+                "available",
+                "help",
+                "deliver",
+                "address"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 3,
+        "user": "yes",
+        "response": "Could you help me out with a bit more context? Are you looking to:\n\n1. *Place an order* for the Opus One\n2. *See the estimated full price* (with tax, delivery, etc.)\n3. *Keep looking* at other options\n\nWhat would you like to do?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "Opus One",
+                "place the order",
+                "bottles",
+                "how many",
+                "order",
+                "proposal",
+                "486"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 4,
+        "user": "actually show me Belvedere vodka instead",
+        "response": "Here are 2 options for Belvedere:\n\n1. *Belvedere Organic Vodka* \u2014 1.75L \u2014 $59.39 \u2b50\n2. *Belvedere Organic Vodka* \u2014 750ml \u2014 $36.29 \u2b50\n\nAnything else I can help with?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "Belvedere",
+                "vodka",
+                "$"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:50:06.317605"
+  },
+  {
+    "id": "E013",
+    "name": "Order confirmation cancel",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "opus one",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\n*Opus One* \u2014 750ML \u2014 $486.19\n\nAnything else I can help with?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "$",
+                "available",
+                "help",
+                "deliver",
+                "address"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 3,
+        "user": "yes",
+        "response": "I found one option for you:\n\n*Opus One* \u2014 750ML \u2014 $486.19\n\nWould you like to place an order, see the estimated full price, or keep looking?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "Opus One",
+                "place the order",
+                "bottles",
+                "how many",
+                "order",
+                "proposal",
+                "486"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 4,
+        "user": "place the order",
+        "response": "How many bottles would you like to order?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "bottles"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 5,
+        "user": "1",
+        "response": "What is your full name? (first and last)",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "name",
+                "first"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 6,
+        "user": "John Smith",
+        "response": "What is your phone number?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "phone"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 7,
+        "user": "9174781243",
+        "response": "Your email on file is *eval-test@getbevvi.com* \u2014 shall I use this for the order, or would you like to use a different one?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "email"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 8,
+        "user": "yes",
+        "response": "What delivery date and time would you like?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "date",
+                "time"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 9,
+        "user": "tomorrow at 5pm",
+        "response": "*Order Summary*\n\nBelvedere Organic Vodka - 1.75 L x1 \u2014 $59.39 ea = $59.39\nDelivery to: 11 Madison Ave, New York, NY 10010\nDelivery: 05:00 PM - 06:00 PM EST\n\nProduct total: $59.39\nEstimated tax (10%): $5.94\nService charge (10%): $5.94\nTip (5%): $2.97\nDelivery: $25.00\n*Estimated grand total: $99.24*\n\nShall I go ahead and place this order?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "Shall I"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 10,
+        "user": "no",
+        "response": "No problem! Would you like to make any changes, or is there anything else I can help with?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "changes",
+                "help",
+                "anything else"
+              ]
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "not_contains",
+              "value": "BEV-"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:50:22.055216"
+  },
+  {
+    "id": "E014",
+    "name": "Greeting flow - age verified user",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "__greeting__",
+        "response": "Hi! I'm Rachel, your personal beverage specialist. I can help you find the perfect wines, spirits, and beers for any occasion.\n\n\u2713 Age verified.\n\nHow can I help you today?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "Rachel"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains",
+              "value": "Age verified"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "not_contains",
+              "value": "21 or older"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:50:24.305283"
+  },
+  {
+    "id": "E015",
+    "name": "Recommendation intent",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "recommend me a nice red wine under $100",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nHere are some great red wine options under $100:\n\n1. *Ruffino Chianti Riserva Ducale Gold* \u2014 750ML \u2014 $40.69 \u2b50\n2. *Ruffino Chianti Riserva Ducale Tan* \u2014 750ML \u2014 $27.45 \u2b50\n3. *Louis Latour Bourgogne Rouge* \u2014 750ML \u2014 $36.29\n4. *Kendall-Jackson Vintner's Reserve Cabernet Sauvignon* \u2014 750ML \u2014 $21.77 \u2b50\n\nThe *Ruffino Ducale Gold* is a standout \u2014 it's a beautifully structured Chianti Classico Riserva with dark fruit, earthy notes, and a long finish. Great value at $40.69. If you're looking for something lighter and more elegant, the *Louis Latour Bourgogne Rouge* (Pinot Noir) is a lovely French Burgundy.\n\nAny of these catch your eye?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "$"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "place the order",
+                "PDF proposal",
+                "make any changes"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:50:45.121260"
+  },
+  {
+    "id": "E016",
+    "name": "Champagne search",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "do you have Veuve Clicquot",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nYes! We have *Veuve Clicquot* available in two sizes:\n\n1. *Veuve Clicquot Yellow Label Brut Champagne* \u2014 1.5L \u2014 $175.99\n2. *Veuve Clicquot Yellow Label Brut* \u2014 375ML \u2014 $46.19\n\nWould you like to place an order, generate a PDF proposal, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "Veuve",
+                "Champagne",
+                "champagne",
+                "$"
+              ]
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "place the order",
+                "PDF proposal",
+                "make any changes"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:50:55.855737"
+  },
+  {
+    "id": "E017",
+    "name": "Budget $500 event package",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "need a package for 20 guests, 3 hours, $500 budget, wine and beer",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nHere's your package for 20 guests, $500 budget, 3 hrs:\n\n*WINE \u2014 6 bottles (4 red, 2 white)*\n\nRed:\n2x *Ruffino Chianti Riserva Ducale Gold* \u2014 750ML \u2014 $40.69 ea = $81.38\n2x *La Crema Pinot Noir RRV* \u2014 750ML \u2014 $42.89 ea = $85.78\n\nWhite:\n1x *Stags' Leap Chardonnay* \u2014 750ML \u2014 $38.49 ea = $38.49\n1x *Cloudy Bay Sauvignon Blanc* \u2014 750ML \u2014 $37.39 ea = $37.39\n\nWine total: $243.04\n\n*BEER \u2014 2 cases*\n1x *Stella Artois* \u2014 24x12 Oz bottle \u2014 $62.99 ea = $62.99\n1x *Stella Artois Cider* \u2014 24x12 Oz bottle \u2014 $62.99 ea = $62.99\n\nBeer total: $125.98\n\nProduct total: $369.02\nEstimated Tax (10%): $36.90\nEstimated Delivery Charge: $25.00\nService Charge (10%): $36.90\nTip (5%): $18.45\n*Estimated grand total: $486.27 of your $500 budget*\n\n_Tax, service, tip, and delivery are estimates \u2014 actual totals may vary._\n\nPreferred brands: Ruffino Chianti Riserva Ducale Gold, La Crema Pinot Noir RRV, Cloudy Bay Sauvignon Blanc\n\n---\n\nWould you also like to add mixers, water, soda, ice, or cups?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "Product total"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "mixers",
+                "place the order"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:51:15.220202"
+  },
+  {
+    "id": "E018",
+    "name": "Spirits only package",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "need spirits for 15 people, 2 hours, $800 budget",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nHere's your spirits package for 15 guests, $800 budget, 2 hrs:\n\n*SPIRITS \u2014 5 bottles*\n\nVodka: 1x *Belvedere Organic Vodka* \u2b50 \u2014 1.75L \u2014 $59.39\nRum: 1x *Angostura 1824 12yr Rum* \u2014 750ML \u2014 $65.99\nBourbon: 1x *Elijah Craig 18YR Single Barrel Bourbon* \u2014 750ML \u2014 $203.49\nGin: 1x *Monkey 47 Schwarzwald Dry Gin* \u2014 1L \u2014 $84.69\nTequila: 1x *Clase Azul Reposado Tequila* \u2014 750ML \u2014 $200.19\n\nProduct total: $613.75\nEstimated Tax (10%): $61.38\nEstimated Delivery Charge: $25.00\nService Charge (10%): $61.38\nTip (5%): $30.69\n*Estimated grand total: $792.19 of your $800 budget*\n\n_Tax, service, tip, and delivery are estimates \u2014 actual totals may vary._\n\n\u2b50 = Preferred brand\n\nWould you also like to add mixers, water, soda, ice, or cups?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "Product total"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "spirit",
+                "vodka",
+                "whiskey",
+                "bourbon",
+                "tequila",
+                "gin"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:51:42.555221"
+  },
+  {
+    "id": "E019",
+    "name": "Custom list - single named product with qty",
+    "passed": false,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "I need 3 bottles of Belvedere vodka",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nHere's what I found:\n\n*Belvedere Organic Vodka* \u2014 1.75L \u2014 $59.39 ea\nQty: 3 = *$178.17*\n\nProduct total: $178.17\nEstimated Tax (10%): $17.82\nEstimated Delivery: $25.00\nService Charge (10%): $17.82\nTip (5%): $8.91\n*Estimated grand total: $247.72*\n\nWould you also like to add mixers, water, soda, ice, or cups?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "Belvedere",
+                "vodka",
+                "$"
+              ]
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "place the order",
+                "PDF proposal",
+                "make any changes"
+              ]
+            },
+            "passed": false
+          }
+        ],
+        "passed": false
+      }
+    ],
+    "timestamp": "2026-08-01T21:51:53.009168"
+  },
+  {
+    "id": "E020",
+    "name": "Beer only search",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "show me some craft beer options",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nHere are some solid craft beer options:\n\n*IPA*\n*Goose Island IPA* \u2014 12-pack \u2014 $31.99\n*Goose Island IPA* \u2014 24-pack \u2014 $62.99\n*Blue Point Mosaic IPA* \u2014 12-pack \u2014 $31.99\n\n*Pale Ale*\n*Oskar Blues Dale's Pale Ale* \u2014 12-pack cans \u2014 $31.99\n*Ommegang Rare Vos* \u2014 12-pack \u2014 $31.99\n*Ommegang Rare Vos* \u2014 24-pack \u2014 $62.99\n\n*Stout*\n*Left Hand Milk Stout Nitro* \u2014 12-pack \u2014 $31.99\n*Left Hand Milk Stout Nitro* \u2014 24-pack \u2014 $62.99\n*Left Hand Milk Stout* \u2014 12-pack \u2014 $31.99\n\nA nice range across styles! Anything catch your eye, or would you like me to look into a specific style or brand?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "$"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "place the order",
+                "PDF proposal",
+                "make any changes",
+                "beer"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:52:21.501487"
+  },
+  {
+    "id": "E021",
+    "name": "Large event package - 100 guests",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "need a full bar package for 100 guests, 4 hours, $5000 budget",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nHere's your full bar package for *100 guests, 4 hours, $5,000 budget:*\n\n---\n\n*WINE \u2014 21 bottles*\n\nRed:\n6x *Bella Union Cabernet by Far Niente* \u2014 750ML \u2014 $76.99 ea = $461.94\n5x *Far Niente Cabernet Napa* \u2014 750ML \u2014 $126.49 ea = $632.45\n\nWhite:\n6x *Louis Jadot Chablis* \u2014 750ML \u2014 $76.99 ea = $461.94\n\nSparkling:\n2x *Mo\u00ebt & Chandon Imperial Brut* \u2014 1.5L \u2014 $148.49 ea = $296.98\n2x *Ruinart Blanc de Blancs Brut NV* \u2014 750ML \u2014 $126.49 ea = $252.98\n\n*Wine total: $2,106.29*\n\n---\n\n*BEER \u2014 9 packs*\n\n5x *Stella Artois* \u2014 24x12 Oz Bottle \u2014 $62.99 ea = $314.95\n4x *Stella Artois Cider* \u2014 24x12 Oz Bottle \u2014 $62.99 ea = $251.96\n\n*Beer total: $566.91*\n\n---\n\n*SPIRITS \u2014 10 bottles*\n\nVodka: 2x *Belvedere Organic Vodka* \u2b50 \u2014 1.75L \u2014 $59.39 ea = $118.78\nRum: 2x *Angostura 1824 12yr Rum* \u2014 750ML \u2014 $65.99 ea = $131.98\nBourbon: 2x *Blantons Single Barrel Bourbon* \u2014 750ML \u2014 $241.99 ea = $483.98\nGin: 2x *Monkey 47 Schwarzwald Dry Gin* \u2014 1L \u2014 $84.69 ea = $169.38\nTequila: 2x *Clase Azul Reposado Tequila* \u2014 750ML \u2014 $200.19 ea = $400.38\n\n*Spirits total: $1,304.50*\n\n---\n\nProduct total: $3,977.70\nEstimated Tax (10%): $397.77\nEstimated Delivery Charge: $25.00\nService Charge (10%): $397.77\nTip (5%): $198.89\n*Estimated grand total: $4,997.13 of your $5,000 budget*\n\n_Tax, service, tip, and delivery are estimates \u2014 actual totals may vary._\n\n\u2b50 = Preferred brand\n\n---\n\nWould you also like to add mixers, water, soda, ice, or cups?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "Product total"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "mixers",
+                "place the order"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:52:55.523467"
+  },
+  {
+    "id": "E022",
+    "name": "White wine search",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "show me nice white wines",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nHere are some nice white wines available:\n\n1. *Moet & Chandon Imperial Brut* \u2014 1.5L \u2014 $148.49 \u2b50\n2. *Moet & Chandon Champagne Brut Imperial* \u2014 375ML \u2014 $35.74 \u2b50\n3. *Mezzacorona Pinot Grigio* \u2014 1.5L \u2014 $16.49\n4. *Jadot Macon Villages* \u2014 750ML \u2014 $17.59\n5. *Simi Chardonnay* \u2014 750ML \u2014 $17.59\n6. *Baron Herzog Chardonnay* \u2014 750ML \u2014 $17.59\n\nA nice range here \u2014 from crisp Pinot Grigio and Chardonnay to classic Champagne. The Moet options are crowd-pleasers for any occasion.\n\nWould you like more details on any of these, or are you shopping for an event?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "$"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "place the order",
+                "PDF proposal",
+                "make any changes"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:53:15.080810"
+  },
+  {
+    "id": "E023",
+    "name": "Proposal then order",
+    "passed": false,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "opus one",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\n*Opus One* \u2014 750ML \u2014 $486.19\n\nAnything else I can help with?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "Opus One"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 3,
+        "user": "generate a PDF proposal",
+        "response": "What is the client or company name?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "bottles",
+                "how many"
+              ]
+            },
+            "passed": false
+          }
+        ],
+        "passed": false
+      },
+      {
+        "turn": 4,
+        "user": "1",
+        "response": "What is the event date?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "client",
+                "company"
+              ]
+            },
+            "passed": false
+          }
+        ],
+        "passed": false
+      },
+      {
+        "turn": 5,
+        "user": "Acme Corp",
+        "response": "It looks like the client name and event date got swapped in your message! Just to confirm:\n\n- *Client name:* Acme Corp\n- *Event date:* What's the event date?\n\nAlso, the last search only returned a single product \u2014 *Opus One - 750 ML* at $486.19. What quantity would you like on the proposal?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "date",
+                "event"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 6,
+        "user": "July 30 2026",
+        "response": "It looks like the client name and event date got a little swapped! Just to confirm:\n\n- *Client name:* Acme Corp\n- *Event date:* July 30, 2026\n\nIs that right?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "Download proposal"
+            },
+            "passed": false
+          }
+        ],
+        "passed": false
+      },
+      {
+        "turn": 7,
+        "user": "place the order",
+        "response": "How many bottles would you like to order?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "bottles",
+                "how many"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:53:33.615241"
+  },
+  {
+    "id": "E024",
+    "name": "Reset mid-conversation",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "opus one",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\n*Opus One* \u2014 750ML \u2014 $486.19\n\nAnything else I can help with?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "Opus One"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 3,
+        "user": "__greeting__",
+        "response": "Hi! I'm Rachel, your personal beverage specialist. I can help you find the perfect wines, spirits, and beers for any occasion.\n\n\u2713 Age verified.\n\nHow can I help you today?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "Rachel"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains",
+              "value": "Age verified"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:53:44.138353"
+  },
+  {
+    "id": "E025",
+    "name": "Tequila search",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "show me premium tequila",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nHere's a solid lineup of premium tequilas available for your location:\n\n*Don Julio*\n1. *Don Julio Blanco Tequila* \u2014 750ML \u2014 $63.79\n2. *Don Julio Reposado Tequila* \u2014 750ML \u2014 $68.19\n3. *Don Julio 70 Cristalino Tequila* \u2014 750ML \u2014 $75.34\n\n*Patr\u00f3n*\n4. *Patron Silver* \u2014 750ML \u2014 $47.29\n5. *Patron Reposado* \u2014 750ML \u2014 $64.89\n6. *Patron Roca Silver* \u2014 750ML \u2014 $76.99\n\n*Casamigos*\n7. *Casamigos Tequila Reposado* \u2014 750ML \u2014 $62.47\n8. *Casamigos Reposado* \u2014 1L \u2014 $75.89\n\n*Casa Dragones*\n9. *Casa Dragones Blanco Tequila* \u2014 750ML \u2014 $82.49\n10. *Casa Dragones Reposado* \u2014 750ML \u2014 $181.49\n\n*Clase Azul*\n11. *Clase Azul Reposado Tequila* \u2014 750ML \u2014 $200.19\n12. *Clase Azul Reposado Tequila* \u2014 1.75L \u2014 $494.99\n13. *Clase Azul Anejo Tequila* \u2014 750ML \u2014 $659.99\n\nAnything catch your eye, or would you like more details on any of these?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "$"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "place the order",
+                "PDF proposal",
+                "make any changes",
+                "tequila"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:54:12.452612"
+  },
+  {
+    "id": "E026",
+    "name": "Scotch whisky search",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "do you have any good scotch",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nHere are some scotch options available:\n\n1. *Oban 14 Year Scotch Whisky* \u2014 750ML \u2014 $95.69\n2. *White Horse Blended Scotch Whisky* \u2014 1.75L \u2014 $38.49\n3. *Black Dog Gold Reserve 12 Year Scotch Whisky* \u2014 750ML \u2014 $38.49\n4. *Johnnie Walker Red Label Blended Scotch Whisky* \u2014 375ML \u2014 $18.69\n5. *Johnnie Walker Black Label Whisky* \u2014 200ML \u2014 $16.49\n\nThe *Oban 14 Year* is a standout \u2014 it's a classic Highland single malt with notes of sea salt, dried fruit, and a hint of smoke. Great sipping scotch.\n\nWould you like to go with any of these, or are you looking for something more specific \u2014 like a peaty Islay style, a smooth Speyside, or a particular price range?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "$"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "place the order",
+                "PDF proposal",
+                "make any changes",
+                "scotch",
+                "whisky"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:54:30.039319"
+  },
+  {
+    "id": "E027",
+    "name": "Multiple product custom list",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "I need 2 Opus One, 3 Belvedere, 2 Veuve Clicquot and 1 case of Corona",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nHere's what I found:\n\n*WINE*\n2x *Opus One* \u2014 750ML \u2014 $486.19 ea = $972.38\n2x *Veuve Clicquot Yellow Label Brut Champagne* \u2014 1.5L \u2014 $175.99 ea = $351.98\n\n*SPIRITS*\n3x *Belvedere Organic Vodka* \u2014 1.75L \u2014 $59.39 ea = $178.17\n\n*BEER*\n1x *Corona Extra 24x12 Oz Bottle* \u2014 24x12 Oz \u2014 $62.99 ea = $62.99\n\nProduct Total: $1,565.52\nEstimated Tax (10%): $156.55\nEstimated Delivery Charge: $25.00\nService Charge (10%): $156.55\nTip (5%): $78.28\n*Estimated Grand Total: $1,981.90*\n\n_Estimated \u2014 actual totals may vary._\n\nWould you also like to add mixers, water, soda, ice, or cups?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "$"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains",
+              "value": "mixers"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 3,
+        "user": "no",
+        "response": "Here's what I found:\n\n*WINE*\n2x *Opus One* \u2014 750ML \u2014 $486.19 ea = $972.38\n2x *Veuve Clicquot Yellow Label Brut Champagne* \u2014 1.5L \u2014 $175.99 ea = $351.98\n\n*SPIRITS*\n3x *Belvedere Organic Vodka* \u2014 1.75L \u2014 $59.39 ea = $178.17\n\n*BEER*\n1x *Corona Extra 24x12 Oz Bottle* \u2014 24x12 Oz \u2014 $62.99 ea = $62.99\n\nProduct total: $1,565.52\nEstimated Tax (10%): $156.55\nEstimated Delivery Charge: $25.00\nService Charge (10%): $156.55\nTip (5%): $78.28\n*Estimated grand total: $1,981.90*\n\nEstimated \u2014 actual totals may vary.\n\nWould you also like to add mixers, water, soda, ice, or cups?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "place the order",
+                "PDF proposal",
+                "make any changes"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:54:49.728669"
+  },
+  {
+    "id": "E028",
+    "name": "Budget change request",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "need a package for 10 people, 2 hours, $1000 budget, wine and beer",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nHere's your package for *10 guests, $1,000 budget, 2 hrs*:\n\n*WINE \u2014 3 bottles*\n\nRed:\n1x *Far Niente Cabernet Napa* \u2014 750ML \u2014 $126.49\n1x *Opus One* \u2014 750ML \u2014 $486.19\n\nWhite:\n1x *Louis Jadot Chablis* \u2014 1.5L \u2014 $76.99\n\nWine total: $689.67\n\n*BEER \u2014 1 pack*\n1x *Stella Artois* \u2014 24x12 Oz Bottle \u2014 $62.99\n\nBeer total: $62.99\n\nProduct total: $752.66\nEstimated Tax (10%): $75.27\nEstimated Delivery Charge: $25.00\nService Charge (10%): $75.27\nTip (5%): $37.63\n*Estimated grand total: $965.82 of your $1,000 budget*\n\n_Tax, service, tip, and delivery are estimates \u2014 actual totals may vary._\n\nWould you also like to add mixers, water, soda, ice, or cups?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "Product total"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 3,
+        "user": "no",
+        "response": "Could you help me understand what you'd like to change? For example:\n\n- Different wine or beer selections?\n- Adjust the quantities?\n- Swap out a specific product?\n- Change the budget or categories?\n\nLet me know and I'll rebuild it right away!\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "place the order",
+                "PDF proposal",
+                "make any changes",
+                "help"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 4,
+        "user": "can you rebuild with a $500 budget instead",
+        "response": "Here's your updated package for *10 guests, 2 hours, $500 budget*:\n\n*WINE \u2014 3 bottles (2 red, 1 white)*\n\nRed:\n2x *Silver Oak Cabernet Alexander* \u2014 750ML \u2014 $109.99 ea = $219.98\n\nWhite:\n1x *Louis Jadot Chablis* \u2014 1.5L \u2014 $76.99 ea = $76.99\n\nWine total: $296.97\n\n*BEER \u2014 1 pack*\n1x *Stella Artois* \u2014 24x12 Oz bottle \u2014 $62.99 ea = $62.99\n\nBeer total: $62.99\n\nProduct total: $359.96\nEstimated Tax (10%): $36.00\nEstimated Delivery Charge: $25.00\nService Charge (10%): $36.00\nTip (5%): $18.00\n*Estimated grand total: $474.95* of your $500 budget\n\n_Tax, service, tip, and delivery are estimates \u2014 actual totals may vary._\n\nWould you also like to add mixers, water, soda, ice, or cups?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "Product total"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:55:33.608752"
+  },
+  {
+    "id": "E029",
+    "name": "NJ zip delivery",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "show me red wine",
+        "response": "I have your delivery address on file as 100 Main St, Teterboro, NJ 07608 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 100 Main St, Teterboro, NJ 07608.\n\nHere are some red wines available:\n\n1. *Catena Malbec* \u2014 750ML \u2014 $27.11\n2. *J. Lohr Cabernet Seven Oaks* \u2014 750ML \u2014 $22.59\n3. *Bonterra Cabernet* \u2014 750ML \u2014 $15.81\n4. *19 Crimes Cabernet Sauvignon* \u2014 750ML \u2014 $14.68\n5. *Bogle Zinfandel Old Vine* \u2014 750ML \u2014 $13.55\n\nAnything catch your eye, or would you like me to narrow it down by style, price, or varietal?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "$"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "place the order",
+                "PDF proposal",
+                "make any changes"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:55:52.246685"
+  },
+  {
+    "id": "E030",
+    "name": "Mixers yes flow",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "need a package for 10 people, 2 hours, $500 budget, wine and beer",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nHere's your package for *10 guests, $500 budget, 2 hrs*:\n\n*WINE \u2014 3 bottles*\n\nRed:\n2x *Silver Oak Cabernet Alexander* \u2014 750ML \u2014 $109.99 ea = $219.98\n\nWhite:\n1x *Louis Jadot Chablis* \u2014 1.5L \u2014 $76.99 ea = $76.99\n\nWine total: $296.97\n\n*BEER \u2014 1 pack*\n1x *Stella Artois* \u2014 24x12 Oz Bottle \u2014 $62.99 ea = $62.99\n\nBeer total: $62.99\n\nProduct total: $359.96\nEstimated Tax (10%): $36.00\nEstimated Delivery Charge: $25.00\nService Charge (10%): $36.00\nTip (5%): $18.00\n*Estimated grand total: $474.95* of your $500 budget\n\n_Tax, service, tip, and delivery are estimates \u2014 actual totals may vary._\n\n---\n\nWould you also like to add mixers, water, soda, ice, or cups?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "mixers",
+                "Product total"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 3,
+        "user": "yes add mixers",
+        "response": "Looks like still water and ice bags aren't available at this location, and the search didn't pull up the right mixer matches. Here's what I can confirm is available:\n\nUnfortunately, mixers, soda, and ice aren't coming up in inventory at this location right now.\n\nWould you like to *place the order*, *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "water",
+                "soda",
+                "ice",
+                "mixer",
+                "place the order"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:56:34.901971"
+  },
+  {
+    "id": "E031",
+    "name": "Unsupported delivery zip \u2192 graceful decline",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "789 Harbor Dr, San Diego, CA 92101",
+        "response": "Sorry, it looks like we don't currently have a store serving the 92101 zip code, so I'm unable to fulfill orders there yet. I'd recommend reaching out to our support team at bevvi-support@getbevvi.com \u2014 they can look into delivery options for your area. Would you like to try a different delivery address?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "don't currently have a store"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains",
+              "value": "92101"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains",
+              "value": "bevvi-support@getbevvi.com"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "do you have any Cabernet Sauvignon",
+        "response": "What is your delivery address? (Please include street, city, state, and zip code)",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "delivery address"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:56:37.679627"
+  },
+  {
+    "id": "E032",
+    "name": "Change address directly (not yes/no)",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "do you have opus one",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "100 Federal Street, Floor 6, Boston, MA 02110",
+        "response": "Got it! Delivering to 100 Federal Street, Floor 6, Boston, MA 02110.\n\nYes! We have Opus One available:\n\n*Opus One* \u2014 750ML \u2014 $499.99\n\nWould you like to see the estimated full price with fees, or is there anything else I can help with?\n\nWould you like to *place the order* or *generate a PDF proposal*, or make any changes?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "Opus One"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains",
+              "value": "100 Federal Street"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "place the order",
+                "PDF proposal",
+                "make any changes"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:56:50.299037"
+  },
+  {
+    "id": "E033",
+    "name": "Proposal skips quantity question when basket already has explicit quantities",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "I need 2 Opus One and 3 Belvedere vodka",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nHere's what I found:\n\n*WINE*\n2x *Opus One* \u2014 750ML \u2014 $486.19 ea = $972.38\n\n*SPIRITS*\n3x *Belvedere Organic Vodka* \u2014 1.75L \u2014 $59.39 ea = $178.17\n\nProduct Total: $1,150.55\nEstimated Tax (10%): $115.06\nEstimated Delivery: $25.00\nService Charge (10%): $115.06\nTip (5%): $57.53\n*Estimated Grand Total: $1,463.20*\n\n_Estimated \u2014 actual totals may vary._\n\nWould you also like to add mixers, water, soda, ice, or cups?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "$"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 3,
+        "user": "generate a pdf proposal",
+        "response": "What is the client or company name?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "client",
+                "company",
+                "name"
+              ]
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "not_contains",
+              "value": "how many"
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "not_contains",
+              "value": "bottles would you like"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 4,
+        "user": "Acme Corp",
+        "response": "What is the event date?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "date",
+                "event"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 5,
+        "user": "August 5 2026",
+        "response": "Your proposal is ready! \ud83c\udf89\n\n*Acme Corp \u2014 Event Proposal*\nEvent Date: August 5, 2026\n\n*Order Summary:*\n2x Opus One - 750ML \u2014 $486.19 ea = $972.38\n3x Belvedere Organic Vodka - 1.75L \u2014 $59.39 ea = $178.17\n\nProduct Total: $1,150.55\nEstimated Tax (10%): $115.06\nEstimated Delivery: $25.00\nService Charge (10%): $115.06\nTip (5%): $57.53\n*Estimated Grand Total: $1,463.20*\n\n<http://3.138.180.46/proposals/bevvi-proposal-1785621428606.pdf|Download proposal>\n\nWould you like to place the order, make any changes, or anything else?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "Opus One",
+                "Belvedere"
+              ]
+            },
+            "passed": true
+          },
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "Download proposal",
+                "download"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:57:14.349519"
+  },
+  {
+    "id": "E034",
+    "name": "Proposal tax-exempt request generates a new PDF",
+    "passed": true,
+    "turns": [
+      {
+        "turn": 1,
+        "user": "I need 2 Opus One and 3 Belvedere vodka",
+        "response": "I have your delivery address on file as 11 Madison Ave, New York, NY 10010 \u2014 shall I use this for your order?",
+        "checks": [],
+        "passed": true
+      },
+      {
+        "turn": 2,
+        "user": "yes",
+        "response": "Got it! Delivering to 11 Madison Ave, New York, NY 10010.\n\nHere's what I found:\n\n*WINE*\n2x *Opus One* \u2014 750ML \u2014 $486.19 ea = $972.38\n\n*SPIRITS*\n3x *Belvedere Organic Vodka* \u2014 1.75L \u2014 $59.39 ea = $178.17\n\nProduct total: $1,150.55\nEstimated Tax (10%): $115.06\nEstimated Delivery Charge: $25.00\nService Charge (10%): $115.06\nTip (5%): $57.53\n*Estimated grand total: $1,463.20*\n\n_Estimated \u2014 actual totals may vary._\n\nWould you also like to add mixers, water, soda, ice, or cups?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains",
+              "value": "$"
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 3,
+        "user": "generate a pdf proposal",
+        "response": "What is the client or company name?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "client",
+                "company",
+                "name"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 4,
+        "user": "Acme Corp",
+        "response": "What is the event date?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "date",
+                "event"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 5,
+        "user": "August 5 2026",
+        "response": "Your proposal is ready! \ud83c\udf89\n\n*Acme Corp \u2014 Event Proposal*\nEvent Date: August 5, 2026\n\nHere's a summary of what's included:\n\n*WINE*\n2x Opus One - 750 ML \u2014 $486.19 ea = $972.38\n\n*SPIRITS*\n3x Belvedere Organic Vodka - 1.75 L \u2014 $59.39 ea = $178.17\n\nProduct Total: $1,150.55\nEstimated Tax (10%): $115.06\nEstimated Delivery: $25.00\nService Charge (10%): $115.06\nTip (5%): $57.53\n*Estimated Grand Total: $1,463.20*\n\n<http://3.138.180.46/proposals/bevvi-proposal-1785621451125.pdf|Download proposal>\n\nWould you like to place the order, make any changes, or anything else?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "Download proposal",
+                "download"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      },
+      {
+        "turn": 6,
+        "user": "this order is tax exempt, set tax to 0",
+        "response": "Your updated proposal for *Acme Corp* is ready with $0 tax applied:\n\n<http://3.138.180.46/proposals/bevvi-proposal-1785621463089.pdf|Download proposal>\n\nHere's the updated breakdown:\n*Opus One - 750 ML* x2 \u2014 $486.19 ea = $972.38\n*Belvedere Organic Vodka - 1.75L* x3 \u2014 $59.39 ea = $178.17\n\nProduct total: $1,150.55\nEstimated Tax: $0.00\nEstimated Delivery: $25.00\nService Charge (10%): $115.06\nTip (5%): $57.53\n*Estimated grand total: $1,348.14*\n\nAnything else you'd like to adjust?",
+        "checks": [
+          {
+            "check": {
+              "type": "contains_any",
+              "values": [
+                "Download proposal",
+                "download"
+              ]
+            },
+            "passed": true
+          }
+        ],
+        "passed": true
+      }
+    ],
+    "timestamp": "2026-08-01T21:57:48.324716"
+  }
+]

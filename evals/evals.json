@@ -1,0 +1,1697 @@
+[
+  {
+    "id": "E001",
+    "name": "Single product search \u2192 CTA",
+    "description": "Customer asks for a specific product, gets result + CTA",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "do you have opus one",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "Opus One"
+          },
+          {
+            "type": "contains",
+            "value": "486"
+          },
+          {
+            "type": "contains",
+            "value": "place the order"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E002",
+    "name": "Event package \u2192 mixers \u2192 CTA",
+    "description": "Customer requests event package, gets mixers question, then CTA",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "no",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "place the order",
+              "make any changes",
+              "PDF proposal",
+              "anything else",
+              "change",
+              "help",
+              "order",
+              "proposal"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "need a menu for 10 people, 2 hours, $1000 budget, beer wine spirits",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "Product total"
+          },
+          {
+            "type": "contains",
+            "value": "mixers"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E003",
+    "name": "Address confirmation flow",
+    "description": "Customer with saved address gets confirmation before search",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "show me some red wine",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "$"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E004",
+    "name": "No address on file \u2192 collect address",
+    "description": "Customer with no saved address is asked for it",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "",
+      "delivery_zip": ""
+    },
+    "turns": [
+      {
+        "user": "show me vodka",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "delivery address",
+              "zip",
+              "address"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "11 Madison Ave, New York, NY 10010",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "Got it",
+              "Delivering",
+              "$",
+              "vodka",
+              "search",
+              "help",
+              "How can I",
+              "beverage"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "show me vodka",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "$"
+          }
+        ]
+      },
+      {
+        "user": "show me vodka",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "$"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E005",
+    "name": "Age verification - new user says yes",
+    "description": "New user confirms age and proceeds",
+    "setup": {
+      "age_verified": false,
+      "delivery_address": "",
+      "delivery_zip": ""
+    },
+    "turns": [
+      {
+        "user": "__greeting__",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "Rachel"
+          },
+          {
+            "type": "contains_any",
+            "values": [
+              "Age verified",
+              "21 or older",
+              "help you today"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "address",
+              "help",
+              "deliver",
+              "Age verified"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E006",
+    "name": "Age verification - user says no",
+    "description": "User under 21 gets goodbye message",
+    "setup": {
+      "age_verified": false,
+      "delivery_address": "",
+      "delivery_zip": ""
+    },
+    "turns": [
+      {
+        "user": "__greeting__",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "Rachel"
+          }
+        ]
+      },
+      {
+        "user": "no",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "sorry",
+              "goodbye",
+              "21 or older",
+              "cannot assist",
+              "address",
+              "help"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E007",
+    "name": "Order state machine - full flow",
+    "description": "Full order flow: qty \u2192 name \u2192 phone \u2192 email \u2192 date \u2192 confirm \u2192 place",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "opus one",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "Opus One",
+              "486",
+              "place the order"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "Opus One",
+              "place the order",
+              "bottles",
+              "order"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "place the order",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "bottles"
+          }
+        ]
+      },
+      {
+        "user": "1",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "name",
+              "first"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "John Smith",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "phone",
+              "number"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "9174781243",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "email"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "delivery",
+              "date",
+              "time"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "tomorrow at 5pm",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "Order Summary"
+          },
+          {
+            "type": "contains",
+            "value": "grand total"
+          },
+          {
+            "type": "contains",
+            "value": "Shall I"
+          }
+        ]
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "BEV-",
+              "order",
+              "payment",
+              "seaforth"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E008",
+    "name": "Proposal state machine - full flow",
+    "description": "Full proposal flow: qty \u2192 client \u2192 date \u2192 PDF",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "opus one",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "$",
+              "available",
+              "help",
+              "deliver",
+              "address"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "Opus One",
+              "place the order",
+              "bottles",
+              "how many",
+              "order",
+              "proposal",
+              "486"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "generate a PDF proposal",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "bottles",
+              "how many"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "2",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "client",
+              "company",
+              "name"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "Acme Corp",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "date",
+              "event"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "August 5 2026",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "Download proposal"
+          },
+          {
+            "type": "contains",
+            "value": "grand total"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E009",
+    "name": "Custom list - named products",
+    "description": "Customer requests specific named products",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "I need 2 bottles of Belvedere vodka and 3 bottles of Opus One",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "$",
+              "available",
+              "help",
+              "deliver",
+              "address"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "Belvedere",
+              "Opus One",
+              "$"
+            ]
+          },
+          {
+            "type": "tool_called",
+            "value": "custom_list"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E010",
+    "name": "Budget edge case - very low budget",
+    "description": "Customer requests package with very low budget",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "need a package for 10 people, 2 hours, $50 budget, beer only",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "$",
+              "available",
+              "help",
+              "deliver",
+              "address"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "budget",
+              "$",
+              "limited",
+              "beer",
+              "available",
+              "package",
+              "low",
+              "hours",
+              "Delivering"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E011",
+    "name": "Product not available \u2192 alternative",
+    "description": "Customer asks for unavailable product",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "do you have Pappy Van Winkle 23 year",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "$",
+              "available",
+              "help",
+              "deliver",
+              "address"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "not available",
+              "alternative",
+              "similar",
+              "suggest",
+              "bourbon",
+              "$"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E012",
+    "name": "Cache invalidation - different product",
+    "description": "Customer searches one product then another - cache clears",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "show me opus one",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "$",
+              "available",
+              "help",
+              "deliver",
+              "address"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "Opus One",
+              "place the order",
+              "bottles",
+              "how many",
+              "order",
+              "proposal",
+              "486"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "actually show me Belvedere vodka instead",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "Belvedere",
+              "vodka",
+              "$"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E013",
+    "name": "Order confirmation cancel",
+    "description": "Customer cancels at order confirmation step",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "opus one",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "$",
+              "available",
+              "help",
+              "deliver",
+              "address"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "Opus One",
+              "place the order",
+              "bottles",
+              "how many",
+              "order",
+              "proposal",
+              "486"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "place the order",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "bottles"
+          }
+        ]
+      },
+      {
+        "user": "1",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "name",
+              "first"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "John Smith",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "phone"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "9174781243",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "email"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "date",
+              "time"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "tomorrow at 5pm",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "Shall I"
+          }
+        ]
+      },
+      {
+        "user": "no",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "changes",
+              "help",
+              "anything else"
+            ]
+          },
+          {
+            "type": "not_contains",
+            "value": "BEV-"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E014",
+    "name": "Greeting flow - age verified user",
+    "description": "Reset triggers correct greeting with age badge",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "__greeting__",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "Rachel"
+          },
+          {
+            "type": "contains",
+            "value": "Age verified"
+          },
+          {
+            "type": "not_contains",
+            "value": "21 or older"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E015",
+    "name": "Recommendation intent",
+    "description": "Customer asks for a recommendation",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "recommend me a nice red wine under $100",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "$"
+          },
+          {
+            "type": "contains_any",
+            "values": [
+              "place the order",
+              "PDF proposal",
+              "make any changes"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E016",
+    "name": "Champagne search",
+    "description": "Customer asks for champagne",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "do you have Veuve Clicquot",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "Veuve",
+              "Champagne",
+              "champagne",
+              "$"
+            ]
+          },
+          {
+            "type": "contains_any",
+            "values": [
+              "place the order",
+              "PDF proposal",
+              "make any changes"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E017",
+    "name": "Budget $500 event package",
+    "description": "Mid-range budget event package",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "need a package for 20 guests, 3 hours, $500 budget, wine and beer",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "Product total"
+          },
+          {
+            "type": "contains_any",
+            "values": [
+              "mixers",
+              "place the order"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E018",
+    "name": "Spirits only package",
+    "description": "Event package with spirits only",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "need spirits for 15 people, 2 hours, $800 budget",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "Product total"
+          },
+          {
+            "type": "contains_any",
+            "values": [
+              "spirit",
+              "vodka",
+              "whiskey",
+              "bourbon",
+              "tequila",
+              "gin"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E019",
+    "name": "Custom list - single named product with qty",
+    "description": "Customer requests specific qty of a named product",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "I need 3 bottles of Belvedere vodka",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "Belvedere",
+              "vodka",
+              "$"
+            ]
+          },
+          {
+            "type": "contains_any",
+            "values": [
+              "place the order",
+              "PDF proposal",
+              "make any changes"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E020",
+    "name": "Beer only search",
+    "description": "Customer searches for beer",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "show me some craft beer options",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "$"
+          },
+          {
+            "type": "contains_any",
+            "values": [
+              "place the order",
+              "PDF proposal",
+              "make any changes",
+              "beer"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E021",
+    "name": "Large event package - 100 guests",
+    "description": "Large event with big budget",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "need a full bar package for 100 guests, 4 hours, $5000 budget",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "Product total"
+          },
+          {
+            "type": "contains_any",
+            "values": [
+              "mixers",
+              "place the order"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E022",
+    "name": "White wine search",
+    "description": "Customer asks for white wine",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "show me nice white wines",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "$"
+          },
+          {
+            "type": "contains_any",
+            "values": [
+              "place the order",
+              "PDF proposal",
+              "make any changes"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E023",
+    "name": "Proposal then order",
+    "description": "Customer generates proposal then places order",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "opus one",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "Opus One"
+          }
+        ]
+      },
+      {
+        "user": "generate a PDF proposal",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "bottles",
+              "how many"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "1",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "client",
+              "company"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "Acme Corp",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "date",
+              "event"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "July 30 2026",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "Download proposal"
+          }
+        ]
+      },
+      {
+        "user": "place the order",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "bottles",
+              "how many"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E024",
+    "name": "Reset mid-conversation",
+    "description": "Customer resets then starts new request",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "opus one",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "Opus One"
+          }
+        ]
+      },
+      {
+        "user": "__greeting__",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "Rachel"
+          },
+          {
+            "type": "contains",
+            "value": "Age verified"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E025",
+    "name": "Tequila search",
+    "description": "Customer asks for tequila",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "show me premium tequila",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "$"
+          },
+          {
+            "type": "contains_any",
+            "values": [
+              "place the order",
+              "PDF proposal",
+              "make any changes",
+              "tequila"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E026",
+    "name": "Scotch whisky search",
+    "description": "Customer asks for scotch",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "do you have any good scotch",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "$"
+          },
+          {
+            "type": "contains_any",
+            "values": [
+              "place the order",
+              "PDF proposal",
+              "make any changes",
+              "scotch",
+              "whisky"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E027",
+    "name": "Multiple product custom list",
+    "description": "Customer requests 4 specific products",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "I need 2 Opus One, 3 Belvedere, 2 Veuve Clicquot and 1 case of Corona",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "$"
+          },
+          {
+            "type": "contains",
+            "value": "mixers"
+          }
+        ]
+      },
+      {
+        "user": "no",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "place the order",
+              "PDF proposal",
+              "make any changes"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E028",
+    "name": "Budget change request",
+    "description": "Customer asks to adjust package budget",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "need a package for 10 people, 2 hours, $1000 budget, wine and beer",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "Product total"
+          }
+        ]
+      },
+      {
+        "user": "no",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "place the order",
+              "PDF proposal",
+              "make any changes",
+              "help"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "can you rebuild with a $500 budget instead",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "Product total"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E029",
+    "name": "NJ zip delivery",
+    "description": "Customer with NJ zip gets LiquorMaster store",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "100 Main St, Teterboro, NJ 07608",
+      "delivery_zip": "07608"
+    },
+    "turns": [
+      {
+        "user": "show me red wine",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "$"
+          },
+          {
+            "type": "contains_any",
+            "values": [
+              "place the order",
+              "PDF proposal",
+              "make any changes"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E030",
+    "name": "Mixers yes flow",
+    "description": "Customer says yes to mixers after event package",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "need a package for 10 people, 2 hours, $500 budget, wine and beer",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "mixers",
+              "Product total"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "yes add mixers",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "water",
+              "soda",
+              "ice",
+              "mixer",
+              "place the order"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E031",
+    "name": "Unsupported delivery zip \u2192 graceful decline",
+    "description": "Customer provides a delivery address in a zip with no store coverage (92101, San Diego). Rachel must check store coverage via the Orchestrator and decline gracefully \u2014 and must NOT lock in the address as confirmed, so a follow-up product question should still prompt for a valid address rather than proceeding to search.",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "",
+      "delivery_zip": ""
+    },
+    "turns": [
+      {
+        "user": "789 Harbor Dr, San Diego, CA 92101",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "don't currently have a store"
+          },
+          {
+            "type": "contains",
+            "value": "92101"
+          },
+          {
+            "type": "contains",
+            "value": "bevvi-support@getbevvi.com"
+          }
+        ]
+      },
+      {
+        "user": "do you have any Cabernet Sauvignon",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "delivery address"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E032",
+    "name": "Change address directly (not yes/no)",
+    "description": "Customer with a saved address gets asked to confirm, but instead of saying yes/no, provides a brand-new address directly. System should recognize it as a new address, check store coverage, save it, and replay the original pending request.",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "do you have opus one",
+        "checks": []
+      },
+      {
+        "user": "100 Federal Street, Floor 6, Boston, MA 02110",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "Opus One"
+          },
+          {
+            "type": "contains",
+            "value": "100 Federal Street"
+          },
+          {
+            "type": "contains_any",
+            "values": [
+              "place the order",
+              "PDF proposal",
+              "make any changes"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E033",
+    "name": "Proposal skips quantity question when basket already has explicit quantities",
+    "description": "Customer builds a multi-item order with explicit per-item quantities, then asks for a proposal. Since quantities are already known, the system should NOT ask 'how many bottles' \u2014 it should go straight to asking for client name, and the final proposal should reflect all items correctly.",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "I need 2 Opus One and 3 Belvedere vodka",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "$"
+          }
+        ]
+      },
+      {
+        "user": "generate a pdf proposal",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "client",
+              "company",
+              "name"
+            ]
+          },
+          {
+            "type": "not_contains",
+            "value": "how many"
+          },
+          {
+            "type": "not_contains",
+            "value": "bottles would you like"
+          }
+        ]
+      },
+      {
+        "user": "Acme Corp",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "date",
+              "event"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "August 5 2026",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "Opus One",
+              "Belvedere"
+            ]
+          },
+          {
+            "type": "contains_any",
+            "values": [
+              "Download proposal",
+              "download"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "id": "E034",
+    "name": "Proposal tax-exempt request generates a new PDF",
+    "description": "Customer requests a proposal, then states the order is tax-exempt. Rachel should regenerate the proposal (new download link) rather than just claiming $0 tax in text without actually updating the PDF. Note: this checks conversational behavior only \u2014 actual PDF tax value isn't verifiable via chat-text checks.",
+    "setup": {
+      "age_verified": true,
+      "delivery_address": "11 Madison Ave, New York, NY 10010",
+      "delivery_zip": "10010"
+    },
+    "turns": [
+      {
+        "user": "I need 2 Opus One and 3 Belvedere vodka",
+        "checks": []
+      },
+      {
+        "user": "yes",
+        "checks": [
+          {
+            "type": "contains",
+            "value": "$"
+          }
+        ]
+      },
+      {
+        "user": "generate a pdf proposal",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "client",
+              "company",
+              "name"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "Acme Corp",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "date",
+              "event"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "August 5 2026",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "Download proposal",
+              "download"
+            ]
+          }
+        ]
+      },
+      {
+        "user": "this order is tax exempt, set tax to 0",
+        "checks": [
+          {
+            "type": "contains_any",
+            "values": [
+              "Download proposal",
+              "download"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+]
