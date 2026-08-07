@@ -98,13 +98,40 @@ async function saveD2CSession(userEmail, sessionData) {
     const now = new Date().toISOString();
     const basket = sessionData.last_basket ? JSON.stringify(sessionData.last_basket) : '';
 
+    // Guard against silently blanking a previously-saved address/zip. Every call
+    // site is supposed to fall back to the existing value when it doesn't have a
+    // new one, but as a defense-in-depth backstop (in case of a caller bug or a
+    // race between concurrent saves), re-fetch the current stored values here and
+    // refuse to overwrite a real value with an empty one.
+    let incomingZip = sessionData.zip || sessionData.delivery_zip || '';
+    let incomingAddress = sessionData.address || sessionData.delivery_address || '';
+    if (!incomingZip || !incomingAddress) {
+      try {
+        const currentResult = await gbrainCall('get_page', { slug, fuzzy: false });
+        if (currentResult) {
+          const currentPage = JSON.parse(currentResult);
+          const currentFm = (currentPage && currentPage.frontmatter) || {};
+          if (!incomingZip && currentFm.delivery_zip) {
+            console.log('[gbrain] saveD2CSession: preventing blank overwrite of delivery_zip for', userEmail);
+            incomingZip = currentFm.delivery_zip;
+          }
+          if (!incomingAddress && currentFm.delivery_address) {
+            console.log('[gbrain] saveD2CSession: preventing blank overwrite of delivery_address for', userEmail);
+            incomingAddress = currentFm.delivery_address;
+          }
+        }
+      } catch(e) {}
+    }
+
+    const ageVerifiedValue = sessionData.age_verified === false ? false : true;
+
     const frontmatter = [
       '---',
       `email: "${userEmail}"`,
       `onboarded: ${sessionData.onboarded !== false}`,
-      `age_verified: true`,
-      `delivery_zip: "${sessionData.zip || sessionData.delivery_zip || ''}"`,
-      `delivery_address: "${(sessionData.address || sessionData.delivery_address || '').replace(/"/g, "'")}"`,
+      `age_verified: ${ageVerifiedValue}`,
+      `delivery_zip: "${incomingZip}"`,
+      `delivery_address: "${incomingAddress.replace(/"/g, "'")}"`,
       `last_search: "${sessionData.last_search || ''}"`,
       `last_basket: '${basket.replace(/'/g, '"')}'`,
       `last_basket_total: "${sessionData.last_basket_total || ''}"`,
@@ -114,8 +141,8 @@ async function saveD2CSession(userEmail, sessionData) {
       '---'
     ].join('\n');
 
-    const zip = sessionData.zip || sessionData.delivery_zip || '';
-    const address = sessionData.address || sessionData.delivery_address || '';
+    const zip = incomingZip;
+    const address = incomingAddress;
     const lastSearch = sessionData.last_search || '';
     const lastBasket = sessionData.last_basket;
 

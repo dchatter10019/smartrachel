@@ -104,10 +104,18 @@ async function sendEmail(toList, subject, bodyText) {
   const gmail = google.gmail({ version: 'v1', auth: authClient });
 
   const toHeader = Array.isArray(toList) ? toList.join(', ') : toList;
+  // RFC 2047 encoded-word for the Subject header — Content-Type: charset=utf-8 only
+  // covers the BODY, not headers. Raw UTF-8 bytes in a header (e.g. an em dash from
+  // "Proposal — Ernst & Young") get misread as Latin-1 by mail clients, producing
+  // mojibake like "Ã¢Â€Â”". Base64-encoding the subject with the =?UTF-8?B?...?= marker
+  // tells every RFC-compliant client how to decode it correctly.
+  const encodedSubject = /[^\x00-\x7F]/.test(subject)
+    ? '=?UTF-8?B?' + Buffer.from(subject, 'utf8').toString('base64') + '?='
+    : subject;
   const messageParts = [
     `From: ${RACHEL_SENDER_EMAIL}`,
     `To: ${toHeader}`,
-    `Subject: ${subject}`,
+    `Subject: ${encodedSubject}`,
     'Content-Type: text/plain; charset=utf-8',
     '',
     bodyText
