@@ -679,64 +679,76 @@ async function executeTool(name, input) {
   if (name === 'order_history') {
     const email = (input.email || '').toLowerCase();
     const limit = input.limit || 5;
+    // Optional date range filter, e.g. for "what did I buy yesterday" — pass ISO
+    // dates (YYYY-MM-DD). Caller (Rachel) should compute these from relative phrases.
+    const since = input.since ? new Date(input.since + 'T00:00:00') : null;
+    const until = input.until ? new Date(input.until + 'T23:59:59') : null;
     if (!email) return { success: false, error: 'email required' };
     try {
-      const fs = require('fs');
-      const path = '/home/ubuntu/logs/order_history.jsonl';
-      if (!fs.existsSync(path)) return { success: true, orders: [], order_count: 0, message: 'No order history found.' };
-      const lines = fs.readFileSync(path, 'utf8').split('\n').filter(Boolean);
-      const matching = [];
-      for (const line of lines) {
-        try {
-          const entry = JSON.parse(line);
-          if (entry.email === email) matching.push(entry);
-        } catch(e) {}
+      const emailSlug = email.replace('@', '-at-').replace(/\./g, '-').replace(/[^a-z0-9-]/g, '');
+      const slugPrefix = 'orders/' + emailSlug + '-';
+      const res = await fetch(GBRAIN_URL + '/mcp', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + GBRAIN_TOKEN, 'Accept': 'application/json, text/event-stream' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'list_pages', arguments: { limit: 100, sort: 'updated_desc' } } })
+      });
+      const text = await res.text();
+      const line = text.split('\n').find(function(l) { return l.startsWith('data:'); });
+      if (!line) return { success: false, error: 'No response from gbrain' };
+      const msg = JSON.parse(line.replace('data:', '').trim());
+      if (msg.result && msg.result.isError) return { success: false, error: msg.result.content[0].text };
+      const pages = JSON.parse(msg.result.content[0].text);
+      const matching = pages.filter(function(p) { return p.slug.indexOf(slugPrefix) === 0; });
+      // Fetch full page data for every matching order (up to a sane cap) BEFORE
+      // slicing to limit — date filtering can only happen after we have order_date
+      // from each page's frontmatter, and slicing first would wrongly restrict the
+      // candidate pool to the 5 most-recently-updated pages rather than the 5 most
+      // relevant ones for the requested date range.
+      const fetchCap = 50;
+      const allOrders = [];
+      for (const p of matching.slice(0, fetchCap)) {
+        const getRes = await fetch(GBRAIN_URL + '/mcp', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + GBRAIN_TOKEN, 'Accept': 'application/json, text/event-stream' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_page', arguments: { slug: p.slug } } })
+        });
+        const getText = await getRes.text();
+        const getLine = getText.split('\n').find(function(l) { return l.startsWith('data:'); });
+        if (!getLine) continue;
+        const getMsg = JSON.parse(getLine.replace('data:', '').trim());
+        if (getMsg.result && getMsg.result.isError) continue;
+        const pageData = JSON.parse(getMsg.result.content[0].text);
+        const fm = pageData.frontmatter || {};
+        const orderDateStr = fm.order_date || '';
+        let orderDateObj = null;
+        if (orderDateStr) {
+          const parsed = new Date(orderDateStr);
+          if (!isNaN(parsed.getTime())) orderDateObj = parsed;
+        }
+        allOrders.push({
+          order_id: fm.order_number || p.slug,
+          date: orderDateStr || pageData.updated_at || '',
+          date_obj: orderDateObj,
+          store: fm.store || '',
+          grand_total: fm.grand_total || '',
+          compiled_truth: pageData.compiled_truth || ''
+        });
+      }
+      let filtered = allOrders;
+      if (since || until) {
+        filtered = allOrders.filter(function(o) {
+          if (!o.date_obj) return false;
+          if (since && o.date_obj < since) return false;
+          if (until && o.date_obj > until) return false;
+          return true;
+        });
       }
       // Most recent first
-      matching.sort(function(a, b) { return new Date(b.ts) - new Date(a.ts); });
-      const trimmed = matching.slice(0, limit).map(function(o) {
-        return {
-          order_id: o.order_id,
-          date: o.ts,
-          store: o.store,
-          items: o.items,
-          grand_total: o.grand_total
-        };
+      filtered.sort(function(a, b) { return (b.date_obj || 0) - (a.date_obj || 0); });
+      const trimmed = filtered.slice(0, limit).map(function(o) {
+        return { order_id: o.order_id, date: o.date, store: o.store, grand_total: o.grand_total, compiled_truth: o.compiled_truth };
       });
-      return { success: true, orders: trimmed, order_count: matching.length, showing: trimmed.length };
-    } catch(e) {
-      return { success: false, error: 'order_history lookup failed: ' + e.message };
-    }
-  }
-
-  if (name === 'order_history') {
-    const email = (input.email || '').toLowerCase();
-    const limit = input.limit || 5;
-    if (!email) return { success: false, error: 'email required' };
-    try {
-      const fs = require('fs');
-      const path = '/home/ubuntu/logs/order_history.jsonl';
-      if (!fs.existsSync(path)) return { success: true, orders: [], order_count: 0, message: 'No order history found.' };
-      const lines = fs.readFileSync(path, 'utf8').split('\n').filter(Boolean);
-      const matching = [];
-      for (const line of lines) {
-        try {
-          const entry = JSON.parse(line);
-          if (entry.email === email) matching.push(entry);
-        } catch(e) {}
-      }
-      // Most recent first
-      matching.sort(function(a, b) { return new Date(b.ts) - new Date(a.ts); });
-      const trimmed = matching.slice(0, limit).map(function(o) {
-        return {
-          order_id: o.order_id,
-          date: o.ts,
-          store: o.store,
-          items: o.items,
-          grand_total: o.grand_total
-        };
-      });
-      return { success: true, orders: trimmed, order_count: matching.length, showing: trimmed.length };
+      return { success: true, orders: trimmed, order_count: filtered.length, showing: trimmed.length, total_orders_on_file: matching.length };
     } catch(e) {
       return { success: false, error: 'order_history lookup failed: ' + e.message };
     }
@@ -873,8 +885,7 @@ const TOOLS = [
   { name: 'recommendation', description: 'Get personalized recommendations based on occasion and customer history.', inputSchema: { type: 'object', properties: { occasion: { type: 'string' }, category: { type: 'string' }, zip: { type: 'string' }, email: { type: 'string' }, budget_per_bottle: { type: 'number' } }, required: ['zip'] } },
   { name: 'generate_proposal', description: 'Generate a PDF proposal from the active basket. Returns download URL.', inputSchema: { type: 'object', properties: { email: { type: 'string' }, client_name: { type: 'string' }, event_date: { type: 'string' }, notes: { type: 'string' } }, required: ['email', 'client_name'] } },
   { name: 'place_order', description: 'Place order after customer confirms. Pass line_items from previous result.', inputSchema: { type: 'object', properties: { line_items: { type: 'string' }, customer: { type: 'object' }, tip_amount: { type: 'number' }, delivery_datetime: { type: 'string' }, delivery_instructions: { type: 'string' }, zip: { type: 'string' } }, required: ['line_items', 'customer'] } },
-  { name: 'order_history', description: 'Look up what the customer has ordered previously. Use when they ask what they bought before, their past orders, order history, or to reorder something from before.', inputSchema: { type: 'object', properties: { email: { type: 'string' }, limit: { type: 'number', description: 'Max number of past orders to return, most recent first (default 5)' } }, required: ['email'] } },
-  { name: 'order_history', description: 'Look up what the customer has ordered previously. Use when they ask what they bought before, their past orders, order history, or to reorder something from before.', inputSchema: { type: 'object', properties: { email: { type: 'string' }, limit: { type: 'number', description: 'Max number of past orders to return, most recent first (default 5)' } }, required: ['email'] } }
+  { name: 'order_history', description: 'Look up what the customer has ordered previously. Use when they ask what they bought before, their past orders, order history, or to reorder something from before. For relative date phrases ("yesterday", "last week", "in July"), compute the actual since/until ISO dates yourself based on the current date and pass them — the tool does not parse relative dates.', inputSchema: { type: 'object', properties: { email: { type: 'string' }, limit: { type: 'number', description: 'Max number of past orders to return, most recent first (default 5)' }, since: { type: 'string', description: 'ISO date YYYY-MM-DD — only return orders on or after this date' }, until: { type: 'string', description: 'ISO date YYYY-MM-DD — only return orders on or before this date' } }, required: ['email'] } }
 ];
 
 function sendSSE(res, data) { res.write('data: ' + JSON.stringify(data) + '\n\n'); }

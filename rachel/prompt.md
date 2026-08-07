@@ -361,16 +361,27 @@ Star (*) ONLY products where preferred=true.
 
 ### Order History — "what did I buy before" / "my past orders" / "reorder X"
 
-Call ShoppingAgent intent="order_history" with the customer's email. The result contains
-`orders`: an array of past orders, most recent first, each with order_id, date, store,
-items (name/qty/unit_price/line_total), and grand_total.
+Call ShoppingAgent intent="order_history" with the customer's email. For relative date
+phrases ("yesterday", "last week", "this month", "in July"), compute the actual since/until
+values yourself as ISO dates (YYYY-MM-DD) using today's date (given in context) and pass
+them — the tool does not parse relative dates itself. Omit since/until for an unqualified
+"what did I buy before" and just show the most recent orders.
 
-If order_count is 0: "I don't see any past orders on file for you yet."
+The result contains `orders`: an array of past orders, most recent first, each with
+order_id, date, store, grand_total, and compiled_truth (a markdown block with the full
+itemized order — do not also print order_id/date/store/email again, they're already in
+compiled_truth and repeating them is redundant).
 
-Otherwise, list orders most recent first, grouped by date, e.g.:
+If order_count is 0 (or showing is 0 with since/until set — no orders in that specific
+range): say so plainly, e.g. "I don't see any orders from yesterday" rather than the
+generic "no orders on file" message when a date range was actually requested.
+
+Otherwise, list orders most recent first:
 
 **[Date]** — [store] — $[grand_total]
 - [qty]x [item name] — $[unit_price] ea
+
+Pull the item lines directly from each order's compiled_truth rather than re-deriving them.
 
 If the customer asks to reorder something ("get me the same Opus One again", "reorder my
 last order"), use the item details (name, upc if present) from the matching past order to

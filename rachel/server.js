@@ -402,6 +402,25 @@ app.post('/chat', async (req, res) => {
       } catch(e) {}
     }
 
+    // ── Order history bypass ──────────────────────────────────────────────
+    // "What did I buy before/yesterday/last time" etc. doesn't need delivery address
+    // or age re-verification — it's a read-only lookup keyed by email. Intercept it
+    // before the onboarding gate so it isn't blocked behind "what's your zip code".
+    // Route to the LLM (not a hardcoded reply) so relative date phrases like
+    // "yesterday" or "last week" get parsed naturally and passed as since/until
+    // to the order_history tool, rather than always returning the last 5 orders.
+    const orderHistoryTriggers = ['what did i buy', 'what did i order', 'my past order', 'my previous order',
+      'my order history', 'order history', 'my last order', 'reorder', 'buy before', 'ordered before',
+      'purchase history', 'my purchases', 'did i ever buy', 'did i ever order', 'did i buy', 'did i order',
+      'have i bought', 'have i ordered', 'have i purchased', 'have i ever bought', 'have i ever ordered'];
+    if (email && orderHistoryTriggers.some(t => msgLower.includes(t))) {
+      const today = new Date().toISOString().split('T')[0];
+      const gbrainContextOH = await getCustomerContext('', '', context?.client_id || 'airculinaire', email).catch(() => '');
+      const addressRuleOH = `\n\n## DELIVERY ADDRESS\nZip: ${state.zip}. Address: ${state.address}. NEVER ask about address or age for an order-history lookup — this is a read-only question, not an order.\n\n## AGE\nCustomer is verified 21+. Never ask for age.\n\n## TODAY'S DATE\n${today} — use this to compute since/until ISO dates for relative phrases like "yesterday", "last week", "this month" when calling ShoppingAgent intent="order_history".`;
+      const outputOH = await callRachel({ sessionKey, message, context, format, gbrainContext: gbrainContextOH, addressRule: addressRuleOH, email });
+      return res.json({ text: outputOH, response: outputOH });
+    }
+
     // ── STATE: age ─────────────────────────────────────────────────────────
     if (state.step === 'age') {
       const capsAge = getCapabilities(format);

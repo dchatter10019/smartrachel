@@ -2,7 +2,7 @@
 // Incremental order-history sync into GBrain.
 // Unlike seed_customers.js (which rebuilds 90-day aggregate profiles every night),
 // this script only fetches orders newer than the last successful sync, using a
-// checkpoint file, and writes one GBrain page PER ORDER at orders/{email-slug}/{orderNumber}.
+// checkpoint file, and writes one GBrain page PER ORDER at orders/{email-slug}-{orderNumber}.
 // This lets shopping-agent's order_history intent answer "what did I buy before"
 // with real itemized past orders, not just aggregate stats.
 
@@ -32,14 +32,20 @@ async function gbrainPutPage(slug, content) {
       jsonrpc: '2.0', id: 1,
       method: 'tools/call',
       params: { name: 'put_page', arguments: { slug, content } }
-    })
+    }),
+    signal: AbortSignal.timeout(15000)
   });
   const text = await res.text();
   const line = text.split('\n').find(l => l.startsWith('data:'));
   if (!line) throw new Error('No response from gbrain MCP');
   const msg = JSON.parse(line.replace('data:', '').trim());
   if (msg.error) throw new Error(JSON.stringify(msg.error));
-  return msg.result?.content?.[0]?.text || null;
+  // Errors from this API surface as result.isError=true with the message inside
+  // result.content[0].text, NOT as a top-level msg.error — a prior version of this
+  // function missed this and silently treated every failed write as a success.
+  const resultText = msg.result?.content?.[0]?.text || null;
+  if (msg.result?.isError) throw new Error(resultText || 'put_page returned isError with no message');
+  return resultText;
 }
 
 async function gbrainPageExists(slug) {
@@ -51,16 +57,16 @@ async function gbrainPageExists(slug) {
         jsonrpc: '2.0', id: 1,
         method: 'tools/call',
         params: { name: 'get_page', arguments: { slug } }
-      })
+      }),
+      signal: AbortSignal.timeout(15000)
     });
     const text = await res.text();
     const line = text.split('\n').find(l => l.startsWith('data:'));
     if (!line) return false;
     const msg = JSON.parse(line.replace('data:', '').trim());
     if (msg.error) return false;
+    if (msg.result?.isError) return false;
     const content = msg.result?.content?.[0]?.text || '';
-    // get_page on a missing slug typically returns an error or empty/"not found" text
-    // rather than throwing — treat empty or explicit not-found text as non-existent.
     if (!content || /not found/i.test(content)) return false;
     return true;
   } catch (e) {
@@ -191,7 +197,7 @@ function buildOrderPage(o) {
     .join('\n');
 
   return `---
-type: order
+type: concept
 order_number: ${o.order_number}
 email: ${o.email}
 customer_name: ${o.customer_name}
@@ -230,24 +236,38 @@ async function main() {
   let written = 0;
   let skipped = 0;
   let failed = 0;
+  let processed = 0;
+  const startTime = Date.now();
 
   for (const o of orders) {
     const emailSlug = slugifyEmail(o.email);
-    const orderSlug = `orders/${emailSlug}/${o.order_number}`;
+    // Single-segment slug — nested paths (orders/{email}/{orderNumber}) were found to
+    // fail on page creation during testing, so flatten to orders/{email}-{orderNumber}.
+    // gbrain slugs must be all-lowercase — uppercase order numbers (e.g. SD-BEVCORP-...)
+    // are silently rejected on creation with a misleading "Page not found" error.
+    const orderSlug = `orders/${emailSlug}-${o.order_number}`.toLowerCase();
 
     const exists = await gbrainPageExists(orderSlug);
     if (exists) {
       skipped++;
-      continue;
+    } else {
+      try {
+        const content = buildOrderPage(o);
+        await gbrainPutPage(orderSlug, content);
+        written++;
+      } catch (e) {
+        log(`FAILED to write ${orderSlug}: ${e.message}`);
+        failed++;
+      }
     }
 
-    try {
-      const content = buildOrderPage(o);
-      await gbrainPutPage(orderSlug, content);
-      written++;
-    } catch (e) {
-      log(`FAILED to write ${orderSlug}: ${e.message}`);
-      failed++;
+    processed++;
+    if (processed % 100 === 0) {
+      const elapsedSec = Math.round((Date.now() - startTime) / 1000);
+      const rate = (processed / elapsedSec).toFixed(2);
+      const remaining = orders.length - processed;
+      const etaSec = rate > 0 ? Math.round(remaining / rate) : 0;
+      log(`Progress: ${processed}/${orders.length} (written=${written} skipped=${skipped} failed=${failed}) — ${elapsedSec}s elapsed, ~${rate}/s, ETA ${Math.round(etaSec / 60)}min`);
     }
   }
 
