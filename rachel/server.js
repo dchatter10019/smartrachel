@@ -353,6 +353,22 @@ app.post('/chat', async (req, res) => {
     // ── D2C flow — state machine ───────────────────────────────────────────
     const state = getState(sessionKey);
     const msgLower = message.toLowerCase().trim().replace(/\*/g, '').replace(/_/g, '');
+
+    // Capture a mentioned quantity from ANY message (e.g. "need a bottle of opus", "get me
+    // 2 bottles") and persist it on state, since the actual "how many bottles?" question may
+    // come several turns later (after address confirmation, after choosing order vs proposal,
+    // etc.) by which point the original message's wording is no longer available to parse.
+    (function captureQty() {
+      const wordToNumQ = { 'a': 1, 'an': 1, 'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+        'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10 };
+      const digitMatchQ = message.match(/\b(\d+)\s*(bottle|bottles|case|cases|pack|packs)\b/i);
+      if (digitMatchQ) {
+        state.lastDetectedQty = parseInt(digitMatchQ[1]);
+        return;
+      }
+      const wordMatchQ = msgLower.match(/\b(a|an|one|two|three|four|five|six|seven|eight|nine|ten)\s+bottle/);
+      if (wordMatchQ) state.lastDetectedQty = wordToNumQ[wordMatchQ[1]];
+    })();
     const yesWords = ['yes', 'yeah', 'yep', 'sure', 'ok', 'okay', 'correct', 'confirmed', 'use it', 'go ahead', 'absolutely', 'i am', 'i\'m over', 'over 21'];
     const noWords = ['no', 'nope', 'not yet', 'i\'m not', 'im not', 'under 21'];
 
@@ -655,7 +671,13 @@ app.post('/chat', async (req, res) => {
 
     // ── Order state machine ────────────────────────────────────────────────────
     const orderTriggers = ['place the order', 'place order', 'place an order', 'order it', 'buy it', 'purchase', 'order this', 'checkout', 'i want to order', 'want to place', 'create the order', 'create order', 'create an order', 'want to create the order', 'submit the order', 'go ahead with the order', 'proceed with the order'];
-    if (orderTriggers.some(t => msgLower.includes(t)) && !state.orderStep && !state.proposalStep) {
+    // Also catch "order a bottle of X" / "order 2 bottles of X" / "order me a X" — a direct
+    // request to order a specific product, not just the fixed confirmation phrases above.
+    // Anchored on "order" near the start of the message (not "in order to...") followed by
+    // a quantity word, to avoid misfiring on unrelated sentences that merely contain "order".
+    const orderProductPattern = /^(order|buy|get|i want|i'd like|i need)\s+(me\s+)?(a|an|\d+|one|two|three|four|five)\s+\w/i;
+    const isDirectOrderRequest = orderProductPattern.test(message.trim()) && /\border\b|\bbuy\b/i.test(message.slice(0, 15));
+    if ((orderTriggers.some(t => msgLower.includes(t)) || isDirectOrderRequest) && !state.orderStep && !state.proposalStep) {
       const caps = getCapabilities(format);
       if (!caps.can_place_order) {
         // Capability disabled — never start the real order state machine. Let Rachel
@@ -685,6 +707,27 @@ app.post('/chat', async (req, res) => {
       if (basketItemCount > 1) {
         // Multi-item package: quantities are already per-line in the basket. Skip qty.
         state.orderData.qty = null;
+        state.orderStep = 'name';
+        saveFlowState();
+        const ask = 'What is your full name? (first and last)';
+        return res.json({ text: ask, response: ask });
+      }
+      // Check whether the customer already specified a quantity in the message that
+      // triggered this order (e.g. "order a bottle of opus", "get me 2 bottles") —
+      // no need to ask again if we can already parse it.
+      const wordToNum = { 'a': 1, 'an': 1, 'one': 1, 'two': 2, 'three': 3, 'four': 4, 'five': 5,
+        'six': 6, 'seven': 7, 'eight': 8, 'nine': 9, 'ten': 10 };
+      let preParsedQty = null;
+      const digitMatch = message.match(/\b(\d+)\s*(bottle|bottles|case|cases|pack|packs)?\b/i);
+      if (digitMatch) {
+        preParsedQty = parseInt(digitMatch[1]);
+      } else {
+        const wordMatch = message.toLowerCase().match(/\b(a|an|one|two|three|four|five|six|seven|eight|nine|ten)\s+bottle/);
+        if (wordMatch) preParsedQty = wordToNum[wordMatch[1]];
+      }
+      const finalQtyForOrder = preParsedQty || state.lastDetectedQty || null;
+      if (finalQtyForOrder && finalQtyForOrder > 0) {
+        state.orderData.qty = finalQtyForOrder;
         state.orderStep = 'name';
         saveFlowState();
         const ask = 'What is your full name? (first and last)';
@@ -915,7 +958,10 @@ app.post('/chat', async (req, res) => {
 
     // ── Order state machine ────────────────────────────────────────────────────
     // ── Proposal state machine ──────────────────────────────────────────────
-    const proposalTriggers = ['generate a pdf', 'generate proposal', 'pdf proposal', 'create a proposal', 'make a proposal', 'send a proposal'];
+    const proposalTriggers = ['generate a pdf', 'generate the pdf', 'generate proposal', 'generate a proposal',
+      'generate the proposal', 'pdf proposal', 'create a proposal', 'create the proposal', 'make a proposal',
+      'make the proposal', 'send a proposal', 'send the proposal', 'build a proposal', 'get me a proposal',
+      'want a proposal', 'want the proposal'];
     if (proposalTriggers.some(t => msgLower.includes(t)) && !state.proposalStep) {
       const caps = getCapabilities(format);
       if (!caps.can_generate_proposal) {
@@ -953,6 +999,13 @@ app.post('/chat', async (req, res) => {
       if (existingItemCount > 1) {
         state.proposalStep = 'client';
         state.proposalData = { qty: null };
+        saveFlowState();
+        const ask = 'What is the client or company name?';
+        return res.json({ text: ask, response: ask });
+      }
+      if (state.lastDetectedQty && state.lastDetectedQty > 0) {
+        state.proposalStep = 'client';
+        state.proposalData = { qty: state.lastDetectedQty };
         saveFlowState();
         const ask = 'What is the client or company name?';
         return res.json({ text: ask, response: ask });
@@ -1069,7 +1122,7 @@ app.post('/chat', async (req, res) => {
             'Delivery: $' + delivery.toFixed(2) + '\n' +
             '*Estimated grand total: $' + grandTotal.toFixed(2) + '*' +
             (downloadUrl ? '\n\n<' + downloadUrl + '|Download proposal>' : '') +
-            '\n\nWould you like to *place the order* or make any changes?'
+            '\n\nWould you like me to email this to anyone, place the order, or make any changes?'
           : (downloadUrl && !proposalOutput.includes(downloadUrl)
               ? proposalOutput + '\n\nDownload proposal: ' + downloadUrl
               : proposalOutput);
@@ -1151,7 +1204,21 @@ app.post('/chat', async (req, res) => {
     const isEventPackage = output.includes('Product total') || output.includes('Estimated grand total') || output.includes('grand total');
     const isSingleProduct = !isEventPackage && output.includes('$') && (output.match(/\d+ML/i) !== null || output.match(/\d+L\b/) !== null) && output.split('$').length <= 3;
     const packageJustShown = isEventPackage || output.includes('Estimated total') || output.includes('estimated total');
-    const hasCTA = output.includes('place the order') || output.includes('PDF proposal') || output.includes('make any changes');
+    // A keyword list can never keep up with the LLM's open-ended phrasing (it improvises
+    // freely — "want me to go ahead?", "shall I get this started?", "ready to order?", etc.
+    // are all valid ways to ask the same thing, and new phrasings appear constantly). The
+    // robust, general signal: if the LLM's reply already ends with a question mark, it
+    // already asked the customer something — never append a second question on top of it.
+    const trimmedOutputForCTA = output.trim();
+    const endsWithQuestion = trimmedOutputForCTA.endsWith('?');
+    const ctaPatterns = [
+      'place the order', 'place an order', 'placing the order', 'placing an order',
+      'pdf proposal', 'generate a proposal', 'generate the proposal',
+      'make any changes', 'any changes', 'anything else', 'would you like to',
+      'shall i', 'let me know if'
+    ];
+    const outputLowerForCTA = trimmedOutputForCTA.toLowerCase();
+    const hasCTA = endsWithQuestion || ctaPatterns.some(p => outputLowerForCTA.includes(p));
 
     // Update state based on output
     if (packageJustShown) state.packageShown = true;

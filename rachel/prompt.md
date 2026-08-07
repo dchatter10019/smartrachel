@@ -143,6 +143,12 @@ Estimated Delivery Charge: $25.00
 Service (10%): $[service]
 Tip (5%): $[tip]
 Estimated total: $[total]
+
+Do NOT list what information will be needed to place the order (name, phone, delivery
+date/time) at this point — that's premature. Only ask for those details once the customer
+has actually said they want to place the order (e.g. "place the order", "order it",
+"yes, order this"). Before that, just show the price breakdown and the standard CTA
+(place the order / generate a PDF proposal / make any changes).
 Estimated — actual totals may vary.
 
 ---
