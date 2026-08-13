@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Rachel — Video Chat (Prototype)</title>
+<style>
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f1115; color: #eee; margin: 0; padding: 0; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+  h1 { font-size: 18px; font-weight: 500; margin: 16px 0 8px; color: #aaa; }
+  #avatar-container { width: 480px; max-width: 90vw; aspect-ratio: 3/4; background: #1a1d24; border-radius: 12px; overflow: hidden; position: relative; box-shadow: 0 4px 24px rgba(0,0,0,0.4); }
+  #avatar-video { width: 100%; height: 100%; object-fit: cover; background: #1a1d24; }
+  #status { position: absolute; bottom: 8px; left: 8px; right: 8px; font-size: 12px; color: #888; background: rgba(0,0,0,0.5); padding: 4px 8px; border-radius: 6px; }
+  #controls { width: 480px; max-width: 90vw; margin-top: 16px; display: flex; gap: 8px; }
+  #text-input { flex: 1; padding: 10px 12px; border-radius: 8px; border: 1px solid #333; background: #1a1d24; color: #eee; font-size: 14px; }
+  button { padding: 10px 16px; border-radius: 8px; border: none; background: #4a7c59; color: white; font-size: 14px; cursor: pointer; }
+  button:hover { background: #5a8c69; }
+  button#mic-btn.recording { background: #c0392b; }
+  #transcript-log { width: 480px; max-width: 90vw; margin-top: 16px; font-size: 13px; color: #999; max-height: 200px; overflow-y: auto; }
+  .log-line { margin: 4px 0; }
+  .log-user { color: #7fb3d5; }
+  .log-rachel { color: #82c980; }
+</style>
+</head>
+<body>
+
+<h1>Rachel — Video Chat Prototype</h1>
+
+<div id="avatar-container">
+  <video id="avatar-video" autoplay playsinline></video>
+  <div id="status">Click Start to begin</div>
+  <button id="start-btn" style="position:absolute; top:50%; left:50%; transform:translate(-50%,-50%); padding:14px 28px; font-size:16px; z-index:10;">Start Conversation</button>
+</div>
+
+<div id="controls">
+  <button id="mic-btn">🎤 Hold to talk</button>
+  <input id="text-input" type="text" placeholder="Or type a message..." />
+  <button id="send-btn">Send</button>
+</div>
+
+<div id="transcript-log"></div>
+
+<script>
+// The LiveAvatar UMD bundle's browser branch expects a pre-existing global
+// `events$1.EventEmitter` (mirroring Node's require('events').EventEmitter),
+// since the bundler didn't fully inline a browser polyfill for it. Minimal
+// EventEmitter implementation, just enough for the SDK's internal use
+// (on/off/once/emit) — sufficient since it only needs basic pub/sub, not
+// every Node EventEmitter edge case.
+window.events$1 = {
+  EventEmitter: class EventEmitter {
+    constructor() { this._listeners = {}; }
+    on(event, fn) {
+      (this._listeners[event] = this._listeners[event] || []).push(fn);
+      return this;
+    }
+    once(event, fn) {
+      const wrapper = (...args) => { this.off(event, wrapper); fn(...args); };
+      return this.on(event, wrapper);
+    }
+    off(event, fn) {
+      if (!this._listeners[event]) return this;
+      this._listeners[event] = this._listeners[event].filter(l => l !== fn);
+      return this;
+    }
+    emit(event, ...args) {
+      (this._listeners[event] || []).slice().forEach(fn => fn(...args));
+      return true;
+    }
+    removeAllListeners(event) {
+      if (event) delete this._listeners[event];
+      else this._listeners = {};
+      return this;
+    }
+  }
+};
+</script>
+<script src="/vendor/liveavatar-sdk.umd.js"></script>
+<script>
+const SESSION_ID = 'proto-' + Math.random().toString(36).slice(2, 10);
+const USER_EMAIL = '';
+
+const statusEl = document.getElementById('status');
+const logEl = document.getElementById('transcript-log');
+const micBtn = document.getElementById('mic-btn');
+const textInput = document.getElementById('text-input');
+const sendBtn = document.getElementById('send-btn');
+
+function setStatus(msg) { statusEl.textContent = msg; }
+function logLine(who, text) {
+  const div = document.createElement('div');
+  div.className = 'log-line ' + (who === 'You' ? 'log-user' : 'log-rachel');
+  div.textContent = who + ': ' + text;
+  logEl.appendChild(div);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+
+let avatarReady = false;
+let avatarSession = null;
+
+async function initAvatar() {
+  setStatus('Requesting LiveAvatar session token...');
+  try {
+    const res = await fetch('/api/heygen-token', { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      setStatus('LiveAvatar token error: ' + (data.error || 'unknown'));
+      console.error('LiveAvatar token error:', data);
+      return;
+    }
+    if (!data.token) {
+      setStatus('No session token returned — check server logs');
+      console.error('Missing token in response:', data);
+      return;
+    }
+
+    setStatus('Starting avatar session...');
+    const { LiveAvatarSession } = window.LiveAvatarSDK;
+    avatarSession = new LiveAvatarSession(data.token, { voiceChat: false });
+
+    await avatarSession.start();
+    const videoEl = document.getElementById('avatar-video');
+    avatarSession.attach(videoEl);
+
+    // Explicitly (re)trigger playback and surface any autoplay-policy rejection —
+    // attach() sets srcObject but browsers can still silently block playback of
+    // the resulting stream depending on gesture timing, and doing so silently
+    // leaves a blank video element with no error shown anywhere.
+    try {
+      await videoEl.play();
+      console.log('[webchat-video] video.play() succeeded');
+    } catch (playErr) {
+      console.error('[webchat-video] video.play() BLOCKED:', playErr.name, playErr.message);
+      setStatus('Video blocked by browser — click anywhere on the video to unblock');
+      // One more user-gesture-triggered attempt, bound to a click on the video itself.
+      videoEl.addEventListener('click', () => {
+        videoEl.play().then(() => console.log('[webchat-video] video.play() succeeded after click'))
+          .catch(e => console.error('[webchat-video] video.play() still blocked:', e));
+      }, { once: true });
+    }
+
+    avatarReady = true;
+    setStatus('Connected — avatar ready');
+    console.log('[webchat-video] LiveAvatar session started:', avatarSession.sessionId);
+  } catch (e) {
+    setStatus('Failed to start avatar: ' + e.message);
+    console.error('[webchat-video] avatar init error:', e);
+  }
+}
+
+async function speakAvatar(text) {
+  if (!avatarReady || !avatarSession) {
+    logLine('Rachel (would speak)', text);
+    return;
+  }
+  try {
+    // LITE mode blocks the text-based speak commands (repeat/message) — confirmed
+    // by inspecting the SDK bundle directly ("Not permitted in LITE mode"). Only
+    // AVATAR_SPEAK_AUDIO is allowed, so we synthesize speech ourselves via our
+    // own /api/tts endpoint (OpenAI TTS, 24kHz PCM) and hand the avatar raw audio.
+    const ttsRes = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    });
+    const ttsData = await ttsRes.json();
+    if (!ttsRes.ok || !ttsData.audio) {
+      console.error('[webchat-video] TTS error:', ttsData);
+      logLine('Rachel (TTS failed, showing text)', text);
+      return;
+    }
+    avatarSession.repeatAudio(ttsData.audio);
+  } catch (e) {
+    console.error('[webchat-video] speak error:', e);
+    logLine('Rachel (speak failed, showing text)', text);
+  }
+}
+
+let recognition = null;
+let recognizing = false;
+
+// userStoppedIntentionally distinguishes "the user clicked stop" from "the
+// recognizer paused itself after a brief silence" — continuous=true still ends
+// the recognition session on longer pauses in most browsers, which previously
+// felt like a mid-sentence timeout. We auto-restart in that case, and only
+// truly stop listening when the user clicks the button again.
+let userStoppedIntentionally = false;
+
+function initSTT() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    setStatus('Speech recognition not supported in this browser — use text input');
+    micBtn.disabled = true;
+    return;
+  }
+  recognition = new SpeechRecognition();
+  recognition.continuous = true;
+  recognition.interimResults = true;
+  recognition.lang = 'en-US';
+
+  let finalTranscript = '';
+  let silenceTimer = null;
+
+  recognition.onresult = (event) => {
+    for (let i = event.resultIndex; i < event.results.length; i++) {
+      if (event.results[i].isFinal) {
+        finalTranscript += event.results[i][0].transcript + ' ';
+      }
+    }
+    // Debounce: send once the user has paused for ~1.2s after their last final
+    // result, rather than requiring an explicit stop click every single turn.
+    clearTimeout(silenceTimer);
+    silenceTimer = setTimeout(() => {
+      if (finalTranscript.trim()) {
+        const toSend = finalTranscript.trim();
+        finalTranscript = '';
+        handleUserMessage(toSend);
+      }
+    }, 1200);
+  };
+  recognition.onerror = (event) => {
+    console.error('STT error:', event.error);
+    if (event.error !== 'no-speech') {
+      setStatus('Speech recognition error: ' + event.error);
+    }
+  };
+  recognition.onend = () => {
+    recognizing = false;
+    micBtn.classList.remove('recording');
+    micBtn.textContent = '🎤 Start listening';
+    // Auto-restart if the browser ended the session on its own (e.g. after a
+    // longer pause) but the user hasn't clicked to stop — keeps the mic
+    // effectively "always on" during a conversation turn instead of requiring
+    // the user to hold a button down or re-click after every short pause.
+    if (!userStoppedIntentionally) {
+      try {
+        recognition.start();
+        recognizing = true;
+        micBtn.classList.add('recording');
+        micBtn.textContent = '🔴 Listening... (click to stop)';
+      } catch (e) {
+        // start() can throw if called too soon after a stop; ignore, user can re-click.
+      }
+    }
+  };
+}
+
+micBtn.addEventListener('click', () => {
+  if (!recognition) return;
+  if (recognizing) {
+    userStoppedIntentionally = true;
+    recognition.stop();
+  } else {
+    userStoppedIntentionally = false;
+    recognizing = true;
+    micBtn.classList.add('recording');
+    micBtn.textContent = '🔴 Listening... (click to stop)';
+    recognition.start();
+  }
+});
+
+sendBtn.addEventListener('click', () => {
+  const text = textInput.value.trim();
+  if (!text) return;
+  textInput.value = '';
+  handleUserMessage(text);
+});
+textInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') sendBtn.click();
+});
+
+async function handleUserMessage(text) {
+  logLine('You', text);
+  setStatus('Rachel is thinking...');
+  try {
+    const res = await fetch('/api/chat-bridge', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, session_id: SESSION_ID, user_email: USER_EMAIL })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setStatus('Error getting reply from Rachel');
+      console.error(data);
+      return;
+    }
+    setStatus('Connected');
+    speakAvatar(data.reply);
+  } catch (e) {
+    setStatus('Error: ' + e.message);
+    console.error(e);
+  }
+}
+
+async function greet() {
+  setStatus('Connecting to Rachel...');
+  try {
+    const res = await fetch('/api/greeting', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: SESSION_ID, user_email: USER_EMAIL })
+    });
+    const data = await res.json();
+    setStatus('Connected');
+    speakAvatar(data.reply);
+  } catch (e) {
+    setStatus('Failed to greet: ' + e.message);
+  }
+}
+
+initSTT();
+
+document.getElementById('start-btn').addEventListener('click', async () => {
+  document.getElementById('start-btn').style.display = 'none';
+  // Sequenced, not fired in parallel — greet() previously raced ahead of
+  // avatarReady being set true, since neither call was awaited before the
+  // other, causing the initial greeting to fall back to text-only even
+  // though the avatar connected successfully moments later.
+  await initAvatar();
+  await greet();
+});
+</script>
+
+</body>
+</html>

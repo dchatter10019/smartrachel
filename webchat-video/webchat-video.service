@@ -1,0 +1,16 @@
+[Unit]
+Description=Rachel Video Chat Prototype (HeyGen LiveAvatar bridge)
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/webchat-video
+ExecStart=/usr/bin/node /home/ubuntu/webchat-video/server.js
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/ubuntu/logs/webchat-video.log
+StandardError=append:/home/ubuntu/logs/webchat-video.log
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+{
+  "name": "webchat-video",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Video-chat prototype: HeyGen LiveAvatar (LITE mode) fronting Rachel's existing chat backend",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@heygen/liveavatar-web-sdk": "^0.0.18",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "node-fetch": "^2.7.0"
+  }
+}
