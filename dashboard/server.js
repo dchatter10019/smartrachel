@@ -17,6 +17,9 @@ const SERVICES = [
   { name: 'Manor NYC',       port: 8101, log: 'store-agent-manor.log',     service: 'store-agent-manor' },
   { name: 'LiquorMaster NJ', port: 8102, log: 'store-agent-liqmaster.log',service: 'store-agent-liqmaster' },
   { name: 'Dallas Fine Wine', port: 8103, log: 'store-agent-dallas-fine-wine.log', service: 'store-agent-dallas-fine-wine' },
+  { name: 'Mavy, Boston',     port: 8104, log: 'store-agent-boston.log',    service: 'store-agent-boston' },
+  { name: 'Aficionados',      port: 8105, log: 'store-agent-miami.log',     service: 'store-agent-miami' },
+  { name: "Sam's Liquor & Market", port: 8106, log: 'store-agent-scottsdale.log', service: 'store-agent-scottsdale' },
 ];
 
 function checkHealth(port) {
