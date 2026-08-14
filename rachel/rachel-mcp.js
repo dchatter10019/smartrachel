@@ -7,6 +7,7 @@ const http = require('http');
 const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
 
 const PORT = 3600;
+const { requestKey, verifyCode, resolveEmailForKey } = require('./mcp-auth.js');
 const RACHEL_URL = 'http://127.0.0.1:3500';
 
 const TOOLS = [
@@ -177,7 +178,15 @@ async function checkAgeVerified(email) {
   } catch(e) { return false; }
 }
 
-async function executeTool(name, input) {
+async function executeTool(name, input, callerEmail) {
+  // Never trust a caller-supplied email for anything security-sensitive.
+  // callerEmail is resolved server-side from the caller's verified API key
+  // (see mcp-auth.js) — it always overrides whatever the tool arguments say,
+  // the same pattern used to lock down the Slack channel: the identity making
+  // the request is established once, server-side, not taken from request data.
+  if (callerEmail) {
+    input = Object.assign({}, input, { email: callerEmail });
+  }
   console.log(`[rachel-mcp] tool: ${name}`, JSON.stringify(input).slice(0, 150));
 
   // Age verification tool
@@ -334,12 +343,50 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // ── Auth: step 1 — request a verification code sent to the caller's email ──
+  if (req.method === 'POST' && req.url === '/auth/request-key') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', async () => {
+      try {
+        const { email } = JSON.parse(body);
+        const result = await requestKey(email);
+        res.writeHead(result.success ? 200 : 400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch(e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
+  // ── Auth: step 2 — exchange the emailed code for a real, email-bound API key ──
+  if (req.method === 'POST' && req.url === '/auth/verify-code') {
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const { email, code } = JSON.parse(body);
+        const result = verifyCode(email, code);
+        res.writeHead(result.success ? 200 : 400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(result));
+      } catch(e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
+    return;
+  }
+
   // JSON endpoint for Voiceflow and other REST clients
   if (req.method === 'POST' && req.url === '/api') {
     const auth = req.headers['authorization'] || '';
-    if (auth !== 'Bearer rachel_mcp_bevvi_2026') {
+    const apiKey = auth.replace(/^Bearer\s+/i, '');
+    const callerEmail = resolveEmailForKey(apiKey);
+    if (!callerEmail) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Unauthorized' }));
+      res.end(JSON.stringify({ error: 'Unauthorized — obtain an API key via /auth/request-key and /auth/verify-code' }));
       return;
     }
     let body = '';
@@ -347,7 +394,7 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const { tool, args } = JSON.parse(body);
-        const result = await executeTool(tool, args || {});
+        const result = await executeTool(tool, args || {}, callerEmail);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch(e) {
@@ -359,6 +406,14 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === 'POST' && req.url === '/mcp') {
+    const auth = req.headers['authorization'] || '';
+    const apiKey = auth.replace(/^Bearer\s+/i, '');
+    const callerEmail = resolveEmailForKey(apiKey);
+    if (!callerEmail) {
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unauthorized — obtain an API key via /auth/request-key and /auth/verify-code' }));
+      return;
+    }
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', async () => {
@@ -380,7 +435,7 @@ const server = http.createServer(async (req, res) => {
           sendSSE(res, { jsonrpc: '2.0', id: msg.id, result: { tools: TOOLS } });
         } else if (msg.method === 'tools/call') {
           const { name, arguments: args } = msg.params;
-          const result = await executeTool(name, args || {});
+          const result = await executeTool(name, args || {}, callerEmail);
           sendSSE(res, { jsonrpc: '2.0', id: msg.id, result: {
             content: [{ type: 'text', text: JSON.stringify(result) }]
           }});

@@ -184,6 +184,14 @@ var EDGES_FIXED = [
   {id:'e5', source:'shopping-agent',     target:'orchestrator',         animated:true, label:'place_order'},
   {id:'e6', source:'shopping-agent',     target:'gbrain-mcp',           animated:true},
   {id:'e7', source:'rachel',             target:'gbrain-mcp',           animated:true},
+  // Rachel MCP is a parallel MCP-tool front door (for Claude Desktop / other MCP
+  // clients) into the same capabilities Rachel exposes conversationally — it calls
+  // Rachel AI's /chat directly, Shopping Agent directly for search/order/package
+  // tools, and gbrain.js directly for session/proposal data. Verified via grep of
+  // rachel-mcp.js's actual fetch()/require() calls, not assumed.
+  {id:'e12',source:'rachel-mcp',         target:'rachel',               animated:true},
+  {id:'e13',source:'rachel-mcp',         target:'shopping-agent',       animated:true},
+  {id:'e14',source:'rachel-mcp',         target:'gbrain-mcp',           animated:true},
 ];
 
 // Store edges are auto-generated from SVCS instead of listed one-by-one — every

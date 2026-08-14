@@ -87,51 +87,8 @@ function getCapabilities(format) {
   return Object.assign({}, defaults, config[format] || {});
 }
 
-// ── Support email sender (Gmail API, service account, reuses email-agent's identity) ──
-const GMAIL_SERVICE_ACCOUNT_FILE = '/home/ubuntu/config/gmail-service-account.json';
-const RACHEL_SENDER_EMAIL = 'rachelai@getbevvi.com';
-const SUPPORT_EMAIL = 'bevvi-support@getbevvi.com';
-
-// General-purpose sender — accepts an arbitrary To list, used for both support
-// escalation and customer-facing sends (e.g. emailing a generated proposal).
-async function sendEmail(toList, subject, bodyText) {
-  const auth = new google.auth.GoogleAuth({
-    keyFile: GMAIL_SERVICE_ACCOUNT_FILE,
-    scopes: ['https://www.googleapis.com/auth/gmail.send'],
-    clientOptions: { subject: RACHEL_SENDER_EMAIL }
-  });
-  const authClient = await auth.getClient();
-  const gmail = google.gmail({ version: 'v1', auth: authClient });
-
-  const toHeader = Array.isArray(toList) ? toList.join(', ') : toList;
-  // RFC 2047 encoded-word for the Subject header — Content-Type: charset=utf-8 only
-  // covers the BODY, not headers. Raw UTF-8 bytes in a header (e.g. an em dash from
-  // "Proposal — Ernst & Young") get misread as Latin-1 by mail clients, producing
-  // mojibake like "Ã¢Â€Â”". Base64-encoding the subject with the =?UTF-8?B?...?= marker
-  // tells every RFC-compliant client how to decode it correctly.
-  const encodedSubject = /[^\x00-\x7F]/.test(subject)
-    ? '=?UTF-8?B?' + Buffer.from(subject, 'utf8').toString('base64') + '?='
-    : subject;
-  const messageParts = [
-    `From: ${RACHEL_SENDER_EMAIL}`,
-    `To: ${toHeader}`,
-    `Subject: ${encodedSubject}`,
-    'Content-Type: text/plain; charset=utf-8',
-    '',
-    bodyText
-  ];
-  const raw = Buffer.from(messageParts.join('\n'))
-    .toString('base64')
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '');
-
-  await gmail.users.messages.send({ userId: 'me', requestBody: { raw } });
-}
-
-async function sendSupportEmail(subject, bodyText) {
-  return sendEmail([SUPPORT_EMAIL], subject, bodyText);
-}
+// ── Email sending — extracted to email-utils.js so rachel-mcp.js can share it ──
+const { sendEmail, sendSupportEmail } = require('./email-utils.js');
 
 const KITCHEN_TO_CLIENT = {
   'Celonis - NYC': 'fooda',
