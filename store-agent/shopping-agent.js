@@ -909,7 +909,25 @@ const server = http.createServer(async function(req, res) {
         } else if (msg.method === 'tools/list') {
           sendSSE(res, { jsonrpc: '2.0', id: msg.id, result: { tools: TOOLS } });
         } else if (msg.method === 'tools/call') {
-          const result = await executeTool(msg.params.name, msg.params.arguments || {});
+          let result = await executeTool(msg.params.name, msg.params.arguments || {});
+          const reviewedIntents = ['product_query', 'menu_build', 'custom_list', 'recommendation', 'place_order'];
+          if (reviewedIntents.includes(msg.params.name)) {
+            try {
+              const { reviewResult } = require('./reviewer.js');
+              const review = await reviewResult(msg.params.name, result, msg.params.arguments || {});
+              if (!review.approved) {
+                result = Object.assign({}, result, {
+                  success: false,
+                  review_rejected: true,
+                  review_layer: review.layer,
+                  error: 'Review flagged an issue before this could be presented: ' + review.reason
+                });
+              }
+            } catch (e) {
+              console.error('[shopping-agent] reviewer error (failing open):', e.message);
+              // Never let a reviewer bug block a legitimate result — fail open.
+            }
+          }
           sendSSE(res, { jsonrpc: '2.0', id: msg.id, result: { content: [{ type: 'text', text: JSON.stringify(result) }] } });
         } else {
           sendSSE(res, { jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'Method not found' } });
