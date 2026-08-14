@@ -176,7 +176,7 @@ var SVCS = [
   {id:'chicago',            name:'Chicago IL',      port:null, log:null,                        group:'store',   x:820, y:880},
 ];
 
-var EDGES = [
+var EDGES_FIXED = [
   {id:'e1', source:'rachel-slack',       target:'rachel',               animated:true},
   {id:'e2', source:'rachel-email',       target:'rachel',               animated:true},
   {id:'e3', source:'voiceflow',          target:'rachel',               animated:true},
@@ -184,11 +184,18 @@ var EDGES = [
   {id:'e5', source:'shopping-agent',     target:'orchestrator',         animated:true, label:'place_order'},
   {id:'e6', source:'shopping-agent',     target:'gbrain-mcp',           animated:true},
   {id:'e7', source:'rachel',             target:'gbrain-mcp',           animated:true},
-  {id:'e8', source:'orchestrator',       target:'store-agent-manor',    animated:true},
-  {id:'e9', source:'orchestrator',       target:'store-agent-liqmaster',animated:true},
-  {id:'e10',source:'orchestrator',       target:'store-agent-dallas-fine-wine', animated:true},
-  {id:'e11',source:'orchestrator',       target:'chicago',              animated:false},
 ];
+
+// Store edges are auto-generated from SVCS instead of listed one-by-one — every
+// group:'store' entry automatically gets an orchestrator->store edge, so adding
+// a new store to SVCS never requires a second manual edit here.
+function buildStoreEdges(svcs) {
+  return svcs.filter(function(s){ return s.group === 'store'; }).map(function(s, i){
+    return { id: 'store-edge-' + s.id, source: 'orchestrator', target: s.id, animated: s.port ? true : false };
+  });
+}
+
+var EDGES = EDGES_FIXED.concat(buildStoreEdges(SVCS));
 
 var health = {};
 var activeSvc = null;
@@ -197,6 +204,7 @@ var sessions = {};
 var es = null;
 var live = false;
 var setNodesExt = null;
+var setEdgesExt = null;
 
 function colorClass(line) {
   var l = line.toLowerCase();
@@ -352,6 +360,7 @@ function FlowApp() {
   var edges = edgesState[0], onEdgesChange = edgesState[2];
 
   setNodesExt = setNodes;
+  setEdgesExt = edgesState[1];
 
   return React.createElement(ReactFlow, {
     nodes: nodes,
@@ -381,6 +390,37 @@ function fetchHealth() {
     hdr.textContent = up+'/'+data.length+' online';
     hdr.className = 'badge '+(up===data.length?'up':'down');
     document.getElementById('ts').textContent = new Date().toLocaleTimeString();
+
+    // Auto-discover any service server.js knows about (SERVICES array) that
+    // isn't yet in our local SVCS/canvas — covers newly deployed store agents
+    // without needing a second manual edit to this file.
+    var knownIds = {};
+    SVCS.forEach(function(s){ knownIds[s.id] = true; });
+    var newOnes = data.filter(function(s){ return !knownIds[s.service]; });
+    if (newOnes.length > 0) {
+      var maxStoreY = 160;
+      SVCS.forEach(function(s){ if (s.group === 'store' && s.y > maxStoreY) maxStoreY = s.y; });
+      var newNodes = [];
+      var newEdges = [];
+      newOnes.forEach(function(s){
+        var isStore = s.service && s.service.indexOf('store-agent-') === 0;
+        maxStoreY += 120;
+        var svcEntry = {
+          id: s.service, name: s.name, port: s.port, log: s.log,
+          group: isStore ? 'store' : 'core',
+          x: isStore ? 820 : 320,
+          y: isStore ? maxStoreY : maxStoreY
+        };
+        SVCS.push(svcEntry);
+        newNodes.push({ id: svcEntry.id, type:'svc', position:{x:svcEntry.x, y:svcEntry.y}, data:{label:svcEntry.name, svc:svcEntry} });
+        if (isStore) {
+          newEdges.push({ id:'store-edge-'+svcEntry.id, source:'orchestrator', target:svcEntry.id, animated:true, style:{stroke:'#cccccc',strokeWidth:1.5}, markerEnd:{type:'arrowclosed',color:'#cccccc'} });
+        }
+      });
+      if (setNodesExt) setNodesExt(function(nodes){ return nodes.concat(newNodes); });
+      if (setEdgesExt) setEdgesExt(function(edges){ return edges.concat(newEdges); });
+    }
+
     if (setNodesExt) {
       setNodesExt(function(nodes){
         return nodes.map(function(n){ return Object.assign({},n,{data:Object.assign({},n.data)}); });

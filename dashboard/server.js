@@ -20,6 +20,7 @@ const SERVICES = [
   { name: 'Mavy, Boston',     port: 8104, log: 'store-agent-boston.log',    service: 'store-agent-boston' },
   { name: 'Aficionados',      port: 8105, log: 'store-agent-miami.log',     service: 'store-agent-miami' },
   { name: "Sam's Liquor & Market", port: 8106, log: 'store-agent-scottsdale.log', service: 'store-agent-scottsdale' },
+  // NEW_STORE_MARKER — /api/deploy-store inserts new entries directly above this line
 ];
 
 function checkHealth(port) {
@@ -359,6 +360,19 @@ const server = http.createServer(async (req, res) => {
         orch = orch.replace('  // Add more stores here as they come online', newEntry + '\n  // Add more stores here as they come online');
         fs.writeFileSync(orchPath, orch);
         execSync('sudo systemctl restart orchestrator');
+
+        // Keep this dashboard's own SERVICES list in sync automatically — this is
+        // what previously required a manual second edit and let stores drift out
+        // of sync with the actual running topology.
+        const selfPath = __filename;
+        let selfSrc = fs.readFileSync(selfPath, 'utf8');
+        const escapedName = cfg.store_name.replace(/'/g, "\\'");
+        const serviceEntry = "  { name: '" + escapedName + "', port: " + cfg.port + ", log: '" + logFile.split('/').pop() + "', service: '" + svcName + "' },\n  // NEW_STORE_MARKER";
+        selfSrc = selfSrc.replace('  // NEW_STORE_MARKER', serviceEntry);
+        fs.writeFileSync(selfPath, selfSrc);
+        // Dashboard server restarts itself to pick up the updated SERVICES list —
+        // the response below is sent first so the UI still gets its success confirmation.
+        setTimeout(() => execSync('sudo systemctl restart dashboard'), 500);
 
         res.setHeader('Content-Type', 'application/json');
         res.end(JSON.stringify({ success: true, service: svcName, port: cfg.port }));
