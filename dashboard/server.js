@@ -306,6 +306,131 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // Natural-language store rules — customer says e.g. "closed Sundays, only
+  // deliver to 85250-85260" and Claude parses it into structured config
+  // (delivery zips, business hours), which gets written to the store's env
+  // file, propagated to orchestrator.js's zip list, and the service restarted.
+  if (url.pathname === '/api/store-rules' && req.method === 'POST') {
+    let body = '';
+    req.on('data', d => body += d);
+    req.on('end', async () => {
+      try {
+        const { service, prompt } = JSON.parse(body);
+        if (!service || !service.startsWith('store-agent-')) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Not a store agent' }));
+          return;
+        }
+        const envSlug = service.replace('store-agent-', '');
+        const envPath = '/home/ubuntu/store-agent/' + envSlug + '.env';
+        if (!fs.existsSync(envPath)) {
+          res.writeHead(404, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Config file not found: ' + envPath }));
+          return;
+        }
+
+        const currentEnv = fs.readFileSync(envPath, 'utf8');
+        const currentZipsMatch = currentEnv.match(/^DELIVERY_ZIPS=(.*)$/m);
+        const currentHoursMatch = currentEnv.match(/^BUSINESS_HOURS=(.*)$/m);
+        const currentZips = currentZipsMatch ? currentZipsMatch[1] : '';
+        const currentHours = currentHoursMatch ? currentHoursMatch[1] : '(not set — open 24/7 by default)';
+
+        const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'x-api-key': process.env.ANTHROPIC_API_KEY,
+            'anthropic-version': '2023-06-01',
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'claude-sonnet-4-6',
+            max_tokens: 1000,
+            system: 'You configure delivery zip codes and business hours for a retail store agent from a plain-English instruction. Respond with ONLY a raw JSON object, no markdown fences, no other text. Shape: {"delivery_zips": [<5-digit zip strings>] or null if the instruction did not mention zips, "hours": {"mon":{"open":"HH:MM","close":"HH:MM"} or "closed", "tue":..., "wed":..., "thu":..., "fri":..., "sat":..., "sun":...} or null if the instruction did not mention hours, "summary": "one short sentence describing exactly what changed"}. If the instruction only changes ONE of zips/hours, leave the other as null so the existing value is preserved unchanged. Use 24-hour HH:MM format. If given a zip RANGE like "85250-85260", expand it to every 5-digit zip in that inclusive range.',
+            messages: [{
+              role: 'user',
+              content: 'Current delivery zips: ' + (currentZips || '(none set)') + '\nCurrent business hours: ' + currentHours + '\n\nInstruction: ' + prompt
+            }]
+          })
+        });
+        const anthropicData = await anthropicRes.json();
+        if (!anthropicRes.ok) {
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Claude API error', detail: anthropicData }));
+          return;
+        }
+        const rawText = (anthropicData.content && anthropicData.content[0] && anthropicData.content[0].text) || '{}';
+        const cleaned = rawText.replace(/^```(json)?/i, '').replace(/```$/, '').trim();
+        let parsed;
+        try {
+          parsed = JSON.parse(cleaned);
+        } catch (e) {
+          res.writeHead(502, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: false, error: 'Could not parse Claude response as JSON', raw: rawText }));
+          return;
+        }
+
+        let newEnv = currentEnv;
+        let zipsChanged = false;
+
+        if (parsed.delivery_zips && Array.isArray(parsed.delivery_zips) && parsed.delivery_zips.length > 0) {
+          const zipsStr = parsed.delivery_zips.join(',');
+          if (currentZipsMatch) {
+            newEnv = newEnv.replace(/^DELIVERY_ZIPS=.*$/m, 'DELIVERY_ZIPS=' + zipsStr);
+          } else {
+            newEnv = newEnv.trim() + '\nDELIVERY_ZIPS=' + zipsStr + '\n';
+          }
+          zipsChanged = true;
+        }
+
+        if (parsed.hours) {
+          const hoursStr = JSON.stringify(parsed.hours);
+          if (currentHoursMatch) {
+            newEnv = newEnv.replace(/^BUSINESS_HOURS=.*$/m, 'BUSINESS_HOURS=' + hoursStr);
+          } else {
+            newEnv = newEnv.trim() + '\nBUSINESS_HOURS=' + hoursStr + '\n';
+          }
+        }
+
+        fs.writeFileSync(envPath, newEnv);
+
+        // Propagate zip changes to orchestrator's STORE_REGISTRY so RFQ routing
+        // matches the new coverage area, matched by port (the most reliable key
+        // since store display names sometimes contain characters that don't
+        // round-trip cleanly through simple string search/replace).
+        if (zipsChanged) {
+          const portMatch = newEnv.match(/^PORT=(\d+)$/m);
+          if (portMatch) {
+            const port = portMatch[1];
+            const orchPath = '/home/ubuntu/store-agent/orchestrator.js';
+            let orch = fs.readFileSync(orchPath, 'utf8');
+            const urlPattern = "url:  'http://127.0.0.1:" + port + "',\n    zips: \\[[^\\]]*\\]";
+            const newZipsJs = "url:  'http://127.0.0.1:" + port + "',\n    zips: [" + parsed.delivery_zips.map(z => "'" + z + "'").join(',') + "]";
+            const re = new RegExp(urlPattern);
+            if (re.test(orch)) {
+              orch = orch.replace(re, newZipsJs);
+              fs.writeFileSync(orchPath, orch);
+              execSync('sudo systemctl restart orchestrator');
+            }
+          }
+        }
+
+        execSync('sudo systemctl restart ' + service);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          success: true,
+          summary: parsed.summary || 'Rules updated',
+          delivery_zips: parsed.delivery_zips || null,
+          hours: parsed.hours || null
+        }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: e.message }));
+      }
+    });
+    return;
+  }
+
   if (url.pathname === '/api/deploy-store' && req.method === 'POST') {
     let body = '';
     req.on('data', d => body += d);
