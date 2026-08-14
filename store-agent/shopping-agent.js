@@ -914,7 +914,14 @@ const server = http.createServer(async function(req, res) {
           if (reviewedIntents.includes(msg.params.name)) {
             try {
               const { reviewResult } = require('./reviewer.js');
-              const review = await reviewResult(msg.params.name, result, msg.params.arguments || {});
+              // Only fetch the taste profile for the intents that actually use it
+              // (the LLM critic, which only runs for recommendation/menu_build) —
+              // no need to pay the gbrain lookup cost for the other intents.
+              let customerProfile = null;
+              if ((msg.params.name === 'recommendation' || msg.params.name === 'menu_build') && msg.params.arguments && msg.params.arguments.email) {
+                try { customerProfile = await getCustomerProfile(msg.params.arguments.email); } catch (e) {}
+              }
+              const review = await reviewResult(msg.params.name, result, msg.params.arguments || {}, customerProfile);
               if (!review.approved) {
                 result = Object.assign({}, result, {
                   success: false,

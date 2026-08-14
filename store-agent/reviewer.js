@@ -133,7 +133,7 @@ function runDeterministicChecks(intent, result, request) {
   return violations;
 }
 
-async function runLlmCritic(intent, result, request) {
+async function runLlmCritic(intent, result, request, customerProfile) {
   if (!ANTHROPIC_API_KEY) return { approved: true, reason: 'ANTHROPIC_API_KEY not configured — skipping subjective review' };
 
   const items = extractLineItems(result);
@@ -148,6 +148,13 @@ async function runLlmCritic(intent, result, request) {
     request.category ? `Requested category: ${request.category}` : null
   ].filter(Boolean).join('\n');
 
+  const profileContext = customerProfile ? [
+    customerProfile.price_tier ? `Customer's usual price tier: ${customerProfile.price_tier}` : null,
+    customerProfile.avg_item_price ? `Customer's average item price: $${customerProfile.avg_item_price}` : null,
+    customerProfile.top_brands && customerProfile.top_brands.length ? `Customer's top brands: ${customerProfile.top_brands.join(', ')}` : null,
+    customerProfile.top_products && customerProfile.top_products.length ? `Customer's frequently purchased products: ${customerProfile.top_products.join(', ')}` : null
+  ].filter(Boolean).join('\n') : null;
+
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -159,10 +166,10 @@ async function runLlmCritic(intent, result, request) {
       body: JSON.stringify({
         model: REVIEW_MODEL,
         max_tokens: 300,
-        system: 'You are a quality reviewer for a beverage-ordering assistant\'s recommendations. Judge ONLY whether the selection is a reasonable, coherent fit for the stated context — not price (already checked separately). Respond with ONLY raw JSON, no markdown: {"approved": true or false, "reason": "one short sentence"}. Be lenient — only reject genuinely incoherent or clearly wrong selections (e.g. all hard liquor for a "kids birthday party", zero wine when wine was explicitly requested), not stylistic preferences.',
+        system: 'You are a quality reviewer for a beverage-ordering assistant\'s recommendations. Judge whether the selection is a reasonable, coherent fit for the stated context AND (when a customer taste profile is given) roughly consistent with their known preferences — not price/budget, already checked separately. Respond with ONLY raw JSON, no markdown: {"approved": true or false, "reason": "one short sentence"}. Be lenient: only reject genuinely incoherent selections (e.g. all hard liquor for a "kids birthday party", zero wine when wine was explicitly requested) or a selection that clearly ignores strong known preferences (e.g. customer\'s profile shows premium Bordeaux purchases and the recommendation is entirely bottom-shelf boxed wine, with nothing about the request suggesting they wanted something different this time). Do NOT reject just because a pick differs somewhat from past purchases — trying something new is normal and fine; only flag a real, clear mismatch.',
         messages: [{
           role: 'user',
-          content: `Context:\n${context || '(no specific context given)'}\n\nSelected items:\n${itemsSummary}`
+          content: `Context:\n${context || '(no specific context given)'}\n\n${profileContext ? 'Customer taste profile:\n' + profileContext + '\n\n' : ''}Selected items:\n${itemsSummary}`
         }]
       })
     });
@@ -177,7 +184,7 @@ async function runLlmCritic(intent, result, request) {
   }
 }
 
-async function reviewResult(intent, result, request) {
+async function reviewResult(intent, result, request, customerProfile) {
   if (!result || result.success === false) {
     return { approved: true, layer: 'none', reason: 'Underlying call did not succeed' };
   }
@@ -189,7 +196,7 @@ async function reviewResult(intent, result, request) {
   }
 
   if (intent === 'recommendation' || intent === 'menu_build') {
-    const critic = await runLlmCritic(intent, result, request || {});
+    const critic = await runLlmCritic(intent, result, request || {}, customerProfile);
     if (!critic.approved) {
       console.log('[reviewer] BLOCKED (llm-critic):', intent, critic.reason);
       return { approved: false, layer: 'llm-critic', reason: critic.reason };
