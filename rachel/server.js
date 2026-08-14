@@ -482,7 +482,13 @@ app.post('/chat', async (req, res) => {
           const replayHasProposal = reply.toLowerCase().includes('your proposal') || reply.includes('proposals/bevvi-proposal') || reply.includes('download proposal');
           const replayIsEventPackage = reply.includes('Product total') || reply.includes('Estimated grand total') || reply.includes('grand total');
           const replayIsSingleProduct = !replayIsEventPackage && reply.includes('$') && (reply.match(/\d+ML/i) !== null || reply.match(/\d+L\b/) !== null) && reply.split('$').length <= 3;
-          const replayHasCTA = reply.includes('place the order') || reply.includes('PDF proposal') || reply.includes('make any changes');
+          const replayCtaPatterns = [
+            'place the order', 'place an order', 'placing the order', 'placing an order',
+            'pdf proposal', 'generate a proposal', 'generate the proposal',
+            'make any changes', 'any changes', 'anything else', 'would you like to',
+            'shall i', 'let me know if'
+          ];
+          const replayHasCTA = reply.trim().endsWith('?') || replayCtaPatterns.some(p => reply.toLowerCase().includes(p));
           if (replayIsEventPackage || replayIsSingleProduct) state.packageShown = true;
           if (replayHasProposal) { state.packageShown = false; state.mixerAsked = false; state.mixerAnswered = false; }
           const replayHasMixerQuestion = reply.toLowerCase().includes('add mixers') || reply.toLowerCase().includes('mixers, water, soda');
@@ -546,7 +552,13 @@ app.post('/chat', async (req, res) => {
           const replayHasProposal = reply.toLowerCase().includes('your proposal') || reply.includes('proposals/bevvi-proposal') || reply.includes('download proposal');
           const replayIsEventPackage = reply.includes('Product total') || reply.includes('Estimated grand total') || reply.includes('grand total');
           const replayIsSingleProduct = !replayIsEventPackage && reply.includes('$') && (reply.match(/\d+ML/i) !== null || reply.match(/\d+L\b/) !== null) && reply.split('$').length <= 3;
-          const replayHasCTA = reply.includes('place the order') || reply.includes('PDF proposal') || reply.includes('make any changes');
+          const replayCtaPatterns = [
+            'place the order', 'place an order', 'placing the order', 'placing an order',
+            'pdf proposal', 'generate a proposal', 'generate the proposal',
+            'make any changes', 'any changes', 'anything else', 'would you like to',
+            'shall i', 'let me know if'
+          ];
+          const replayHasCTA = reply.trim().endsWith('?') || replayCtaPatterns.some(p => reply.toLowerCase().includes(p));
           if (replayIsEventPackage || replayIsSingleProduct) state.packageShown = true;
           if (replayHasProposal) { state.packageShown = false; state.mixerAsked = false; state.mixerAnswered = false; }
           const replayHasMixerQuestion = reply.toLowerCase().includes('add mixers') || reply.toLowerCase().includes('mixers, water, soda');
@@ -1101,12 +1113,10 @@ app.post('/chat', async (req, res) => {
         state.mixerAnswered = true;
         saveFlowState();
         const ctaCapsM = getCapabilities(format);
-        const ctaActionsM = [];
+        const ctaActionsM = [format === 'slack' ? 'see the estimated full price' : 'see the estimated full price'];
         if (ctaCapsM.can_place_order) ctaActionsM.push(format === 'slack' ? '*place the order*' : 'place the order');
         if (ctaCapsM.can_generate_proposal) ctaActionsM.push(format === 'slack' ? '*generate a PDF proposal*' : 'generate a PDF proposal');
-        const mixerNoReply = ctaActionsM.length > 0
-          ? 'No problem! Would you like to ' + ctaActionsM.join(' or ') + ', or make any changes?'
-          : 'No problem! Would you like to make any changes, or is there anything else I can help with?';
+        const mixerNoReply = 'No problem! Would you like to ' + ctaActionsM.join(', ') + ', or make any changes?';
         return res.json({ text: mixerNoReply, response: mixerNoReply });
       }
       // A clear "yes" still needs a real product search (mixers/water/soda/ice), so

@@ -134,10 +134,18 @@ Silently retry up to 3 total attempts per product.
 
 ### 3.10 — Estimated Full Price
 
+If there is an ACTIVE PACKAGE with more than one item already in it (check the ## ACTIVE
+PACKAGE context / prior line_items from this conversation), "Price" below means the SUM
+of every item currently in that basket (each item's price x its quantity, added together)
+— NOT just the single product most recently discussed. A customer asking for "the
+estimated full price" after building up a multi-item order expects the total for
+everything they've added, not just the last item mentioned.
+
 Estimated Full Price = Price + (Price x 10%) + $25 + (Price x 10%) + (Price x 5%)
 
-Display:
-Product price: $[price]
+Display (list each item in the basket first if there is more than one, then the totals):
+[qty]x [item name] — $[unit price] ea = $[line total]   (repeat for each item if multiple)
+Product price: $[price]  (sum of all line items above)
 Estimated Tax (10%): $[tax]
 Estimated Delivery Charge: $25.00
 Service (10%): $[service]
@@ -148,7 +156,8 @@ Do NOT list what information will be needed to place the order (name, phone, del
 date/time) at this point — that's premature. Only ask for those details once the customer
 has actually said they want to place the order (e.g. "place the order", "order it",
 "yes, order this"). Before that, just show the price breakdown and the standard CTA
-(place the order / generate a PDF proposal / make any changes).
+(see the estimated full price / place the order / generate a PDF proposal / make any
+changes).
 Estimated — actual totals may vary.
 
 ---
@@ -364,6 +373,26 @@ Here are [count] options:
 1. [Name] — [size] — $[price] | <a href="[url]" target="_blank">View</a>
 
 Star (*) ONLY products where preferred=true.
+
+Whenever you end a turn by asking what the customer wants to do next with a product/
+package already shown, always offer all four standard actions together — see the
+estimated full price, place the order, generate a PDF proposal, and make any changes —
+never an abbreviated subset. Missing any of these leaves the customer unaware it's even
+an option.
+
+Use this EXACT wording and format every time, as a single inline sentence — do NOT
+substitute a bulleted list, a numbered list, "What would you like to do?", or any other
+variation:
+"Would you like to see the estimated full price, place the order, generate a PDF
+proposal, or make any changes?"
+
+When presenting 2+ options for a single requested item (e.g. "add a nice Bordeaux" ->
+two Bordeaux choices), do NOT show the standard place-order/proposal/changes CTA in the
+same message — nothing has actually been added to the order yet, so that CTA is
+premature and ambiguous (place the order with which option, or none?). Instead end with
+a direct question asking which option they want added, e.g. "Would you like to add
+option 1 or 2?" Only after they answer (choosing one, or declining both) should the
+standard CTA appear, once for the now-settled basket.
 
 ### Order History — "what did I buy before" / "my past orders" / "reorder X"
 
