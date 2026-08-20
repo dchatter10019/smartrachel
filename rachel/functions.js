@@ -876,7 +876,23 @@ async function buildPackage(iv) {
   function addLines(picks,label,category) {
     if (picks.length===0){unavailable.push(label);return;}
     for (var i=0;i<picks.length;i++) {
-      lineItems.push({label:label,name:picks[i].product.name,qty:picks[i].qty,upc:picks[i].product.upc||'',
+      var finalQty = picks[i].qty;
+      // Beer quantity was computed assuming a generic beerPackSize (default 12
+      // cans/bottles per case), BEFORE the actual product was selected — real
+      // beer products come in varying pack sizes (12, 18, 24, 30, 36...). If we
+      // don't rescale, a product that's actually packaged in 24s gets the same
+      // "qty" that was meant for 12s, silently doubling the real can/bottle
+      // count delivered vs. what totalDrinks/beerDrinks actually called for.
+      if (category === 'beer') {
+        var sizeStr = picks[i].product.sizeStr || '';
+        var packMatch = sizeStr.match(/^(\d+)\s*x/i);
+        var realPackSize = packMatch ? parseInt(packMatch[1]) : null;
+        if (realPackSize && realPackSize > 0 && realPackSize !== beerPackSize) {
+          var impliedDrinks = picks[i].qty * beerPackSize;
+          finalQty = Math.max(1, Math.ceil(impliedDrinks / realPackSize));
+        }
+      }
+      lineItems.push({label:label,name:picks[i].product.name,qty:finalQty,upc:picks[i].product.upc||'',
         price:picks[i].product.price,size:picks[i].product.sizeStr,
         url:picks[i].product.url,product_id:picks[i].product.product_id,category:category});
     }
