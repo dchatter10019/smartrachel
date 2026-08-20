@@ -653,6 +653,7 @@ async function getProductURLByZip({ product_name, zipcode, client_id, min_price,
 async function buildPackage(iv) {
   var guests = parseInt(iv.guests) || 0;
   var hours = parseFloat(iv.hours) || 0;
+  var drinksPerPersonInput = parseFloat(iv.drinks_per_person) || 0;
   var rawPackageType = iv.package_type;
   var isCustom = (rawPackageType === "CUSTOM" || rawPackageType === "custom");
   var packageType = isCustom ? "CUSTOM" : (parseInt(rawPackageType) || 5);
@@ -700,7 +701,7 @@ async function buildPackage(iv) {
     if (kitchenLocation) clientName = CLIENT_MAP[kitchenLocation] || 'airculinaire'; // always use mapped client
   }
 
-  if (guests <= 0 || hours <= 0) return fail("Missing guests or hours");
+  if (guests <= 0 || (hours <= 0 && drinksPerPersonInput <= 0)) return fail("Missing guests, and neither hours nor drinks_per_person was given");
   if (totalBudget <= 0) return fail("Missing total_budget");
   var isQuoteMode = (totalBudget >= 999999);
   if (totalBudget < 150 && !isQuoteMode) return fail("Budget $" + totalBudget + " is below the $150 minimum.");
@@ -708,7 +709,13 @@ async function buildPackage(iv) {
   if (isCustom && namedProducts.length === 0) return fail("package_type=CUSTOM requires named_products");
 
   var baseDpp;
-  if (hours <= 1) baseDpp = 1.5;
+  if (drinksPerPersonInput > 0) {
+    // Customer specified drinks-per-person directly — use it as-is rather than
+    // deriving it from event duration. This is what actually drives quantity
+    // calculations everywhere downstream (totalDrinks, category splits, custom
+    // mode caps), so no other logic needs to change once this is set correctly.
+    baseDpp = drinksPerPersonInput;
+  } else if (hours <= 1) baseDpp = 1.5;
   else if (hours <= 2) baseDpp = 2.25;
   else if (hours <= 3) baseDpp = 2.90;
   else if (hours <= 4) baseDpp = 3.45;
@@ -952,11 +959,12 @@ async function buildPackage(iv) {
       var hasExplicitQty=np.qty && parseInt(np.qty) > 0;
       var qty=hasExplicitQty ? parseInt(np.qty) : Math.max(1,Math.ceil(perProd/dpu));
       var n2=Math.max(1,byCat[catN].length);
-      var cap2=catN==="wine"?Math.max(1,Math.ceil((guests*hours*0.6)/n2)):catN==="beer"?Math.max(1,Math.ceil((guests*hours*0.5)/n2)):Math.max(1,Math.ceil((guests/10+1)/n2));
+      var cap2=catN==="wine"?Math.max(1,Math.ceil((guests*baseDpp*0.6)/n2)):catN==="beer"?Math.max(1,Math.ceil((guests*baseDpp*0.5)/n2)):Math.max(1,Math.ceil((guests/10+1)/n2));
       if(!hasExplicitQty && qty>cap2) qty=cap2;
       lineItems.push({label:np.name,name:best.name,qty:qty,price:best.price,size:best.sizeStr,url:best.url,product_id:best.product_id,upc:best.upc||"",establishmentId:best.establishmentId||"",category:catN});
     }
-    summaryBits.push("CUSTOM | "+guests+" guests | "+hours+"h | "+(isQuoteMode?"QUOTE":"$"+totalBudget));
+    var durationLabel = hours > 0 ? (hours+"h") : (baseDpp+" drinks/person");
+    summaryBits.push("CUSTOM | "+guests+" guests | "+durationLabel+" | "+(isQuoteMode?"QUOTE":"$"+totalBudget));
   } else {
     var dpp2=baseDpp*mult;
     totalDrinks=Math.round(guests*dpp2);
@@ -1040,7 +1048,8 @@ async function buildPackage(iv) {
       }
       addLines(picks,pl.label,pl.cat);
     }
-    summaryBits.push("Package "+packageType+" | "+guests+" guests | "+hours+"h | "+(isQuoteMode?"QUOTE":"$"+totalBudget)+" | drinks "+totalDrinks);
+    var durationLabel2 = hours > 0 ? (hours+"h") : (baseDpp+" drinks/person");
+    summaryBits.push("Package "+packageType+" | "+guests+" guests | "+durationLabel2+" | "+(isQuoteMode?"QUOTE":"$"+totalBudget)+" | drinks "+totalDrinks);
   }
 
   if (lineItems.length===0) return fail("No products available at "+kitchenLocation);

@@ -358,6 +358,7 @@ async function executeTool(name, input) {
     const { buildPackage } = require('/home/ubuntu/rachel/functions.js');
     const result = await buildPackage({
       guests: input.guests, hours: input.hours,
+      drinks_per_person: input.drinks_per_person || 0,
       total_budget: input.budget || 999999,
       package_type: pkgType,
       kitchen_location: loc.kitchen,
@@ -499,7 +500,12 @@ async function executeTool(name, input) {
     const { buildPackage } = require('/home/ubuntu/rachel/functions.js');
     const result = await buildPackage({
       guests: input.guests || 10,
-      hours: input.hours || 2,
+      // Only default hours to 2 if drinks_per_person wasn't given either —
+      // otherwise this default would silently override an explicit
+      // drinks-per-person request in the summary display (baseDpp calculation
+      // itself already correctly prioritizes drinks_per_person regardless).
+      hours: input.hours || (input.drinks_per_person ? 0 : 2),
+      drinks_per_person: input.drinks_per_person || 0,
       total_budget: input.budget || 999999,
       package_type: 'CUSTOM',
       kitchen_location: loc.kitchen,
