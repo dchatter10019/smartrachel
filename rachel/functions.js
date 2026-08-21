@@ -656,7 +656,8 @@ async function buildPackage(iv) {
   var drinksPerPersonInput = parseFloat(iv.drinks_per_person) || 0;
   var rawPackageType = iv.package_type;
   var isCustom = (rawPackageType === "CUSTOM" || rawPackageType === "custom");
-  var packageType = isCustom ? "CUSTOM" : (parseInt(rawPackageType) || 5);
+  var isSplit = (rawPackageType === "SPLIT" || rawPackageType === "split");
+  var packageType = isCustom ? "CUSTOM" : (isSplit ? "SPLIT" : (parseInt(rawPackageType) || 5));
   var totalBudget = parseFloat(iv.total_budget) || 0;
   var learned_splits = iv.learned_splits || null;
   var beerPackSize = parseInt(iv.beer_pack_size) || 12;
@@ -702,8 +703,8 @@ async function buildPackage(iv) {
   }
 
   if (guests <= 0 || (hours <= 0 && drinksPerPersonInput <= 0)) return fail("Missing guests, and neither hours nor drinks_per_person was given");
-  if (totalBudget <= 0) return fail("Missing total_budget");
-  var isQuoteMode = (totalBudget >= 999999);
+  if (totalBudget <= 0 && !isSplit) return fail("Missing total_budget");
+  var isQuoteMode = (totalBudget >= 999999) || isSplit;
   if (totalBudget < 150 && !isQuoteMode) return fail("Budget $" + totalBudget + " is below the $150 minimum.");
   if (!kitchenLocation || !clientName) return fail("Missing kitchen_location or client_name");
   if (isCustom && namedProducts.length === 0) return fail("package_type=CUSTOM requires named_products");
@@ -811,8 +812,15 @@ async function buildPackage(iv) {
     } catch(e){return [];}
   }
 
-  function pick(cands,slotType,targetPrice,minP,maxP,totalQty,maxUnique) {
-    var pool=cands.filter(function(p){return classifyOk(slotType,p)&&p.price<=(maxP||999999)&&p.price>=(minP||0);});
+  function pick(cands,slotType,targetPrice,minP,maxP,totalQty,maxUnique,allowedBrands) {
+    var pool=cands.filter(function(p){
+      var ok = classifyOk(slotType,p)&&p.price<=(maxP||999999)&&p.price>=(minP||0);
+      if (ok && allowedBrands && allowedBrands.length > 0) {
+        var nmB=(p.name||"").toLowerCase();
+        ok = allowedBrands.some(function(b){ return nmB.indexOf(String(b).toLowerCase()) >= 0; });
+      }
+      return ok;
+    });
     if (pool.length===0) return [];
     var steps=[0.50,0.35,0.20,0];
     var chosenPool=null;
@@ -883,7 +891,7 @@ async function buildPackage(iv) {
       // don't rescale, a product that's actually packaged in 24s gets the same
       // "qty" that was meant for 12s, silently doubling the real can/bottle
       // count delivered vs. what totalDrinks/beerDrinks actually called for.
-      if (category === 'beer') {
+      if (category === 'beer' || category === 'seltzer') {
         var sizeStr = picks[i].product.sizeStr || '';
         var packMatch = sizeStr.match(/^(\d+)\s*x/i);
         var realPackSize = packMatch ? parseInt(packMatch[1]) : null;
@@ -981,6 +989,102 @@ async function buildPackage(iv) {
     }
     var durationLabel = hours > 0 ? (hours+"h") : (baseDpp+" drinks/person");
     summaryBits.push("CUSTOM | "+guests+" guests | "+durationLabel+" | "+(isQuoteMode?"QUOTE":"$"+totalBudget));
+  } else if (isSplit) {
+    // Customer-driven category percentages (e.g. "20% wine, 30% beer, 50% hard
+    // seltzer") with optional per-category brand allowlists (e.g. red wine =
+    // Cabernet or Pinot Noir only) and direct per-unit price targets/caps,
+    // instead of a fixed total budget. category_splits keys: wine, beer,
+    // hard_seltzer (or seltzer), spirits. category_brands keys: red, white,
+    // beer, seltzer (or hard_seltzer), spirits — each an array of allowed
+    // brand/varietal keywords; omit for "any product in that category".
+    var categorySplits={};
+    try { categorySplits=JSON.parse(iv.category_splits||"{}"); } catch(e){}
+    var categoryBrands={};
+    try { categoryBrands=JSON.parse(iv.category_brands||"{}"); } catch(e){}
+    var splitSum=0;
+    for (var ckKey in categorySplits) splitSum+=(parseFloat(categorySplits[ckKey])||0);
+    if (splitSum<=0) return fail('category_splits required (e.g. {"wine":0.2,"beer":0.3,"hard_seltzer":0.5}) and must sum to a positive value for package_type=SPLIT');
+    var normSplits={};
+    for (var ckKey2 in categorySplits) normSplits[ckKey2]=(parseFloat(categorySplits[ckKey2])||0)/splitSum;
+
+    // Critical: totalDrinks was declared as 0 at the top of buildPackage and
+    // only ever assigned inside the OTHER branches (CUSTOM / standard) — must
+    // set it here too before deriving per-category drink counts from it, or
+    // every category silently computes against zero.
+    totalDrinks=Math.round(guests*baseDpp);
+
+    var wineTargetInput=parseFloat(iv.wine_price_target)||0;
+    var beerMaxInput=parseFloat(iv.beer_max_price)||capBeerMax||0;
+    var seltzerMaxInput=parseFloat(iv.seltzer_max_price)||beerMaxInput||0;
+
+    var winePct=normSplits.wine||0;
+    var beerPct=normSplits.beer||0;
+    var seltzerPct=normSplits.hard_seltzer||normSplits.seltzer||0;
+    var spiritPctS=normSplits.spirits||0;
+
+    var planS=[];
+
+    if (winePct>0) {
+      var wineDrinksS=Math.round(totalDrinks*winePct);
+      var wineBottlesS=Math.max(1,Math.ceil(wineDrinksS/5));
+      var redRatioS=(categoryBrands.red_ratio!==undefined)?parseFloat(categoryBrands.red_ratio):0.5;
+      var redBottlesS=Math.round(wineBottlesS*redRatioS);
+      var whiteBottlesS=wineBottlesS-redBottlesS;
+      var redBrandsS=categoryBrands.red||[];
+      var whiteBrandsS=categoryBrands.white||[];
+      var wMinS=wineTargetInput?wineTargetInput*0.5:0;
+      var wMaxS=wineTargetInput?wineTargetInput*1.5:999999;
+      if (redBottlesS>0) planS.push({term:"Red Wine",slot:"red",qty:redBottlesS,target:wineTargetInput,min:wMinS,max:wMaxS,label:"Red Wine",cat:"wine",uniq:Math.max(1,redBrandsS.length||2),brands:redBrandsS});
+      if (whiteBottlesS>0) planS.push({term:"White Wine",slot:"white",qty:whiteBottlesS,target:wineTargetInput,min:wMinS,max:wMaxS,label:"White Wine",cat:"wine",uniq:Math.max(1,whiteBrandsS.length||2),brands:whiteBrandsS});
+    }
+
+    if (beerPct>0) {
+      var beerDrinksS=Math.round(totalDrinks*beerPct);
+      var beerCasesS=Math.max(1,Math.ceil(beerDrinksS/beerPackSize));
+      var beerBrandsS=categoryBrands.beer||[];
+      planS.push({term:"Beer",slot:"beer",qty:beerCasesS,target:beerMaxInput||0,min:0,max:beerMaxInput||999999,label:"Beer",cat:"beer",uniq:Math.max(1,beerBrandsS.length||2),brands:beerBrandsS});
+    }
+
+    if (seltzerPct>0) {
+      var seltzerDrinksS=Math.round(totalDrinks*seltzerPct);
+      var seltzerCasesS=Math.max(1,Math.ceil(seltzerDrinksS/beerPackSize));
+      var seltzerBrandsS=categoryBrands.seltzer||categoryBrands.hard_seltzer||[];
+      planS.push({term:"Hard Seltzer",slot:"seltzer",qty:seltzerCasesS,target:seltzerMaxInput||0,min:0,max:seltzerMaxInput||999999,label:"Hard Seltzer",cat:"seltzer",uniq:Math.max(1,seltzerBrandsS.length||2),brands:seltzerBrandsS});
+    }
+
+    if (spiritPctS>0) {
+      var spiritDrinksS=Math.round(totalDrinks*spiritPctS);
+      var spiritBottlesS=Math.max(1,Math.ceil(spiritDrinksS/16));
+      var spiritBrandsS=categoryBrands.spirits||[];
+      planS.push({term:"Spirits",slot:"vodka",qty:spiritBottlesS,target:0,min:0,max:999999,label:"Spirits",cat:"spirits",uniq:Math.max(1,spiritBrandsS.length||2),brands:spiritBrandsS});
+    }
+
+    if (planS.length===0) return fail("category_splits produced no recognized categories — keys must be among wine/beer/hard_seltzer(or seltzer)/spirits");
+
+    var brandSubstitutions=[];
+    var resAllS=await Promise.all(planS.map(function(pl){ return doSearch(pl.term); }));
+    for (var pIdxS=0;pIdxS<planS.length;pIdxS++) {
+      var plS=planS[pIdxS];
+      var picksS=pick(resAllS[pIdxS],plS.slot,plS.target,plS.min,plS.max,plS.qty,plS.uniq,plS.brands);
+      if (picksS.length===0) {
+        // Relax price caps first (same fallback pattern used in the standard
+        // non-SPLIT path) but keep the brand filter.
+        picksS=pick(resAllS[pIdxS],plS.slot,0,0,999999,plS.qty,plS.uniq,plS.brands);
+      }
+      if (picksS.length===0 && plS.brands && plS.brands.length>0) {
+        // None of the customer's named brands are carried at this location —
+        // fall back to any product in the category rather than silently
+        // failing, but record it so the customer is told what was substituted
+        // (never silently swap a named brand without saying so).
+        picksS=pick(resAllS[pIdxS],plS.slot,0,0,999999,plS.qty,plS.uniq,null);
+        if (picksS.length>0) {
+          brandSubstitutions.push(plS.label+': none of your requested brands ('+plS.brands.join(', ')+') are available at this location — substituted '+picksS.map(function(pk){return pk.product.name;}).join(', ')+' instead');
+        }
+      }
+      addLines(picksS,plS.label,plS.cat);
+    }
+    var durationLabelS = hours > 0 ? (hours+"h") : (baseDpp+" drinks/person");
+    summaryBits.push("SPLIT | "+guests+" guests | "+durationLabelS+" | drinks "+totalDrinks);
   } else {
     var dpp2=baseDpp*mult;
     totalDrinks=Math.round(guests*dpp2);
@@ -1116,6 +1220,7 @@ async function buildPackage(iv) {
     estimated_tip:tip.toFixed(2), delivery_fee:delivery.toFixed(2), estimated_grand_total:grand.toFixed(2),
     product_budget:String(productBudget), budget_used_pct:String(usedPct),
     preferred_brands:prefList.join(", "), unavailable:unavailable.join(", "),
+    brand_substitutions:(typeof brandSubstitutions!=='undefined'?brandSubstitutions:[]).join("; "),
     total_drinks:String(totalDrinks), summary:summary };
 }
 

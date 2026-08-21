@@ -356,13 +356,25 @@ async function executeTool(name, input) {
       else if (hasW) pkgType = '3';
     }
     const { buildPackage } = require('/home/ubuntu/rachel/functions.js');
+    // A customer-driven category percentage split (e.g. "20% wine, 30% beer,
+    // 50% hard seltzer") overrides the auto-detected package_type entirely —
+    // it's a fundamentally different allocation mode (arbitrary user percentages
+    // + per-category brand allowlists + direct price targets, vs. the fixed
+    // lookup table pkgType otherwise uses).
+    const effectivePkgType = input.category_splits ? 'SPLIT' : pkgType;
     const result = await buildPackage({
       guests: input.guests, hours: input.hours,
       drinks_per_person: input.drinks_per_person || 0,
-      total_budget: input.budget || 999999,
-      package_type: pkgType,
+      total_budget: input.budget || (input.category_splits ? 999999 : undefined),
+      package_type: effectivePkgType,
       kitchen_location: loc.kitchen,
-      client_name: loc.client
+      client_name: loc.client,
+      category_splits: input.category_splits || '',
+      category_brands: input.category_brands || '',
+      wine_price_target: input.wine_price_target || 0,
+      beer_max_price: input.beer_max_price || input.max_price || 0,
+      seltzer_max_price: input.seltzer_max_price || 0,
+      beer_pack_size: input.beer_pack_size || 0
     });
     if (result.success !== 'true') return { success: false, error: result.error };
 
@@ -489,6 +501,7 @@ async function executeTool(name, input) {
       estimated_grand_total: result.estimated_grand_total,
       preferred_brands: result.preferred_brands,
       unavailable: result.unavailable,
+      brand_substitutions: result.brand_substitutions,
       swaps: swaps,
       total_drinks: result.total_drinks
     };
