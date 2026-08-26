@@ -103,6 +103,16 @@ const PORT = process.env.RACHEL_PORT || 3500;
 
 // ── Session stores ─────────────────────────────────────────────────────────
 const sessions = {};       // sessionKey -> messages[]
+// Real, definitive root cause found tonight: sessions[sessionKey] (the raw Claude API
+// conversation history) does NOT reliably contain the actual formatted reply text shown
+// to the customer — confirmed via direct diagnostic logging that most "assistant"
+// entries in it are EMPTY STRINGS or filler text, since a turn's only model output can
+// be a tool_use block with no accompanying text. The real, substantive reply is
+// constructed/returned separately as { text, response } via res.json() and never
+// written back into sessions[sessionKey] at all. Track the actual outgoing reply text
+// per session here instead — this is what candidate-extraction (for the substitute-
+// merge logic) needs to scan, not the internal API conversation history.
+const lastRepliesBySession = {}; // sessionKey -> array of recent outgoing reply texts
 const packageCache = {};   // cacheKey -> line_items (L1)
 
 // flowState persisted to disk
@@ -332,6 +342,18 @@ app.post('/chat', async (req, res) => {
   console.log(`[rachel] context:`, JSON.stringify({ kitchen_location: context?.kitchen_location, client_id: context?.client_id, user_email: context?.user_email }));
 
   const sessionKey = session_id || `${context?.account_id || 'anon'}-${context?.kitchen_location || 'noloc'}`;
+  const _originalJson = res.json.bind(res);
+  res.json = (body) => {
+    try {
+      const outText = body && (body.text || body.response);
+      if (outText && sessionKey) {
+        if (!lastRepliesBySession[sessionKey]) lastRepliesBySession[sessionKey] = [];
+        lastRepliesBySession[sessionKey].push(outText);
+        if (lastRepliesBySession[sessionKey].length > 6) lastRepliesBySession[sessionKey].shift();
+      }
+    } catch (e) {}
+    return _originalJson(body);
+  };
   if (!sessions[sessionKey]) sessions[sessionKey] = [];
 
   const email = context?.user_email || '';
@@ -1195,9 +1217,10 @@ app.post('/chat', async (req, res) => {
     // actually mentioned "substitute", so a stray unrelated "yes" (answering some
     // other pending question) doesn't misfire this.
     if (state.pendingSubstitutes && state.pendingSubstitutes.length > 0) {
-      const priorMsgs = sessions[sessionKey] || [];
-      const lastAssistantMsg = [...priorMsgs].reverse().find(m => m.role === 'assistant');
-      const lastAssistantText = lastAssistantMsg ? (Array.isArray(lastAssistantMsg.content) ? lastAssistantMsg.content.map(c => c.text || '').join(' ') : String(lastAssistantMsg.content || '')) : '';
+      // Use the actual last outgoing reply (tracked via lastRepliesBySession), not
+      // sessions[sessionKey] — confirmed via direct diagnostic logging tonight that the
+      // raw API conversation history does not reliably contain the real reply text.
+      const lastAssistantText = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
       const lastMentionedSubstitute = lastAssistantText.toLowerCase().includes('substitute');
       const subConfirmWords = ['yes', 'yeah', 'yep', 'sure', 'please', 'ok', 'okay'];
       const subMsgLower = message.toLowerCase().trim().replace(/\*/g, '');
@@ -1256,9 +1279,10 @@ app.post('/chat', async (req, res) => {
     // Rachel's most recent message clearly asked the customer to pick from options,
     // even with no pendingSubstitutes entry — in that case we ADD the matched item
     // directly rather than replacing anything (there's no "original" to remove).
-    const priorMsgsGate = sessions[sessionKey] || [];
-    const lastAssistantMsgGate = [...priorMsgsGate].reverse().find(m => m.role === 'assistant');
-    const lastAssistantTextGate = lastAssistantMsgGate ? (Array.isArray(lastAssistantMsgGate.content) ? lastAssistantMsgGate.content.map(c => c.text || '').join(' ') : String(lastAssistantMsgGate.content || '')) : '';
+    // Use the actual last outgoing reply (tracked via lastRepliesBySession), not
+    // sessions[sessionKey] — confirmed via direct diagnostic logging tonight that the
+    // raw API conversation history does not reliably contain the real reply text.
+    const lastAssistantTextGate = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
     const looksLikeSelectionPrompt = /which (one|option|would)|would you like to (go with|choose|add)|works for you/i.test(lastAssistantTextGate);
     const hasPendingSub = state.pendingSubstitutes && state.pendingSubstitutes.length > 0;
     if (hasPendingSub || looksLikeSelectionPrompt) {
@@ -1281,8 +1305,12 @@ app.post('/chat', async (req, res) => {
       // assistant message first, then filter to only those containing a "$" (any
       // genuine candidate-presenting reply will have a price; filler/procedural text
       // won't) before taking the last few for candidate extraction.
-      const getMsgText = m => Array.isArray(m.content) ? m.content.map(c => c.text || '').join(' ') : String(m.content || '');
-      const substantiveAssistantTexts = [...priorMsgsSel].reverse().filter(m => m.role === 'assistant').map(getMsgText).filter(t => t.includes('$')).slice(0, 4);
+      // Use the ACTUAL outgoing reply texts tracked via lastRepliesBySession (see
+      // definition near the top of the file) — NOT sessions[sessionKey], which does not
+      // reliably contain the real formatted reply text (confirmed via direct diagnostic
+      // logging: most "assistant" entries there are empty strings or filler, since a
+      // turn's only model output can be a tool_use block with no accompanying text).
+      const substantiveAssistantTexts = (lastRepliesBySession[sessionKey] || []).slice().reverse().filter(t => t.includes('$')).slice(0, 4);
       const recentAssistantTextSel = substantiveAssistantTexts.join(String.fromCharCode(10));
 
       // Extract candidate options Rachel presented, across two formats:
