@@ -828,29 +828,104 @@ async function buildPackage(iv) {
     }).filter(function(p){return p.price>0&&p.name;});
   }
 
+  // Strip accented characters (ò, ä, é, etc.) to their plain ASCII equivalents —
+  // confirmed via direct testing that the catalog's exact-match search fails when
+  // the search term has a diacritic the specific catalog entry doesn't (e.g.
+  // "Espolòn" with the accent found nothing, while "Espolon" without it matched
+  // immediately) — real catalog data is inconsistent about which entries carry
+  // accents at all, so stripping them from the search term is the reliable fix.
+  function stripDiacritics(term) {
+    return String(term || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  }
+
+  // Extract a requested size like "1 L", "750mL", "1.75 L" from a raw search term,
+  // normalized to a comparable form (digits + unit, no space/case sensitivity) —
+  // used to verify a retry step's results actually match what was asked for, not
+  // just that SOME product came back. This is what catches the case where a
+  // size-stripped-but-still-accented retry "succeeds" by matching a narrower,
+  // wrong-size catalog entry, instead of continuing on to a broader retry that
+  // would have found the actually-requested size.
+  function extractRequestedSize(term) {
+    var m = String(term || '').match(/\b(\d+(\.\d+)?)\s*(m?l|oz)\b/i);
+    if (!m) return null;
+    return (m[1] + m[3]).toLowerCase().replace(/\s+/g, '');
+  }
+  function normalizeSizeStr(sizeStr) {
+    return String(sizeStr || '').toLowerCase().replace(/\s+/g, '');
+  }
+  function resultsMatchRequestedSize(results, requestedSize) {
+    if (!requestedSize) return true; // no specific size was requested — anything counts
+    return results.some(function(p) { return normalizeSizeStr(p.sizeStr).indexOf(requestedSize) >= 0; });
+  }
+
   async function doSearch(term) {
     try {
+      var requestedSize = extractRequestedSize(term);
+      var bestSoFar = [];
+
       // Try the term exactly as given first — this preserves precise size-matching
       // when the format happens to be correct (e.g. "Angel's Envy Bourbon 750 ML").
-      // Only fall back to a size-stripped retry if the original returns nothing —
-      // confirmed via direct testing that shorthand size notation ("750mL", "1L",
-      // "6 pack") the customer or LLM might naturally use does NOT match the
-      // catalog's actual format and silently returns zero results even for
-      // genuinely available products. Trying original-first (rather than always
-      // stripping) avoids losing the ability to request a specific size when the
-      // format IS correct — stripping unconditionally would make the separate
-      // "wrong size returned" issue worse, not just fix the "not found" issue.
       var results = await rawSearch(term);
-      if (results.length > 0) return results;
+      if (results.length > 0) {
+        bestSoFar = results;
+        if (resultsMatchRequestedSize(results, requestedSize)) return results;
+      }
+
+      // Size-stripped retry — confirmed via direct testing that shorthand size
+      // notation ("750mL", "1L", "6 pack") does NOT match the catalog's actual
+      // format and silently returns zero results even for genuinely available
+      // products. Only accept this result immediately if it actually contains the
+      // requested size (or none was requested) — otherwise keep it as a fallback
+      // candidate but keep trying broader retries, since a "successful" match here
+      // can still be the WRONG size if the still-accented term matches a narrower,
+      // different catalog subset than a fully-cleaned search would.
       var cleanTerm = stripSizeFromSearchTerm(term);
       if (cleanTerm && cleanTerm !== term) {
         var fallbackResults = await rawSearch(cleanTerm);
         if (fallbackResults.length > 0) {
-          console.log('[doSearch] size-stripped retry succeeded:', JSON.stringify(term), '->', JSON.stringify(cleanTerm));
-          return fallbackResults;
+          if (bestSoFar.length === 0) bestSoFar = fallbackResults;
+          if (resultsMatchRequestedSize(fallbackResults, requestedSize)) {
+            console.log('[doSearch] size-stripped retry succeeded (size match):', JSON.stringify(term), '->', JSON.stringify(cleanTerm));
+            return fallbackResults;
+          }
         }
       }
-      return results;
+
+      // Diacritic-stripped retry — confirmed via direct testing that accented
+      // characters ("Espolòn") don't match catalog entries stored without the
+      // accent, and the catalog is inconsistent about which entries carry accents.
+      var diacriticTerm = stripDiacritics(term);
+      if (diacriticTerm && diacriticTerm !== term) {
+        var diacriticResults = await rawSearch(diacriticTerm);
+        if (diacriticResults.length > 0) {
+          if (bestSoFar.length === 0) bestSoFar = diacriticResults;
+          if (resultsMatchRequestedSize(diacriticResults, requestedSize)) {
+            console.log('[doSearch] diacritic-stripped retry succeeded (size match):', JSON.stringify(term), '->', JSON.stringify(diacriticTerm));
+            return diacriticResults;
+          }
+        }
+        // Both fixes combined — broadest retry, most likely to surface the full
+        // candidate set (all sizes, no accent) if a term has both issues at once.
+        var bothStrippedTerm = stripSizeFromSearchTerm(diacriticTerm);
+        if (bothStrippedTerm && bothStrippedTerm !== diacriticTerm) {
+          var bothResults = await rawSearch(bothStrippedTerm);
+          if (bothResults.length > 0) {
+            if (resultsMatchRequestedSize(bothResults, requestedSize)) {
+              console.log('[doSearch] size+diacritic-stripped retry succeeded (size match):', JSON.stringify(term), '->', JSON.stringify(bothStrippedTerm));
+              return bothResults;
+            }
+            // Even without an exact size match, the broadest search is the best
+            // candidate set to fall back to — it has the most complete results.
+            bestSoFar = bothResults;
+          }
+        }
+      }
+
+      // No retry step found an exact size match — return the best (most complete)
+      // candidate set found so far rather than nothing, so the item still shows up
+      // even if the specific size isn't available (existing size-substitution/
+      // "closest available" messaging in the prompt handles telling the customer).
+      return bestSoFar;
     } catch(e){return [];}
   }
 

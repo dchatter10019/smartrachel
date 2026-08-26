@@ -243,6 +243,14 @@ function stripSizeFromSearchTerm(term) {
     .trim();
 }
 
+// Strip accented characters to plain ASCII — confirmed via direct testing that the
+// catalog's exact-match search fails when the search term has a diacritic the specific
+// catalog entry doesn't (e.g. "Espolòn" with the accent found nothing, "Espolon" without
+// it matched immediately) — the catalog is inconsistent about which entries carry accents.
+function stripDiacritics(term) {
+  return String(term || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
+
 async function searchWithFallbacks(location, client, name, limit, minPrice, maxPrice) {
   let products = await searchProducts(location, client, name, limit || 10, minPrice, maxPrice);
   if (products.length) return products;
@@ -256,6 +264,22 @@ async function searchWithFallbacks(location, client, name, limit, minPrice, maxP
     if (products.length) {
       console.log('[searchWithFallbacks] size-stripped retry succeeded:', JSON.stringify(name), '->', JSON.stringify(sizeStripped));
       return products;
+    }
+  }
+  const diacriticStripped = stripDiacritics(name);
+  if (diacriticStripped && diacriticStripped !== name) {
+    products = await searchProducts(location, client, diacriticStripped, limit || 10, minPrice, maxPrice);
+    if (products.length) {
+      console.log('[searchWithFallbacks] diacritic-stripped retry succeeded:', JSON.stringify(name), '->', JSON.stringify(diacriticStripped));
+      return products;
+    }
+    const bothStripped = stripSizeFromSearchTerm(diacriticStripped);
+    if (bothStripped && bothStripped !== diacriticStripped) {
+      products = await searchProducts(location, client, bothStripped, limit || 10, minPrice, maxPrice);
+      if (products.length) {
+        console.log('[searchWithFallbacks] size+diacritic-stripped retry succeeded:', JSON.stringify(name), '->', JSON.stringify(bothStripped));
+        return products;
+      }
     }
   }
   // Normalize common category names
