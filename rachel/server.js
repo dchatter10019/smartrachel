@@ -1482,8 +1482,26 @@ app.post('/chat', async (req, res) => {
 
         if (matched) {
           try {
+            // Real bug found tonight: with multiple items pending substitution
+            // simultaneously (e.g. both a Gin AND a Triple Sec), blindly using
+            // pendingSubstitutes[0] as "the original item this replaces" credited the
+            // WRONG item — a chosen Triple Sec candidate was reported as replacing the
+            // Gin, just because Gin happened to be first in the array. Match the
+            // candidate's own category/type (vodka, gin, triple sec, etc.) against each
+            // pending item to find the one it actually corresponds to, falling back to
+            // index 0 only if no type-based match is found.
+            const TYPE_MATCH_KEYWORDS = ['triple sec', 'vodka', 'gin', 'rum', 'tequila', 'whiskey', 'whisky', 'bourbon', 'scotch', 'cognac', 'brandy', 'liqueur', 'wine', 'beer', 'seltzer', 'champagne', 'cider'];
+            const matchedNameLower = matched.name.toLowerCase();
+            const matchedCandidateType = TYPE_MATCH_KEYWORDS.find(t => matchedNameLower.includes(t));
             const hasOriginalToReplace = state.pendingSubstitutes && state.pendingSubstitutes.length > 0;
-            const originalItemName = hasOriginalToReplace ? state.pendingSubstitutes[0] : null;
+            let originalItemName = null;
+            if (hasOriginalToReplace) {
+              if (matchedCandidateType) {
+                originalItemName = state.pendingSubstitutes.find(p => p.toLowerCase().includes(matchedCandidateType)) || state.pendingSubstitutes[0];
+              } else {
+                originalItemName = state.pendingSubstitutes[0];
+              }
+            }
             const originalBrandWord = originalItemName ? originalItemName.split(' ')[0].toLowerCase() : null;
             let items = [];
             try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
@@ -1506,7 +1524,7 @@ app.post('/chat', async (req, res) => {
             const key = makeCacheKey(email, state.zip, state.lastFingerprint);
             packageCache[key] = newLineItems;
             state.lastLineItems = newLineItems;
-            if (hasOriginalToReplace) state.pendingSubstitutes = state.pendingSubstitutes.slice(1);
+            if (hasOriginalToReplace) state.pendingSubstitutes = state.pendingSubstitutes.filter(p => p !== originalItemName);
             saveFlowState();
             try { saveBasket(email, newLineItems, '', format).catch(() => {}); } catch (e) {}
             console.log('[substitute-merge]', hasOriginalToReplace ? 'replaced' : 'added (ad-hoc, no original to replace)', hasOriginalToReplace ? JSON.stringify(originalItemName) + ' with' : '', JSON.stringify(matched.name), 'qty', qtyToUse);
