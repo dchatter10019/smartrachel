@@ -323,6 +323,22 @@ async function executeTool(name, input) {
         }
       }
 
+      // Real, confirmed bug: createCorpOrder was never receiving tip/service-charge
+      // fields under the names it actually expects — a real example payload from
+      // Bevvi's own backend logs showed tipAmt/tipPct/serviceChargeAmt/serviceChargePct,
+      // none of which we were sending (we sent "tipAmount", which the API silently
+      // ignores, and never sent service charge fields at all, defaulting the real
+      // order's service charge to $0 even though every quote shown to the customer
+      // throughout the conversation includes an estimated 10% service charge).
+      const productTotal = products.reduce((sum, p) => sum + (parseFloat(p.price) || 0) * (p.qty || p.quantity || 1), 0);
+      const serviceChargePct = 10;
+      const serviceChargeAmt = Math.round(productTotal * (serviceChargePct / 100) * 100) / 100;
+      // tip_amount is a dollar figure already computed upstream (shopping-agent.js/rachel.js,
+      // matching the standard 5% default shown in every quote) — derive tipPct from it
+      // when available, falling back to the standard 5% default if it's missing/zero.
+      const tipAmt = tip_amount || Math.round(productTotal * 0.05 * 100) / 100;
+      const tipPct = productTotal > 0 ? Math.round((tipAmt / productTotal) * 100) : 5;
+
       const body = {
         // account_email = registered corp account (requester). customer.email may be the
         // delivery recipient's contact and is not guaranteed to be a Bevvi account.
@@ -345,7 +361,10 @@ async function executeTool(name, input) {
           zipcode:       zipcode,
           phoneNumber:   (customer.phone || customer.phoneNumber || '').replace(/\D/g, '')
         },
-        tipAmount:            tip_amount || 0,
+        tipAmt:               tipAmt,
+        tipPct:               tipPct,
+        serviceChargeAmt:     serviceChargeAmt,
+        serviceChargePct:     serviceChargePct,
         deliveryDateTime:     delivery_datetime || '',
         deliveryInstructions: delivery_instructions || ''
       };
