@@ -1306,16 +1306,58 @@ app.post('/chat', async (req, res) => {
         // after it), not just anywhere in the message — "New Amsterdam" appearing in a
         // "same price as X" clause, far from any confirmation language, correctly won't
         // match; "Hiram Walker ... is good" (confirmation immediately after) will.
+        // Real, definitive root cause found tonight (traced through every single failed
+        // test): requiring an explicit confirmation phrase near the candidate mention was
+        // TOO STRICT — it silently blocked the single most common way customers actually
+        // confirm a choice: simply restating the option verbatim (e.g. "Bombay Original —
+        // 750 mL — $27.49"), with no "is good"/"works"/etc at all. Two-tier matching now:
+        // Tier 1 — if the customer's message is short and dominated by ONE candidate's
+        // name (no confirmation phrase required — restating the option IS the
+        // confirmation). Tier 2 — for longer/compound messages that mention a candidate's
+        // brand word alongside other content, still require nearby confirmation language,
+        // since that's exactly the scenario that caused a real false positive earlier
+        // tonight ("...same price as New Amsterdam" incorrectly matching the rejected item).
+        const wordsInMsg = msgLowerSel.replace(/[^a-z0-9\s]/gi, ' ').split(/\s+/).filter(Boolean);
+        const isShortMsg = wordsInMsg.length <= 10;
         const confirmPhrases = ['is good', 'sounds good', 'i like', 'works', "let's go", 'lets go', "i'll take", 'ill take', 'yes', 'good choice', 'perfect', 'great'];
-        const matched = candidates.find(c => {
-          const firstWord = c.name.split(' ')[0].toLowerCase();
-          if (firstWord.length <= 2) return false;
-          const wordRe = new RegExp('\\b' + firstWord.replace(/[^a-z0-9]/gi, '') + '\\b', 'i');
-          const wordMatch = wordRe.exec(msgLowerSel);
-          if (!wordMatch) return false;
-          const windowAfter = msgLowerSel.slice(wordMatch.index, wordMatch.index + 60);
-          return confirmPhrases.some(p => windowAfter.includes(p));
-        });
+
+        // Match on the first TWO words when available, not just one — real ambiguity
+        // found tonight: two candidates sharing a brand ("Bombay Original" vs "Bombay
+        // Sapphire") both matched on "bombay" alone, leaving Tier 1 unable to pick either.
+        function candidateWordMatch(c) {
+          const nameWords = c.name.split(' ').filter(w => w.length > 2);
+          const phrase = nameWords.slice(0, 2).join(' ').toLowerCase();
+          if (!phrase) return null;
+          const phraseRe = new RegExp(phrase.replace(/[^a-z0-9\s]/gi, '').split(/\s+/).join('\\s+'), 'i');
+          const twoWordMatch = phraseRe.exec(msgLowerSel);
+          if (twoWordMatch) return twoWordMatch;
+          // Fall back to single-word match only if there's just one word to work with
+          // (e.g. a one-word product name) — otherwise require the fuller phrase above.
+          if (nameWords.length === 1) {
+            const wordRe = new RegExp('\\b' + nameWords[0].toLowerCase().replace(/[^a-z0-9]/gi, '') + '\\b', 'i');
+            return wordRe.exec(msgLowerSel);
+          }
+          return null;
+        }
+
+        let matched = null;
+        if (isShortMsg) {
+          // Tier 1: short message — a single matching candidate is treated as a direct
+          // restatement/confirmation, no extra phrase needed.
+          const tier1Matches = candidates.filter(c => candidateWordMatch(c) !== null);
+          if (tier1Matches.length === 1) matched = tier1Matches[0];
+        }
+        if (!matched) {
+          // Tier 2: longer/compound message — require genuine confirmation language
+          // near the mention, to avoid matching a candidate referenced only in passing
+          // or in a rejecting/comparative context.
+          matched = candidates.find(c => {
+            const wordMatch = candidateWordMatch(c);
+            if (!wordMatch) return false;
+            const windowAfter = msgLowerSel.slice(wordMatch.index, wordMatch.index + 60);
+            return confirmPhrases.some(p => windowAfter.includes(p));
+          }) || null;
+        }
 
         if (matched) {
           try {
