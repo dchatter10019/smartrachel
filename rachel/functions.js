@@ -1313,6 +1313,27 @@ async function buildPackage(iv) {
         return b.price-a.price;
       });
       var best=found[0];
+      // Real bug found tonight: when a requested size ("New Amsterdam Gin 750 mL")
+      // isn't available and search returns a DIFFERENT size instead (e.g. 1.75L), that
+      // wrong-size item was silently added to the basket, and the "size mismatch, want
+      // a different size/brand?" flagging was purely the LLM noticing it in raw search
+      // results and mentioning it in text — with NO structured backend signal, meaning
+      // a confirmed size-substitute choice (e.g. "yes find a 750mL gin instead" ->
+      // customer picks Bombay) never got persisted the same way an unavailable-item
+      // substitute does, leaving the order-confirmation loop bug from earlier tonight
+      // effectively unfixed for this specific trigger. Fix: treat a genuine size
+      // mismatch exactly like "not found" — push to the same `unavailable` array
+      // (reusing the entire already-built and verified pendingSubstitutes -> search ->
+      // merge pipeline) instead of silently adding the wrong-size item to the basket.
+      var requestedSizeMatch = np.name.match(/\d+(\.\d+)?\s*(mL|ML|L|oz|OZ)\b/i);
+      if (requestedSizeMatch && best.sizeStr) {
+        var reqSizeNorm = requestedSizeMatch[0].toLowerCase().replace(/\s+/g, '');
+        var foundSizeNorm = String(best.sizeStr).toLowerCase().replace(/\s+/g, '');
+        if (reqSizeNorm !== foundSizeNorm) {
+          unavailable.push(np.name);
+          continue;
+        }
+      }
       var dpu=catN==="wine"?5:catN==="spirits"?16:(parseInt(np.pack_size)||beerPackSize);
       var perProd=drinksPerCat/byCat[catN].length;
       var hasExplicitQty=np.qty && parseInt(np.qty) > 0;

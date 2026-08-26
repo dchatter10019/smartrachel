@@ -260,9 +260,25 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       }
     },
     onUnavailableItems: (unavailableStr) => {
+      // Real bug found tonight: this used to REPLACE the entire pendingSubstitutes
+      // list on every call, including calls that had nothing to do with the original
+      // substitution search — e.g. the LLM's own follow-up "let me search for gin
+      // alternatives" product_query succeeds (unavailable: ""), which was silently
+      // WIPING OUT tracking of a still-unresolved item (like DeKuyper Triple Sec)
+      // before the customer ever got a chance to confirm their pick for it. Merge/
+      // union new unavailable items into the EXISTING list instead of replacing it —
+      // an item should only ever be cleared from pendingSubstitutes by the merge step
+      // actually resolving it, never as a side effect of a different, unrelated
+      // search happening to succeed.
       const state = getState(sessionKey);
-      state.pendingSubstitutes = (unavailableStr || '')
+      const newItems = (unavailableStr || '')
         .split(',').map(s => s.trim()).filter(Boolean);
+      const existing = state.pendingSubstitutes || [];
+      const merged = [...existing];
+      for (const item of newItems) {
+        if (!merged.some(e => e.toLowerCase() === item.toLowerCase())) merged.push(item);
+      }
+      state.pendingSubstitutes = merged;
       saveFlowState();
       if (state.pendingSubstitutes.length > 0) {
         console.log('[substitute-tracking] pending:', state.pendingSubstitutes.join(', '));
@@ -1225,33 +1241,80 @@ app.post('/chat', async (req, res) => {
     // customer's pick, and actually rewriting state.lastLineItems — rather than relying on
     // the LLM to both pick correctly AND remember to persist it, which it wasn't doing.
     if (state.pendingSubstitutes && state.pendingSubstitutes.length > 0) {
+      // Real gap found tonight: options are sometimes offered several turns apart
+      // (e.g. gin options in one turn, triple sec options several turns earlier),
+      // and the customer can confirm both together later — scanning only the single
+      // most recent assistant message misses anything presented earlier. Scan the
+      // last several assistant turns instead, so an option is still matchable even
+      // if it wasn't the very last thing said.
       const priorMsgsSel = sessions[sessionKey] || [];
-      const lastAssistantMsgSel = [...priorMsgsSel].reverse().find(m => m.role === 'assistant');
-      const lastAssistantTextSel = lastAssistantMsgSel ? (Array.isArray(lastAssistantMsgSel.content) ? lastAssistantMsgSel.content.map(c => c.text || '').join(' ') : String(lastAssistantMsgSel.content || '')) : '';
+      const recentAssistantMsgsSel = [...priorMsgsSel].reverse().filter(m => m.role === 'assistant').slice(0, 4);
+      const recentAssistantTextSel = recentAssistantMsgsSel.map(m => Array.isArray(m.content) ? m.content.map(c => c.text || '').join(' ') : String(m.content || '')).join(String.fromCharCode(10));
 
-      // Extract candidate options Rachel just presented: any line containing a $price,
-      // taking the text before the last dash/em-dash preceding the price as the name.
-      const candidateLines = lastAssistantTextSel.split(String.fromCharCode(10));
+      // Extract candidate options Rachel presented, across two formats:
+      // 1) Line-based "Name — Size — $Price" (bullets/numbered lists)
+      // 2) Free-flowing prose "Name at $Price" or "Name — $Price" inline mentions
+      // (real bug found tonight: prose like "Bombay Gin — 750 mL — $27.49. ... or
+      // stick with Plymouth at $37.39, Drumshanbo at $43.99" mixes both styles in
+      // one paragraph — a pure line-split regex misses the inline mentions entirely).
+      const candidateLines = recentAssistantTextSel.split(String.fromCharCode(10));
       const candidates = [];
       for (const line of candidateLines) {
+        // Format 1: dash-separated, one option per visual line
         const priceMatch = line.match(/\$([\d.]+)/);
-        if (!priceMatch) continue;
-        const beforePrice = line.slice(0, priceMatch.index);
-        const dashSplit = beforePrice.split(/[—-](?!\s*\$)/);
-        if (dashSplit.length < 2) continue;
-        let name = dashSplit[0].replace(/^\s*\d+[\.\)]\s*/, '').replace(/\*/g, '').trim();
-        if (!name) continue;
-        const sizeMatch = beforePrice.match(/\d+(\.\d+)?\s*(mL|ML|L|oz|OZ)\b/);
-        candidates.push({ name, price: parseFloat(priceMatch[1]), size: sizeMatch ? sizeMatch[0] : '' });
+        if (priceMatch) {
+          const beforePrice = line.slice(0, priceMatch.index);
+          const dashSplit = beforePrice.split(/[—-](?!\s*\$)/);
+          if (dashSplit.length >= 2) {
+            let namePart = dashSplit[0];
+            // Trim to only the text after the LAST sentence-boundary punctuation
+            // (. ! ? :) — otherwise a preceding sentence like "Here's a more
+            // affordable option: Bombay Gin" gets captured as the whole "name",
+            // breaking brand-word matching entirely (confirmed a real bug tonight).
+            const sentenceBoundary = namePart.match(/.*[.!?:]\s*/);
+            if (sentenceBoundary) namePart = namePart.slice(sentenceBoundary[0].length);
+            let name = namePart.replace(/^\s*\d+[\.\)]\s*/, '').replace(/\*/g, '').trim();
+            if (name && name.split(' ').length <= 8) {
+              const sizeMatch = beforePrice.match(/\d+(\.\d+)?\s*(mL|ML|L|oz|OZ)\b/);
+              candidates.push({ name, price: parseFloat(priceMatch[1]), size: sizeMatch ? sizeMatch[0] : '' });
+            }
+          }
+        }
+        // Format 2: inline "Name at $Price" or "Name (— )?$Price" mentions, possibly
+        // several per line/sentence — global match to catch all of them.
+        const inlineRe = /([A-Za-z][A-Za-z0-9'’.\s]{2,40}?)\s*(?:—\s*)?(?:at\s+)?\$([\d.]+)/g;
+        let m;
+        while ((m = inlineRe.exec(line)) !== null) {
+          let name = m[1].replace(/^\s*\d+[\.\)]\s*/, '').replace(/\*/g, '').trim();
+          // Skip if this looks like a duplicate of something format-1 already caught,
+          // or if the "name" is just leftover connector words with nothing brand-like.
+          if (!name || name.split(' ').length > 8) continue;
+          const alreadyHave = candidates.some(c => c.name.toLowerCase() === name.toLowerCase());
+          if (alreadyHave) continue;
+          candidates.push({ name, price: parseFloat(m[2]), size: '' });
+        }
       }
 
       if (candidates.length > 0) {
         const msgLowerSel = message.toLowerCase().replace(/\*/g, '');
-        // Match by the candidate's first significant word (usually the brand) appearing
-        // as a whole word in the customer's reply — conservative, avoids false matches.
+        // Real false-positive risk found tonight: a compound message like "Hiram Walker
+        // is good, but I need a gin same price as New Amsterdam" mentions "New Amsterdam"
+        // (a REJECTED option) alongside confirming a different one — matching on "does
+        // the candidate's first word appear ANYWHERE in the message" would incorrectly
+        // treat the rejected option as the customer's pick. Now require a genuine
+        // confirmation phrase to appear NEAR the candidate's mention (within ~40 chars
+        // after it), not just anywhere in the message — "New Amsterdam" appearing in a
+        // "same price as X" clause, far from any confirmation language, correctly won't
+        // match; "Hiram Walker ... is good" (confirmation immediately after) will.
+        const confirmPhrases = ['is good', 'sounds good', 'i like', 'works', "let's go", 'lets go', "i'll take", 'ill take', 'yes', 'good choice', 'perfect', 'great'];
         const matched = candidates.find(c => {
           const firstWord = c.name.split(' ')[0].toLowerCase();
-          return firstWord.length > 2 && new RegExp('\\b' + firstWord.replace(/[^a-z0-9]/gi, '') + '\\b', 'i').test(msgLowerSel);
+          if (firstWord.length <= 2) return false;
+          const wordRe = new RegExp('\\b' + firstWord.replace(/[^a-z0-9]/gi, '') + '\\b', 'i');
+          const wordMatch = wordRe.exec(msgLowerSel);
+          if (!wordMatch) return false;
+          const windowAfter = msgLowerSel.slice(wordMatch.index, wordMatch.index + 60);
+          return confirmPhrases.some(p => windowAfter.includes(p));
         });
 
         if (matched) {
