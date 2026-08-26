@@ -852,6 +852,190 @@ async function buildPackage(iv) {
     return result;
   }
 
+  // Generalized fuzzy fallback — a last resort when NO exact-match retry (original,
+  // size-stripped, diacritic-stripped, brand-nickname-expanded, combined) found
+  // anything at all. Rather than maintaining an ever-growing hardcoded list of every
+  // brand nickname/abbreviation/misspelling we happen to encounter (Sam/Samuel Adams,
+  // Jack/Jack Daniel's, etc.), this searches broadly using just the first significant
+  // word (usually the brand), then scores every candidate's name against the cleaned
+  // search term using token overlap (same scoring formula already used elsewhere in
+  // this codebase for low_confidence_match detection), keeping only genuinely close
+  // matches above a confidence threshold — generalizes to any brand-naming mismatch
+  // without needing to know about it in advance.
+  function tokenOverlapScore(a, b) {
+    var norm = function(s) { return (s || '').toLowerCase().replace(/[^a-z0-9%.\s]/g, ' ').split(/\s+/).filter(Boolean); };
+    var ta = {}; norm(a).forEach(function(t){ ta[t] = true; });
+    var tbArr = norm(b);
+    var taSize = Object.keys(ta).length;
+    if (taSize === 0 || tbArr.length === 0) return 0;
+    var tb = {}; tbArr.forEach(function(t){ tb[t] = true; });
+    var tbSize = Object.keys(tb).length;
+    var overlap = 0;
+    for (var t in ta) if (tb[t]) overlap++;
+    return overlap / Math.min(taSize, tbSize);
+  }
+  var FUZZY_MATCH_THRESHOLD = 0.5; // at least half the smaller token set must overlap
+
+  function scoreCandidates(cleanedTerm, candidates, excludeWord) {
+    var termForScoring = cleanedTerm;
+    if (excludeWord) {
+      termForScoring = cleanedTerm.replace(new RegExp('\\b' + excludeWord + '\\b', 'gi'), '').trim();
+    }
+    return candidates
+      .map(function(p) {
+        var nameForScoring = excludeWord ? p.name.replace(new RegExp('\\b' + excludeWord + '\\b', 'gi'), '').trim() : p.name;
+        return { product: p, score: tokenOverlapScore(termForScoring, nameForScoring) };
+      })
+      .filter(function(s) { return s.score >= FUZZY_MATCH_THRESHOLD; })
+      .sort(function(a, b) { return b.score - a.score; });
+  }
+
+  // Coarse category fields ("spirits"/"wine"/"beer") aren't searchable text — no
+  // product is literally named "spirits". Extract the SPECIFIC type keyword actually
+  // present in the term itself (vodka, gin, whiskey, etc.) to use as a real, searchable
+  // broadening term instead.
+  var TYPE_KEYWORDS = [
+    'vodka', 'gin', 'rum', 'tequila', 'whiskey', 'whisky', 'bourbon', 'scotch',
+    'cognac', 'brandy', 'liqueur', 'wine', 'beer', 'seltzer', 'champagne', 'cider'
+  ];
+  function extractTypeKeyword(term) {
+    var lower = String(term || '').toLowerCase();
+    for (var i = 0; i < TYPE_KEYWORDS.length; i++) {
+      if (new RegExp('\\b' + TYPE_KEYWORDS[i] + '\\b').test(lower)) return TYPE_KEYWORDS[i];
+    }
+    return null;
+  }
+
+  async function fuzzyFallbackSearch(cleanedTerm, category) {
+    var words = cleanedTerm.trim().split(/\s+/).filter(Boolean);
+    if (words.length === 0) return [];
+
+    // Tier 1: broad search on just the first word (usually the brand name) — helps
+    // when the brand word itself is correct but other words in the query are wrong.
+    var broadResults = await rawSearch(words[0]);
+    if (broadResults.length > 0) {
+      var scored = scoreCandidates(cleanedTerm, broadResults, null);
+      if (scored.length > 0) {
+        console.log('[doSearch] fuzzy fallback (brand-word broad search) matched:', JSON.stringify(cleanedTerm), '->', scored.map(function(s){return s.product.name + ' (' + s.score.toFixed(2) + ')';}).join(', '));
+        return scored.map(function(s) { return s.product; });
+      }
+    }
+
+    // Tier 2: if the brand word itself might be misspelled (tier 1 found nothing at
+    // all — the API requires exact token spelling, so no query variation of a
+    // misspelled word will ever match), broaden using the SPECIFIC type keyword
+    // actually present in the term (e.g. "vodka" extracted from "Absolute Vodka") —
+    // NOT the coarse category bucket ("spirits"), which isn't literal searchable text
+    // and returns nothing. The type keyword is excluded from scoring on both sides —
+    // otherwise every candidate of that type would share the word and inflate scores
+    // regardless of actual relevance.
+    var typeKeyword = extractTypeKeyword(cleanedTerm) || (category && TYPE_KEYWORDS.indexOf(String(category).toLowerCase()) >= 0 ? category : null);
+    if (typeKeyword) {
+      var categoryResults = await rawSearch(typeKeyword);
+      if (categoryResults.length > 0) {
+        var categoryScored = scoreCandidates(cleanedTerm, categoryResults, typeKeyword);
+        if (categoryScored.length > 0) {
+          console.log('[doSearch] fuzzy fallback (type-keyword broad search) matched:', JSON.stringify(cleanedTerm), '->', categoryScored.map(function(s){return s.product.name + ' (' + s.score.toFixed(2) + ')';}).join(', '));
+          return categoryScored.map(function(s) { return s.product; });
+        }
+      }
+    }
+
+    return [];
+  }
+
+  // Generalized fuzzy fallback — a last resort when NO exact-match retry (original,
+  // size-stripped, diacritic-stripped, brand-nickname-expanded, combined) found
+  // anything at all. Rather than maintaining an ever-growing hardcoded list of every
+  // brand nickname/abbreviation/misspelling we happen to encounter (Sam/Samuel Adams,
+  // Jack/Jack Daniel's, etc.), this searches broadly using just the first significant
+  // word (usually the brand), then scores every candidate's name against the cleaned
+  // search term using token overlap (same scoring formula already used elsewhere in
+  // this codebase for low_confidence_match detection), keeping only genuinely close
+  // matches above a confidence threshold — generalizes to any brand-naming mismatch
+  // without needing to know about it in advance.
+  function tokenOverlapScore(a, b) {
+    var norm = function(s) { return (s || '').toLowerCase().replace(/[^a-z0-9%.\s]/g, ' ').split(/\s+/).filter(Boolean); };
+    var ta = {}; norm(a).forEach(function(t){ ta[t] = true; });
+    var tbArr = norm(b);
+    var taSize = Object.keys(ta).length;
+    if (taSize === 0 || tbArr.length === 0) return 0;
+    var tb = {}; tbArr.forEach(function(t){ tb[t] = true; });
+    var tbSize = Object.keys(tb).length;
+    var overlap = 0;
+    for (var t in ta) if (tb[t]) overlap++;
+    return overlap / Math.min(taSize, tbSize);
+  }
+  var FUZZY_MATCH_THRESHOLD = 0.5; // at least half the smaller token set must overlap
+
+  function scoreCandidates(cleanedTerm, candidates, excludeWord) {
+    var termForScoring = cleanedTerm;
+    if (excludeWord) {
+      termForScoring = cleanedTerm.replace(new RegExp('\\b' + excludeWord + '\\b', 'gi'), '').trim();
+    }
+    return candidates
+      .map(function(p) {
+        var nameForScoring = excludeWord ? p.name.replace(new RegExp('\\b' + excludeWord + '\\b', 'gi'), '').trim() : p.name;
+        return { product: p, score: tokenOverlapScore(termForScoring, nameForScoring) };
+      })
+      .filter(function(s) { return s.score >= FUZZY_MATCH_THRESHOLD; })
+      .sort(function(a, b) { return b.score - a.score; });
+  }
+
+  // Coarse category fields ("spirits"/"wine"/"beer") aren't searchable text — no
+  // product is literally named "spirits". Extract the SPECIFIC type keyword actually
+  // present in the term itself (vodka, gin, whiskey, etc.) to use as a real, searchable
+  // broadening term instead.
+  var TYPE_KEYWORDS = [
+    'vodka', 'gin', 'rum', 'tequila', 'whiskey', 'whisky', 'bourbon', 'scotch',
+    'cognac', 'brandy', 'liqueur', 'wine', 'beer', 'seltzer', 'champagne', 'cider'
+  ];
+  function extractTypeKeyword(term) {
+    var lower = String(term || '').toLowerCase();
+    for (var i = 0; i < TYPE_KEYWORDS.length; i++) {
+      if (new RegExp('\\b' + TYPE_KEYWORDS[i] + '\\b').test(lower)) return TYPE_KEYWORDS[i];
+    }
+    return null;
+  }
+
+  async function fuzzyFallbackSearch(cleanedTerm, category) {
+    var words = cleanedTerm.trim().split(/\s+/).filter(Boolean);
+    if (words.length === 0) return [];
+
+    // Tier 1: broad search on just the first word (usually the brand name) — helps
+    // when the brand word itself is correct but other words in the query are wrong.
+    var broadResults = await rawSearch(words[0]);
+    if (broadResults.length > 0) {
+      var scored = scoreCandidates(cleanedTerm, broadResults, null);
+      if (scored.length > 0) {
+        console.log('[doSearch] fuzzy fallback (brand-word broad search) matched:', JSON.stringify(cleanedTerm), '->', scored.map(function(s){return s.product.name + ' (' + s.score.toFixed(2) + ')';}).join(', '));
+        return scored.map(function(s) { return s.product; });
+      }
+    }
+
+    // Tier 2: if the brand word itself might be misspelled (tier 1 found nothing at
+    // all — the API requires exact token spelling, so no query variation of a
+    // misspelled word will ever match), broaden using the SPECIFIC type keyword
+    // actually present in the term (e.g. "vodka" extracted from "Absolute Vodka") —
+    // NOT the coarse category bucket ("spirits"), which isn't literal searchable text
+    // and returns nothing. The type keyword is excluded from scoring on both sides —
+    // otherwise every candidate of that type would share the word and inflate scores
+    // regardless of actual relevance.
+    var typeKeyword = extractTypeKeyword(cleanedTerm) || (category && TYPE_KEYWORDS.indexOf(String(category).toLowerCase()) >= 0 ? category : null);
+    if (typeKeyword) {
+      var categoryResults = await rawSearch(typeKeyword);
+      if (categoryResults.length > 0) {
+        var categoryScored = scoreCandidates(cleanedTerm, categoryResults, typeKeyword);
+        if (categoryScored.length > 0) {
+          console.log('[doSearch] fuzzy fallback (type-keyword broad search) matched:', JSON.stringify(cleanedTerm), '->', categoryScored.map(function(s){return s.product.name + ' (' + s.score.toFixed(2) + ')';}).join(', '));
+          return categoryScored.map(function(s) { return s.product; });
+        }
+      }
+    }
+
+    return [];
+  }
+
   // Extract a requested size like "1 L", "750mL", "1.75 L" from a raw search term,
   // normalized to a comparable form (digits + unit, no space/case sensitivity) —
   // used to verify a retry step's results actually match what was asked for, not
@@ -872,7 +1056,7 @@ async function buildPackage(iv) {
     return results.some(function(p) { return normalizeSizeStr(p.sizeStr).indexOf(requestedSize) >= 0; });
   }
 
-  async function doSearch(term) {
+  async function doSearch(term, searchCategory) {
     try {
       // Expand any colloquial brand nickname to the catalog's formal name up front —
       // safe no-op if absent, fixes the search immediately if present (e.g. "Sam
@@ -937,6 +1121,22 @@ async function buildPackage(iv) {
             bestSoFar = bothResults;
           }
         }
+      }
+
+      // If NOTHING at all was found by any exact-match retry, try the generalized
+      // fuzzy fallback before giving up entirely — catches brand-naming mismatches
+      // we haven't seen before, without needing to hardcode each one.
+      if (bestSoFar.length === 0) {
+        var fuzzyResults = await fuzzyFallbackSearch(stripSizeFromSearchTerm(stripDiacritics(term)) || term, searchCategory);
+        if (fuzzyResults.length > 0) return fuzzyResults;
+      }
+
+      // If NOTHING at all was found by any exact-match retry, try the generalized
+      // fuzzy fallback before giving up entirely — catches brand-naming mismatches
+      // we haven't seen before, without needing to hardcode each one.
+      if (bestSoFar.length === 0) {
+        var fuzzyResults = await fuzzyFallbackSearch(stripSizeFromSearchTerm(stripDiacritics(term)) || term, searchCategory);
+        if (fuzzyResults.length > 0) return fuzzyResults;
       }
 
       // No retry step found an exact size match — return the best (most complete)
@@ -1055,9 +1255,9 @@ async function buildPackage(iv) {
     var repCats=(byCat.wine.length?1:0)+(byCat.beer.length?1:0)+(byCat.spirits.length?1:0);
     var drinksPerCat=repCats?totalDrinks/repCats:0;
     // Build search terms with variations for each product
-    async function doSearchWithFallbacks(name) {
+    async function doSearchWithFallbacks(name, category) {
       // Try original name first
-      var results = await doSearch(name);
+      var results = await doSearch(name, category);
       if (results.length > 0) return results;
       // Try without apostrophes and special chars
       var simplified = name.replace(/[''']/g, '').replace(/[^a-zA-Z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -1088,7 +1288,7 @@ async function buildPackage(iv) {
       }
       return results;
     }
-    var results=await Promise.all(namedProducts.map(function(np){return doSearchWithFallbacks(np.name);}));
+    var results=await Promise.all(namedProducts.map(function(np){return doSearchWithFallbacks(np.name, np.category);}));
     for (var n=0;n<namedProducts.length;n++) {
       var np=namedProducts[n];
       var catN=(np.category||"").toLowerCase();
