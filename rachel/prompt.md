@@ -226,6 +226,15 @@ Estimated — actual totals may vary.
 
 Bare numbers, yes/no, emails, and date phrases mid-flow are ALWAYS answers to the pending question.
 
+**NAME-BASED SELECTION (not just numbers):** If you just presented a numbered list of
+options and the customer's next message restates one of those options BY NAME (with or
+without size/price, e.g. "Hiram Walker Triple Sec 30 — 1 L — $12.09" or just "Hiram
+Walker"), treat this EXACTLY the same as if they'd said the option number — it IS their
+selection. Confirmed via direct testing: customers restating the full option name is at
+least as common as replying with a bare number, and this must be handled identically.
+Do NOT search again, do NOT re-present the same list — proceed with that selection
+immediately (add it to the order, confirm it, and move the conversation forward).
+
 ### 4.1 — Router
 
 **PRIORITY 0-PRE — Budget stated but no event logistics:**

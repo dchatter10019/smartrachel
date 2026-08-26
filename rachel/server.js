@@ -336,6 +336,8 @@ app.post('/chat', async (req, res) => {
 
   const email = context?.user_email || '';
   const isD2C = !context?.kitchen_location;
+  console.log('[TRACE-EARLY] isD2C:', isD2C, '| sessionKey:', sessionKey);
+  console.log('[TRACE-EARLY] isD2C:', isD2C, '| sessionKey:', sessionKey);
 
   console.log(`[rachel] chat — session: ${sessionKey} messages: ${sessions[sessionKey].length} — "${message}"`);
 
@@ -522,6 +524,7 @@ app.post('/chat', async (req, res) => {
         state.addrConfirmed = true;
         state.step = 'ready';
         // Replay pending intent if any
+        console.log('[TRACE-REPLAY] entering addr-confirmed block, pendingIntent:', JSON.stringify(state.pendingIntent), '| addrConfirmed:', state.addrConfirmed, '| step:', state.step);
         if (state.pendingIntent) {
           const pending = state.pendingIntent;
           state.pendingIntent = null;
@@ -593,6 +596,7 @@ app.post('/chat', async (req, res) => {
             await saveD2CSession(email, Object.assign({}, d2c, { delivery_address: message, delivery_zip: state.zip }));
           } catch(e) {}
         }
+        console.log('[TRACE-REPLAY] entering addr-confirmed block, pendingIntent:', JSON.stringify(state.pendingIntent), '| addrConfirmed:', state.addrConfirmed, '| step:', state.step);
         if (state.pendingIntent) {
           const pending = state.pendingIntent;
           state.pendingIntent = null;
@@ -658,6 +662,7 @@ app.post('/chat', async (req, res) => {
     }
 
     // ── STATE: ready — pass to Rachel ──────────────────────────────────────
+    console.log('[TRACE] state.step:', state.step, '| pendingSubstitutes:', JSON.stringify(state.pendingSubstitutes), '| message:', JSON.stringify(message).slice(0,80));
     if (state.step !== 'ready') {
       // Shouldn\'t happen but fallback
       const ask = 'What is your delivery address? (Include street, city, state, and zip)';
@@ -1160,6 +1165,7 @@ app.post('/chat', async (req, res) => {
     // message), so the LLM would improvise — sometimes re-narrating the whole
     // package and mixer question from scratch instead of just moving on. Handle
     // a clear yes/no answer here, deterministically, without an LLM call at all.
+    console.log('[TRACE] reached mixer-check, mixerAsked:', state.mixerAsked, 'mixerAnswered:', state.mixerAnswered, 'packageShown:', state.packageShown);
     if (state.mixerAsked && !state.mixerAnswered && state.packageShown) {
       const mixerNoWords = ['no', 'nope', 'no thanks', 'no worries', "that's all", 'thats all', "i'm good", 'im good', 'nothing else', 'none'];
       const mixerMsgLower = message.toLowerCase().trim().replace(/\*/g, '');
@@ -1240,7 +1246,23 @@ app.post('/chat', async (req, res) => {
     // — parsing the candidate options from Rachel's own last message, matching the
     // customer's pick, and actually rewriting state.lastLineItems — rather than relying on
     // the LLM to both pick correctly AND remember to persist it, which it wasn't doing.
-    if (state.pendingSubstitutes && state.pendingSubstitutes.length > 0) {
+    // Real gap found tonight: an AD-HOC single-item substitution (not part of a full
+    // custom_list order — e.g. a standalone "do you have X" -> unavailable -> "here are
+    // 2 options" flow) never populates pendingSubstitutes at all (that's specific to
+    // custom_list's unavailable tracking), so a customer picking one of the presented
+    // options had NO deterministic backstop — confirmed via direct trace logging that
+    // the LLM was stuck looping, re-presenting the same 2 options forever instead of
+    // recognizing the customer's clear selection. Broaden the gate: also enter when
+    // Rachel's most recent message clearly asked the customer to pick from options,
+    // even with no pendingSubstitutes entry — in that case we ADD the matched item
+    // directly rather than replacing anything (there's no "original" to remove).
+    const priorMsgsGate = sessions[sessionKey] || [];
+    const lastAssistantMsgGate = [...priorMsgsGate].reverse().find(m => m.role === 'assistant');
+    const lastAssistantTextGate = lastAssistantMsgGate ? (Array.isArray(lastAssistantMsgGate.content) ? lastAssistantMsgGate.content.map(c => c.text || '').join(' ') : String(lastAssistantMsgGate.content || '')) : '';
+    const looksLikeSelectionPrompt = /which (one|option|would)|would you like to (go with|choose|add)|works for you/i.test(lastAssistantTextGate);
+    const hasPendingSub = state.pendingSubstitutes && state.pendingSubstitutes.length > 0;
+    if (hasPendingSub || looksLikeSelectionPrompt) {
+      console.log('[substitute-merge-DIAGNOSTIC] block entered, hasPendingSub:', hasPendingSub, '| looksLikeSelectionPrompt:', looksLikeSelectionPrompt, '| message:', JSON.stringify(message).slice(0, 100));
       // Real gap found tonight: options are sometimes offered several turns apart
       // (e.g. gin options in one turn, triple sec options several turns earlier),
       // and the customer can confirm both together later — scanning only the single
@@ -1397,17 +1419,20 @@ app.post('/chat', async (req, res) => {
 
         if (matched) {
           try {
-            const originalItemName = state.pendingSubstitutes[0];
-            const originalBrandWord = originalItemName.split(' ')[0].toLowerCase();
+            const hasOriginalToReplace = state.pendingSubstitutes && state.pendingSubstitutes.length > 0;
+            const originalItemName = hasOriginalToReplace ? state.pendingSubstitutes[0] : null;
+            const originalBrandWord = originalItemName ? originalItemName.split(' ')[0].toLowerCase() : null;
             let items = [];
             try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
-            const removeIdx = items.findIndex(it => (it.name || it.label || '').toLowerCase().includes(originalBrandWord));
             let qtyToUse = 1;
             let categoryToUse = '';
-            if (removeIdx >= 0) {
-              qtyToUse = items[removeIdx].qty || items[removeIdx].quantity || 1;
-              categoryToUse = items[removeIdx].category || '';
-              items.splice(removeIdx, 1);
+            if (originalBrandWord) {
+              const removeIdx = items.findIndex(it => (it.name || it.label || '').toLowerCase().includes(originalBrandWord));
+              if (removeIdx >= 0) {
+                qtyToUse = items[removeIdx].qty || items[removeIdx].quantity || 1;
+                categoryToUse = items[removeIdx].category || '';
+                items.splice(removeIdx, 1);
+              }
             }
             items.push({
               label: matched.name, name: matched.name, qty: qtyToUse, quantity: qtyToUse,
@@ -1418,14 +1443,14 @@ app.post('/chat', async (req, res) => {
             const key = makeCacheKey(email, state.zip, state.lastFingerprint);
             packageCache[key] = newLineItems;
             state.lastLineItems = newLineItems;
-            state.pendingSubstitutes = state.pendingSubstitutes.slice(1);
+            if (hasOriginalToReplace) state.pendingSubstitutes = state.pendingSubstitutes.slice(1);
             saveFlowState();
             try { saveBasket(email, newLineItems, '', format).catch(() => {}); } catch (e) {}
-            console.log('[substitute-merge] replaced', JSON.stringify(originalItemName), 'with', JSON.stringify(matched.name), 'qty', qtyToUse);
+            console.log('[substitute-merge]', hasOriginalToReplace ? 'replaced' : 'added (ad-hoc, no original to replace)', hasOriginalToReplace ? JSON.stringify(originalItemName) + ' with' : '', JSON.stringify(matched.name), 'qty', qtyToUse);
 
-            const stillPending = state.pendingSubstitutes.length > 0;
+            const stillPending = hasOriginalToReplace && state.pendingSubstitutes.length > 0;
             const confirmReply = 'Got it — ' + qtyToUse + 'x ' + matched.name + (matched.size ? ' (' + matched.size + ')' : '') +
-              ' at $' + matched.price.toFixed(2) + ' ea has replaced ' + originalItemName + ' in your order.' +
+              ' at $' + matched.price.toFixed(2) + ' ea ' + (hasOriginalToReplace ? 'has replaced ' + originalItemName + ' in your order.' : 'has been added to your order.') +
               (stillPending ? ' Still need a substitute for: ' + state.pendingSubstitutes.join(', ') + '.' : ' Would you like to place the order, generate a PDF proposal, or make any changes?');
             return res.json({ text: confirmReply, response: confirmReply });
           } catch (e) {
