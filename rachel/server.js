@@ -267,6 +267,35 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       if (state.pendingSubstitutes.length > 0) {
         console.log('[substitute-tracking] pending:', state.pendingSubstitutes.join(', '));
       }
+    },
+    onProductDiscussed: (em, lineItems, fmt) => {
+      // Separate from onPackageBuilt on purpose — a real, severe bug found tonight:
+      // treating EVERY product_query/recommendation result as "the new active order"
+      // (the old behavior) meant a narrow "here are 2 gin options to pick from" search
+      // during mid-order substitution silently REPLACED the customer's entire ~20-item
+      // order with just those 2 options, which then became the actual order sent to
+      // place_order — while Rachel's own displayed "here's your updated full order" text
+      // (pure LLM narration from conversation memory, no real merge ever happened) looked
+      // completely correct to the customer even though the real saved state was wrong.
+      //
+      // Only allow this to become the active order when there ISN'T already a substantive
+      // basket in progress — this is what the original fix was actually meant to handle: a
+      // simple "do you have Opus One" -> "yes" -> "place the order" flow starting from
+      // nothing. If a real multi-item order already exists, skip the overwrite entirely and
+      // leave it alone — safer to require the customer to explicitly resolve a pending
+      // substitution than to silently destroy 18 correct items.
+      const state = getState(sessionKey);
+      let existingCount = 0;
+      try { existingCount = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
+      if (existingCount > 0) {
+        console.log('[product-discussed] SKIPPED overwrite — existing basket has', existingCount, 'item(s), narrow search result not saved as active order');
+        return;
+      }
+      const key = makeCacheKey(em || email, state.zip, state.lastFingerprint);
+      packageCache[key] = lineItems;
+      state.lastLineItems = lineItems;
+      saveFlowState();
+      console.log('[product-discussed] captured as active context (no prior basket):', key);
     }
   });
   sessions[sessionKey] = result.messages;
@@ -1182,14 +1211,25 @@ app.post('/chat', async (req, res) => {
       }
     }
 
-    // Cache invalidation check
+    // Search-result cache invalidation check — this clears the L1/L2 SEARCH-RESULT
+    // caches only, NOT the active order (state.lastLineItems). A genuine, severe bug
+    // found and fixed tonight: fingerprint(message) hashes the raw message TEXT, so it
+    // changes on virtually every single turn (customers essentially never repeat the
+    // exact same message) — the previous code nulled state.lastLineItems here too,
+    // meaning the customer's ENTIRE active order was silently wiped on almost every
+    // turn, "masked" only when that same turn's tool call happened to rebuild the
+    // basket from scratch (e.g. custom_list/menu_build) — but permanently destroyed on
+    // any turn that didn't (e.g. a plain product_query while resolving a substitution),
+    // which is exactly what caused a real ~20-item order to collapse down to just 2
+    // leftover search-result items. The active order must persist across turns
+    // regardless of what the customer's raw message text was — only explicit actions
+    // (a fresh custom_list/menu_build build, a zip change, an explicit reset) should
+    // ever clear it, never an incidental hash-of-the-message-text change.
     const fp = fingerprint(message);
     if (fp !== state.lastFingerprint || state.zip !== state.lastZip) {
       if (state.lastFingerprint && state.lastZip) {
-        // Request changed — clear cache and lastLineItems
         clearCache(email, format);
-        state.lastLineItems = null;
-        console.log('[cache] invalidated: new request or zip changed');
+        console.log('[cache] search-result cache invalidated: new request or zip changed (active order preserved)');
       }
       state.lastFingerprint = fp;
       state.lastZip = state.zip;

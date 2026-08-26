@@ -120,7 +120,7 @@ const ALL_TOOLS = [
 
 const ORDER_CONFIRMATION_WORDS = ['yes', 'yeah', 'yep', 'yup', 'confirm', 'confirmed', 'go ahead', 'place it', 'place the order', 'sounds good', 'that works', 'correct', 'do it', 'please place', 'looks good', 'lgtm', 'proceed', 'ok place', 'okay place'];
 
-async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, onProposalGenerated, customerMessage, alreadyConfirmed, requesterEmail, sendEmailFn, lastProposalUrl, onUnavailableItems) {
+async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, onProposalGenerated, customerMessage, alreadyConfirmed, requesterEmail, sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed) {
   console.log(`[tool] ${toolName}`, JSON.stringify(toolInput).slice(0, 500));
   try {
     switch (toolName) {
@@ -182,10 +182,18 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           onUnavailableItems(result.unavailable || '');
         }
         // product_query / recommendation return `products` (or `results[].products`), not
-        // `line_items`. Capture what was just shown to the customer as the active context —
-        // otherwise a later "create the order" falls back to a stale saved basket instead of
-        // the single item just discussed.
-        if (result.success && onPackageBuilt && ['product_query','recommendation'].includes(saInput.intent)) {
+        // `line_items`. Report what was just shown via a SEPARATE callback (onProductDiscussed),
+        // NOT onPackageBuilt — a real, severe bug found tonight: onPackageBuilt unconditionally
+        // overwrites the active saved order, so a narrow "here are 2 gin options to pick from"
+        // search during mid-order substitution was silently destroying the customer's entire
+        // ~20-item order, leaving only the last-searched options in state — which then became
+        // the actual order sent to place_order, while the LLM's own displayed "here's your full
+        // updated order" text (pure narration from conversation memory, no real merge ever
+        // happened) looked correct to the customer even though the real saved state was wrong.
+        // onProductDiscussed lets server.js decide whether it's safe to treat this as the
+        // active order (no substantial existing basket) or should be kept separate (an existing
+        // multi-item order is in progress, so a narrow options search must never replace it).
+        if (result.success && onProductDiscussed && ['product_query','recommendation'].includes(saInput.intent)) {
           let flatProducts = [];
           if (Array.isArray(result.products)) {
             flatProducts = result.products;
@@ -207,7 +215,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
               establishmentId: p.establishmentId || '',
               category: p.category || ''
             }));
-            onPackageBuilt(saInput.email || '', JSON.stringify(asLineItems), saInput.channel);
+            onProductDiscussed(saInput.email || '', JSON.stringify(asLineItems), saInput.channel);
           }
         }
         if (result.success && result.download_url && saInput.intent === 'generate_proposal' && onProposalGenerated) {
@@ -270,7 +278,7 @@ const path = require('path');
 
 const MAX_ITERATIONS = 10;
 
-async function rachelChat({ messages, context, rachelPrompt, gbrain_context = '', channel_format = 'voiceflow', address_rule = '', onPackageBuilt = null, onProposalGenerated = null, sendEmailFn = null, lastProposalUrl = '', customerMessage = '', alreadyConfirmed = false, onUnavailableItems = null }) {
+async function rachelChat({ messages, context, rachelPrompt, gbrain_context = '', channel_format = 'voiceflow', address_rule = '', onPackageBuilt = null, onProposalGenerated = null, sendEmailFn = null, lastProposalUrl = '', customerMessage = '', alreadyConfirmed = false, onUnavailableItems = null, onProductDiscussed = null }) {
   const channelNotes = {
     html: `
 
@@ -353,7 +361,7 @@ RULES:
       const toolResults = [];
       for (const block of response.content) {
         if (block.type === 'tool_use') {
-          const result = await executeTool(block.name, block.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl, onUnavailableItems);
+          const result = await executeTool(block.name, block.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed);
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,
