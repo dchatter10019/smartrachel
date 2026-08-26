@@ -1341,7 +1341,43 @@ app.post('/chat', async (req, res) => {
         }
 
         let matched = null;
-        if (isShortMsg) {
+
+        // Tier 0: bare affirmative with NO item name at all (e.g. "sounds good", "yes")
+        // replying to a single-candidate proposal question (e.g. "Bombay London Dry
+        // Gin — 750 mL — $27.49. Works for you?") — real gap found tonight: this is a
+        // completely normal way to confirm, but neither Tier 1 nor Tier 2 can match it
+        // since both require the candidate's name to appear in the CUSTOMER's own
+        // message, and here it doesn't at all — the item is identified purely by
+        // Rachel's immediately preceding question. Only look at Rachel's SINGLE most
+        // recent message (not the wider multi-turn scan) so a bare "yes" doesn't
+        // accidentally confirm some OLDER option from several turns back.
+        const bareAffirmatives = ['yes', 'yeah', 'yep', 'yup', 'sure', 'ok', 'okay', 'good', 'fine'];
+        const isBareAffirmative = !isShortMsg ? false : (
+          confirmPhrases.some(p => msgLowerSel.trim() === p || msgLowerSel.trim().startsWith(p + ' ') || msgLowerSel.trim().startsWith(p + '.') || msgLowerSel.trim().startsWith(p + '!')) ||
+          bareAffirmatives.some(w => msgLowerSel.trim() === w)
+        );
+        if (isBareAffirmative && recentAssistantMsgsSel.length > 0) {
+          const singleMsgText = Array.isArray(recentAssistantMsgsSel[0].content) ? recentAssistantMsgsSel[0].content.map(c => c.text || '').join(' ') : String(recentAssistantMsgsSel[0].content || '');
+          const singleMsgPriceMatches = [...singleMsgText.matchAll(/\$([\d.]+)/g)];
+          if (singleMsgPriceMatches.length === 1) {
+            const onlyPriceMatch = singleMsgPriceMatches[0];
+            const beforeOnlyPrice = singleMsgText.slice(0, onlyPriceMatch.index);
+            const dashSplitSingle = beforeOnlyPrice.split(/[—-](?!\s*\$)/);
+            if (dashSplitSingle.length >= 2) {
+              let namePartSingle = dashSplitSingle[0];
+              const sentenceBoundarySingle = namePartSingle.match(/.*[.!?:]\s*/);
+              if (sentenceBoundarySingle) namePartSingle = namePartSingle.slice(sentenceBoundarySingle[0].length);
+              const nameSingle = namePartSingle.replace(/^\s*\d+[\.\)]\s*/, '').replace(/\*/g, '').trim();
+              if (nameSingle && nameSingle.split(' ').length <= 8) {
+                const sizeMatchSingle = beforeOnlyPrice.match(/\d+(\.\d+)?\s*(mL|ML|L|oz|OZ)\b/);
+                matched = { name: nameSingle, price: parseFloat(onlyPriceMatch[1]), size: sizeMatchSingle ? sizeMatchSingle[0] : '' };
+                console.log('[substitute-merge] Tier 0 (bare affirmative to single-candidate question) matched:', nameSingle);
+              }
+            }
+          }
+        }
+
+        if (!matched && isShortMsg) {
           // Tier 1: short message — a single matching candidate is treated as a direct
           // restatement/confirmation, no extra phrase needed.
           const tier1Matches = candidates.filter(c => candidateWordMatch(c) !== null);
