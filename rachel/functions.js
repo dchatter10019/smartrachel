@@ -790,25 +790,67 @@ async function buildPackage(iv) {
     return true;
   }
 
+  // Strip trailing size/pack/volume wording from a search term before hitting the
+  // catalog API — confirmed via direct testing that the search does literal text
+  // matching against catalog product names, and shorthand size notation the customer
+  // or LLM might naturally use ("750mL", "1L", "6 pack") does NOT match the catalog's
+  // actual format ("750 ML", "1 L", "6x12 OZ Bottle"), silently returning zero results
+  // for genuinely available products. Rather than trying to normalize every possible
+  // shorthand to the exact right catalog format (error-prone — many unit/pack
+  // conventions), stripping size wording entirely is simpler and was confirmed to work
+  // just as reliably as an exactly-matching size in every case tested.
+  function stripSizeFromSearchTerm(term) {
+    return String(term || '')
+      .replace(/\b\d+(\.\d+)?\s*m?[lL]\b/g, '')       // 750mL, 1L, 1.75L, 750 ml
+      .replace(/\b\d+(\.\d+)?\s*(oz|OZ)\b/g, '')       // 12oz, 12 OZ
+      .replace(/\b\d+\s*x\s*\d+\s*(oz|OZ|m?[lL])?\b/g, '') // 6x12, 24x12oz
+      .replace(/\b(\d+[\s-]?)?pack\b/gi, '')             // 6 pack, 6-pack, pack
+      .replace(/\bcase\s+of\b/gi, '')                     // case of
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+  }
+
+  async function rawSearch(term) {
+    var isZipSentinel = kitchenLocation.indexOf('zip:') === 0;
+    var url = isZipSentinel
+      ? "https://api.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode="+encodeURIComponent(kitchenLocation.slice(4))+"&searchBy="+encodeURIComponent(term)+"&limit=100&client="+encodeURIComponent(clientName)
+      : "https://api.getbevvi.com/api/corpproducts/searchCorpProducts?location="+encodeURIComponent(kitchenLocation)+"&searchBy="+encodeURIComponent(term)+"&limit=100&client="+encodeURIComponent(clientName);
+    var res=await fetch(url);
+    if (!res.ok) return [];
+    var data=await res.json();
+    if (!Array.isArray(data)) return [];
+    return data.map(function(p) {
+      var price=p.salePrice||p.price||0;
+      var sizeStr=p.size&&p.units?String(p.size)+String(p.units):"";
+      var purl=p.url?p.url:(p.slug?"https://airculinaire.getbevvi.com/productdetail/"+p.slug:"");
+      var pid=(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||"";
+      return {name:p.name||"",price:parseFloat(price)||0,sizeStr:sizeStr,url:purl,product_id:pid,upc:p.upc||p.origanlUpc||"",establishmentId:p.establishmentId||""};
+    }).filter(function(p){return p.price>0&&p.name;});
+  }
+
   async function doSearch(term) {
     try {
-      // kitchenLocation may be a 'zip:XXXXX' sentinel for zips with no hardcoded
-      // kitchen_location mapping — use the API's zipcode-direct search in that case.
-      var isZipSentinel = kitchenLocation.indexOf('zip:') === 0;
-      var url = isZipSentinel
-        ? "https://api.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode="+encodeURIComponent(kitchenLocation.slice(4))+"&searchBy="+encodeURIComponent(term)+"&limit=100&client="+encodeURIComponent(clientName)
-        : "https://api.getbevvi.com/api/corpproducts/searchCorpProducts?location="+encodeURIComponent(kitchenLocation)+"&searchBy="+encodeURIComponent(term)+"&limit=100&client="+encodeURIComponent(clientName);
-      var res=await fetch(url);
-      if (!res.ok) return [];
-      var data=await res.json();
-      if (!Array.isArray(data)) return [];
-      return data.map(function(p) {
-        var price=p.salePrice||p.price||0;
-        var sizeStr=p.size&&p.units?String(p.size)+String(p.units):"";
-        var purl=p.url?p.url:(p.slug?"https://airculinaire.getbevvi.com/productdetail/"+p.slug:"");
-        var pid=(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||"";
-        return {name:p.name||"",price:parseFloat(price)||0,sizeStr:sizeStr,url:purl,product_id:pid,upc:p.upc||p.origanlUpc||"",establishmentId:p.establishmentId||""};
-      }).filter(function(p){return p.price>0&&p.name;});
+      // Try the term exactly as given first — this preserves precise size-matching
+      // when the format happens to be correct (e.g. "Angel's Envy Bourbon 750 ML").
+      // Only fall back to a size-stripped retry if the original returns nothing —
+      // confirmed via direct testing that shorthand size notation ("750mL", "1L",
+      // "6 pack") the customer or LLM might naturally use does NOT match the
+      // catalog's actual format and silently returns zero results even for
+      // genuinely available products. Trying original-first (rather than always
+      // stripping) avoids losing the ability to request a specific size when the
+      // format IS correct — stripping unconditionally would make the separate
+      // "wrong size returned" issue worse, not just fix the "not found" issue.
+      var results = await rawSearch(term);
+      if (results.length > 0) return results;
+      var cleanTerm = stripSizeFromSearchTerm(term);
+      if (cleanTerm && cleanTerm !== term) {
+        var fallbackResults = await rawSearch(cleanTerm);
+        if (fallbackResults.length > 0) {
+          console.log('[doSearch] size-stripped retry succeeded:', JSON.stringify(term), '->', JSON.stringify(cleanTerm));
+          return fallbackResults;
+        }
+      }
+      return results;
     } catch(e){return [];}
   }
 

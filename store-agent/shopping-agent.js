@@ -226,9 +226,38 @@ async function searchProducts(location, client, query, limit, minPrice, maxPrice
   } catch(e) { console.error('[searchProducts] error:', e.message); return []; }
 }
 
+// Strip trailing size/pack/volume wording from a search term — confirmed via direct
+// API testing that the catalog does literal text matching against product names, and
+// shorthand size notation ("750mL", "1L", "6 pack") does NOT match the catalog's actual
+// format ("750 ML", "1 L", "6x12 OZ Bottle"), silently returning zero results even for
+// genuinely available products (e.g. "Samuel Adams Summer Ale 6 pack" -> nothing,
+// "Samuel Adams Summer Ale" -> found immediately).
+function stripSizeFromSearchTerm(term) {
+  return String(term || '')
+    .replace(/\b\d+(\.\d+)?\s*m?[lL]\b/g, '')
+    .replace(/\b\d+(\.\d+)?\s*(oz|OZ)\b/g, '')
+    .replace(/\b\d+\s*x\s*\d+\s*(oz|OZ|m?[lL])?\b/g, '')
+    .replace(/\b(\d+[\s-]?)?pack\b/gi, '')
+    .replace(/\bcase\s+of\b/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
 async function searchWithFallbacks(location, client, name, limit, minPrice, maxPrice) {
   let products = await searchProducts(location, client, name, limit || 10, minPrice, maxPrice);
   if (products.length) return products;
+  // Try stripping size/pack wording BEFORE the more aggressive word-count fallbacks
+  // below, since it preserves maximum specificity (e.g. keeps "Summer Ale", only
+  // drops "6 pack") rather than discarding whole words that might matter for
+  // disambiguating between similar products in a crowded catalog.
+  const sizeStripped = stripSizeFromSearchTerm(name);
+  if (sizeStripped && sizeStripped !== name) {
+    products = await searchProducts(location, client, sizeStripped, limit || 10, minPrice, maxPrice);
+    if (products.length) {
+      console.log('[searchWithFallbacks] size-stripped retry succeeded:', JSON.stringify(name), '->', JSON.stringify(sizeStripped));
+      return products;
+    }
+  }
   // Normalize common category names
   const nameMap = {'champagne': 'champagne', 'prosecco': 'prosecco', 'sparkling wine': 'champagne',
                    'red wine': 'cabernet', 'white wine': 'chardonnay', 'rose': 'rose wine', 'ros\u00e9': 'rose wine'};
