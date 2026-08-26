@@ -838,6 +838,20 @@ async function buildPackage(iv) {
     return String(term || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   }
 
+  // Expand common colloquial brand nicknames to their formal catalog name — confirmed
+  // via direct testing that "Sam Adams" (how most people naturally refer to the brand)
+  // returns nothing, while "Samuel Adams" (the catalog's formal name) matches. Substring
+  // replacement (not exact-match), since the nickname is usually embedded within a
+  // longer product name ("Sam Adams Summer Ale"), not the whole search term.
+  var BRAND_NICKNAMES = [
+    [/\bsam\s+adams\b/i, 'Samuel Adams']
+  ];
+  function expandBrandNicknames(term) {
+    var result = String(term || '');
+    BRAND_NICKNAMES.forEach(function(pair) { result = result.replace(pair[0], pair[1]); });
+    return result;
+  }
+
   // Extract a requested size like "1 L", "750mL", "1.75 L" from a raw search term,
   // normalized to a comparable form (digits + unit, no space/case sensitivity) —
   // used to verify a retry step's results actually match what was asked for, not
@@ -860,6 +874,10 @@ async function buildPackage(iv) {
 
   async function doSearch(term) {
     try {
+      // Expand any colloquial brand nickname to the catalog's formal name up front —
+      // safe no-op if absent, fixes the search immediately if present (e.g. "Sam
+      // Adams" -> "Samuel Adams"), before any size/diacritic retry logic runs.
+      term = expandBrandNicknames(term);
       var requestedSize = extractRequestedSize(term);
       var bestSoFar = [];
 

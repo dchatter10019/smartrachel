@@ -251,7 +251,20 @@ function stripDiacritics(term) {
   return String(term || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 }
 
+// Expand common colloquial brand nicknames to their formal catalog name — confirmed via
+// direct testing that "Sam Adams" (how most people naturally refer to the brand) returns
+// nothing, while "Samuel Adams" (the catalog's formal name) matches.
+var BRAND_NICKNAMES = [
+  [/\bsam\s+adams\b/i, 'Samuel Adams']
+];
+function expandBrandNicknames(term) {
+  var result = String(term || '');
+  BRAND_NICKNAMES.forEach(function(pair) { result = result.replace(pair[0], pair[1]); });
+  return result;
+}
+
 async function searchWithFallbacks(location, client, name, limit, minPrice, maxPrice) {
+  name = expandBrandNicknames(name);
   let products = await searchProducts(location, client, name, limit || 10, minPrice, maxPrice);
   if (products.length) return products;
   // Try stripping size/pack wording BEFORE the more aggressive word-count fallbacks

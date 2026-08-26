@@ -11,27 +11,20 @@
 [ShoppingAgent] intents:
 - intent="product_query" → search for a SPECIFIC named product (do you have Opus One, show me Patron)
 
-**SEARCH TERMS — brand/product name ONLY, exact catalog size formatting or none at all:**
-The catalog search matches against literal product name text, not semantic meaning or
-fuzzy matching — a real, available product can return ZERO results if the search term's
-wording doesn't literally match its catalog name, even for a seemingly trivial difference.
-Confirmed via direct testing on multiple real products:
-- "Samuel Adams Summer Ale 6 pack" -> nothing found. "Samuel Adams Summer Ale" (no pack
-  wording) -> found immediately. Catalog names use "6x12 OZ Bottle", never "6 pack" —
-  never append pack-size/quantity/count phrasing ("6 pack", "case of", "12-pack").
-- "Angel's Envy Bourbon 750mL" -> nothing found. "Angel's Envy Bourbon 750 ML" (space
-  before ML, uppercase) -> found. "Angel's Envy Bourbon" (no size at all) -> also found.
-  Shorthand size notation like "750mL"/"1L" (no space, lowercase unit) does NOT match —
-  the catalog format is always "[number] ML" or "[number] L" with a space and uppercase
-  unit.
-
-The safe default: search using ONLY the brand and product name, with NO size or
-pack-count wording appended at all — this reliably matches regardless of exact catalog
-formatting, and you can select or confirm the right size/pack from whatever the search
-actually returns. Only include a size in the search term if you already know it must be
-formatted as "[number] ML" / "[number] L" with a space, and even then, omitting it
-entirely is safer. If a first search returns nothing, before concluding a product is
-unavailable, retry once with just the brand name and no size/pack wording at all.
+**SEARCH TERMS — ALWAYS include the customer's stated size, don't drop it:** If the
+customer specifies a size/volume for an item (e.g. "Espolòn Tequila Blanco – 1 L",
+"Angel's Envy Bourbon 750 mL"), ALWAYS include that size in the search term you send —
+do NOT strip it out. The backend now automatically retries with corrected formatting,
+stripped accents, etc. if the exact wording doesn't match the catalog, so you do not need
+to worry about getting the size format perfectly right — just include whatever size the
+customer actually said, in whatever format they said it. Omitting the size entirely means
+the system has no way to know the customer wanted that specific size at all, and may
+return a different (often larger, more expensive) size instead — this has caused real,
+confirmed mismatches (customer asked for 1 L, got 1.75 L instead) when size was dropped
+from the search term. Do NOT append pack-count/quantity phrasing like "6 pack" or "case
+of" though — that specifically does not match the catalog's pack-size naming and should
+be left out; a numeric volume (mL/L/OZ) is different from a pack-count and should always
+be included.
 intent="recommendation" → use when customer asks for suggestions, nice options, or what's good (show me some nice tequila, recommend a wine, what's a good bourbon) — this uses purchase history to personalize
 - intent="menu_build" → build standard event package when customer says "beer wine spirits" or generic categories. Do NOT use when customer names specific spirits or has strong preferences.
 
