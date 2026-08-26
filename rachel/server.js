@@ -322,6 +322,50 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       state.lastLineItems = lineItems;
       saveFlowState();
       console.log('[product-discussed] captured as active context (no prior basket):', key);
+    },
+    onSubstituteConfirmed: (originalItem, replacementName, replacementPrice, replacementSize) => {
+      // The LLM calls this explicitly whenever it recognizes the customer has confirmed
+      // a substitute, in ANY phrasing — replacing the earlier, fundamentally fragile
+      // approach of trying to detect confirmations by regex-matching the customer's raw
+      // text after the fact (which missed real phrasings across many rounds of tonight's
+      // testing). The LLM already understands intent correctly; this just makes sure
+      // that understanding reliably becomes a real state change, not just narration.
+      try {
+        const state = getState(sessionKey);
+        if (!replacementName) return { success: false, error: 'replacement_name required' };
+        let items = [];
+        try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+        const originalBrandWord = originalItem ? originalItem.split(' ')[0].toLowerCase() : null;
+        let qtyToUse = 1;
+        let categoryToUse = '';
+        if (originalBrandWord) {
+          const removeIdx = items.findIndex(it => (it.name || it.label || '').toLowerCase().includes(originalBrandWord));
+          if (removeIdx >= 0) {
+            qtyToUse = items[removeIdx].qty || items[removeIdx].quantity || 1;
+            categoryToUse = items[removeIdx].category || '';
+            items.splice(removeIdx, 1);
+          }
+        }
+        items.push({
+          label: replacementName, name: replacementName, qty: qtyToUse, quantity: qtyToUse,
+          price: replacementPrice || 0, size: replacementSize || '', url: '', product_id: '',
+          upc: '', establishmentId: '', category: categoryToUse
+        });
+        const newLineItems = JSON.stringify(items);
+        const key2 = makeCacheKey(email, state.zip, state.lastFingerprint);
+        packageCache[key2] = newLineItems;
+        state.lastLineItems = newLineItems;
+        if (originalItem && state.pendingSubstitutes) {
+          state.pendingSubstitutes = state.pendingSubstitutes.filter(p => p !== originalItem);
+        }
+        saveFlowState();
+        try { saveBasket(email, newLineItems, '', 'slack').catch(() => {}); } catch (e) {}
+        console.log('[confirm-substitute-tool] replaced', JSON.stringify(originalItem), 'with', JSON.stringify(replacementName), 'qty', qtyToUse);
+        return { success: true, replaced: originalItem, with: replacementName, qty: qtyToUse };
+      } catch (e) {
+        console.error('[confirm-substitute-tool] error:', e.message);
+        return { success: false, error: e.message };
+      }
     }
   });
   sessions[sessionKey] = result.messages;
