@@ -1235,12 +1235,26 @@ app.post('/chat', async (req, res) => {
       const isSubConfirm = lastMentionedSubstitute && (subMsgLower.includes('substitut') || subConfirmWords.some(w => subMsgLower === w || subMsgLower.startsWith(w + ' ') || subMsgLower.startsWith(w + ',')));
       if (isSubConfirm) {
         const itemToSubstitute = state.pendingSubstitutes[0];
-        console.log('[substitute-deterministic] searching real replacement for:', itemToSubstitute);
+        // Real bug found tonight: searching for the ORIGINAL unavailable item's exact
+        // name (e.g. "DeKuyper Triple Sec 30 proof 1 L") often finds nothing, since
+        // that specific brand genuinely isn't in the catalog — but plenty of OTHER
+        // triple secs are, just under different names. This search path (shopping-
+        // agent.js's product_query) doesn't have the same category-broadening fuzzy
+        // fallback built into functions.js's doSearch earlier tonight, so it correctly
+        // (but unhelpfully) reports "not found" instead of surfacing real alternatives.
+        // Extract a broader category/type term (e.g. "Triple Sec", "Gin") to search
+        // with instead of the specific unavailable brand — this is what we actually
+        // want for a substitute search anyway.
+        const SUBSTITUTE_TYPE_KEYWORDS = ['triple sec', 'vodka', 'gin', 'rum', 'tequila', 'whiskey', 'whisky', 'bourbon', 'scotch', 'cognac', 'brandy', 'liqueur', 'wine', 'beer', 'seltzer', 'champagne', 'cider'];
+        const itemLower = itemToSubstitute.toLowerCase();
+        const matchedType = SUBSTITUTE_TYPE_KEYWORDS.find(t => itemLower.includes(t));
+        const substituteSearchTerm = matchedType || itemToSubstitute;
+        console.log('[substitute-deterministic] searching real replacement for:', itemToSubstitute, '| search term:', substituteSearchTerm);
         try {
           const subRes = await fetch('http://127.0.0.1:8300/mcp', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: itemToSubstitute, limit: 3 }], zip: state.zip || '', email: email } } })
+            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: substituteSearchTerm, limit: 5 }], zip: state.zip || '', email: email } } })
           });
           const subText = await subRes.text();
           const subLine = subText.split('\n').find(l => l.startsWith('data:'));
