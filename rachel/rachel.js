@@ -124,7 +124,7 @@ const ALL_TOOLS = [
 
 const ORDER_CONFIRMATION_WORDS = ['yes', 'yeah', 'yep', 'yup', 'confirm', 'confirmed', 'go ahead', 'place it', 'place the order', 'sounds good', 'that works', 'correct', 'do it', 'please place', 'looks good', 'lgtm', 'proceed', 'ok place', 'okay place'];
 
-async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, onProposalGenerated, customerMessage, alreadyConfirmed, requesterEmail, sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed) {
+async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, onProposalGenerated, customerMessage, alreadyConfirmed, requesterEmail, sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems) {
   console.log(`[tool] ${toolName}`, JSON.stringify(toolInput).slice(0, 500));
   try {
     switch (toolName) {
@@ -153,6 +153,20 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             console.log('[ShoppingAgent] overriding LLM-supplied email', saInput.email, '->', requesterEmail);
           }
           saInput.email = requesterEmail;
+        }
+        // Real safety gap found tonight: place_order's line_items comes from the LLM's
+        // own manual reconstruction of the order as a JSON string parameter — but the
+        // LLM's "memory" of the order can drift from the ACTUAL current basket (e.g.
+        // after several turns and substitutions), especially since confirm_substitute
+        // updates are tracked in server.js's session state, not automatically reflected
+        // back into the LLM's own working notion of the order. Never trust the LLM's
+        // self-constructed line_items for an actual placement — always override with our
+        // own authoritative, reliably-tracked current basket when we have one.
+        if (saInput.intent === 'place_order' && currentLineItems) {
+          if (saInput.line_items && saInput.line_items !== currentLineItems) {
+            console.log('[ShoppingAgent] overriding LLM-supplied line_items with authoritative current basket for place_order');
+          }
+          saInput.line_items = currentLineItems;
         }
         // confirm_substitute is handled entirely in-process, not via the shopping-agent
         // HTTP service — it needs access to this session's pendingSubstitutes/
@@ -295,7 +309,7 @@ const path = require('path');
 
 const MAX_ITERATIONS = 10;
 
-async function rachelChat({ messages, context, rachelPrompt, gbrain_context = '', channel_format = 'voiceflow', address_rule = '', onPackageBuilt = null, onProposalGenerated = null, sendEmailFn = null, lastProposalUrl = '', customerMessage = '', alreadyConfirmed = false, onUnavailableItems = null, onProductDiscussed = null, onSubstituteConfirmed = null }) {
+async function rachelChat({ messages, context, rachelPrompt, gbrain_context = '', channel_format = 'voiceflow', address_rule = '', onPackageBuilt = null, onProposalGenerated = null, sendEmailFn = null, lastProposalUrl = '', customerMessage = '', alreadyConfirmed = false, onUnavailableItems = null, onProductDiscussed = null, onSubstituteConfirmed = null, currentLineItems = '' }) {
   const channelNotes = {
     html: `
 
@@ -378,7 +392,7 @@ RULES:
       const toolResults = [];
       for (const block of response.content) {
         if (block.type === 'tool_use') {
-          const result = await executeTool(block.name, block.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed);
+          const result = await executeTool(block.name, block.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems);
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,
