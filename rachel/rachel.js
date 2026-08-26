@@ -120,7 +120,7 @@ const ALL_TOOLS = [
 
 const ORDER_CONFIRMATION_WORDS = ['yes', 'yeah', 'yep', 'yup', 'confirm', 'confirmed', 'go ahead', 'place it', 'place the order', 'sounds good', 'that works', 'correct', 'do it', 'please place', 'looks good', 'lgtm', 'proceed', 'ok place', 'okay place'];
 
-async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, onProposalGenerated, customerMessage, alreadyConfirmed, requesterEmail, sendEmailFn, lastProposalUrl) {
+async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, onProposalGenerated, customerMessage, alreadyConfirmed, requesterEmail, sendEmailFn, lastProposalUrl, onUnavailableItems) {
   console.log(`[tool] ${toolName}`, JSON.stringify(toolInput).slice(0, 500));
   try {
     switch (toolName) {
@@ -171,6 +171,15 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         console.log('[ShoppingAgent] intent:', saInput.intent, 'channel:', saInput.channel, 'success:', result.success);
         if (result.success && result.line_items && ['menu_build','custom_list'].includes(saInput.intent) && onPackageBuilt) {
           onPackageBuilt(saInput.email || '', result.line_items, saInput.channel);
+        }
+        // Track unavailable items via the tool's own structured field, not by
+        // trying to parse the LLM's eventual free-text reply — this is what lets
+        // a later deterministic "yes, find a substitute" handler in server.js
+        // fire a real search for the RIGHT item, instead of the LLM guessing
+        // from conversation memory and confusing it with an unrelated item
+        // discussed earlier (a real bug this was built to fix).
+        if (result.success && onUnavailableItems && ['menu_build','custom_list','product_query'].includes(saInput.intent)) {
+          onUnavailableItems(result.unavailable || '');
         }
         // product_query / recommendation return `products` (or `results[].products`), not
         // `line_items`. Capture what was just shown to the customer as the active context —
@@ -261,7 +270,7 @@ const path = require('path');
 
 const MAX_ITERATIONS = 10;
 
-async function rachelChat({ messages, context, rachelPrompt, gbrain_context = '', channel_format = 'voiceflow', address_rule = '', onPackageBuilt = null, onProposalGenerated = null, sendEmailFn = null, lastProposalUrl = '', customerMessage = '', alreadyConfirmed = false }) {
+async function rachelChat({ messages, context, rachelPrompt, gbrain_context = '', channel_format = 'voiceflow', address_rule = '', onPackageBuilt = null, onProposalGenerated = null, sendEmailFn = null, lastProposalUrl = '', customerMessage = '', alreadyConfirmed = false, onUnavailableItems = null }) {
   const channelNotes = {
     html: `
 
@@ -344,7 +353,7 @@ RULES:
       const toolResults = [];
       for (const block of response.content) {
         if (block.type === 'tool_use') {
-          const result = await executeTool(block.name, block.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl);
+          const result = await executeTool(block.name, block.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl, onUnavailableItems);
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,

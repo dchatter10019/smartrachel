@@ -258,6 +258,15 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       } else {
         console.log('[package] cart persistence skipped (can_add_to_cart disabled for channel):', fmt || format);
       }
+    },
+    onUnavailableItems: (unavailableStr) => {
+      const state = getState(sessionKey);
+      state.pendingSubstitutes = (unavailableStr || '')
+        .split(',').map(s => s.trim()).filter(Boolean);
+      saveFlowState();
+      if (state.pendingSubstitutes.length > 0) {
+        console.log('[substitute-tracking] pending:', state.pendingSubstitutes.join(', '));
+      }
     }
   });
   sessions[sessionKey] = result.messages;
@@ -1121,6 +1130,56 @@ app.post('/chat', async (req, res) => {
       }
       // A clear "yes" still needs a real product search (mixers/water/soda/ice), so
       // that case intentionally falls through to the normal LLM path below.
+    }
+
+    // ── Deterministic substitute-confirmation interception ──────────────────
+    // A plain "yes"/"yes find a substitute" here previously went straight to the
+    // LLM with lastLineItems about to be wiped (cache invalidation just below),
+    // causing it to hallucinate an answer from unrelated earlier conversation
+    // history instead of actually searching — confirmed via logs: iteration 1
+    // stop_reason: end_turn, zero tool calls, and it answered about a completely
+    // different item discussed several turns earlier. Perform the real search
+    // here deterministically instead of trusting the LLM's judgment on whether/
+    // what to search for. Guarded by requiring Rachel's own last message to have
+    // actually mentioned "substitute", so a stray unrelated "yes" (answering some
+    // other pending question) doesn't misfire this.
+    if (state.pendingSubstitutes && state.pendingSubstitutes.length > 0) {
+      const priorMsgs = sessions[sessionKey] || [];
+      const lastAssistantMsg = [...priorMsgs].reverse().find(m => m.role === 'assistant');
+      const lastAssistantText = lastAssistantMsg ? (Array.isArray(lastAssistantMsg.content) ? lastAssistantMsg.content.map(c => c.text || '').join(' ') : String(lastAssistantMsg.content || '')) : '';
+      const lastMentionedSubstitute = lastAssistantText.toLowerCase().includes('substitute');
+      const subConfirmWords = ['yes', 'yeah', 'yep', 'sure', 'please', 'ok', 'okay'];
+      const subMsgLower = message.toLowerCase().trim().replace(/\*/g, '');
+      const isSubConfirm = lastMentionedSubstitute && (subMsgLower.includes('substitut') || subConfirmWords.some(w => subMsgLower === w || subMsgLower.startsWith(w + ' ') || subMsgLower.startsWith(w + ',')));
+      if (isSubConfirm) {
+        const itemToSubstitute = state.pendingSubstitutes[0];
+        console.log('[substitute-deterministic] searching real replacement for:', itemToSubstitute);
+        try {
+          const subRes = await fetch('http://127.0.0.1:8300/mcp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: itemToSubstitute, limit: 3 }], zip: state.zip || '', email: email } } })
+          });
+          const subText = await subRes.text();
+          const subLine = subText.split('\n').find(l => l.startsWith('data:'));
+          const subData = subLine ? JSON.parse(subLine.replace('data:', '').trim()) : null;
+          const subResult = subData ? JSON.parse(subData.result.content[0].text) : null;
+          state.pendingSubstitutes = state.pendingSubstitutes.slice(1);
+          saveFlowState();
+          const foundProducts = subResult && subResult.results && subResult.results[0] && subResult.results[0].products;
+          if (foundProducts && foundProducts.length > 0) {
+            const p = foundProducts[0];
+            const subReply = 'I found a substitute for ' + itemToSubstitute + ': ' + p.name + ' — ' + (p.size || '') + ' — $' + (p.price || p.salePrice || 0) + '. Would you like to add this instead?';
+            return res.json({ text: subReply, response: subReply });
+          } else {
+            const noSubReply = "Unfortunately I couldn't find a substitute for " + itemToSubstitute + ' either. Would you like to skip it, or try something else?';
+            return res.json({ text: noSubReply, response: noSubReply });
+          }
+        } catch (e) {
+          console.error('[substitute-deterministic] search error:', e.message);
+          // Fall through to the normal LLM path on error rather than failing the turn.
+        }
+      }
     }
 
     // Cache invalidation check
