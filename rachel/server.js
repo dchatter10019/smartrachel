@@ -1211,6 +1211,90 @@ app.post('/chat', async (req, res) => {
       }
     }
 
+    // ── Deterministic substitute-SELECTION merge ─────────────────────────────
+    // Real, severe bug found tonight via a live conversation: after a customer picks
+    // one of several presented substitute options (e.g. "lets go with bombay"), NOTHING
+    // ever actually wrote that choice into state.lastLineItems — the LLM's own narrated
+    // "here's your updated order with the substitution" text looked completely correct,
+    // but the real saved basket still held the ORIGINAL unavailable item. This surfaced
+    // downstream as an infinite place_order confirmation loop: the deterministic
+    // order-confirm step built its place_order payload from the stale real basket, which
+    // didn't match what had just been narrated, and the LLM kept re-presenting/re-asking
+    // instead of ever calling the tool. This block performs the real merge deterministically
+    // — parsing the candidate options from Rachel's own last message, matching the
+    // customer's pick, and actually rewriting state.lastLineItems — rather than relying on
+    // the LLM to both pick correctly AND remember to persist it, which it wasn't doing.
+    if (state.pendingSubstitutes && state.pendingSubstitutes.length > 0) {
+      const priorMsgsSel = sessions[sessionKey] || [];
+      const lastAssistantMsgSel = [...priorMsgsSel].reverse().find(m => m.role === 'assistant');
+      const lastAssistantTextSel = lastAssistantMsgSel ? (Array.isArray(lastAssistantMsgSel.content) ? lastAssistantMsgSel.content.map(c => c.text || '').join(' ') : String(lastAssistantMsgSel.content || '')) : '';
+
+      // Extract candidate options Rachel just presented: any line containing a $price,
+      // taking the text before the last dash/em-dash preceding the price as the name.
+      const candidateLines = lastAssistantTextSel.split(String.fromCharCode(10));
+      const candidates = [];
+      for (const line of candidateLines) {
+        const priceMatch = line.match(/\$([\d.]+)/);
+        if (!priceMatch) continue;
+        const beforePrice = line.slice(0, priceMatch.index);
+        const dashSplit = beforePrice.split(/[—-](?!\s*\$)/);
+        if (dashSplit.length < 2) continue;
+        let name = dashSplit[0].replace(/^\s*\d+[\.\)]\s*/, '').replace(/\*/g, '').trim();
+        if (!name) continue;
+        const sizeMatch = beforePrice.match(/\d+(\.\d+)?\s*(mL|ML|L|oz|OZ)\b/);
+        candidates.push({ name, price: parseFloat(priceMatch[1]), size: sizeMatch ? sizeMatch[0] : '' });
+      }
+
+      if (candidates.length > 0) {
+        const msgLowerSel = message.toLowerCase().replace(/\*/g, '');
+        // Match by the candidate's first significant word (usually the brand) appearing
+        // as a whole word in the customer's reply — conservative, avoids false matches.
+        const matched = candidates.find(c => {
+          const firstWord = c.name.split(' ')[0].toLowerCase();
+          return firstWord.length > 2 && new RegExp('\\b' + firstWord.replace(/[^a-z0-9]/gi, '') + '\\b', 'i').test(msgLowerSel);
+        });
+
+        if (matched) {
+          try {
+            const originalItemName = state.pendingSubstitutes[0];
+            const originalBrandWord = originalItemName.split(' ')[0].toLowerCase();
+            let items = [];
+            try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+            const removeIdx = items.findIndex(it => (it.name || it.label || '').toLowerCase().includes(originalBrandWord));
+            let qtyToUse = 1;
+            let categoryToUse = '';
+            if (removeIdx >= 0) {
+              qtyToUse = items[removeIdx].qty || items[removeIdx].quantity || 1;
+              categoryToUse = items[removeIdx].category || '';
+              items.splice(removeIdx, 1);
+            }
+            items.push({
+              label: matched.name, name: matched.name, qty: qtyToUse, quantity: qtyToUse,
+              price: matched.price, size: matched.size, url: '', product_id: '', upc: '',
+              establishmentId: '', category: categoryToUse
+            });
+            const newLineItems = JSON.stringify(items);
+            const key = makeCacheKey(email, state.zip, state.lastFingerprint);
+            packageCache[key] = newLineItems;
+            state.lastLineItems = newLineItems;
+            state.pendingSubstitutes = state.pendingSubstitutes.slice(1);
+            saveFlowState();
+            try { saveBasket(email, newLineItems, '', format).catch(() => {}); } catch (e) {}
+            console.log('[substitute-merge] replaced', JSON.stringify(originalItemName), 'with', JSON.stringify(matched.name), 'qty', qtyToUse);
+
+            const stillPending = state.pendingSubstitutes.length > 0;
+            const confirmReply = 'Got it — ' + qtyToUse + 'x ' + matched.name + (matched.size ? ' (' + matched.size + ')' : '') +
+              ' at $' + matched.price.toFixed(2) + ' ea has replaced ' + originalItemName + ' in your order.' +
+              (stillPending ? ' Still need a substitute for: ' + state.pendingSubstitutes.join(', ') + '.' : ' Would you like to place the order, generate a PDF proposal, or make any changes?');
+            return res.json({ text: confirmReply, response: confirmReply });
+          } catch (e) {
+            console.error('[substitute-merge] error:', e.message);
+            // Fall through to the normal LLM path on error rather than failing the turn.
+          }
+        }
+      }
+    }
+
     // Search-result cache invalidation check — this clears the L1/L2 SEARCH-RESULT
     // caches only, NOT the active order (state.lastLineItems). A genuine, severe bug
     // found and fixed tonight: fingerprint(message) hashes the raw message TEXT, so it
