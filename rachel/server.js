@@ -1260,8 +1260,12 @@ app.post('/chat', async (req, res) => {
           const subLine = subText.split('\n').find(l => l.startsWith('data:'));
           const subData = subLine ? JSON.parse(subLine.replace('data:', '').trim()) : null;
           const subResult = subData ? JSON.parse(subData.result.content[0].text) : null;
-          state.pendingSubstitutes = state.pendingSubstitutes.slice(1);
-          saveFlowState();
+          // Real bug found tonight: this used to remove the item from pendingSubstitutes
+          // immediately upon FINDING a candidate, before the customer confirmed it —
+          // meaning a customer who rejected the first suggestion and asked for something
+          // else left tracking permanently broken for that item. Only remove it once the
+          // customer actually confirms a specific candidate — the substitute-merge block
+          // handles that removal correctly; this search step should only ever look.
           const foundProducts = subResult && subResult.results && subResult.results[0] && subResult.results[0].products;
           if (foundProducts && foundProducts.length > 0) {
             const p = foundProducts[0];
