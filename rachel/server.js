@@ -1276,7 +1276,15 @@ app.post('/chat', async (req, res) => {
       const lastMentionedSubstitute = lastAssistantText.toLowerCase().includes('substitute');
       const subConfirmWords = ['yes', 'yeah', 'yep', 'sure', 'please', 'ok', 'okay'];
       const subMsgLower = message.toLowerCase().trim().replace(/\*/g, '');
-      const isSubConfirm = lastMentionedSubstitute && (subMsgLower.includes('substitut') || subConfirmWords.some(w => subMsgLower === w || subMsgLower.startsWith(w + ' ') || subMsgLower.startsWith(w + ',')));
+      // Real bug found tonight: now that confirm_substitute exists as an explicit LLM
+      // tool call, a bare "yes" replying to "I found a substitute... would you like to
+      // add this instead?" should reach the LLM (which correctly calls confirm_substitute)
+      // — not re-trigger THIS search block, which was only meant to handle the initial
+      // "yes, find a substitute" request. Without this guard, a bare "yes" after a
+      // candidate was already found kept re-searching and re-presenting the same
+      // candidate forever, never letting the LLM actually confirm it.
+      const alreadyFoundCandidate = /i found a substitute|here.s (a|the) substitute/i.test(lastAssistantText);
+      const isSubConfirm = lastMentionedSubstitute && !alreadyFoundCandidate && (subMsgLower.includes('substitut') || subConfirmWords.some(w => subMsgLower === w || subMsgLower.startsWith(w + ' ') || subMsgLower.startsWith(w + ',')));
       if (isSubConfirm) {
         const itemToSubstitute = state.pendingSubstitutes[0];
         // Real bug found tonight: searching for the ORIGINAL unavailable item's exact
