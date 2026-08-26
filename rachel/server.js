@@ -1270,8 +1270,20 @@ app.post('/chat', async (req, res) => {
       // last several assistant turns instead, so an option is still matchable even
       // if it wasn't the very last thing said.
       const priorMsgsSel = sessions[sessionKey] || [];
-      const recentAssistantMsgsSel = [...priorMsgsSel].reverse().filter(m => m.role === 'assistant').slice(0, 4);
-      const recentAssistantTextSel = recentAssistantMsgsSel.map(m => Array.isArray(m.content) ? m.content.map(c => c.text || '').join(' ') : String(m.content || '')).join(String.fromCharCode(10));
+      // Real root cause found tonight: sessions[sessionKey] stores each step of the
+      // LLM's multi-step tool-use loop as a SEPARATE assistant message — including
+      // trivial filler text like "Let me search for both simultaneously!" emitted
+      // before a tool call. Scanning the last N raw assistant messages was picking up
+      // these filler turns instead of the actual substantive reply (the one with real
+      // candidate options and prices) that the customer saw in Slack — confirmed via
+      // direct diagnostic logging showing recentAssistantTextSel as just filler text
+      // with zero candidates ever extractable from it. Fix: extract text from EVERY
+      // assistant message first, then filter to only those containing a "$" (any
+      // genuine candidate-presenting reply will have a price; filler/procedural text
+      // won't) before taking the last few for candidate extraction.
+      const getMsgText = m => Array.isArray(m.content) ? m.content.map(c => c.text || '').join(' ') : String(m.content || '');
+      const substantiveAssistantTexts = [...priorMsgsSel].reverse().filter(m => m.role === 'assistant').map(getMsgText).filter(t => t.includes('$')).slice(0, 4);
+      const recentAssistantTextSel = substantiveAssistantTexts.join(String.fromCharCode(10));
 
       // Extract candidate options Rachel presented, across two formats:
       // 1) Line-based "Name — Size — $Price" (bullets/numbered lists)
@@ -1317,6 +1329,7 @@ app.post('/chat', async (req, res) => {
         }
       }
 
+      console.log('[CANDIDATES-DIAGNOSTIC] extracted:', JSON.stringify(candidates));
       if (candidates.length > 0) {
         const msgLowerSel = message.toLowerCase().replace(/\*/g, '');
         // Real false-positive risk found tonight: a compound message like "Hiram Walker
@@ -1378,8 +1391,8 @@ app.post('/chat', async (req, res) => {
           confirmPhrases.some(p => msgLowerSel.trim() === p || msgLowerSel.trim().startsWith(p + ' ') || msgLowerSel.trim().startsWith(p + '.') || msgLowerSel.trim().startsWith(p + '!')) ||
           bareAffirmatives.some(w => msgLowerSel.trim() === w)
         );
-        if (isBareAffirmative && recentAssistantMsgsSel.length > 0) {
-          const singleMsgText = Array.isArray(recentAssistantMsgsSel[0].content) ? recentAssistantMsgsSel[0].content.map(c => c.text || '').join(' ') : String(recentAssistantMsgsSel[0].content || '');
+        if (isBareAffirmative && substantiveAssistantTexts.length > 0) {
+          const singleMsgText = substantiveAssistantTexts[0];
           const singleMsgPriceMatches = [...singleMsgText.matchAll(/\$([\d.]+)/g)];
           if (singleMsgPriceMatches.length === 1) {
             const onlyPriceMatch = singleMsgPriceMatches[0];
