@@ -1191,7 +1191,15 @@ app.post('/chat', async (req, res) => {
     if (state.mixerAsked && !state.mixerAnswered && state.packageShown) {
       const mixerNoWords = ['no', 'nope', 'no thanks', 'no worries', "that's all", 'thats all', "i'm good", 'im good', 'nothing else', 'none'];
       const mixerMsgLower = message.toLowerCase().trim().replace(/\*/g, '');
-      if (mixerNoWords.some(w => mixerMsgLower === w || mixerMsgLower.startsWith(w + ' ') || mixerMsgLower.startsWith(w + ','))) {
+      // Real bug found tonight: a message like "no find a 750 ML gin around $25" was
+      // being swallowed here — it starts with "no" but is clearly a substantial,
+      // unrelated follow-up request (about a gin substitute, not mixers), not a mixer
+      // decline. Only treat "no ..." as a mixer decline if what follows is SHORT (a
+      // brief trailing phrase like "no thanks" or "no, that's it") — a longer message
+      // means the customer is answering something else entirely and should fall
+      // through to normal processing instead of being cut off here.
+      const mixerMsgWordCount = mixerMsgLower.split(/\s+/).filter(Boolean).length;
+      if (mixerNoWords.some(w => mixerMsgLower === w || ((mixerMsgLower.startsWith(w + ' ') || mixerMsgLower.startsWith(w + ',')) && mixerMsgWordCount <= 4))) {
         state.mixerAnswered = true;
         saveFlowState();
         const ctaCapsM = getCapabilities(format);
