@@ -1321,8 +1321,19 @@ app.post('/chat', async (req, res) => {
           // handles that removal correctly; this search step should only ever look.
           const foundProducts = subResult && subResult.results && subResult.results[0] && subResult.results[0].products;
           if (foundProducts && foundProducts.length > 0) {
-            const p = foundProducts[0];
-            const subReply = 'I found a substitute for ' + itemToSubstitute + ': ' + p.name + ' — ' + (p.size || '') + ' — $' + (p.price || p.salePrice || 0) + '. Would you like to add this instead?';
+            // Real regression found tonight: this used to always show just the single
+            // first result, even when several good options exist — a worse experience
+            // than the LLM's own free-form searches, which naturally present multiple
+            // options as a numbered list. Show up to 3 options here too when available.
+            const topOptions = foundProducts.slice(0, 3);
+            let subReply;
+            if (topOptions.length === 1) {
+              const p = topOptions[0];
+              subReply = 'I found a substitute for ' + itemToSubstitute + ': ' + p.name + ' — ' + (p.size || '') + ' — $' + (p.price || p.salePrice || 0) + '. Would you like to add this instead?';
+            } else {
+              const optionLines = topOptions.map((p, i) => (i + 1) + '. ' + p.name + ' — ' + (p.size || '') + ' — $' + (p.price || p.salePrice || 0)).join('\n');
+              subReply = 'Here are some options for ' + itemToSubstitute + ':\n\n' + optionLines + '\n\nWhich would you like to go with?';
+            }
             return res.json({ text: subReply, response: subReply });
           } else {
             const noSubReply = "Unfortunately I couldn't find a substitute for " + itemToSubstitute + ' either. Would you like to skip it, or try something else?';
