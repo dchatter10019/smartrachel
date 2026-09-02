@@ -10,12 +10,56 @@ const path = require('path');
 const BEVVI_RED = '#B71C1C';
 const BEVVI_DARK = '#1A1A2E';
 
+// Real bug found tonight (from an actual generated proposal): items were landing in
+// the wrong category on the PDF — Corona Extra (beer) and Cointreau Triple Sec / 
+// Rittenhouse Rye (spirits) all ended up under "Other", while a lime juice mixer ended
+// up under "Beer". This function was blindly trusting whatever item.category value was
+// set upstream (e.g. by the LLM constructing a custom order), with zero validation —
+// a single wrong category assignment anywhere upstream shows up directly on a real
+// customer-facing PDF. Add a deterministic, name-based classifier as a safety net:
+// checks mixer/non-alcoholic keywords FIRST (so "ginger beer" or a lime juice mixer
+// doesn't get miscaught by the word "beer"), then beer/wine/spirits type keywords —
+// and only overrides the upstream category when the name clearly indicates something
+// different, never overriding a category that's already correct.
+const CATEGORY_KEYWORDS = {
+  mixer: ['juice', 'tonic', 'club soda', 'ginger ale', 'ginger beer', 'syrup', 'bitters', 'grenadine', 'sour mix', 'simple syrup'],
+  beer: ['beer', 'lager', 'ale', 'ipa', 'stout', 'pilsner', 'porter', 'cider'],
+  wine: ['wine', 'cabernet', 'merlot', 'chardonnay', 'pinot', 'sauvignon', 'riesling', 'malbec', 'prosecco', 'champagne', 'moscato', 'rose', 'zinfandel', 'syrah', 'shiraz'],
+  spirits: ['vodka', 'gin', 'rum', 'whiskey', 'whisky', 'bourbon', 'scotch', 'rye', 'tequila', 'cognac', 'brandy', 'liqueur', 'triple sec', 'vermouth', 'amaretto', 'schnapps']
+};
+function classifyByName(name) {
+  const nameLower = (name || '').toLowerCase();
+  for (const cat of ['mixer', 'beer', 'wine', 'spirits']) {
+    if (CATEGORY_KEYWORDS[cat].some(kw => nameLower.includes(kw))) return cat;
+  }
+  // Real gap found tonight: many beers are named by brand only (Corona, Modelo,
+  // Heineken) with no type-word ("beer"/"lager") in the name at all, so the keyword
+  // check above misses them. The "NxN Oz Bottle/Can" multi-pack format is a strong,
+  // generalizable signal — virtually no wine or spirits product is packaged this way —
+  // so use it as a fallback rather than needing an exhaustive brand-name list.
+  if (/\d+\s*x\s*\d+\s*oz\s*(bottle|can)/i.test(nameLower)) return 'beer';
+  return null;
+}
+
 function groupByCategory(lineItems) {
   const groups = {};
   const categoryOrder = ['wine', 'spirits', 'beer', 'hard seltzer', 'soju', 'mixer', 'other'];
+  const validCategories = new Set(categoryOrder);
   
   lineItems.forEach(item => {
-    const cat = (item.category || 'other').toLowerCase();
+    let cat = (item.category || '').toLowerCase().trim();
+    // Only trust the upstream category if it's a real, recognized value — an empty,
+    // missing, or unrecognized category always gets the name-based classifier applied.
+    // Even a recognized category gets double-checked against the name, since a wrong-
+    // but-technically-valid category (e.g. a beer tagged "spirits") is just as real a
+    // bug as a missing one.
+    const nameGuess = classifyByName(item.name || item.label || '');
+    if (nameGuess && nameGuess !== cat) {
+      console.log('[generate-proposal] category correction:', JSON.stringify(item.name || item.label), cat || '(none)', '->', nameGuess);
+      cat = nameGuess;
+    } else if (!validCategories.has(cat)) {
+      cat = 'other';
+    }
     const displayCat = cat.charAt(0).toUpperCase() + cat.slice(1);
     if (!groups[displayCat]) groups[displayCat] = [];
     groups[displayCat].push(item);
