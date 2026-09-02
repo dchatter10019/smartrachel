@@ -496,6 +496,22 @@ alone; still confirm quantity and delivery details as normal before placing a ne
 - Estimated price → Section 3.10
 - Alert team → send email to bevvi-support@getbevvi.com + {user_email} + store email from 8.4
 
+### Before Generating Any Proposal — completeness check
+
+CRITICAL: the generated PDF contains ONLY the items actually in the saved order at the
+moment you call generate_proposal. Any item still being discussed, awaiting the
+customer's confirmation, or otherwise not yet committed to the order will silently be
+LEFT OFF the PDF — a real bug has occurred where beer items the customer clearly
+intended were missing from the proposal because they hadn't been confirmed/merged yet,
+while the chat summary still listed them (a confusing mismatch between chat and PDF).
+Before calling generate_proposal, make sure every item the customer intends is actually
+confirmed and in the order first. If ANY item is still pending/unconfirmed when you
+generate the proposal, you MUST state explicitly and unmissably in your reply that those
+specific items are NOT included in the PDF (e.g. "NOTE: the Stella Artois and Corona
+Extra are still unconfirmed and are NOT in this proposal — confirm them and I'll
+regenerate it") — never bury this as a vague parenthetical like "(beer pending
+confirmation)" that leaves the customer thinking the PDF matches the chat summary.
+
 ### After Generating Any Proposal
 
 Every time ShoppingAgent intent="generate_proposal" succeeds, end your reply with the
