@@ -146,9 +146,17 @@ def clear_history(user_id: str):
 # ── RACHEL RESPONSE ───────────────────────────────────────────────────────────
 def ask_rachel(user_id: str, text: str, customer_context: str = "", user_email: str = "", is_new_session: bool = False) -> str:
     try:
+        # Session key: prefer the customer's email over the raw Slack user_id.
+        # Real bug found: the same person has DIFFERENT Slack user_ids across different
+        # workspaces/clients, so keying the session on user_id meant switching Slack
+        # clients silently started a brand-new empty session (lost basket/address mid-
+        # conversation). A person's Slack profile email is stable across workspaces, so
+        # keying on it gives one continuous session everywhere. Fall back to user_id only
+        # when no email is available (so behavior is never worse than before).
+        session_key = f"slack-{user_email}" if user_email else f"slack-{user_id}"
         payload = {
             "message": text,
-            "session_id": f"slack-{user_id}",
+            "session_id": session_key,
             "format": "slack",
             "gbrain_context": customer_context,
             "context": {
