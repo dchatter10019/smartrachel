@@ -698,6 +698,13 @@ async function buildPackage(iv) {
   var capSpiritMin = parseFloat(iv.spirit_min_price) || 0;
   var capSpiritMax = parseFloat(iv.spirit_max_price) || 0;
   var hasPriceCaps = !!(capWineMax || capBeerMax || capSpiritMax || capWineMin || capBeerMin || capSpiritMin);
+  // Stability hint: previously-selected products for this session, keyed by slot
+  // label. When a rebuild happens (e.g. customer adds a cocktail), we prefer to keep
+  // the product already chosen for a slot if it still fits the price ceiling, rather
+  // than re-searching and landing on a different bottle at the same tier. Customers
+  // found it odd that "add an Old Fashioned" changed their wine.
+  var priorByLabel = {};
+  if (iv.prior_line_items) { try { var _pl = JSON.parse(iv.prior_line_items) || []; for (var _p = 0; _p < _pl.length; _p++) { if (_pl[_p] && _pl[_p].label) priorByLabel[String(_pl[_p].label).toLowerCase()] = _pl[_p]; } } catch(e) {} }
   var cocktailIngredients = [];
   if (iv.cocktail_ingredients) { try { cocktailIngredients = JSON.parse(iv.cocktail_ingredients) || []; } catch(e) { cocktailIngredients = []; } }
   if (!Array.isArray(cocktailIngredients)) cocktailIngredients = [];
@@ -1644,6 +1651,15 @@ async function buildPackage(iv) {
           // the CHEAPEST same-type product, not the next-cheapest: a $55->$50 step is a
           // useless downgrade that just falls through to a quantity trim anyway.
           var term=li.label||li.name;
+          // Prefer the previously-selected product for this slot if it fits the ceiling.
+          var priorPick=priorByLabel[String(li.label||'').toLowerCase()];
+          if (priorPick&&priorPick.price>0&&priorPick.price<li.price&&priorPick.price<=maxUnit&&priorPick.name!==li.name) {
+            console.log('[buildPackage] QUANTITY-FIRST budget fit: keeping prior selection',priorPick.name,'$'+priorPick.price,'for slot',li.label,'(qty kept:',li.qty+')');
+            li.name=priorPick.name;li.price=priorPick.price;li.size=priorPick.size||li.size;li.url=priorPick.url||li.url;
+            li.product_id=priorPick.product_id||li.product_id;li.upc=priorPick.upc||li.upc;li.establishmentId=priorPick.establishmentId||li.establishmentId;
+            cheaperFound=true;
+            continue;
+          }
           var cands=await doSearch(term, li.category);
           var liPack=(String(li.size||'').match(/(\d+)\s*x/i)||[])[1];
           // Option C: target a price tier. Compute the max unit price at which this

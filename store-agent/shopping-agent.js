@@ -577,7 +577,17 @@ async function executeTool(name, input) {
     const loc = resolveLocation(input.zip || '');
     if (!loc.kitchen) return { success: false, error: 'No store for zip ' + input.zip };
     const { buildPackage } = require('/home/ubuntu/rachel/functions.js');
+    // Stability: load the previously-saved package so buildPackage can prefer to keep
+    // already-chosen products per slot on a rebuild (e.g. adding a cocktail shouldn't
+    // silently change the customer's wine).
+    let priorLineItems = '';
+    try {
+      const { getPackage } = require('/home/ubuntu/rachel/gbrain.js');
+      const prev = input.email ? await getPackage(input.email, input.channel || 'slack') : null;
+      if (prev) priorLineItems = typeof prev === 'string' ? prev : JSON.stringify(prev);
+    } catch(e) {}
     const result = await buildPackage({
+      prior_line_items: priorLineItems,
       guests: input.guests || 10,
       // Only default hours to 2 if drinks_per_person wasn't given either —
       // otherwise this default would silently override an explicit
