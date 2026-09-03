@@ -44,11 +44,11 @@ const ALL_TOOLS = [
   },
   {
     name: "ShoppingAgent",
-    description: "THE single interface for ALL product and order operations. Use for: product search (do you have X), menu building (event packages), custom lists (named products with qty), recommendations (suggest something), placing orders, and generating proposals. Pass intent + customer context. Never use BuildPackage or CreateOrder directly.\n\nintents:\nintent=\"product_query\" → search for specific products (do you have X, show me X)\nintent=\"recommendation\" → use when customer asks for suggestions (show me some nice tequila, recommend a wine) — uses purchase history\nintent=\"menu_build\" → build standard event package when customer says generic categories\nintent=\"custom_list\" → USE THIS when customer names specific products OR specific spirits (bourbon not just spirits)\nintent=\"place_order\" → place order after customer confirms\nintent=\"order_history\" → use when customer asks what they bought before, their past orders, order history, or wants to reorder something from a previous order. Returns itemized past orders with dates, products, and totals.\nintent=\"confirm_substitute\" → MANDATORY whenever the customer confirms a substitute for a previously-flagged unavailable item, IN ANY PHRASING WHATSOEVER (a bare yes, restating the product name, looks good, sounds good, that works, anything at all indicating they want that specific option). Call this IMMEDIATELY in the SAME turn, alongside or instead of narrating the change in text — never just describe the substitution without also calling this tool. Pass original_item (the exact unavailable item being replaced), replacement_name, replacement_price, and replacement_size if known.\nintent=\"generate_proposal\" → generate PDF proposal — call when customer asks for a proposal/PDF/quote. If the customer states the order is tax-exempt (e.g. \"no tax on alcohol in this state\", \"set tax to 0\", \"no sales tax\") pass tax_exempt=true on the ShoppingAgent call — this actually zeroes the tax on the generated PDF. Do NOT just say $0 tax in your reply without also passing tax_exempt=true; the PDF is built by a separate template and won't reflect a change you only mention in text.",
+    description: "THE single interface for ALL product and order operations. Use for: product search (do you have X), menu building (event packages), custom lists (named products with qty), recommendations (suggest something), placing orders, and generating proposals. Pass intent + customer context. Never use BuildPackage or CreateOrder directly.\n\nintents:\nintent=\"product_query\" → search for specific products (do you have X, show me X)\nintent=\"recommendation\" → use when customer asks for suggestions (show me some nice tequila, recommend a wine) — uses purchase history\nintent=\"menu_build\" → build standard event package when customer says generic categories\nintent=\"custom_list\" → USE THIS when customer names specific products OR specific spirits (bourbon not just spirits)\nintent=\"place_order\" → place order after customer confirms\nintent=\"order_history\" → use when customer asks what they bought before, their past orders, order history, or wants to reorder something from a previous order. Returns itemized past orders with dates, products, and totals.\nintent=\"confirm_substitute\" → MANDATORY for ANY replacement of an existing basket item — BOTH (a) confirming a substitute for a previously-flagged unavailable item, AND (b) a voluntary swap between available products ('use X instead of Y', 'swap Y for X', 'replace Y with X', 'switch to X', 'I'd rather have X'). This is the ONLY way to actually change the basket; narrating a swap in text does NOT change it (a real customer asked to swap Angostura Bitters Cocoa for plain Angostura Bitters three times and Rachel just re-displayed the product each time because this tool was never called). Applies IN ANY PHRASING WHATSOEVER (a bare yes, restating the product name, looks good, sounds good, that works, anything at all indicating they want that specific option). Call this IMMEDIATELY in the SAME turn, alongside or instead of narrating the change in text — never just describe the substitution without also calling this tool. Pass original_item (the exact unavailable item being replaced), replacement_name, replacement_price, and replacement_size if known.\nintent=\"show_basket\" → MANDATORY whenever the customer asks to see their current basket/order/items/package (show me the basket, what's in my order, show me all the items, what do I have so far, recap). Returns the AUTHORITATIVE current basket as line_items_display — present it verbatim. NEVER say you can't see the basket, NEVER fall back to order_history, and NEVER reconstruct the basket from memory (your memory goes stale after swaps).\nintent=\"generate_proposal\" → generate PDF proposal — call when customer asks for a proposal/PDF/quote. If the customer states the order is tax-exempt (e.g. \"no tax on alcohol in this state\", \"set tax to 0\", \"no sales tax\") pass tax_exempt=true on the ShoppingAgent call — this actually zeroes the tax on the generated PDF. Do NOT just say $0 tax in your reply without also passing tax_exempt=true; the PDF is built by a separate template and won't reflect a change you only mention in text. If the customer wants a proposal with JUST the grand total and no fee breakdown ('just the total', 'no breakdown', 'don't show tax/tip/service', 'totals only'), pass totals_only=true — again, the PDF template decides this, so saying it in text does nothing.",
     input_schema: {
       type: "object",
       properties: {
-        intent:    { type: "string", enum: ["product_query","menu_build","custom_list","recommendation","place_order","generate_proposal","order_history","confirm_substitute"] },
+        intent:    { type: "string", enum: ["product_query","menu_build","custom_list","recommendation","place_order","generate_proposal","order_history","confirm_substitute","show_basket"] },
         zip:       { type: "string", description: "Delivery zip code" },
         email:     { type: "string", description: "Customer email" },
         queries:   { type: "array",  description: "For product_query: [{name, category, limit}]" },
@@ -77,9 +77,10 @@ const ALL_TOOLS = [
         notes:       { type: "string", description: "For generate_proposal: additional notes" },
         tax_exempt:  { type: "boolean", description: "For generate_proposal: set true if the customer states the order/location is tax-exempt (e.g. no state tax on alcohol) — this sets tax to $0 on the actual PDF, not just in your reply text" },
         tax_rate:    { type: "number", description: "For generate_proposal: override the tax rate as a decimal (e.g. 0.0625 for 6.25%). Only use if the customer specifies an exact rate; use tax_exempt instead for a flat $0." },
+        totals_only: { type: "boolean", description: "For generate_proposal: set true when the customer wants a proposal showing ONLY the grand total — no breakdown of product total, tax, service charge, tip, or delivery (e.g. 'just the total', 'no breakdown', 'don't show the fees', 'totals only', 'hide the tax/tip'). Line items and category subtotals still appear; only the fee breakdown is hidden." },
         min_price: { type: "number" },
         max_price:  { type: "number" },
-        original_item: { type: "string", description: "For confirm_substitute ONLY: the exact name of the originally unavailable/pending item being replaced (as previously flagged, e.g. 'New Amsterdam Gin 750 mL')." },
+        original_item: { type: "string", description: "For confirm_substitute ONLY: the exact name of the basket item being replaced — either a previously-flagged unavailable item OR any currently-available item the customer wants swapped out (e.g. 'New Amsterdam Gin 750 mL', 'Angostura Bitters Cocoa')." },
         replacement_name: { type: "string", description: "For confirm_substitute ONLY: the exact name of the product the customer confirmed as the replacement (e.g. 'Bombay London Dry Gin')." },
         replacement_price: { type: "number", description: "For confirm_substitute ONLY: the per-unit price of the confirmed replacement, as already shown to the customer." },
         replacement_size: { type: "string", description: "For confirm_substitute ONLY: the size of the confirmed replacement (e.g. '750 mL'), if known." }
@@ -124,7 +125,7 @@ const ALL_TOOLS = [
 
 const ORDER_CONFIRMATION_WORDS = ['yes', 'yeah', 'yep', 'yup', 'confirm', 'confirmed', 'go ahead', 'place it', 'place the order', 'sounds good', 'that works', 'correct', 'do it', 'please place', 'looks good', 'lgtm', 'proceed', 'ok place', 'okay place'];
 
-async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, onProposalGenerated, customerMessage, alreadyConfirmed, requesterEmail, sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems) {
+async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, onProposalGenerated, customerMessage, alreadyConfirmed, requesterEmail, sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems, onShowBasket, eventParams) {
   console.log(`[tool] ${toolName}`, JSON.stringify(toolInput).slice(0, 500));
   try {
     switch (toolName) {
@@ -172,6 +173,96 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         // never the LLM's from-memory reconstruction. Override with the authoritative
         // state.lastLineItems whenever we have one — the only time we fall through to the
         // LLM's supplied line_items is when there's genuinely no saved basket yet.
+        // Sanitize named_products: the LLM sometimes merges several products into ONE
+        // entry when reconstructing a list from memory — real bug on a budget-change
+        // rebuild: "Stella Artois 24x12 Oz Bottle + Corona Extra 24x12 Oz Bottle (3 cases
+        // each)" was sent as a single product name, matched nothing, and both beers came
+        // back "unavailable". Split such entries on " + " / " & " / " and ", strip any
+        // trailing "(N cases each)" parenthetical, and carry the per-item qty through.
+        // Fill missing event parameters from the persisted eventParams (authoritative).
+        // Real bug: on a budget-change rebuild the LLM sent budget=2500 but OMITTED
+        // guests and hours (and dropped the beer), so the calculator defaulted to 10
+        // guests and sized everything at 1 unit. A prompt rule asks the LLM to reuse
+        // them; this guarantees it. Only fills what's missing — never overrides a value
+        // the LLM did supply (the customer may genuinely be changing it).
+        // PARAM-CHANGE OVERRIDE: when the customer's message only changes ONE parameter
+        // (budget / guests / hours), rebuild from the persisted eventParams VERBATIM and
+        // apply just that change. The LLM only relays the new value. Real bug: on
+        // "the budget is now 2500" the LLM chose intent=menu_build (discarding the
+        // customer's whole custom cocktail package) and INVENTED guests=50 — a 5-spirit
+        // bar for 50 people replaced a 150-guest Margarita/Old Fashioned package. A
+        // fill-only override can't catch a wrong-but-present value; this one can.
+        if ((saInput.intent === 'custom_list' || saInput.intent === 'menu_build') && eventParams && eventParams.named_products) {
+          const m = String(customerMessage || '').toLowerCase();
+          const numIn = (re) => { const x = m.match(re); return x ? parseFloat(String(x[1]).replace(/,/g, '')) : null; };
+          let newBudget = numIn(/budget[^0-9$]*\$?\s*([\d,]+(?:\.\d+)?)\s*k?/i);
+          if (newBudget && /\d\s*k\b/i.test(m)) newBudget = newBudget * 1000;
+          const newGuests = numIn(/(\d+)\s*(?:people|guests|ppl|attendees|heads?)\b/i);
+          const newHours  = numIn(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\b/i);
+          const mentionsItems = /\b(add|remove|swap|replace|instead|also|plus|drop|without)\b/i.test(m);
+          const changes = [newBudget, newGuests, newHours].filter(v => v !== null).length;
+          if (changes >= 1 && !mentionsItems) {
+            try {
+              saInput.intent = eventParams.intent || 'custom_list';
+              saInput.named_products = JSON.parse(eventParams.named_products);
+              saInput.guests = newGuests || eventParams.guests || saInput.guests;
+              saInput.hours = newHours || eventParams.hours || saInput.hours;
+              if (eventParams.drinks_per_person && !newHours) saInput.drinks_per_person = eventParams.drinks_per_person;
+              saInput.budget = newBudget || eventParams.budget || saInput.budget;
+              if (eventParams.categories && !saInput.categories) saInput.categories = eventParams.categories;
+              // Tag which fields the CUSTOMER changed, so the capture only updates those.
+              saInput._paramChange = { budget: newBudget, guests: newGuests, hours: newHours };
+              console.log('[ShoppingAgent] PARAM-CHANGE OVERRIDE: rebuilt call from persisted eventParams; changes ->', JSON.stringify({ budget: newBudget, guests: newGuests, hours: newHours }), '| intent:', saInput.intent, '| guests:', saInput.guests, '| hours:', saInput.hours, '| budget:', saInput.budget);
+            } catch (e) { console.log('[ShoppingAgent] PARAM-CHANGE OVERRIDE failed:', e.message); }
+          }
+        }
+        if ((saInput.intent === 'custom_list' || saInput.intent === 'menu_build') && eventParams) {
+          const filled = [];
+          if (!saInput.guests && eventParams.guests) { saInput.guests = eventParams.guests; filled.push('guests=' + eventParams.guests); }
+          if (!saInput.hours && !saInput.drinks_per_person) {
+            if (eventParams.hours) { saInput.hours = eventParams.hours; filled.push('hours=' + eventParams.hours); }
+            else if (eventParams.drinks_per_person) { saInput.drinks_per_person = eventParams.drinks_per_person; filled.push('dpp=' + eventParams.drinks_per_person); }
+          }
+          if (!saInput.budget && eventParams.budget) { saInput.budget = eventParams.budget; filled.push('budget=' + eventParams.budget); }
+          // Restore whole categories the LLM dropped (e.g. the beer vanished from the
+          // rebuild). Only adds items whose category is entirely absent from the new list.
+          if (saInput.intent === 'custom_list' && Array.isArray(saInput.named_products) && eventParams.named_products) {
+            try {
+              const prev = JSON.parse(eventParams.named_products) || [];
+              const haveCats = new Set(saInput.named_products.map(n => String(n.category || '').toLowerCase()));
+              for (const pn of prev) {
+                const cat = String(pn.category || '').toLowerCase();
+                if (cat && !haveCats.has(cat)) { saInput.named_products.push(pn); filled.push('restored ' + cat + ':' + pn.name); }
+              }
+            } catch (e) {}
+          }
+          if (filled.length) console.log('[ShoppingAgent] filled missing params from persisted eventParams:', filled.join(', '));
+        }
+        if (saInput.intent === 'custom_list' && Array.isArray(saInput.named_products)) {
+          const splitMergedNamedProducts = (list) => {
+            const out = [];
+            for (const np of list) {
+              const rawName = String((np && np.name) || '');
+              const eachMatch = rawName.match(/\((\d+)\s*(?:cases?|bottles?|packs?)?\s*each\)/i);
+              const cleaned = rawName.replace(/\s*\([^)]*each\)\s*$/i, '').trim();
+              // Split ONLY on " + " — real product names use "&" and "and" ("Bread & Butter
+              // Chardonnay", "Martini & Rossi") and would be wrongly split on those.
+              const parts = cleaned.split(/\s+\+\s+/).map(s => s.trim()).filter(Boolean);
+              if (parts.length > 1) {
+                console.log('[ShoppingAgent] splitting merged named_product', JSON.stringify(rawName), '->', JSON.stringify(parts));
+                for (const p of parts) {
+                  const item = Object.assign({}, np, { name: p });
+                  if (eachMatch && !item.qty) { item.qty = parseInt(eachMatch[1]); item.qty_from_customer = true; }
+                  out.push(item);
+                }
+              } else {
+                out.push(np);
+              }
+            }
+            return out;
+          };
+          saInput.named_products = splitMergedNamedProducts(saInput.named_products);
+        }
         if ((saInput.intent === 'place_order' || saInput.intent === 'generate_proposal') && currentLineItems) {
           if (saInput.line_items && saInput.line_items !== currentLineItems) {
             console.log('[ShoppingAgent] overriding LLM-supplied line_items with authoritative current basket for', saInput.intent);
@@ -186,9 +277,15 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         // real phrasings and was fundamentally fragile. Now the LLM itself (which
         // already understands intent correctly) explicitly calls this tool whenever it
         // recognizes a confirmation, and the actual state mutation happens reliably here.
+        // show_basket: read the authoritative basket in-process (see server.js onShowBasket).
+        if (saInput.intent === 'show_basket') {
+          if (!onShowBasket) return { success: false, error: 'show_basket not available in this context' };
+          return onShowBasket() || { success: false };
+        }
         if (saInput.intent === 'confirm_substitute') {
           if (!onSubstituteConfirmed) return { success: false, error: 'confirm_substitute not available in this context' };
-          const result = onSubstituteConfirmed(saInput.original_item || '', saInput.replacement_name || '', saInput.replacement_price || 0, saInput.replacement_size || '');
+          // Handler is async now (it resolves the replacement to a real catalog product).
+          const result = await onSubstituteConfirmed(saInput.original_item || '', saInput.replacement_name || '', saInput.replacement_price || 0, saInput.replacement_size || '');
           return result || { success: true };
         }
         if (saInput.intent === 'place_order' && !alreadyConfirmed) {
@@ -211,7 +308,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         const result = JSON.parse(saData.result.content[0].text);
         console.log('[ShoppingAgent] intent:', saInput.intent, 'channel:', saInput.channel, 'success:', result.success);
         if (result.success && result.line_items && ['menu_build','custom_list'].includes(saInput.intent) && onPackageBuilt) {
-          onPackageBuilt(saInput.email || '', result.line_items, saInput.channel);
+          onPackageBuilt(saInput.email || '', result.line_items, saInput.channel, saInput);
         }
         // Track unavailable items via the tool's own structured field, not by
         // trying to parse the LLM's eventual free-text reply — this is what lets
@@ -319,7 +416,7 @@ const path = require('path');
 
 const MAX_ITERATIONS = 10;
 
-async function rachelChat({ messages, context, rachelPrompt, gbrain_context = '', channel_format = 'voiceflow', address_rule = '', onPackageBuilt = null, onProposalGenerated = null, sendEmailFn = null, lastProposalUrl = '', customerMessage = '', alreadyConfirmed = false, onUnavailableItems = null, onProductDiscussed = null, onSubstituteConfirmed = null, currentLineItems = '' }) {
+async function rachelChat({ messages, context, rachelPrompt, gbrain_context = '', channel_format = 'voiceflow', address_rule = '', onPackageBuilt = null, onProposalGenerated = null, sendEmailFn = null, lastProposalUrl = '', customerMessage = '', alreadyConfirmed = false, onUnavailableItems = null, onProductDiscussed = null, onSubstituteConfirmed = null, currentLineItems = '', onShowBasket = null, eventParams = null }) {
   const channelNotes = {
     html: `
 
@@ -402,7 +499,7 @@ RULES:
       const toolResults = [];
       for (const block of response.content) {
         if (block.type === 'tool_use') {
-          const result = await executeTool(block.name, block.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems);
+          const result = await executeTool(block.name, block.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems, onShowBasket, eventParams);
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,

@@ -644,45 +644,13 @@ async function executeTool(name, input) {
     if (input.budget && input.budget > 0) {
       const maxProduct = Math.floor((input.budget - 25) / 1.25 * 100) / 100;
       let runningTotal = finalItems2.reduce(function(sum,p) { return sum+p.qty*p.price; }, 0);
-      // QUANTITY-FIRST trim (business rule: quantity always takes priority, price tier
-      // flexes). Real bug: the upgrade pass raised wine to a ~$55 bottle, then this trim
-      // cut the calculator's 48 bottles down to 11 to fit budget — fewer bottles of
-      // fancier wine, the opposite of what a 150-guest event needs. Now: when over
-      // budget, swap the most expensive items to CHEAPER products first (qty preserved);
-      // only reduce quantity as a true last resort if no cheaper product exists.
-      const downgradedNames = new Set();
-      let guard = 0;
-      while (runningTotal > maxProduct && guard++ < 25) {
-        const cand = finalItems2
-          .filter(function(p) { return !downgradedNames.has(p.name); })
-          .sort(function(a,b) { return b.price - a.price; })[0];
-        if (!cand) break;
-        downgradedNames.add(cand.name);
-        const searchTerm = (cand.label || cand.name).split(' ').slice(0,2).join(' ');
-        let cheaper = [];
-        try {
-          const cands = await searchWithFallbacks(loc.kitchen, loc.client, searchTerm, 20);
-          cheaper = cands
-            .map(function(p) { return { name: p.name, price: p.salePrice||p.price||0, upc: p.upc||'', url: p.url||'', product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'', establishmentId: p.establishmentId||'' }; })
-            .filter(function(p) { return p.price > 0 && p.price < cand.price; })
-            .sort(function(a,b) { return b.price - a.price; });
-        } catch(e) {}
-        if (cheaper.length > 0) {
-          const pick = cheaper[0];
-          console.log('[shopping-agent] QUANTITY-FIRST downgrade', cand.name, '$'+cand.price, '->', pick.name, '$'+pick.price, '(qty preserved:', cand.qty+')');
-          Object.assign(cand, pick);
-          runningTotal = finalItems2.reduce(function(sum,p) { return sum+p.qty*p.price; }, 0);
-        }
-      }
-      // Last resort only: still over budget after exhausting cheaper products
-      while (runningTotal > maxProduct && finalItems2.some(function(p) { return p.qty > 1; })) {
-        const maxItem = finalItems2.reduce(function(a,b) { return (b.qty > 1 && b.price > a.price) ? b : a; }, {price:0});
-        if (maxItem.qty > 1) {
-          console.log('[shopping-agent] QUANTITY-FIRST last-resort qty trim', maxItem.name, maxItem.qty, '->', maxItem.qty-1);
-          maxItem.qty--;
-          runningTotal = finalItems2.reduce(function(sum,p) { return sum+p.qty*p.price; }, 0);
-        } else break;
-      }
+      // Budget fitting is now owned entirely by buildPackage in functions.js, which
+      // runs a QUANTITY-FIRST fit WITH product-identity guards (same size/pack, same
+      // category, red/white/sparkling match, 750 mL preference) before returning.
+      // A duplicate unguarded downgrade loop that lived here re-trimmed the already-
+      // fitted output and, lacking those guards, "downgraded" a 24-pack of Stella
+      // Artois to a coffee liqueur because it was cheaper — which then made the beer
+      // appear unavailable. Removed; do not reintroduce budget trimming here.
       result.line_items = JSON.stringify(finalItems2);
     }
     
@@ -792,6 +760,7 @@ async function executeTool(name, input) {
       line_items: lineItems,
       notes: input.notes || '',
       tax_exempt: input.tax_exempt || false,
+      totals_only: input.totals_only || false,
       tax_rate: typeof input.tax_rate === 'number' ? input.tax_rate : undefined
     }, outputPath);
     return {

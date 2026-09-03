@@ -252,11 +252,64 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
     channel_format: format,
     onProposalGenerated: onProposalGenerated || null,
     currentLineItems: stateForEmail.lastLineItems || '',
+    eventParams: stateForEmail.eventParams || null,
     customerMessage: message,
     alreadyConfirmed: alreadyConfirmed || false,
     sendEmailFn: sendEmail,
     lastProposalUrl: stateForEmail.lastProposalUrl || '',
-    onPackageBuilt: (em, lineItems, fmt) => {
+    onPackageBuilt: (em, lineItems, fmt, saInput) => {
+      // A successful build supersedes any prior "unavailable" state. Real bug: two
+      // beers were falsely flagged unavailable on one rebuild (stale pendingSubstitutes
+      // entries), then restored fine on the NEXT rebuild — but the pending list was
+      // never cleared. A later, unrelated bitters swap then fell into the regex merge
+      // block, which "replaced Stella Artois" with the bitters and knocked the beer out
+      // of the basket ("4x 3x Angostura ... has replaced Stella Artois 24x12 Oz").
+      try {
+        const stPS = getState(sessionKey);
+        if (stPS.pendingSubstitutes && stPS.pendingSubstitutes.length) {
+          console.log('[package-built] clearing stale pendingSubstitutes:', JSON.stringify(stPS.pendingSubstitutes));
+          stPS.pendingSubstitutes = []; // fresh build supersedes prior unavailable state
+        }
+      } catch (e) {}
+      // Persist the event parameters alongside the basket. Real bug: after a service
+      // restart the LLM's conversation memory (sessions[]) was gone, and "budget is now
+      // $2,500, everything else is the same" got "I don't have the details from a
+      // previous build" — the basket had survived (flowState on disk) but guests/hours/
+      // categories had not. Storing them here and injecting them each turn (see
+      // ## EVENT PARAMETERS below) lets a single-parameter change rebuild without re-asking.
+      try {
+        if (saInput && (saInput.guests || saInput.hours || saInput.budget)) {
+          const st = getState(sessionKey);
+          // MERGE into existing params — never overwrite a known value with null. Real
+          // bug: a budget-only rebuild (no guests/hours on the call) succeeded as a tool
+          // call, so this fired and REPLACED guests=150/hours=3 with nulls, poisoning
+          // the persisted state for every subsequent rebuild.
+          const prev = st.eventParams || {};
+          const merged = Object.assign({}, prev);
+          const isInitial = !prev.guests;                 // first real build: capture everything
+          const pc = saInput._paramChange || null;         // explicit customer param change
+          // Guests/hours are only ever set from (a) the initial customer-driven build or
+          // (b) a field the customer explicitly changed. A reconstructed rebuild — where
+          // the LLM re-typed values from memory — never touches them. Real bug: a
+          // hallucinated menu_build with guests=50 overwrote the customer's 150 and
+          // poisoned every later rebuild.
+          if (isInitial) {
+            if (saInput.guests) merged.guests = saInput.guests;
+            if (saInput.hours) merged.hours = saInput.hours;
+            if (saInput.drinks_per_person) merged.drinks_per_person = saInput.drinks_per_person;
+            if (saInput.categories) merged.categories = saInput.categories;
+            if (saInput.intent) merged.intent = saInput.intent;
+            if (saInput.named_products && saInput.named_products.length) merged.named_products = JSON.stringify(saInput.named_products);
+          } else if (pc) {
+            if (pc.guests) merged.guests = pc.guests;
+            if (pc.hours) merged.hours = pc.hours;
+          }
+          // Budget follows the latest explicit value (initial, or a customer change).
+          if (isInitial || (pc && pc.budget)) { if (saInput.budget) merged.budget = saInput.budget; }
+          st.eventParams = merged;
+          saveFlowState();
+        }
+      } catch (e) {}
       const state = getState(sessionKey);
       const key = makeCacheKey(em || email, state.zip, state.lastFingerprint);
       packageCache[key] = lineItems;
@@ -324,7 +377,28 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       saveFlowState();
       console.log('[product-discussed] captured as active context (no prior basket):', key);
     },
-    onSubstituteConfirmed: (originalItem, replacementName, replacementPrice, replacementSize) => {
+    // show_basket: return the AUTHORITATIVE current basket. Real gap found: the LLM had
+    // no way to READ state.lastLineItems — "show me the basket" only ever worked when
+    // the basket happened to still be in the LLM's recent context. After a swap via
+    // confirm_substitute (a state change the LLM doesn't see as line items), its memory
+    // went stale and it fell back to order history, telling the customer it "can't
+    // display the basket." This is the same authoritative source place_order and
+    // generate_proposal now use, formatted like a package summary.
+    onShowBasket: () => {
+      try {
+        const state = getState(sessionKey);
+        let items = [];
+        try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+        if (!items.length) return { success: true, empty: true, line_items: '[]', line_items_display: '', product_total: '0.00' };
+        const disp = items.map(li => {
+          const qty = li.qty || li.quantity || 1, price = parseFloat(li.price) || 0;
+          return qty + 'x ' + String(li.name || li.label || '').replace(/ \*$/, '') + (li.size ? ' \u2014 ' + li.size : '') + ' \u2014 $' + price.toFixed(2) + ' ea = $' + (qty * price).toFixed(2);
+        });
+        const total = items.reduce((s, li) => s + (li.qty || li.quantity || 1) * (parseFloat(li.price) || 0), 0);
+        return { success: true, empty: false, line_items: JSON.stringify(items), line_items_display: disp.join('\n'), product_total: total.toFixed(2), item_count: items.length };
+      } catch (e) { return { success: false, error: e.message }; }
+    },
+    onSubstituteConfirmed: async (originalItem, replacementName, replacementPrice, replacementSize) => {
       // The LLM calls this explicitly whenever it recognizes the customer has confirmed
       // a substitute, in ANY phrasing — replacing the earlier, fundamentally fragile
       // approach of trying to detect confirmations by regex-matching the customer's raw
@@ -347,10 +421,59 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
             items.splice(removeIdx, 1);
           }
         }
+        // Resolve the replacement to a REAL catalog product. Real bug: the LLM called
+        // confirm_substitute without a price, and this pushed a hollow placeholder —
+        // $0.00, empty product_id/upc/establishmentId — which showed as "pending
+        // confirmation (currently $0.00)" in the basket and could never be ordered.
+        // Look the product up by name so a swapped item is always orderable; use the
+        // LLM-supplied size/price only to pick the right variant among matches.
+        let resolved = null;
+        try {
+          const rr = await fetch('http://127.0.0.1:8300/mcp', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: replacementName, limit: 8 }], zip: state.zip || '', email: email } } })
+          });
+          const rt = await rr.text();
+          const rl = rt.split('\n').find(l => l.startsWith('data:'));
+          const rd = rl ? JSON.parse(rl.replace('data:', '').trim()) : null;
+          const rres = rd ? JSON.parse(rd.result.content[0].text) : null;
+          const prods = (rres && rres.results && rres.results[0] && rres.results[0].products) || [];
+          // Strip size/pack suffixes BEFORE comparing names, otherwise the catalog name
+          // "Angostura Bitters - 4 OZ" reads as "angosturabitters4oz" and gets treated as
+          // a different variant of "angosturabitters" (real regression: the correct plain
+          // bitters scored negative and the swap stored a $0 placeholder).
+          const stripSize = s => String(s || '').replace(/\s*[-—]?\s*\d+(\.\d+)?\s*(ml|l|oz|liter|litre)\b.*$/i, '').replace(/\s*\d+\s*x\s*\d+\s*oz.*$/i, '');
+          const norm = s => stripSize(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+          const wantSize = String(replacementSize || '').toLowerCase().replace(/[^a-z0-9]/g, ''), wantName = norm(replacementName);
+          const scored = prods.map(p => {
+            const pn = norm(p.name), ps = norm(p.sizeStr || p.size || '');
+            let s = 0;
+            // Exact match wins. A candidate that CONTAINS the wanted name with extra words
+            // ("angosturabitterscocoa" for wanted "angosturabitters") is a DIFFERENT product
+            // — penalize it, don't reward it (real bug: plain Angostura Bitters resolved to
+            // the Cocoa variant, so the displayed swap silently didn't happen at the
+            // product level). Only reward the reverse (wanted name has extra descriptors).
+            if (pn === wantName) s += 100;
+            else if (wantName.indexOf(pn) >= 0) s += 40;      // candidate is a shorter core of the wanted name
+            else if (pn.indexOf(wantName) >= 0) s -= 30;      // candidate has extra words = different variant
+            if (wantSize && ps && ps.indexOf(wantSize) >= 0) s += 30;
+            const pp = parseFloat(p.salePrice || p.price) || 0;
+            if (replacementPrice && pp && Math.abs(pp - replacementPrice) < 0.01) s += 20;
+            return { p, s };
+          }).sort((a, b) => b.s - a.s);
+          if (scored.length && scored[0].s > 0) resolved = scored[0].p;
+        } catch (e) { console.log('[confirm-substitute] product lookup failed:', e.message); }
+        if (resolved) {
+          console.log('[confirm-substitute] resolved', JSON.stringify(replacementName), '->', resolved.name, '$' + (resolved.salePrice || resolved.price));
+        } else {
+          console.log('[confirm-substitute] WARNING: could not resolve', JSON.stringify(replacementName), 'to a catalog product; storing as supplied');
+        }
+        const rp = resolved ? (parseFloat(resolved.salePrice || resolved.price) || replacementPrice || 0) : (replacementPrice || 0);
         items.push({
-          label: replacementName, name: replacementName, qty: qtyToUse, quantity: qtyToUse,
-          price: replacementPrice || 0, size: replacementSize || '', url: '', product_id: '',
-          upc: '', establishmentId: '', category: categoryToUse
+          label: replacementName, name: resolved ? resolved.name : replacementName, qty: qtyToUse, quantity: qtyToUse,
+          price: rp, size: resolved ? (resolved.sizeStr || resolved.size || replacementSize || '') : (replacementSize || ''),
+          url: resolved ? (resolved.url || '') : '', product_id: resolved ? ((resolved.corpProductFilter && resolved.corpProductFilter.corpProductId) || resolved.product_id || resolved.id || '') : '',
+          upc: resolved ? (resolved.upc || '') : '', establishmentId: resolved ? (resolved.establishmentId || '') : '', category: categoryToUse
         });
         const newLineItems = JSON.stringify(items);
         const key2 = makeCacheKey(email, state.zip, state.lastFingerprint);
@@ -375,7 +498,11 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
 
 // ── POST /chat ─────────────────────────────────────────────────────────────
 app.post('/chat', async (req, res) => {
-  const { message, context, gbrain_context, session_id, format = 'markdown', skip_gbrain = false } = req.body;
+  // `let`, not `const`: the proposal flow re-dispatches into the date handler by
+  // reassigning `message = state.savedEventDate` when client+date are already saved.
+  // As a const this threw "Assignment to constant variable" at runtime — a TypeError
+  // that node --check cannot catch — on exactly the path where both were remembered.
+  let { message, context, gbrain_context, session_id, format = 'markdown', skip_gbrain = false } = req.body;
 
   if (!message) return res.status(400).json({ error: 'message required' });
 
@@ -422,7 +549,59 @@ app.post('/chat', async (req, res) => {
         gbrain_context: skip_gbrain ? gbrain_context : (gbrainContext || gbrain_context || ''),
         address_rule: '',
         channel_format: format,
-        onPackageBuilt: (em, lineItems, fmt) => {
+        onPackageBuilt: (em, lineItems, fmt, saInput) => {
+      // A successful build supersedes any prior "unavailable" state. Real bug: two
+      // beers were falsely flagged unavailable on one rebuild (stale pendingSubstitutes
+      // entries), then restored fine on the NEXT rebuild — but the pending list was
+      // never cleared. A later, unrelated bitters swap then fell into the regex merge
+      // block, which "replaced Stella Artois" with the bitters and knocked the beer out
+      // of the basket ("4x 3x Angostura ... has replaced Stella Artois 24x12 Oz").
+      try {
+        const stPS = getState(sessionKey);
+        if (stPS.pendingSubstitutes && stPS.pendingSubstitutes.length) {
+          console.log('[package-built] clearing stale pendingSubstitutes:', JSON.stringify(stPS.pendingSubstitutes));
+          stPS.pendingSubstitutes = []; // fresh build supersedes prior unavailable state
+        }
+      } catch (e) {}
+      // Persist the event parameters alongside the basket. Real bug: after a service
+      // restart the LLM's conversation memory (sessions[]) was gone, and "budget is now
+      // $2,500, everything else is the same" got "I don't have the details from a
+      // previous build" — the basket had survived (flowState on disk) but guests/hours/
+      // categories had not. Storing them here and injecting them each turn (see
+      // ## EVENT PARAMETERS below) lets a single-parameter change rebuild without re-asking.
+      try {
+        if (saInput && (saInput.guests || saInput.hours || saInput.budget)) {
+          const st = getState(sessionKey);
+          // MERGE into existing params — never overwrite a known value with null. Real
+          // bug: a budget-only rebuild (no guests/hours on the call) succeeded as a tool
+          // call, so this fired and REPLACED guests=150/hours=3 with nulls, poisoning
+          // the persisted state for every subsequent rebuild.
+          const prev = st.eventParams || {};
+          const merged = Object.assign({}, prev);
+          const isInitial = !prev.guests;                 // first real build: capture everything
+          const pc = saInput._paramChange || null;         // explicit customer param change
+          // Guests/hours are only ever set from (a) the initial customer-driven build or
+          // (b) a field the customer explicitly changed. A reconstructed rebuild — where
+          // the LLM re-typed values from memory — never touches them. Real bug: a
+          // hallucinated menu_build with guests=50 overwrote the customer's 150 and
+          // poisoned every later rebuild.
+          if (isInitial) {
+            if (saInput.guests) merged.guests = saInput.guests;
+            if (saInput.hours) merged.hours = saInput.hours;
+            if (saInput.drinks_per_person) merged.drinks_per_person = saInput.drinks_per_person;
+            if (saInput.categories) merged.categories = saInput.categories;
+            if (saInput.intent) merged.intent = saInput.intent;
+            if (saInput.named_products && saInput.named_products.length) merged.named_products = JSON.stringify(saInput.named_products);
+          } else if (pc) {
+            if (pc.guests) merged.guests = pc.guests;
+            if (pc.hours) merged.hours = pc.hours;
+          }
+          // Budget follows the latest explicit value (initial, or a customer change).
+          if (isInitial || (pc && pc.budget)) { if (saInput.budget) merged.budget = saInput.budget; }
+          st.eventParams = merged;
+          saveFlowState();
+        }
+      } catch (e) {}
           packageCache[(em || email) + ':b2b'] = lineItems;
         }
       });
@@ -1057,7 +1236,19 @@ app.post('/chat', async (req, res) => {
       'generate the proposal', 'pdf proposal', 'create a proposal', 'create the proposal', 'make a proposal',
       'make the proposal', 'send a proposal', 'send the proposal', 'build a proposal', 'get me a proposal',
       'want a proposal', 'want the proposal'];
-    if (proposalTriggers.some(t => msgLower.includes(t)) && !state.proposalStep) {
+    const isProposalTrigger = proposalTriggers.some(t => msgLower.includes(t));
+    // An explicit proposal request ALWAYS restarts the flow. Previously it was ignored
+    // whenever a step was already in progress (`&& !state.proposalStep`), so a request
+    // that crashed mid-flow left proposalStep stuck (e.g. 'qty') and the customer's next
+    // "generate a proposal" fell into the stale handler and asked "how many bottles?".
+    // An unambiguous re-request should never be swallowed by leftover state.
+    if (isProposalTrigger && state.proposalStep) {
+      console.log('[proposal] explicit re-request while proposalStep=' + state.proposalStep + ' — resetting stale flow');
+      state.proposalStep = null;
+      state.proposalData = null;
+      saveFlowState();
+    }
+    if (isProposalTrigger) {
       const caps = getCapabilities(format);
       if (!caps.can_generate_proposal) {
         // Capability disabled — never start the real proposal state machine. Let Rachel
@@ -1133,11 +1324,22 @@ app.post('/chat', async (req, res) => {
       return res.json({ text: ask, response: ask });
     }
 
+    // A re-issued command ("generate the pdf", "proposal") or an explicit skip is NOT an
+    // answer to the client/date question. Real bug: the customer replied "generate the
+    // pdf" to both prompts and the state machine stored that literal text as the client
+    // name and event date (PDF showed "—"), and would have remembered it for the rest of
+    // the session. Treat it as "proceed with this field blank" and never persist it.
+    const isNonAnswer = (m) => /^\s*(generate|create|make|build)\b.*(pdf|proposal|quote)|^\s*(proposal|pdf|quote|skip|none|n\/a|na|no|-)\s*$/i.test(m || '');
+
     if (state.proposalStep === 'client') {
-      // Strip any date that might be in the client name
-      state.proposalData.client_name = message.split(',')[0].trim();
-      // Persist durably so later proposals in this session don't re-ask (Issue C).
-      state.savedClientName = state.proposalData.client_name;
+      if (isNonAnswer(message)) {
+        state.proposalData.client_name = '';
+      } else {
+        // Strip any date that might be in the client name
+        state.proposalData.client_name = message.split(',')[0].trim();
+        // Persist durably so later proposals in this session don't re-ask (Issue C).
+        state.savedClientName = state.proposalData.client_name;
+      }
       // If the event date is already known from an earlier proposal, skip asking again.
       if (state.savedEventDate) {
         state.proposalData.event_date = state.savedEventDate;
@@ -1153,8 +1355,12 @@ app.post('/chat', async (req, res) => {
     }
 
     if (state.proposalStep === 'date') {
-      state.proposalData.event_date = message.trim();
-      state.savedEventDate = state.proposalData.event_date;
+      if (isNonAnswer(message)) {
+        state.proposalData.event_date = '';
+      } else {
+        state.proposalData.event_date = message.trim();
+        state.savedEventDate = state.proposalData.event_date;
+      }
       state.proposalStep = 'generating';
       // Load basket now before building summary
       if (email && !state.lastLineItems) {
@@ -1437,7 +1643,7 @@ app.post('/chat', async (req, res) => {
       // stick with Plymouth at $37.39, Drumshanbo at $43.99" mixes both styles in
       // one paragraph — a pure line-split regex misses the inline mentions entirely).
       const candidateLines = recentAssistantTextSel.split(String.fromCharCode(10));
-      const candidates = [];
+      let candidates = []; // let: reassigned by the fragment filter below
       for (const line of candidateLines) {
         // Format 1: dash-separated, one option per visual line
         const priceMatch = line.match(/\$([\d.]+)/);
@@ -1474,6 +1680,21 @@ app.post('/chat', async (req, res) => {
         }
       }
 
+      // Reject fragment "candidates". The inline regex can start matching mid-token,
+      // producing junk like "x12 Oz", "ML", "OZ", "Got it", "Well within your" — and
+      // one of those junk fragments once WON a merge and replaced real Stella Artois
+      // with a phantom "x12 Oz" item. A real product name starts with a letter that
+      // isn't glued to a preceding digit, is not just a size unit, and isn't filler.
+      function isPlausibleProductName(n) {
+        const s = String(n || '').trim();
+        if (!s) return false;
+        if (/^(x\d|ML|L|OZ|mL|oz)\b/i.test(s)) return false;              // "x12 Oz", "ML", "OZ"
+        if (/^(got it|well within|of your|at|hmm|keep as|is and|for the|within|here's|spirits bumped)/i.test(s)) return false; // filler
+        if (!/[A-Za-z]{3,}/.test(s)) return false;                           // needs a real word
+        if (/^\d/.test(s)) return true;                                     // "3x Rittenhouse..." is fine
+        return true;
+      }
+      candidates = candidates.filter(c => isPlausibleProductName(c.name));
       console.log('[CANDIDATES-DIAGNOSTIC] extracted:', JSON.stringify(candidates));
       if (candidates.length > 0) {
         const msgLowerSel = message.toLowerCase().replace(/\*/g, '');
@@ -1522,6 +1743,26 @@ app.post('/chat', async (req, res) => {
 
         let matched = null;
 
+        // Tier 0.5 — EXACT full-name match, checked before every heuristic. The 2-word
+        // heuristic below is still ambiguous when candidates share their first two
+        // words ("Angostura Bitters" vs "Angostura Bitters Cocoa"): "swap with Angostura
+        // Bitters" matched both, so Rachel re-asked three times. If the message contains
+        // a candidate's complete name as a whole phrase, that candidate wins outright.
+        // Where one name is a prefix of another, prefer the LONGEST name the message
+        // actually contains — so "Angostura Bitters" (no "Cocoa" in the message) picks
+        // the plain bitters, while "Angostura Bitters Cocoa" picks the cocoa one.
+        {
+          const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+          const msgN = ' ' + norm(msgLowerSel) + ' ';
+          const exact = candidates
+            .filter(c => { const n = norm(c.name.replace(/^\d+x\s*/i, '')); return n.length >= 4 && msgN.indexOf(' ' + n + ' ') >= 0; })
+            .sort((a, b) => b.name.length - a.name.length);
+          if (exact.length > 0) {
+            matched = exact[0];
+            console.log('[substitute-merge] Tier 0.5 exact full-name match:', JSON.stringify(matched.name));
+          }
+        }
+
         // Tier 0: bare affirmative with NO item name at all (e.g. "sounds good", "yes")
         // replying to a single-candidate proposal question (e.g. "Bombay London Dry
         // Gin — 750 mL — $27.49. Works for you?") — real gap found tonight: this is a
@@ -1550,7 +1791,7 @@ app.post('/chat', async (req, res) => {
               const nameSingle = namePartSingle.replace(/^\s*\d+[\.\)]\s*/, '').replace(/\*/g, '').trim();
               if (nameSingle && nameSingle.split(' ').length <= 8) {
                 const sizeMatchSingle = beforeOnlyPrice.match(/\d+(\.\d+)?\s*(mL|ML|L|oz|OZ)\b/);
-                matched = { name: nameSingle, price: parseFloat(onlyPriceMatch[1]), size: sizeMatchSingle ? sizeMatchSingle[0] : '' };
+                if (!matched) matched = { name: nameSingle, price: parseFloat(onlyPriceMatch[1]), size: sizeMatchSingle ? sizeMatchSingle[0] : '' };
                 console.log('[substitute-merge] Tier 0 (bare affirmative to single-candidate question) matched:', nameSingle);
               }
             }
@@ -1561,7 +1802,7 @@ app.post('/chat', async (req, res) => {
           // Tier 1: short message — a single matching candidate is treated as a direct
           // restatement/confirmation, no extra phrase needed.
           const tier1Matches = candidates.filter(c => candidateWordMatch(c) !== null);
-          if (tier1Matches.length === 1) matched = tier1Matches[0];
+          if (!matched && tier1Matches.length === 1) matched = tier1Matches[0];
         }
         if (!matched) {
           // Tier 2: longer/compound message — require genuine confirmation language
@@ -1689,6 +1930,20 @@ app.post('/chat', async (req, res) => {
     if (context.saved_package) {
       fullAddrRule += `\n\n## ACTIVE PACKAGE\nline_items: ${context.saved_package}\nFor brand swaps: keep quantities, swap only requested item. Call ShoppingAgent intent=custom_list with updated named_products.`;
     }
+      // Inject the persisted event parameters (OUTSIDE the saved_package branch: that
+      // branch depends on an in-memory cache that is empty after every restart, which
+      // is exactly when these persisted params are needed). Fires whenever they exist.
+      // Inject the persisted event parameters so a single-parameter change (new budget,
+      // new headcount) can rebuild using everything else already known — even after a
+      // restart wiped the LLM's conversation memory.
+      try {
+        const stEP = getState(sessionKey);
+        if (stEP.eventParams) {
+          const ep = stEP.eventParams;
+          fullAddrRule += `\n\n## EVENT PARAMETERS (already established — REUSE these, do not re-ask)\nguests: ${ep.guests || 'unknown'} | hours: ${ep.hours || (ep.drinks_per_person ? ep.drinks_per_person + ' drinks/person' : 'unknown')} | budget: ${ep.budget ? '$' + ep.budget : 'unknown'}` + (ep.categories ? ` | categories: ${JSON.stringify(ep.categories)}` : '') + (ep.named_products ? `\nnamed_products: ${ep.named_products}` : '') + `\nIf the customer changes ONE of these (e.g. a new budget), rebuild with the SAME intent (${ep.intent || 'custom_list'}) using all the other values above unchanged.`;
+        }
+      } catch (e) {}
+
 
     // Call Rachel
     const output = await callRachel({ sessionKey, message, context, format, gbrainContext, addressRule: fullAddrRule, email });

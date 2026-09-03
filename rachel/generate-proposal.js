@@ -76,7 +76,7 @@ function groupByCategory(lineItems) {
 }
 
 function generateHTML(proposal) {
-  const { client_name, event_date, line_items, notes, tax_exempt, tax_rate } = proposal;
+  const { client_name, event_date, line_items, notes, tax_exempt, tax_rate, totals_only } = proposal;
   const items = typeof line_items === 'string' ? JSON.parse(line_items) : line_items;
   const groups = groupByCategory(items);
   
@@ -101,7 +101,14 @@ function generateHTML(proposal) {
         <td style="text-align:right">$${(p.qty * p.price).toFixed(2)}</td>
       </tr>`).join('');
     
+    // Each category is its own table inside a keep-together block, so a section that
+    // doesn't fit on the current page moves WHOLE to the next page — its subtotal never
+    // gets orphaned from its rows. (Previously all categories shared one <tbody>, so
+    // Chromium broke rows freely and a "X Total" line could land alone on the next page.)
     categorySections += `
+      <div class="cat-section">
+      <table>
+      <tbody>
       <tr class="cat-header">
         <td colspan="5">${cat.toUpperCase()}</td>
       </tr>
@@ -113,7 +120,10 @@ function generateHTML(proposal) {
       <tr class="cat-total">
         <td colspan="4"><strong>${cat} Total</strong></td>
         <td style="text-align:right"><strong>$${catTotal.toFixed(2)}</strong></td>
-      </tr>`;
+      </tr>
+      </tbody>
+      </table>
+      </div>`;
   });
 
   return `<!DOCTYPE html>
@@ -121,6 +131,9 @@ function generateHTML(proposal) {
 <head>
 <meta charset="utf-8">
 <style>
+  /* Keep each category (header + rows + subtotal) together on one page. */
+  .cat-section { break-inside: avoid; page-break-inside: avoid; }
+  .cat-section table { width: 100%; margin-bottom: 0; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: Arial, sans-serif; font-size: 12px; color: #333; padding: 40px; }
   .logo { color: ${BEVVI_RED}; font-size: 28px; font-weight: bold; margin-bottom: 20px; }
@@ -155,22 +168,20 @@ function generateHTML(proposal) {
     <div><label>Event Date(s):</label><span>${event_date || '—'}</span></div>
   </div>
   <h2>Beverage Selection</h2>
-  <table>
-    <tbody>${categorySections}</tbody>
-  </table>
+  ${categorySections}
   ${notes ? `<div class="notes">${notes}</div>` : ''}
-  <div style="margin-top:16px;padding:12px 16px;background:#f9f9f9;border:1px solid #eee;border-radius:4px;font-size:13px">
+  ${totals_only ? '' : `<div style="margin-top:16px;padding:12px 16px;background:#f9f9f9;border:1px solid #eee;border-radius:4px;font-size:13px">
     <div style="display:flex;justify-content:space-between;padding:4px 0"><span>Product total</span><span>$${productTotal.toFixed(2)}</span></div>
     <div style="display:flex;justify-content:space-between;padding:4px 0"><span>Estimated tax (${Math.round(effectiveTaxRate * 100)}%)</span><span>$${tax.toFixed(2)}</span></div>
     <div style="display:flex;justify-content:space-between;padding:4px 0"><span>Service charge (10%)</span><span>$${service.toFixed(2)}</span></div>
     <div style="display:flex;justify-content:space-between;padding:4px 0"><span>Tip (5%)</span><span>$${tip.toFixed(2)}</span></div>
     <div style="display:flex;justify-content:space-between;padding:4px 0"><span>Delivery</span><span>$${delivery.toFixed(2)}</span></div>
-  </div>
+  </div>`}
   <div class="grand-total">
     <span class="label">ESTIMATED GRAND TOTAL</span>
     <span class="amount">$${grandTotal.toFixed(2)}</span>
   </div>
-  <div style="font-size:11px;color:#888;margin-top:8px">Tax, service, tip, and delivery are estimates — actual totals may vary.</div>
+  <div style="font-size:11px;color:#888;margin-top:8px">${totals_only ? 'Total is an estimate inclusive of tax, service, and delivery — actual totals may vary.' : 'Tax, service, tip, and delivery are estimates — actual totals may vary.'}</div>
   <div class="footer">This proposal is valid for 7 days. Prices may vary based on availability. Contact your Bevvi representative for questions.</div>
 </body>
 </html>`;
