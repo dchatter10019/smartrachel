@@ -452,11 +452,25 @@ async function executeTool(name, input) {
       const currentTotal = items.reduce(function(sum, p) { return sum + p.qty * p.price; }, 0);
       const remaining = productBudget - currentTotal;
       if (remaining > 30 && items.length > 0) {
-        const budgetPerItem = productBudget / items.length;
+        // BUDGET-SAFE UPGRADE. Real bug: the first build overshot the budget (e.g.
+        // \$2,750 on \$2,500) and only the rebuild corrected it. Two flaws: (1)
+        // budget was split EVENLY per line (productBudget / items.length), blind to
+        // quantity — a 3-bottle tequila got the same \$220 as 24 bottles of wine, so
+        // small lines inflated far past their fair share; (2) each line was upgraded
+        // independently with no check that the SUM still fit. Now: distribute the
+        // REMAINING headroom proportionally to each line's current spend, and verify
+        // the running total after every upgrade — stop the moment the cap is reached.
         const usedNamesPass1 = new Set(items.map(function(p) { return p.name; }));
+        let runningTotalUp = currentTotal;
         for (var ii = 0; ii < items.length; ii++) {
           const item = items[ii];
-          const targetPrice = budgetPerItem / item.qty;
+          const lineSpend = item.qty * item.price;
+          const headroomLeft = productBudget - runningTotalUp;
+          if (headroomLeft <= 30) break;
+          // This line's fair share of the remaining headroom, by its share of spend.
+          const share = runningTotalUp > 0 ? lineSpend / runningTotalUp : 1 / items.length;
+          const lineBudget = lineSpend + headroomLeft * share;
+          const targetPrice = lineBudget / item.qty;
           if (targetPrice > item.price * 1.3) {
             // Use item label (Red Wine/White Wine) for precise subcategory search
             const itemLabel = (item.label || item.category || '').toLowerCase();
@@ -480,11 +494,15 @@ async function executeTool(name, input) {
               .sort(function(a,b) { return b.price - a.price; });
             if (better.length > 0) {
               const best = better[0];
-              console.log('[shopping-agent] menu_build upgrading', item.name, '$'+item.price, '->', best.name, '$'+best.price);
+              // Enforce the cap: only apply if the new total still fits the product budget.
+              const newLineSpend = item.qty * best.price;
+              if (runningTotalUp - lineSpend + newLineSpend > productBudget) { continue; }
+              console.log('[shopping-agent] menu_build upgrading', item.name, '$'+item.price, '->', best.name, '$'+best.price, '(running total', (runningTotalUp - lineSpend + newLineSpend).toFixed(2), '/', productBudget + ')');
               swaps.push({ from: item.name, to: best.name, label: item.label || item.category });
               usedNamesPass1.delete(item.name);
               Object.assign(item, best);
               usedNamesPass1.add(item.name);
+              runningTotalUp = runningTotalUp - lineSpend + newLineSpend;
             }
           }
         }
@@ -611,11 +629,25 @@ async function executeTool(name, input) {
       const remaining = productBudget - currentTotal;
 
       if (remaining > 30 && items.length > 0) {
-        const budgetPerItem = productBudget / items.length;
+        // BUDGET-SAFE UPGRADE. Real bug: the first build overshot the budget (e.g.
+        // \$2,750 on \$2,500) and only the rebuild corrected it. Two flaws: (1)
+        // budget was split EVENLY per line (productBudget / items.length), blind to
+        // quantity — a 3-bottle tequila got the same \$220 as 24 bottles of wine, so
+        // small lines inflated far past their fair share; (2) each line was upgraded
+        // independently with no check that the SUM still fit. Now: distribute the
+        // REMAINING headroom proportionally to each line's current spend, and verify
+        // the running total after every upgrade — stop the moment the cap is reached.
         const usedNamesPass1 = new Set(items.map(function(p) { return p.name; }));
+        let runningTotalUp = currentTotal;
         for (var ii = 0; ii < items.length; ii++) {
           const item = items[ii];
-          const targetPrice = budgetPerItem / item.qty;
+          const lineSpend = item.qty * item.price;
+          const headroomLeft = productBudget - runningTotalUp;
+          if (headroomLeft <= 30) break;
+          // This line's fair share of the remaining headroom, by its share of spend.
+          const share = runningTotalUp > 0 ? lineSpend / runningTotalUp : 1 / items.length;
+          const lineBudget = lineSpend + headroomLeft * share;
+          const targetPrice = lineBudget / item.qty;
           if (targetPrice > item.price * 1.3) {
             const searchTerm = (item.label || item.name).split(' ').slice(0,2).join(' ');
             const candidates = await searchWithFallbacks(loc.kitchen, loc.client, searchTerm, 20);
@@ -625,8 +657,12 @@ async function executeTool(name, input) {
               .sort(function(a,b) { return b.price - a.price; });
             if (better.length > 0) {
               const best = better[0];
-              console.log('[shopping-agent] upgrading', item.name, '$'+item.price, '->', best.name, '$'+best.price);
+              // Enforce the cap: only apply if the new total still fits the product budget.
+              const newLineSpend = item.qty * best.price;
+              if (runningTotalUp - lineSpend + newLineSpend > productBudget) { continue; }
+              console.log('[shopping-agent] upgrading', item.name, '$'+item.price, '->', best.name, '$'+best.price, '(running total', (runningTotalUp - lineSpend + newLineSpend).toFixed(2), '/', productBudget + ')');
               Object.assign(item, best);
+              runningTotalUp = runningTotalUp - lineSpend + newLineSpend;
             }
           }
         }
