@@ -1092,11 +1092,23 @@ app.post('/chat', async (req, res) => {
         } catch(e) {}
       }
       if (existingItemCount > 1) {
-        state.proposalStep = 'client';
-        state.proposalData = { qty: null };
-        saveFlowState();
-        const ask = 'What is the client or company name?';
-        return res.json({ text: ask, response: ask });
+        // Issue C fix: if client name AND event date were already collected for an
+        // earlier proposal in this session, don't re-ask — reuse them and go straight
+        // to generating. The customer can still say "change the client/date" to update.
+        if (state.savedClientName && state.savedEventDate) {
+          state.proposalData = { qty: null, client_name: state.savedClientName, event_date: state.savedEventDate };
+          state.proposalStep = 'date';
+          message = state.savedEventDate;
+        } else {
+          state.proposalStep = 'client';
+          state.proposalData = { qty: null };
+          saveFlowState();
+          const ask = state.savedClientName
+            ? 'What is the event date?'
+            : 'What is the client or company name?';
+          if (state.savedClientName) { state.proposalData.client_name = state.savedClientName; state.proposalStep = 'date'; }
+          return res.json({ text: ask, response: ask });
+        }
       }
       if (state.lastDetectedQty && state.lastDetectedQty > 0) {
         state.proposalStep = 'client';
@@ -1124,14 +1136,25 @@ app.post('/chat', async (req, res) => {
     if (state.proposalStep === 'client') {
       // Strip any date that might be in the client name
       state.proposalData.client_name = message.split(',')[0].trim();
-      state.proposalStep = 'date';
-      saveFlowState();
-      const ask = 'What is the event date?';
-      return res.json({ text: ask, response: ask });
+      // Persist durably so later proposals in this session don't re-ask (Issue C).
+      state.savedClientName = state.proposalData.client_name;
+      // If the event date is already known from an earlier proposal, skip asking again.
+      if (state.savedEventDate) {
+        state.proposalData.event_date = state.savedEventDate;
+        state.proposalStep = 'date';
+        // Re-dispatch into the date handler with the remembered value.
+        message = state.savedEventDate;
+      } else {
+        state.proposalStep = 'date';
+        saveFlowState();
+        const ask = 'What is the event date?';
+        return res.json({ text: ask, response: ask });
+      }
     }
 
     if (state.proposalStep === 'date') {
       state.proposalData.event_date = message.trim();
+      state.savedEventDate = state.proposalData.event_date;
       state.proposalStep = 'generating';
       // Load basket now before building summary
       if (email && !state.lastLineItems) {
@@ -1373,7 +1396,11 @@ app.post('/chat', async (req, res) => {
     // sessions[sessionKey] — confirmed via direct diagnostic logging tonight that the
     // raw API conversation history does not reliably contain the real reply text.
     const lastAssistantTextGate = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
-    const looksLikeSelectionPrompt = /which (one|option|would)|would you like to (go with|choose|add)|works for you/i.test(lastAssistantTextGate);
+    // Loop fix: once a selection has been resolved (a merge succeeded), the same
+    // "which would you like?" prompt must not keep re-opening the gate on every later
+    // message — that caused the LLM to re-present the already-chosen options forever.
+    const alreadyResolved = state.resolvedSelectionPrompt && state.resolvedSelectionPrompt === lastAssistantTextGate;
+    const looksLikeSelectionPrompt = !alreadyResolved && /which (one|option|would)|would you like to (go with|choose|add)|works for you/i.test(lastAssistantTextGate);
     const hasPendingSub = state.pendingSubstitutes && state.pendingSubstitutes.length > 0;
     if (hasPendingSub || looksLikeSelectionPrompt) {
       console.log('[substitute-merge-DIAGNOSTIC] block entered, hasPendingSub:', hasPendingSub, '| looksLikeSelectionPrompt:', looksLikeSelectionPrompt, '| message:', JSON.stringify(message).slice(0, 100));
@@ -1595,6 +1622,9 @@ app.post('/chat', async (req, res) => {
             if (hasOriginalToReplace) state.pendingSubstitutes = state.pendingSubstitutes.filter(p => p !== originalItemName);
             saveFlowState();
             try { saveBasket(email, newLineItems, '', format).catch(() => {}); } catch (e) {}
+            // Mark this selection prompt as resolved so the gate won't re-open on it.
+            state.resolvedSelectionPrompt = lastAssistantTextGate;
+            saveFlowState();
             console.log('[substitute-merge]', hasOriginalToReplace ? 'replaced' : 'added (ad-hoc, no original to replace)', hasOriginalToReplace ? JSON.stringify(originalItemName) + ' with' : '', JSON.stringify(matched.name), 'qty', qtyToUse);
 
             const stillPending = hasOriginalToReplace && state.pendingSubstitutes.length > 0;
