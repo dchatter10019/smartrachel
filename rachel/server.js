@@ -384,6 +384,48 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
     // went stale and it fell back to order history, telling the customer it "can't
     // display the basket." This is the same authoritative source place_order and
     // generate_proposal now use, formatted like a package summary.
+    // update_quantity: set the qty of one or more existing basket items. Real bug: the
+    // customer said "reduce the beers to 6 cases total", confirmed "yes" three times,
+    // and Rachel just re-asked for confirmation each time — there was no tool to change
+    // a quantity (confirm_substitute replaces a product; custom_list rebuilds everything),
+    // so she had nothing to call. Accepts a list so a split ("3 Stella + 3 Corona") is
+    // one call. Matches items by name substring (case-insensitive); qty 0 removes.
+    onUpdateQuantity: (updates) => {
+      try {
+        const state = getState(sessionKey);
+        let items = [];
+        try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+        if (!items.length) return { success: false, error: 'No active basket' };
+        const list = Array.isArray(updates) ? updates : [];
+        const applied = [], notFound = [];
+        for (const u of list) {
+          const want = String((u && u.item) || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
+          const qty = parseInt(u && u.qty);
+          if (!want || isNaN(qty) || qty < 0) { notFound.push(String((u && u.item) || '?')); continue; }
+          // Best match: the item whose name contains the most words of the request.
+          const wantWords = want.split(' ').filter(w => w.length > 1);
+          let best = -1, bestScore = 0;
+          items.forEach((it, i) => {
+            const nm = String(it.name || it.label || '').toLowerCase();
+            const score = wantWords.filter(w => nm.indexOf(w) >= 0).length;
+            if (score > bestScore) { bestScore = score; best = i; }
+          });
+          if (best < 0 || bestScore === 0) { notFound.push(u.item); continue; }
+          const it = items[best];
+          const before = it.qty || it.quantity || 1;
+          if (qty === 0) { items.splice(best, 1); applied.push(it.name + ': removed'); }
+          else { it.qty = qty; it.quantity = qty; applied.push(it.name + ': ' + before + ' -> ' + qty); }
+        }
+        const newLineItems = JSON.stringify(items);
+        const key3 = makeCacheKey(email, state.zip, state.lastFingerprint);
+        packageCache[key3] = newLineItems;
+        state.lastLineItems = newLineItems;
+        saveFlowState();
+        console.log('[update-quantity]', JSON.stringify(applied), notFound.length ? '| not found: ' + JSON.stringify(notFound) : '');
+        const total = items.reduce((s, li) => s + (li.qty || li.quantity || 1) * (parseFloat(li.price) || 0), 0);
+        return { success: true, applied, not_found: notFound, line_items: newLineItems, product_total: total.toFixed(2) };
+      } catch (e) { return { success: false, error: e.message }; }
+    },
     onShowBasket: () => {
       try {
         const state = getState(sessionKey);
