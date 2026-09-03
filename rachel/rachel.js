@@ -63,7 +63,7 @@ const ALL_TOOLS = [
         beer_max_price: { type: "number", description: "Use when the customer states a max price per case for beer (also applies as the default seltzer cap if seltzer_max_price isn't separately given)." },
         budget:    { type: "number", description: "Total budget" },
         categories:{ type: "array",  description: "For menu_build: [beer, wine, spirits]" },
-        named_products: { type: "array", description: "For custom_list: [{name, category, qty}]" },
+        named_products: { type: "array", description: "For custom_list: [{name, category, qty, qty_from_customer}]. IMPORTANT: only include qty when the customer EXPLICITLY stated a number for that item (e.g. '3 bottles of Grey Goose'), and in that case ALSO set qty_from_customer: true. If the customer named a product for an event WITHOUT stating a quantity, OMIT qty entirely so the system's calculator sizes it correctly from guests/hours. NEVER invent a qty — an invented qty bypasses the calculator and produces badly undersized packages (a real bug shipped 14 wine bottles for 150 guests when the calculator would have sized 54)." },
         occasion:  { type: "string", description: "For recommendation" },
         category:  { type: "string", description: "For recommendation" },
         budget_per_bottle: { type: "number", description: "For recommendation" },

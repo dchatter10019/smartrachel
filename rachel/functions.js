@@ -263,6 +263,21 @@ function runCustomMode(ctx) {
   const totalDrinks     = Math.round(guests * drinksPerPerson);
   const representedCategories = [byCategory.wine, byCategory.beer, byCategory.spirits].filter(c => c.length > 0).length;
   const drinksPerCategory = representedCategories > 0 ? totalDrinks / representedCategories : 0;
+  // QUANTITY allocation fix — this is the code path custom_list ACTUALLY runs (an
+  // earlier patch landed in a dead inline block and never executed). The even 1/3
+  // split above underweights wine badly (menu_build uses the learned 62/32/5 split;
+  // the same 150-guest event sized 26 wine bottles one way, 12 the other). Use the
+  // learned split as the base, floor every explicitly-requested category at 20% (so
+  // beer isn't starved to ~1 case when the customer asked for it), then renormalize.
+  const CATEGORY_FLOOR = 0.20;
+  const baseSplit = { wine: 0.62, spirits: 0.32, beer: 0.05 };
+  const catShare = {};
+  let shareSum = 0;
+  for (const c of ['wine', 'spirits', 'beer']) {
+    if (byCategory[c].length > 0) { catShare[c] = Math.max(baseSplit[c], CATEGORY_FLOOR); shareSum += catShare[c]; }
+  }
+  if (shareSum > 0) for (const c in catShare) catShare[c] = catShare[c] / shareSum;
+  console.log('[runCustomMode] runCustomMode category shares (learned split + 20% floor):', JSON.stringify(catShare));
 
   const allocations = [];
 
@@ -276,13 +291,24 @@ function runCustomMode(ctx) {
 
   function allocateCategory(catName, products) {
     if (products.length === 0) return;
-    const drinksPerProduct = drinksPerCategory / products.length;
+    const catDrinks = (catShare[catName] !== undefined) ? totalDrinks * catShare[catName] : drinksPerCategory;
+    const drinksPerProduct = catDrinks / products.length;
     for (const product of products) {
       const dpu      = drinksPerUnit(product);
+      // Honor a quantity ONLY when the customer explicitly stated it (qty_from_customer
+      // true). An LLM-invented qty is ignored so the calculator sizes the item; this
+      // path previously ignored qty entirely, so it could never honor "3 bottles of X".
+      const qtyFromCustomer = product.qty_from_customer === true || product.qty_from_customer === 'true';
+      const statedQty = parseInt(product.qty) || 0;
       let quantity   = Math.max(1, Math.ceil(drinksPerProduct / dpu));
       let capApplied = false;
-      const cap      = perProductCap(catName, product, products.length);
-      if (quantity > cap) { quantity = cap; capApplied = true; }
+      if (qtyFromCustomer && statedQty > 0) {
+        quantity = statedQty;
+      } else {
+        if (statedQty > 0) console.log('[runCustomMode] ignoring LLM-supplied qty', statedQty, 'for', JSON.stringify(product.name), '(no qty_from_customer) — using calculator', quantity);
+        const cap = perProductCap(catName, product, products.length);
+        if (quantity > cap) { quantity = cap; capApplied = true; }
+      }
       allocations.push({
         name: product.name, category: catName,
         subcategory: product.subcategory || "",
@@ -1242,9 +1268,16 @@ async function buildPackage(iv) {
   }
 
   if (isCustom) {
-    var byCat={wine:[],beer:[],spirits:[]};
+    // MIXER category: cocktail mixers (lime juice, bitters, ginger beer, tonic...) are
+    // now accepted. Previously any non wine/beer/spirits category hard-failed
+    // ("Unknown category"), so the LLM learned to drop mixers entirely and cocktails
+    // shipped incomplete (Margarita with no lime, Old Fashioned with no bitters).
+    // Mixers are deliberately kept OUT of the drink-share allocation (they aren't
+    // drinks) and sized on their own rule at push time.
+    var byCat={wine:[],beer:[],spirits:[],mixer:[]};
     for (var i=0;i<namedProducts.length;i++) {
       var cat=(namedProducts[i].category||"").toLowerCase();
+      if (cat==="mixers") cat="mixer";
       if (byCat[cat]) byCat[cat].push(namedProducts[i]);
       else return fail("Unknown category: "+namedProducts[i].name);
     }
@@ -1252,8 +1285,29 @@ async function buildPackage(iv) {
     if (byCat.wine.length>0&&byCat.beer.length===0&&byCat.spirits.length===0) cmult=0.80;
     else if (byCat.wine.length>0&&byCat.spirits.length>0&&byCat.beer.length===0) cmult=0.90;
     totalDrinks=Math.round(guests*baseDpp*cmult);
+    // Allocation fix (real bug from a live 150-guest event): this path used to split
+    // drinks EVENLY across represented categories (1/3 each), while menu_build uses the
+    // learned split (62% wine / 32% spirits / 5% beer). The same event therefore sized
+    // 26 wine bottles via menu_build but only 10 via custom_list — two calculators, two
+    // answers. Align custom_list to the learned split so both paths agree.
+    // BUT the learned 5% beer share reflects wine-heavy corporate orders and gives ~1
+    // case for 150 people when the customer explicitly asked for beer — clearly wrong.
+    // So: learned split as the base, then floor every explicitly-requested category at
+    // CATEGORY_FLOOR (20%, per business judgment), then renormalize to sum to 1.
+    var CATEGORY_FLOOR=0.20;
+    var baseSplit={wine:0.62,spirits:0.32,beer:0.05};
+    var catShare={};
+    var shareSum=0;
+    ['wine','spirits','beer'].forEach(function(c){
+      if(byCat[c].length>0){
+        catShare[c]=Math.max(baseSplit[c],CATEGORY_FLOOR);
+        shareSum+=catShare[c];
+      }
+    });
+    if(shareSum>0){ Object.keys(catShare).forEach(function(c){ catShare[c]=catShare[c]/shareSum; }); }
+    console.log('[buildPackage] custom_list category shares (learned split + '+(CATEGORY_FLOOR*100)+'% floor):', JSON.stringify(catShare));
     var repCats=(byCat.wine.length?1:0)+(byCat.beer.length?1:0)+(byCat.spirits.length?1:0);
-    var drinksPerCat=repCats?totalDrinks/repCats:0;
+    var drinksPerCat=repCats?totalDrinks/repCats:0; // legacy fallback, superseded below per-category
     // Build search terms with variations for each product
     async function doSearchWithFallbacks(name, category) {
       // Try original name first
@@ -1335,12 +1389,37 @@ async function buildPackage(iv) {
         }
       }
       var dpu=catN==="wine"?5:catN==="spirits"?16:(parseInt(np.pack_size)||beerPackSize);
-      var perProd=drinksPerCat/byCat[catN].length;
-      var hasExplicitQty=np.qty && parseInt(np.qty) > 0;
-      var qty=hasExplicitQty ? parseInt(np.qty) : Math.max(1,Math.ceil(perProd/dpu));
+      // Use the blended per-category share (learned split + floor) instead of the
+      // legacy even split, so this path agrees with menu_build.
+      var catDrinks=(catShare[catN]!==undefined)?totalDrinks*catShare[catN]:drinksPerCat;
+      var perProd=catDrinks/byCat[catN].length;
+      // Option C fix (real bug from a live 150-guest event): the LLM was passing
+      // INVENTED qty values the customer never stated (8, 6, 13...), and any supplied
+      // qty bypassed the calculator entirely — so a package the calculator would size
+      // at ~54 wine bottles shipped with 14. A customer-stated qty ("3 bottles of Grey
+      // Goose") must still be honored, so the fix distinguishes the two: only honor
+      // np.qty when qty_from_customer is explicitly true. The flag defaults to false,
+      // so if the LLM forgets it (the common failure) the calculator runs — the safe
+      // outcome. Log every override so invented quantities are visible in the logs.
+      var qtyFromCustomer = np.qty_from_customer === true || np.qty_from_customer === 'true';
+      var hasExplicitQty = qtyFromCustomer && np.qty && parseInt(np.qty) > 0;
+      var computedQty = Math.max(1,Math.ceil(perProd/dpu));
+      if (catN==="mixer") {
+        // Mixer sizing: tied to the cocktail spirit volume, not the drink share.
+        // Bitters: ~1 bottle per 60 cocktails (dashes). Juice/soda/tonic: ~1 bottle
+        // per 15 cocktails (~750ml serves ~15). Cocktail count ≈ the spirits' share.
+        var cocktailDrinksM=Math.round(totalDrinks*(catShare.spirits||0.28));
+        var nm=String(np.name||'').toLowerCase();
+        var isBitters=/bitter|amaro|vermouth/.test(nm);
+        computedQty=Math.max(1,Math.ceil(cocktailDrinksM/(isBitters?60:15)));
+      }
+      if (np.qty && parseInt(np.qty) > 0 && !qtyFromCustomer) {
+        console.log('[buildPackage] qty override: LLM supplied qty', np.qty, 'for', JSON.stringify(np.name), 'without qty_from_customer — using calculator value', computedQty);
+      }
+      var qty=hasExplicitQty ? parseInt(np.qty) : computedQty;
       var n2=Math.max(1,byCat[catN].length);
       var cap2=catN==="wine"?Math.max(1,Math.ceil((guests*baseDpp*0.6)/n2)):catN==="beer"?Math.max(1,Math.ceil((guests*baseDpp*0.5)/n2)):Math.max(1,Math.ceil((guests/10+1)/n2));
-      if(!hasExplicitQty && qty>cap2) qty=cap2;
+      if(!hasExplicitQty && catN!=="mixer" && qty>cap2) qty=cap2;
       lineItems.push({label:np.name,name:best.name,qty:qty,price:best.price,size:best.sizeStr,url:best.url,product_id:best.product_id,upc:best.upc||"",establishmentId:best.establishmentId||"",category:catN});
     }
     var durationLabel = hours > 0 ? (hours+"h") : (baseDpp+" drinks/person");
@@ -1536,16 +1615,94 @@ async function buildPackage(iv) {
     return Math.round(t*100)/100;
   }
   if (!isQuoteMode) {
+    // QUANTITY-FIRST budget fit (business rule: quantity always wins, price tier
+    // flexes). This was the real cause of a 150-guest event getting 14 wine bottles:
+    // the calculator correctly sized 35+35, then this loop repeatedly decremented the
+    // line with the largest subtotal (the ~$55 Prisoner) to fit budget — fewer bottles
+    // of pricier wine, the opposite of what an event needs. Now: when over budget,
+    // first DOWNGRADE the highest-subtotal item to a cheaper product (quantity kept);
+    // only decrement quantity as a last resort once no cheaper product exists.
+    var downgraded={};
     var guard=0;
     while (productTotal()>productBudget&&guard<50) {
+      guard++;
+      // Iterate: each pass re-derives ceilings from the now-cheaper basket, so the tier
+      // converges on one that actually fits. An item is only marked exhausted (skipped)
+      // when a search finds no cheaper same-type product, not after a single attempt.
       var idx=-1,best2=0;
       for (var i2=0;i2<lineItems.length;i2++) {
         var sub=lineItems[i2].qty*lineItems[i2].price;
-        if (lineItems[i2].qty>1&&sub>best2){best2=sub;idx=i2;}
+        if (!downgraded[i2]&&sub>best2){best2=sub;idx=i2;}
       }
-      if (idx<0) break;
-      lineItems[idx].qty-=1;
-      guard++;
+      if (idx>=0) {
+        var li=lineItems[idx];
+        var cheaperFound=false;
+        try {
+          // Search by the ORIGINAL label (e.g. "White Wine", "Corona Beer"), not the
+          // matched product's name — the product name pulls in cross-category matches
+          // (a white wine "downgraded" to Champagne; bitters to an amaro). And prefer
+          // the CHEAPEST same-type product, not the next-cheapest: a $55->$50 step is a
+          // useless downgrade that just falls through to a quantity trim anyway.
+          var term=li.label||li.name;
+          var cands=await doSearch(term, li.category);
+          var liPack=(String(li.size||'').match(/(\d+)\s*x/i)||[])[1];
+          // Option C: target a price tier. Compute the max unit price at which this
+          // item's FULL quantity still fits within the budget (budget minus everything
+          // else already in the basket), then pick the most expensive same-type product
+          // at or below that ceiling. Single pass, spends the budget, no oscillation.
+          // Fair ceiling: budget share for this item = its fraction of the current total
+          // spend, applied to productBudget. Computing "budget minus everything else at
+          // current prices" goes negative when the whole basket is over budget (nothing
+          // qualifies, so it silently fell through to quantity trims). Proportional
+          // allocation gives every item an achievable price tier in a single pass.
+          var grandTot=0;
+          for (var oi=0;oi<lineItems.length;oi++) grandTot+=lineItems[oi].qty*lineItems[oi].price;
+          var mySub=li.qty*li.price;
+          var myBudget=grandTot>0?productBudget*(mySub/grandTot):0;
+          var maxUnit=li.qty>0?myBudget/li.qty:0;
+          // Wine color guard: "Red Wine" must not resolve to a rosé/white and vice versa.
+          var lbl=String(li.label||'').toLowerCase();
+          var wantRed=lbl.indexOf('red')>=0, wantWhite=lbl.indexOf('white')>=0;
+          function isSparkling(n){n=String(n||'').toLowerCase();return /champagne|prosecco|sparkling|brut|cava|cremant|spumante/.test(n);}
+          function isRoseOrWhite(n){n=String(n||'').toLowerCase();return /ros[eé]|white zinfand|\bwhite\b|blanc|chardonnay|pinot grigio|pinot gris|riesling|moscato|sauvignon blanc|albari|vermentino|gruner/.test(n);}
+          function isRed(n){n=String(n||'').toLowerCase();return /\bred\b|cabernet|merlot|pinot noir|malbec|syrah|shiraz|nebbiolo|sangiovese|tempranillo|zinfandel(?! white)|red blend/.test(n);}
+          // Normalize a size string to a comparable key: "24x12 Oz Bottle" -> "24x12", "750 ML" -> "750ml".
+          function sizeKey(s){s=String(s||'').toLowerCase().replace(/\s+/g,'');var m=s.match(/(\d+)x(\d+)/);if(m)return m[1]+'x'+m[2];m=s.match(/(\d+(?:\.\d+)?)(ml|l)/);return m?(m[1]+m[2]):s;}
+          var liKey=sizeKey(li.size);
+          var cheaper=(cands||[]).filter(function(p){
+              if(!(p.price>0&&p.price<li.price&&p.price<=maxUnit)) return false;
+              // Same size/pack REQUIRED for a downgrade — a 6-pack is not a cheaper 24-pack,
+              // and a 375ml is not a cheaper 750ml. Different size = different product.
+              if(liKey&&sizeKey(p.sizeStr)!==liKey) return false;
+              if(li.category==='wine'){
+                // Still vs sparkling must match; red/white must match the requested color.
+                if(isSparkling(p.name)!==isSparkling(li.name)) return false;
+                if(wantRed&&(isRoseOrWhite(p.name)||isSparkling(p.name))) return false;
+                if(wantWhite&&(isRed(p.name)||isSparkling(p.name))) return false;
+              }
+              return true;})
+            .sort(function(a,b){return b.price-a.price;}); // most expensive under the ceiling first
+          if (cheaper.length>0) {
+            var c=cheaper[0];
+            console.log('[buildPackage] QUANTITY-FIRST budget fit: downgrade',li.name,'$'+li.price,'->',c.name,'$'+c.price,'(qty kept:',li.qty+')');
+            li.name=c.name;li.price=c.price;li.size=c.sizeStr||li.size;li.url=c.url||li.url;
+            li.product_id=c.product_id||li.product_id;li.upc=c.upc||li.upc;li.establishmentId=c.establishmentId||li.establishmentId;
+            cheaperFound=true;
+          }
+        } catch(e) {}
+        if (cheaperFound) continue;
+        downgraded[idx]=true; // no cheaper same-type product exists — exhausted
+        continue;
+      }
+      // Last resort: no un-downgraded item had a cheaper alternative — decrement qty
+      var idxQ=-1,bestQ=0;
+      for (var i3=0;i3<lineItems.length;i3++) {
+        var subQ=lineItems[i3].qty*lineItems[i3].price;
+        if (lineItems[i3].qty>1&&subQ>bestQ){bestQ=subQ;idxQ=i3;}
+      }
+      if (idxQ<0) break;
+      console.log('[buildPackage] QUANTITY-FIRST last-resort qty trim',lineItems[idxQ].name,lineItems[idxQ].qty,'->',lineItems[idxQ].qty-1);
+      lineItems[idxQ].qty-=1;
     }
   }
 
