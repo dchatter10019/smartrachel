@@ -1353,7 +1353,22 @@ async function buildPackage(iv) {
     for (var n=0;n<namedProducts.length;n++) {
       var np=namedProducts[n];
       var catN=(np.category||"").toLowerCase();
-      var found=results[n].filter(function(p){return !isMini(p);});
+      // Category sanity: the store search is loose and can return a product from the
+      // wrong category (real bug: a generic "Beer" query returned Mr. Black Cold Brew, a
+      // coffee liqueur, which then sat in the beer slot). Reject any candidate whose
+      // name clearly belongs to a different category, so `best` is the first result
+      // that is actually a beer / wine / spirit.
+      function categorySane(p, cat){
+        var nm=String(p.name||'').toLowerCase();
+        var spiritW=/vodka|rum|bourbon|whiskey|whisky|gin\b|tequila|scotch|cognac|brandy|mezcal|liqueur|cold brew|kahlua|amaro|aperol|campari|vermouth/;
+        var wineW=/wine|cabernet|merlot|pinot|chardonnay|sauvignon|riesling|zinfandel|malbec|syrah|shiraz|chianti|prosecco|champagne|brut|sparkling|ros[eé]/;
+        var beerW=/beer|lager|ale\b|ipa|pilsner|pilsener|stout|porter|cider|seltzer|\d+\s*x\s*\d+\s*oz/;
+        if(cat==="beer")    return !spiritW.test(nm) && !wineW.test(nm) && beerW.test(nm);
+        if(cat==="wine")    return !spiritW.test(nm) && !/lager|ale\b|ipa|pilsner|stout|porter|\d+\s*x\s*\d+\s*oz/.test(nm);
+        if(cat==="spirits") return !wineW.test(nm) && !/lager|ipa|pilsner|stout|porter|\bbeer\b/.test(nm);
+        return true; // mixers: don't over-constrain
+      }
+      var found=results[n].filter(function(p){return !isMini(p)&&categorySane(p,catN);});
       if (found.length===0){unavailable.push(np.name);continue;}
       var capMin=0,capMax=0;
       if (catN==="wine"){capMin=capWineMin;capMax=capWineMax;}
