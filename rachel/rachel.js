@@ -162,9 +162,19 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         // back into the LLM's own working notion of the order. Never trust the LLM's
         // self-constructed line_items for an actual placement — always override with our
         // own authoritative, reliably-tracked current basket when we have one.
-        if (saInput.intent === 'place_order' && currentLineItems) {
+        // Same authoritative-basket override for BOTH place_order AND generate_proposal.
+        // Real, severe bug found tonight from a live event-planning session: the customer's
+        // proposal quantities kept drifting between regenerations (wine went 8 -> 12 -> 16
+        // -> 8 across consecutive proposals the customer never approved). Root cause: the
+        // LLM hand-types the entire line_items JSON from its own conversation memory each
+        // time, so any wavering in its recollection of quantities gets faithfully rendered
+        // onto the PDF. A proposal (like an order) must reflect the actual saved basket,
+        // never the LLM's from-memory reconstruction. Override with the authoritative
+        // state.lastLineItems whenever we have one — the only time we fall through to the
+        // LLM's supplied line_items is when there's genuinely no saved basket yet.
+        if ((saInput.intent === 'place_order' || saInput.intent === 'generate_proposal') && currentLineItems) {
           if (saInput.line_items && saInput.line_items !== currentLineItems) {
-            console.log('[ShoppingAgent] overriding LLM-supplied line_items with authoritative current basket for place_order');
+            console.log('[ShoppingAgent] overriding LLM-supplied line_items with authoritative current basket for', saInput.intent);
           }
           saInput.line_items = currentLineItems;
         }
