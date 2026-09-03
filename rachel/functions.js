@@ -1369,6 +1369,15 @@ async function buildPackage(iv) {
         return true; // mixers: don't over-constrain
       }
       var found=results[n].filter(function(p){return !isMini(p)&&categorySane(p,catN);});
+      // Size preference: for wine and spirits, prefer 750 mL when the customer did NOT
+      // state a size (a stated size lives in the product name, e.g. "Grey Goose 1.75L",
+      // and is honored as-is). 750 mL is the standard event bottle; without this the
+      // search just returned whatever ranked first (tequila kept landing on 1 L).
+      // Stable sort: 750 mL candidates move to the front, others remain as fallbacks
+      // so an item never fails just because no 750 mL version exists.
+      var prefer750=(catN==="wine"||catN==="spirits")&&!/\d+(\.\d+)?\s*(mL|ML|L|oz|OZ)\b/i.test(np.name||'');
+      // (750 mL preference is applied as a tiebreaker inside the main sort below —
+      // a standalone pre-sort here was silently overwritten by that sort.)
       if (found.length===0){unavailable.push(np.name);continue;}
       var capMin=0,capMax=0;
       if (catN==="wine"){capMin=capWineMin;capMax=capWineMax;}
@@ -1386,6 +1395,14 @@ async function buildPackage(iv) {
         var pa=brandStatus(a.name)==="preferred"?1:0;
         var pb2=brandStatus(b.name)==="preferred"?1:0;
         if(pa!==pb2) return pb2-pa;
+        // 750 mL preference (wine/spirits, no stated size) as a tiebreaker BEFORE price.
+        // This sort runs after the earlier size sort and was silently undoing it — its
+        // price-descending tiebreaker put the 1 L ahead of the 750 mL of the same brand.
+        if(prefer750){
+          var a750=/\b750\s*ml\b/i.test(String(a.sizeStr||a.name||''))?0:1;
+          var b750=/\b750\s*ml\b/i.test(String(b.sizeStr||b.name||''))?0:1;
+          if(a750!==b750) return a750-b750;
+        }
         return b.price-a.price;
       });
       var best=found[0];
@@ -1668,7 +1685,14 @@ async function buildPackage(iv) {
           var term=li.label||li.name;
           // Prefer the previously-selected product for this slot if it fits the ceiling.
           var priorPick=priorByLabel[String(li.label||'').toLowerCase()];
-          if (priorPick&&priorPick.price>0&&priorPick.price<li.price&&priorPick.price<=maxUnit&&priorPick.name!==li.name) {
+          // Don't restore a prior pick that violates the 750 mL preference (wine/spirits,
+          // no stated size) — otherwise a stale 1 L saved before the size rule existed
+          // keeps getting resurrected across rebuilds.
+          var priorSizeOk=true;
+          if (priorPick&&(li.category==="wine"||li.category==="spirits")&&!/\d+(\.\d+)?\s*(mL|ML|L|oz|OZ)\b/i.test(li.label||'')) {
+            priorSizeOk=/\b750\s*ml\b/i.test(String(priorPick.size||priorPick.name||''));
+          }
+          if (priorPick&&priorSizeOk&&priorPick.price>0&&priorPick.price<li.price&&priorPick.price<=maxUnit&&priorPick.name!==li.name) {
             console.log('[buildPackage] QUANTITY-FIRST budget fit: keeping prior selection',priorPick.name,'$'+priorPick.price,'for slot',li.label,'(qty kept:',li.qty+')');
             li.name=priorPick.name;li.price=priorPick.price;li.size=priorPick.size||li.size;li.url=priorPick.url||li.url;
             li.product_id=priorPick.product_id||li.product_id;li.upc=priorPick.upc||li.upc;li.establishmentId=priorPick.establishmentId||li.establishmentId;
