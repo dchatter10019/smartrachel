@@ -185,7 +185,29 @@ def is_allowed(user_id: str) -> bool:
 def is_bot(event: dict) -> bool:
     return bool(event.get("bot_id") or event.get("subtype") == "bot_message")
 
+# Per-user serialization. Slack Bolt runs each event in its own thread, so two
+# DIFFERENT messages from the same user sent in quick succession ran ask_rachel
+# concurrently against the same session. Real bug: customer sent "Margarita" then
+# "Old Fashioned" before the first reply; both built in parallel, neither saw the
+# other, and the customer got two partial packages out of order. The existing
+# dedup only catches IDENTICAL messages. This lock makes message B for a user wait
+# until message A has fully completed (Rachel call + reply + saved package), so B
+# correctly sees A's result and can ADD to it instead of racing it.
+_user_locks: dict = {}
+_user_locks_guard = threading.Lock()
+
+def _lock_for(user_id: str) -> threading.Lock:
+    with _user_locks_guard:
+        if user_id not in _user_locks:
+            _user_locks[user_id] = threading.Lock()
+        return _user_locks[user_id]
+
 def handle(event: dict, say, client):
+    user_id = event.get("user", "")
+    with _lock_for(user_id):
+        return _handle_unlocked(event, say, client)
+
+def _handle_unlocked(event: dict, say, client):
     if is_bot(event):
         return
 
