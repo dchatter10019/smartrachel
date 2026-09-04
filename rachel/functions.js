@@ -1114,7 +1114,18 @@ async function buildPackage(iv) {
         else{unavailable.push(np.name+" (none within caps)");continue;}
       }
       var terms=np.name.toLowerCase().split(/\s+/);
+      // Exact-name preference: a candidate whose size-stripped name equals the request
+      // beats a superset name. "Ruffino Prosecco Rosé" ties "Ruffino Prosecco" on term
+      // score and then won on price — the Rosé variant kept replacing the plain one.
+      var reqKey=String(np.name||'').toLowerCase().replace(/\s*[-—]?\s*\d+(\.\d+)?\s*(ml|l|oz)\b.*$/i,'').replace(/[^a-z0-9]/g,'');
+      function nameKey(x){return String(x.name||'').toLowerCase().replace(/\s*[-—]?\s*\d+(\.\d+)?\s*(ml|l|oz)\b.*$/i,'').replace(/[^a-z0-9]/g,'');}
+      // Also: no rosé for a non-rosé request, at initial selection time too.
+      if(catN==='wine'&&!/ros[eé]|blush/.test(String(np.name||'').toLowerCase())){
+        var nonRose=found.filter(function(x){return !/ros[eé]|blush/.test(String(x.name||'').toLowerCase());});
+        if(nonRose.length) found=nonRose;
+      }
       found.sort(function(a,b) {
+        var ea=nameKey(a)===reqKey?1:0, eb=nameKey(b)===reqKey?1:0; if(ea!==eb) return eb-ea;
         function score(x){var s=0;var ln=x.name.toLowerCase();for(var t=0;t<terms.length;t++) if(ln.indexOf(terms[t])>=0) s++;return s;}
         var d=score(b)-score(a);if(d) return d;
         var pa=brandStatus(a.name)==="preferred"?1:0;
@@ -1466,6 +1477,10 @@ async function buildPackage(iv) {
               if(li.category==='wine'){
                 // Never a sake/port/sherry/vermouth etc. in a table-wine slot.
                 if(isNotTableWine(p.name)) return false;
+                // No rosé unless the customer asked for rosé — applies to EVERY wine slot,
+                // including sparkling (real bug: "Prosecco" kept resolving to Prosecco Rosé).
+                var wantRoseSlot=/ros[eé]|blush/.test(lbl);
+                if(!wantRoseSlot&&isRose(p.name)) return false;
                 // Still vs sparkling must match; red/white must match the requested color.
                 if(isSparkling(p.name)!==isSparkling(li.name)) return false;
                 if(wantRed&&(isRoseOrWhite(p.name)||isSparkling(p.name))) return false;

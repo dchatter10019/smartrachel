@@ -572,8 +572,6 @@ app.post('/chat', async (req, res) => {
 
   const email = context?.user_email || '';
   const isD2C = !context?.kitchen_location;
-  console.log('[TRACE-EARLY] isD2C:', isD2C, '| sessionKey:', sessionKey);
-  console.log('[TRACE-EARLY] isD2C:', isD2C, '| sessionKey:', sessionKey);
 
   console.log(`[rachel] chat — session: ${sessionKey} messages: ${sessions[sessionKey].length} — "${message}"`);
 
@@ -812,7 +810,6 @@ app.post('/chat', async (req, res) => {
         state.addrConfirmed = true;
         state.step = 'ready';
         // Replay pending intent if any
-        console.log('[TRACE-REPLAY] entering addr-confirmed block, pendingIntent:', JSON.stringify(state.pendingIntent), '| addrConfirmed:', state.addrConfirmed, '| step:', state.step);
         if (state.pendingIntent) {
           const pending = state.pendingIntent;
           state.pendingIntent = null;
@@ -884,7 +881,6 @@ app.post('/chat', async (req, res) => {
             await saveD2CSession(email, Object.assign({}, d2c, { delivery_address: message, delivery_zip: state.zip }));
           } catch(e) {}
         }
-        console.log('[TRACE-REPLAY] entering addr-confirmed block, pendingIntent:', JSON.stringify(state.pendingIntent), '| addrConfirmed:', state.addrConfirmed, '| step:', state.step);
         if (state.pendingIntent) {
           const pending = state.pendingIntent;
           state.pendingIntent = null;
@@ -950,7 +946,7 @@ app.post('/chat', async (req, res) => {
     }
 
     // ── STATE: ready — pass to Rachel ──────────────────────────────────────
-    console.log('[TRACE] state.step:', state.step, '| pendingSubstitutes:', JSON.stringify(state.pendingSubstitutes), '| message:', JSON.stringify(message).slice(0,80));
+    console.log('[turn] state.step:', state.step, '| pendingSubstitutes:', JSON.stringify(state.pendingSubstitutes), '| message:', JSON.stringify(message).slice(0,80));
     if (state.step !== 'ready') {
       // Shouldn\'t happen but fallback
       const ask = 'What is your delivery address? (Include street, city, state, and zip)';
@@ -1503,7 +1499,6 @@ app.post('/chat', async (req, res) => {
     // message), so the LLM would improvise — sometimes re-narrating the whole
     // package and mixer question from scratch instead of just moving on. Handle
     // a clear yes/no answer here, deterministically, without an LLM call at all.
-    console.log('[TRACE] reached mixer-check, mixerAsked:', state.mixerAsked, 'mixerAnswered:', state.mixerAnswered, 'packageShown:', state.packageShown);
     if (state.mixerAsked && !state.mixerAnswered && state.packageShown) {
       const mixerNoWords = ['no', 'nope', 'no thanks', 'no worries', "that's all", 'thats all', "i'm good", 'im good', 'nothing else', 'none'];
       const mixerMsgLower = message.toLowerCase().trim().replace(/\*/g, '');
@@ -1650,8 +1645,15 @@ app.post('/chat', async (req, res) => {
     const alreadyResolved = state.resolvedSelectionPrompt && state.resolvedSelectionPrompt === lastAssistantTextGate;
     const looksLikeSelectionPrompt = !alreadyResolved && /which (one|option|would)|would you like to (go with|choose|add)|works for you/i.test(lastAssistantTextGate);
     const hasPendingSub = state.pendingSubstitutes && state.pendingSubstitutes.length > 0;
-    if (hasPendingSub || looksLikeSelectionPrompt) {
-      console.log('[substitute-merge-DIAGNOSTIC] block entered, hasPendingSub:', hasPendingSub, '| looksLikeSelectionPrompt:', looksLikeSelectionPrompt, '| message:', JSON.stringify(message).slice(0, 100));
+    // Gate narrowed to genuine unavailable-item substitution ONLY. This block used to
+    // also fire on any "which would you like?" reply (looksLikeSelectionPrompt), but
+    // with no pending item it can't know what's being replaced, so it just ADDED qty 1
+    // of whatever name it matched — the source of every stray 1x entry and duplicate
+    // (real session: "Alamos Malbec" -> stray 1x; "replace Yellow Tail with Alamos" ->
+    // added the item being REMOVED). Voluntary swaps and list selections now go to the
+    // LLM's confirm_substitute, which resolves the real product and the right quantity.
+    if (hasPendingSub) {
+      console.log('[substitute-merge] gate: hasPendingSub:', hasPendingSub, '| looksLikeSelectionPrompt:', looksLikeSelectionPrompt, '| message:', JSON.stringify(message).slice(0, 100));
       // Real gap found tonight: options are sometimes offered several turns apart
       // (e.g. gin options in one turn, triple sec options several turns earlier),
       // and the customer can confirm both together later — scanning only the single
@@ -1737,7 +1739,6 @@ app.post('/chat', async (req, res) => {
         return true;
       }
       candidates = candidates.filter(c => isPlausibleProductName(c.name));
-      console.log('[CANDIDATES-DIAGNOSTIC] extracted:', JSON.stringify(candidates));
       if (candidates.length > 0) {
         const msgLowerSel = message.toLowerCase().replace(/\*/g, '');
         // Real false-positive risk found tonight: a compound message like "Hiram Walker
@@ -1796,9 +1797,21 @@ app.post('/chat', async (req, res) => {
         {
           const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim();
           const msgN = ' ' + norm(msgLowerSel) + ' ';
-          const exact = candidates
+          let exact = candidates
             .filter(c => { const n = norm(c.name.replace(/^\d+x\s*/i, '')); return n.length >= 4 && msgN.indexOf(' ' + n + ' ') >= 0; })
             .sort((a, b) => b.name.length - a.name.length);
+          // "replace X with Y" / "swap X for Y" / "Y instead of X": the message contains
+          // BOTH names; longest-wins picked X (the item being removed). Prefer the
+          // candidate positioned as the replacement.
+          if (exact.length > 1) {
+            const withM = msgN.match(/\b(?:replace|swap|change|switch)\b.*?\b(?:with|for|to)\b(.*)$/);
+            const insteadM = msgN.match(/^(.*?)\binstead of\b/);
+            const tail = withM ? withM[1] : (insteadM ? insteadM[1] : null);
+            if (tail) {
+              const inTail = exact.filter(c => (' ' + tail + ' ').indexOf(' ' + norm(c.name.replace(/^\d+x\s*/i, '')) + ' ') >= 0);
+              if (inTail.length) exact = inTail;
+            }
+          }
           if (exact.length > 0) {
             matched = exact[0];
             console.log('[substitute-merge] Tier 0.5 exact full-name match:', JSON.stringify(matched.name));
