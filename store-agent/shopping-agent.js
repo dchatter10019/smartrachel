@@ -587,7 +587,8 @@ async function executeTool(name, input) {
       unavailable: result.unavailable,
       brand_substitutions: result.brand_substitutions,
       swaps: swaps,
-      total_drinks: result.total_drinks
+      total_drinks: result.total_drinks,
+      tier_warning: result.tier_warning || ''
     };
   }
 
@@ -710,7 +711,8 @@ async function executeTool(name, input) {
       estimated_tip: finalTip.toFixed(2),
       delivery_fee: '25.00',
       estimated_grand_total: finalGrand.toFixed(2),
-      unavailable: result.unavailable
+      unavailable: result.unavailable,
+      tier_warning: result.tier_warning || ''
     };
   }
 

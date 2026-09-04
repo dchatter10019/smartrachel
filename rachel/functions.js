@@ -1719,7 +1719,16 @@ async function buildPackage(iv) {
           var lbl=String(li.label||'').toLowerCase();
           var wantRed=lbl.indexOf('red')>=0, wantWhite=lbl.indexOf('white')>=0;
           function isSparkling(n){n=String(n||'').toLowerCase();return /champagne|prosecco|sparkling|brut|cava|cremant|spumante/.test(n);}
-          function isRoseOrWhite(n){n=String(n||'').toLowerCase();return /ros[eé]|white zinfand|\bwhite\b|blanc|chardonnay|pinot grigio|pinot gris|riesling|moscato|sauvignon blanc|albari|vermentino|gruner/.test(n);}
+          // Wine-adjacent products that must NEVER fill a red or white table-wine slot.
+          // Real bug: "Gekkeikan Sake" (rice wine) landed in the WHITE wine slot — it
+          // matched no red marker, so the white slot's negative-only check let it through.
+          function isNotTableWine(n){n=String(n||'').toLowerCase();return /\bsake\b|\bsaki\b|\bport\b|sherry|madeira|marsala|vermouth|cooking wine|\bmead\b|soju|plum wine|ice wine|dessert wine|concord|manischewitz|kedem|sangria|wine cooler/.test(n);}
+          // Rosé is its OWN category — it fills neither a red nor a white slot. Real bug:
+          // "Beringer White Zinfandel" (a rosé) passed as "white" because rosé and white
+          // were lumped together for the red-slot exclusion.
+          function isRose(n){n=String(n||'').toLowerCase();return /ros[eé]|white zinfand|blush/.test(n);}
+          function isWhite(n){n=String(n||'').toLowerCase();return !isRose(n)&&/\bwhite\b|blanc|chardonnay|pinot grigio|pinot gris|riesling|moscato|sauvignon|albari|vermentino|gruner|viognier|semillon|chenin|torrontes|verdejo|gavi|soave|muscadet|falanghina|garganega/.test(n);}
+          function isRoseOrWhite(n){return isRose(n)||isWhite(n);}
           function isRed(n){n=String(n||'').toLowerCase();return /\bred\b|cabernet|merlot|pinot noir|malbec|syrah|shiraz|nebbiolo|sangiovese|tempranillo|zinfandel(?! white)|red blend/.test(n);}
           // Normalize a size string to a comparable key: "24x12 Oz Bottle" -> "24x12", "750 ML" -> "750ml".
           function sizeKey(s){s=String(s||'').toLowerCase().replace(/\s+/g,'');var m=s.match(/(\d+)x(\d+)/);if(m)return m[1]+'x'+m[2];m=s.match(/(\d+(?:\.\d+)?)(ml|l)/);return m?(m[1]+m[2]):s;}
@@ -1730,10 +1739,13 @@ async function buildPackage(iv) {
               // and a 375ml is not a cheaper 750ml. Different size = different product.
               if(liKey&&sizeKey(p.sizeStr)!==liKey) return false;
               if(li.category==='wine'){
+                // Never a sake/port/sherry/vermouth etc. in a table-wine slot.
+                if(isNotTableWine(p.name)) return false;
                 // Still vs sparkling must match; red/white must match the requested color.
                 if(isSparkling(p.name)!==isSparkling(li.name)) return false;
                 if(wantRed&&(isRoseOrWhite(p.name)||isSparkling(p.name))) return false;
-                if(wantWhite&&(isRed(p.name)||isSparkling(p.name))) return false;
+                // A white slot needs a POSITIVE white match — not rosé, not merely "not red".
+                if(wantWhite&&(isRed(p.name)||isSparkling(p.name)||isRose(p.name)||!isWhite(p.name))) return false;
               }
               return true;})
             .sort(function(a,b){return b.price-a.price;}); // most expensive under the ceiling first
@@ -1783,6 +1795,20 @@ async function buildPackage(iv) {
   var summary=summaryBits.join(" ")+" | items "+lineItems.length+" | product $"+pt+" | grand $"+grand+(unavailable.length?" | UNAVAILABLE: "+unavailable.join(", "):"");
 
   return { success:"true", error:"", is_custom_mode:isCustom?"true":"false",
+    tier_warning: (function(){
+      // Low-tier signal (business rule: \$12/bottle wine floor). Quantity-first holds
+      // bottle counts fixed and lets price tier absorb the budget — correct in the normal
+      // range, but at a very low budget it silently lands on odd wine (real case:
+      // Manischewitz Concord Grape at \$9.89 for a corporate happy hour). The calculator
+      // decides deterministically; Rachel must surface it and offer the tradeoff. No
+      // high-side signal by design — higher tiers are welcome sales, not a problem.
+      var WINE_FLOOR = 12;
+      var low = lineItems.filter(function(li){ return li.category === 'wine' && (parseFloat(li.price) || 0) > 0 && parseFloat(li.price) < WINE_FLOOR; });
+      if (!low.length) return '';
+      var desc = low.map(function(li){ return li.qty + 'x ' + li.name + ' at $' + parseFloat(li.price).toFixed(2); }).join('; ');
+      var shortfall = low.reduce(function(s, li){ return s + li.qty * (WINE_FLOOR - parseFloat(li.price)); }, 0);
+      return 'LOW WINE TIER: ' + desc + ' is below the $' + WINE_FLOOR + '/bottle floor. Bringing these to $' + WINE_FLOOR + '/bottle at the same quantities needs about $' + Math.ceil(shortfall * 1.25) + ' more total budget (incl. fees).';
+    })(),
     line_items:JSON.stringify(lineItems), line_items_display:disp.join("\n"),
     product_total:pt.toFixed(2), estimated_tax:tax.toFixed(2), estimated_service:svc.toFixed(2),
     estimated_tip:tip.toFixed(2), delivery_fee:delivery.toFixed(2), estimated_grand_total:grand.toFixed(2),
