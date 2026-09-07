@@ -1040,6 +1040,35 @@ app.post('/chat', async (req, res) => {
       const finalQtyForOrder = preParsedQty || state.lastDetectedQty || null;
       if (finalQtyForOrder && finalQtyForOrder > 0) {
         state.orderData.qty = finalQtyForOrder;
+        // Pre-fill from what we already know: name/phone from the previous successful
+        // order, email from the profile, delivery date from the event/proposal date.
+        // Then ask ONLY for what's genuinely missing, in one message — previously every
+        // order was 4 sequential questions even for a repeat customer with a known date.
+        {
+          const sc = state.savedCustomer || {};
+          const knownDate = state.savedEventDate || (state.eventParams && state.eventParams.event_date) || '';
+          state.orderData.name = sc.name || '';
+          state.orderData.phone = sc.phone || '';
+          state.orderData.email = email || sc.email || '';
+          state.orderData.known_date = knownDate;
+          const missing = [];
+          if (!state.orderData.name) missing.push('your full name (first and last)');
+          if (!state.orderData.phone) missing.push('your phone number');
+          if (missing.length === 0) {
+            // Everything known -> one confirmation turn that doubles as the correction point.
+            state.orderStep = 'confirm_known';
+            saveFlowState();
+            const dateBit = knownDate ? (' delivering on ' + knownDate) : '';
+            const askK = 'I\'ll place this as ' + state.orderData.name + ', ' + state.orderData.phone + ', ' + state.orderData.email + dateBit + '.\n' +
+              (knownDate ? 'What delivery time works, and any delivery instructions for the driver (buzzer/door code, loading dock, floor/suite, on-site contact)? If any of those details should change, just tell me.'
+                         : 'What delivery date and time works? If any of those details should change, just tell me.');
+            return res.json({ text: askK, response: askK });
+          }
+          state.orderStep = 'name';
+          saveFlowState();
+          const askM = 'Almost there — I just need ' + missing.join(' and ') + '.';
+          return res.json({ text: askM, response: askM });
+        }
         state.orderStep = 'name';
         saveFlowState();
         const ask = 'What is your full name? (first and last)';
@@ -1068,8 +1097,48 @@ app.post('/chat', async (req, res) => {
       return res.json({ text: ask, response: ask });
     }
 
+    if (state.orderStep === 'confirm_known') {
+      const t = message.trim();
+      // Inline corrections override the pre-filled values.
+      const em = t.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+      if (em) state.orderData.email = em[0];
+      const ph = t.match(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/);
+      if (ph) state.orderData.phone = ph[0].replace(/\D/g, '');
+      const nm = t.match(/(?:name is|i'?m|it'?s)\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)/);
+      if (nm) state.orderData.name = nm[1];
+      // Route the rest (time and/or instructions) into the existing details handler.
+      // If we know the date, combine it with the stated time so validation sees a full datetime.
+      const timeOnly = t.match(/\b(\d{1,2}(?::\d{2})?\s*(?:am|pm)|noon|midnight)\b/i);
+      const kd = state.orderData.known_date;
+      if (kd && timeOnly && !/\d{1,2}\/\d{1,2}|january|february|march|april|may|june|july|august|september|october|november|december|tomorrow|today/i.test(t)) {
+        message = kd + ' at ' + timeOnly[1];
+      } else {
+        message = t;
+      }
+      // Anything after the time phrase is treated as instructions (customers often say
+      // "5pm, buzzer 4B"). If none, the details step will ask.
+      if (timeOnly) {
+        const after = t.slice(t.toLowerCase().indexOf(timeOnly[1].toLowerCase()) + timeOnly[1].length).replace(/^[\s,;.\-—]+/, '').trim();
+        if (after && !/^(none|no|nothing)$/i.test(after)) { state.orderData.delivery_instructions = after; state.orderData.instructions_asked = true; }
+      }
+      state.orderStep = 'details';
+      saveFlowState();
+    }
+
     if (state.orderStep === 'name') {
-      state.orderData.name = message.trim();
+      // The "missing info" reply may contain name AND phone in one message.
+      const t = message.trim();
+      const ph = t.match(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/);
+      if (ph) { state.orderData.phone = ph[0].replace(/\D/g, ''); }
+      const nameOnly = ph ? t.replace(ph[0], '').replace(/[,;]+/g, ' ').trim() : t;
+      if (!state.orderData.name && nameOnly) state.orderData.name = nameOnly;
+      if (state.orderData.phone) {
+        state.orderStep = 'details';
+        saveFlowState();
+        const kd = state.orderData.known_date;
+        const ask = kd ? ('Thanks! Delivering on ' + kd + ' — what time works, and any delivery instructions for the driver?') : 'Thanks! What delivery date and time would you like?';
+        return res.json({ text: ask, response: ask });
+      }
       state.orderStep = 'phone';
       saveFlowState();
       const ask = 'What is your phone number?';
@@ -1078,6 +1147,16 @@ app.post('/chat', async (req, res) => {
 
     if (state.orderStep === 'phone') {
       state.orderData.phone = message.replace(/\D/g, '');
+      // Email is already on file (profile) and was shown as a correction point; a
+      // separate "confirm your email" turn is redundant. Only ask if we have none.
+      if (state.orderData.email || email) {
+        state.orderData.email = state.orderData.email || email;
+        state.orderStep = 'details';
+        saveFlowState();
+        const kd = state.orderData.known_date;
+        const askD = kd ? ('Thanks! Delivering on ' + kd + ' — what time works, and any delivery instructions for the driver?') : 'Thanks! What delivery date and time would you like?';
+        return res.json({ text: askD, response: askD });
+      }
       state.orderStep = 'email_confirm';
       saveFlowState();
       const ask = format === 'slack'
@@ -1098,6 +1177,14 @@ app.post('/chat', async (req, res) => {
       saveFlowState();
       const ask = 'What delivery date and time would you like?';
       return res.json({ text: ask, response: ask });
+    }
+
+    if (state.orderStep === 'instructions') {
+      const raw = message.trim();
+      state.orderData.delivery_instructions = /^(none|no|nope|n\/a|na|nothing|skip)\.?$/i.test(raw) ? '' : raw;
+      state.orderStep = 'details';   // re-enter the placement path with datetime already set
+      saveFlowState();
+      message = state.orderData.delivery_datetime; // replay the validated datetime into the details handler
     }
 
     if (state.orderStep === 'details') {
@@ -1142,6 +1229,16 @@ app.post('/chat', async (req, res) => {
       }
 
       state.orderData.delivery_datetime = finalDeliveryText;
+      // New step: delivery instructions (buzzer/door code, loading dock, on-site contact).
+      // agent.js already accepts delivery_instructions and sends it to the Bevvi API as
+      // deliveryInstructions — the flow just never collected it.
+      if (!state.orderData.instructions_asked) {
+        state.orderData.instructions_asked = true;
+        state.orderStep = 'instructions';
+        saveFlowState();
+        const askI = 'Any delivery instructions for the driver? (e.g. buzzer or door code, loading dock, floor/suite, or an on-site contact) — or say "none".';
+        return res.json({ text: askI, response: askI });
+      }
       state.orderStep = 'confirm';
       saveFlowState();
       // Build order summary
@@ -1242,14 +1339,21 @@ app.post('/chat', async (req, res) => {
           line_items: updatedLineItems || '[]',
           customer: customerObj,
           delivery_datetime: od.delivery_datetime,
+          delivery_instructions: od.delivery_instructions || '',
           zip: state.zip
         });
         const fp2 = fingerprint(placeMsg);
         state.lastFingerprint = fp2;
         const gbrainCtx = email ? await getCustomerContext('', '', context?.client_id || 'airculinaire', email).catch(() => '') : '';
         context.saved_zip = state.zip;
-        const addrRule2 = '\n\n## DELIVERY\nZip: ' + state.zip + '. Address: ' + state.address + '. Age and address verified.\n\n## ORDER INSTRUCTION\nThe user message contains a JSON system instruction. Parse it and immediately call ShoppingAgent with intent=place_order using the line_items, customer, delivery_datetime and zip from the JSON. Do not ask for any more information.';
+        const addrRule2 = '\n\n## DELIVERY\nZip: ' + state.zip + '. Address: ' + state.address + '. Age and address verified.\n\n## ORDER INSTRUCTION\nThe user message contains a JSON system instruction. Parse it and immediately call ShoppingAgent with intent=place_order using the line_items, customer, delivery_datetime, delivery_instructions and zip from the JSON (pass delivery_instructions through verbatim, even if empty). Do not ask for any more information.';
         const orderOutput = await callRachel({ sessionKey, message: placeMsg, context, format, gbrainContext: gbrainCtx, addressRule: addrRule2, email, alreadyConfirmed: true });
+        // Persist the customer's contact details for repeat orders. GBrain stores no
+        // name/phone, so the previous successful order is the only source — without
+        // this every order re-asked name and phone from scratch.
+        if (od.name || od.phone) {
+          state.savedCustomer = { name: od.name || '', phone: od.phone || '', email: od.email || email || '' };
+        }
         state.orderStep = null;
         state.orderData = null;
         saveFlowState();
