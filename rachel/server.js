@@ -822,7 +822,11 @@ app.post('/chat', async (req, res) => {
           let reply = await callRachel({ sessionKey, message: pending, context, format, gbrainContext, addressRule: addrRule, email });
           // Apply the same CTA logic as the main flow, since this replay path bypasses it otherwise
           const replayHasProposal = reply.toLowerCase().includes('your proposal') || reply.includes('proposals/bevvi-proposal') || reply.includes('download proposal');
-          const replayIsEventPackage = reply.includes('Product total') || reply.includes('Estimated grand total') || reply.includes('grand total');
+          // Case-insensitive: replies say "Product Total" / "Estimated Grand Total" (title
+          // case), which the old lowercase substring checks never matched — so packageShown
+          // stayed false and the deterministic mixer-decline gate never fired on the
+          // first "no" (real bug: "no" to mixers re-displayed the package twice).
+          const replayIsEventPackage = /product total|estimated (grand )?total|grand total/i.test(reply);
           const replayIsSingleProduct = !replayIsEventPackage && reply.includes('$') && (reply.match(/\d+ML/i) !== null || reply.match(/\d+L\b/) !== null) && reply.split('$').length <= 3;
           const replayCtaPatterns = [
             'place the order', 'place an order', 'placing the order', 'placing an order',
@@ -892,7 +896,11 @@ app.post('/chat', async (req, res) => {
           const addrRule = `\n\n## DELIVERY\nZip: ${state.zip}. Address: ${state.address}. Use this zip for ALL ShoppingAgent calls. Never ask about address or age.`;
           let reply = await callRachel({ sessionKey, message: pending, context, format, gbrainContext, addressRule: addrRule, email });
           const replayHasProposal = reply.toLowerCase().includes('your proposal') || reply.includes('proposals/bevvi-proposal') || reply.includes('download proposal');
-          const replayIsEventPackage = reply.includes('Product total') || reply.includes('Estimated grand total') || reply.includes('grand total');
+          // Case-insensitive: replies say "Product Total" / "Estimated Grand Total" (title
+          // case), which the old lowercase substring checks never matched — so packageShown
+          // stayed false and the deterministic mixer-decline gate never fired on the
+          // first "no" (real bug: "no" to mixers re-displayed the package twice).
+          const replayIsEventPackage = /product total|estimated (grand )?total|grand total/i.test(reply);
           const replayIsSingleProduct = !replayIsEventPackage && reply.includes('$') && (reply.match(/\d+ML/i) !== null || reply.match(/\d+L\b/) !== null) && reply.split('$').length <= 3;
           const replayCtaPatterns = [
             'place the order', 'place an order', 'placing the order', 'placing an order',
@@ -1021,7 +1029,7 @@ app.post('/chat', async (req, res) => {
         state.orderData.qty = null;
         state.orderStep = 'name';
         saveFlowState();
-        const ask = 'What is your full name? (first and last)';
+        const ask = 'What is your full name — the person placing the order? (first and last). If someone else will receive the delivery, you can give their contact in the delivery instructions later.';
         return res.json({ text: ask, response: ask });
       }
       // Check whether the customer already specified a quantity in the message that
@@ -1066,12 +1074,12 @@ app.post('/chat', async (req, res) => {
           }
           state.orderStep = 'name';
           saveFlowState();
-          const askM = 'Almost there — I just need ' + missing.join(' and ') + '.';
+          const askM = 'Almost there — I just need ' + missing.join(' and ') + ' for the person placing the order. (An on-site contact for the driver can go in the delivery instructions.)';
           return res.json({ text: askM, response: askM });
         }
         state.orderStep = 'name';
         saveFlowState();
-        const ask = 'What is your full name? (first and last)';
+        const ask = 'What is your full name — the person placing the order? (first and last). If someone else will receive the delivery, you can give their contact in the delivery instructions later.';
         return res.json({ text: ask, response: ask });
       }
       state.orderStep = 'qty';
@@ -1079,7 +1087,6 @@ app.post('/chat', async (req, res) => {
       const ask = 'How many bottles would you like to order?';
       return res.json({ text: ask, response: ask });
     }
-
     if (state.orderStep === 'qty') {
       const qtyMatch = message.match(/\b(\d+)\b/);
       state.orderData.qty = qtyMatch ? parseInt(qtyMatch[1]) : 1;
@@ -1093,10 +1100,21 @@ app.post('/chat', async (req, res) => {
           if (basket) { state.lastLineItems = typeof basket === 'string' ? basket : JSON.stringify(basket); saveFlowState(); }
         } catch(e) {}
       }
-      const ask = 'What is your full name? (first and last)';
+      const ask = 'What is your full name — the person placing the order? (first and last). If someone else will receive the delivery, you can give their contact in the delivery instructions later.';
       return res.json({ text: ask, response: ask });
     }
 
+    // Strip Slack markup before any order-step parsing. Slack delivers phone links as
+    // <tel:3475702280|347-570-2280> (the number twice -> digit-stripping produced
+    // "34757022803475702280"), blockquotes as &gt;, bold as *...*. Real order state had
+    // name "&gt; *Shaminka Smith*" and a 20-digit phone from one instructions message.
+    const cleanSlackText = (s) => String(s || '')
+      .replace(/<tel:[^|>]*\|([^>]*)>/g, '$1').replace(/<mailto:[^|>]*\|([^>]*)>/g, '$1')
+      .replace(/<(https?:[^|>]*)\|[^>]*>/g, '$1').replace(/<([^>]+)>/g, '$1')
+      .replace(/&gt;/g, '').replace(/&lt;/g, '').replace(/&amp;/g, '&')
+      .replace(/\*([^*]+)\*/g, '$1').replace(/_([^_]+)_/g, '$1')
+      .replace(/^\s*>\s*/gm, '').replace(/\s+/g, ' ').trim();
+    if (state.orderStep) message = cleanSlackText(message);
     if (state.orderStep === 'confirm_known') {
       const t = message.trim();
       // Inline corrections override the pre-filled values.
@@ -1124,7 +1142,6 @@ app.post('/chat', async (req, res) => {
       state.orderStep = 'details';
       saveFlowState();
     }
-
     if (state.orderStep === 'name') {
       // The "missing info" reply may contain name AND phone in one message.
       const t = message.trim();
@@ -1141,10 +1158,9 @@ app.post('/chat', async (req, res) => {
       }
       state.orderStep = 'phone';
       saveFlowState();
-      const ask = 'What is your phone number?';
+      const ask = 'And your phone number (for the person placing the order)?';
       return res.json({ text: ask, response: ask });
     }
-
     if (state.orderStep === 'phone') {
       state.orderData.phone = message.replace(/\D/g, '');
       // Email is already on file (profile) and was shown as a correction point; a
@@ -1164,7 +1180,6 @@ app.post('/chat', async (req, res) => {
         : 'Your email on file is ' + email + ' — shall I use this, or provide a different one?';
       return res.json({ text: ask, response: ask });
     }
-
     if (state.orderStep === 'email_confirm') {
       // If yes or empty, use existing email. Otherwise use provided email
       if (yesWords.some(w => msgLower.includes(w))) {
@@ -1178,16 +1193,20 @@ app.post('/chat', async (req, res) => {
       const ask = 'What delivery date and time would you like?';
       return res.json({ text: ask, response: ask });
     }
-
     if (state.orderStep === 'instructions') {
       const raw = message.trim();
       state.orderData.delivery_instructions = /^(none|no|nope|n\/a|na|nothing|skip)\.?$/i.test(raw) ? '' : raw;
-      state.orderStep = 'details';   // re-enter the placement path with datetime already set
+      // The datetime was already validated and stored as the matched window text
+      // (e.g. "02:00 PM - 03:00 PM EST"). Replaying THAT into the details handler
+      // made chrono re-parse the window string and land on the wrong hour (real
+      // bug: customer said 2 PM, summary showed 7-8 PM). Skip re-validation.
+      state.orderData.datetime_validated = true;
+      state.orderStep = 'details';
       saveFlowState();
-      message = state.orderData.delivery_datetime; // replay the validated datetime into the details handler
+      message = state.orderData.delivery_datetime;
     }
-
     if (state.orderStep === 'details') {
+     if (!state.orderData.datetime_validated) {
       const parsedResults = chrono.parse(message, new Date(), { forwardDate: true });
       if (!parsedResults.length || !parsedResults[0].start.isCertain('hour')) {
         const ask = 'Could you give me a specific delivery date and time? (e.g. \"tomorrow at 5pm\" or \"August 5th at 2pm\")';
@@ -1229,6 +1248,7 @@ app.post('/chat', async (req, res) => {
       }
 
       state.orderData.delivery_datetime = finalDeliveryText;
+     } // end !datetime_validated — a validated replay skips parse+availability, keeps the stored window
       // New step: delivery instructions (buzzer/door code, loading dock, on-site contact).
       // agent.js already accepts delivery_instructions and sends it to the Bevvi API as
       // deliveryInstructions — the flow just never collected it.
@@ -1288,7 +1308,8 @@ app.post('/chat', async (req, res) => {
         ? '*Order Summary*\n\n' +
           (multiLines ? multiLines.join('\n') : productName + ' x' + qty + ' — $' + unitPrice.toFixed(2) + ' ea = $' + productTotal.toFixed(2)) + '\n' +
           'Delivery to: ' + state.address + '\n' +
-          'Delivery: ' + state.orderData.delivery_datetime + '\n\n' +
+          'Delivery: ' + state.orderData.delivery_datetime + '\n' +
+          (state.orderData.delivery_instructions ? 'Delivery instructions: ' + state.orderData.delivery_instructions + '\n' : '') + '\n' +
           'Product total: $' + productTotal.toFixed(2) + '\n' +
           'Estimated tax (10%): $' + tax.toFixed(2) + '\n' +
           'Service charge (10%): $' + service.toFixed(2) + '\n' +
@@ -1299,7 +1320,6 @@ app.post('/chat', async (req, res) => {
         : 'Order summary ready. Grand total: $' + grandTotal.toFixed(2) + '. Confirm?';
       return res.json({ text: summary, response: summary });
     }
-
     if (state.orderStep === 'confirm') {
       if (yesWords.some(w => msgLower.includes(w))) {
         state.orderStep = 'placing';
@@ -1324,16 +1344,47 @@ app.post('/chat', async (req, res) => {
             updatedLineItems = JSON.stringify(items);
           } catch(e) {}
         }
+        // Parse the address robustly. Real bug: a two-line address ("101 E 150th St" /
+        // "Bronx, NY 10451") was stored with the line break collapsed to a space, so the
+        // old comma-split produced city="NY 10451" and no state — Bevvi rejected it
+        // ("should be street address, city, state zip"). State was also hardcoded 'NY',
+        // which would break every Boston/Dallas/Scottsdale/Miami order.
+        const addrRaw = String(state.address || '').replace(/\s+/g, ' ').trim();
+        let street = addrRaw, city = '', stateCode = '', zipc = state.zip || '';
+        {
+          // Comma before the city: unambiguous.
+          let m = addrRaw.match(/^(.*?),\s*([A-Za-z .'-]+?)[,\s]+([A-Z]{2})[,\s]+(\d{5})(?:-\d{4})?\s*$/);
+          if (m) { street = m[1].trim(); city = m[2].trim(); stateCode = m[3]; zipc = m[4]; }
+          else {
+            // No comma between street and city (a two-line address collapsed to one line):
+            // split on the LAST street-suffix word, so "101 E 150th St Bronx" -> St | Bronx
+            // and "1250 Broadway 2nd Floor New York" -> Floor | New York.
+            m = addrRaw.match(/^(.*?)[,\s]+([A-Z]{2})[,\s]+(\d{5})(?:-\d{4})?\s*$/);
+            if (m) {
+              const pre = m[1].replace(/,\s*$/, ''); stateCode = m[2]; zipc = m[3];
+              const SUFFIX = /\b(street|st|avenue|ave|boulevard|blvd|road|rd|drive|dr|lane|ln|way|place|pl|court|ct|terrace|ter|parkway|pkwy|highway|hwy|broadway|floor|fl|suite|ste|apt|unit|#\d+)\.?\b/i;
+              const words = pre.split(' '); let cut = -1;
+              for (let i = words.length - 1; i >= 0; i--) { if (SUFFIX.test(words[i])) { cut = i; break; } }
+              if (cut >= 0 && cut < words.length - 1) { street = words.slice(0, cut + 1).join(' '); city = words.slice(cut + 1).join(' '); }
+              else { street = pre; }
+            } else {
+              const m2 = addrRaw.match(/^(.*?),\s*([^,]+?)\s*$/);
+              if (m2) { street = m2[1].trim(); city = m2[2].trim(); }
+            }
+          }
+        }
         const customerObj = {
           firstName: firstName,
           lastName: lastName,
           email: od.email || email,
           phone: od.phone,
-          address: state.address,
-          city: state.address.split(',').length > 1 ? state.address.split(',')[1].trim() : '',
-          state: 'NY',
-          zipcode: state.zip
+          address: [street, city, [stateCode, zipc].filter(Boolean).join(' ')].filter(Boolean).join(', '),
+          streetAddress: street,
+          city: city,
+          state: stateCode || 'NY',
+          zipcode: zipc
         };
+        console.log('[order] parsed address ->', JSON.stringify({ street, city, state: stateCode, zip: zipc }));
         const placeMsg = JSON.stringify({
           _system: 'place_order',
           line_items: updatedLineItems || '[]',
@@ -1456,7 +1507,6 @@ app.post('/chat', async (req, res) => {
       const ask = 'How many bottles would you like on the proposal?';
       return res.json({ text: ask, response: ask });
     }
-
     if (state.proposalStep === 'qty') {
       const qtyMatch = message.match(/\b(\d+)\b/);
       state.proposalData.qty = qtyMatch ? parseInt(qtyMatch[1]) : 1;
@@ -1472,7 +1522,6 @@ app.post('/chat', async (req, res) => {
     // name and event date (PDF showed "—"), and would have remembered it for the rest of
     // the session. Treat it as "proceed with this field blank" and never persist it.
     const isNonAnswer = (m) => /^\s*(generate|create|make|build)\b.*(pdf|proposal|quote)|^\s*(proposal|pdf|quote|skip|none|n\/a|na|no|-)\s*$/i.test(m || '');
-
     if (state.proposalStep === 'client') {
       if (isNonAnswer(message)) {
         state.proposalData.client_name = '';
@@ -1495,7 +1544,6 @@ app.post('/chat', async (req, res) => {
         return res.json({ text: ask, response: ask });
       }
     }
-
     if (state.proposalStep === 'date') {
       if (isNonAnswer(message)) {
         state.proposalData.event_date = '';
@@ -1603,7 +1651,9 @@ app.post('/chat', async (req, res) => {
     // message), so the LLM would improvise — sometimes re-narrating the whole
     // package and mixer question from scratch instead of just moving on. Handle
     // a clear yes/no answer here, deterministically, without an LLM call at all.
-    if (state.mixerAsked && !state.mixerAnswered && state.packageShown) {
+    // Gate on mixerAsked only: if the question was asked, the answer applies. packageShown
+    // was merely a proxy for "a package exists" and its detection has been fragile.
+    if (state.mixerAsked && !state.mixerAnswered) {
       const mixerNoWords = ['no', 'nope', 'no thanks', 'no worries', "that's all", 'thats all', "i'm good", 'im good', 'nothing else', 'none'];
       const mixerMsgLower = message.toLowerCase().trim().replace(/\*/g, '');
       // Real bug found tonight: a message like "no find a 750 ML gin around $25" was
@@ -2089,6 +2139,12 @@ app.post('/chat', async (req, res) => {
     if (context.saved_package) {
       fullAddrRule += `\n\n## ACTIVE PACKAGE\nline_items: ${context.saved_package}\nFor brand swaps: keep quantities, swap only requested item. Call ShoppingAgent intent=custom_list with updated named_products.`;
     }
+    // Once the customer has answered the mixers question, say so explicitly — otherwise
+    // the LLM re-asks "would you also like to add mixers...?" on every later turn.
+    try {
+      const stMx = getState(sessionKey);
+      if (stMx.mixerAnswered) fullAddrRule += `\n\n## MIXERS ALREADY ANSWERED\nThe customer has already answered the mixers/water/soda/ice/cups question for this package. Do NOT ask it again. End replies with the place-order / proposal / changes options instead.`;
+    } catch (e) {}
       // Inject the persisted event parameters (OUTSIDE the saved_package branch: that
       // branch depends on an in-memory cache that is empty after every restart, which
       // is exactly when these persisted params are needed). Fires whenever they exist.
@@ -2112,7 +2168,10 @@ app.post('/chat', async (req, res) => {
     const hasProposal = output.toLowerCase().includes('your proposal') || output.includes('proposals/bevvi-proposal') || output.includes('download proposal');
     const isEventPackage = output.includes('Product total') || output.includes('Estimated grand total') || output.includes('grand total');
     const isSingleProduct = !isEventPackage && output.includes('$') && (output.match(/\d+ML/i) !== null || output.match(/\d+L\b/) !== null) && output.split('$').length <= 3;
-    const packageJustShown = isEventPackage || output.includes('Estimated total') || output.includes('estimated total');
+    // Real bug: replies said "Estimated Grand Total", which does NOT contain the
+    // substring 'Estimated total', so packageShown never got set, the deterministic
+    // mixer-decline handler stayed gated off, and "no" to mixers looped forever.
+    const packageJustShown = isEventPackage || /estimated (grand )?total|product total/i.test(output);
     // A keyword list can never keep up with the LLM's open-ended phrasing (it improvises
     // freely — "want me to go ahead?", "shall I get this started?", "ready to order?", etc.
     // are all valid ways to ask the same thing, and new phrasings appear constantly). The

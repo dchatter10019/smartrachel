@@ -175,13 +175,33 @@ async function createOrder({ products, customerData, tipAmount, deliveryDateTime
       return { success: false, order_id: '', payment_url: '', error: 'No products provided' };
     }
 
+    // Send the product ID and establishment, not just the UPC. Real bug: Bevvi's
+    // order-side UPC lookup fails for some catalog products ("No Product found for the
+    // upc:083085904081" — Ruffino Prosecco, which search returned fine); the basket
+    // carried the corpProductId the whole time and this path just never sent it.
+    // This is the DIRECT createOrder path used by Slack orders; agent.js (the RFQ
+    // path) already sends both.
     const orderProducts = products.map(function(p) {
       return {
         name: p.name || '',
         upc: p.upc || '',
-        qty: parseInt(p.qty) || parseInt(p.quantity) || 1
+        productId: p.product_id || p.productId || '',
+        establishmentId: p.establishmentId || '',
+        qty: parseInt(p.qty) || parseInt(p.quantity) || 1,
+        price: parseFloat(p.price) || 0
       };
     });
+    // Tip / service charge with the field names Bevvi actually reads (tipAmt/tipPct/
+    // serviceChargeAmt/serviceChargePct). This path sent `tipAmount` — silently
+    // ignored — and no service charge at all, so every Slack order under-billed.
+    const productTotalOC = orderProducts.reduce(function(s, p){ return s + p.qty * p.price; }, 0);
+    const serviceChargePct = 10;
+    const serviceChargeAmt = Math.round(productTotalOC * serviceChargePct) / 100;
+    // Default the tip to 5% when none was passed, matching the quote shown to the
+    // customer (agent.js does the same) — otherwise the order would bill $0 tip
+    // against a summary that promised 5%.
+    const tipAmtOC = parseFloat(tipAmount) || Math.round(productTotalOC * 0.05 * 100) / 100;
+    const tipPct = productTotalOC > 0 ? Math.round(tipAmtOC / productTotalOC * 100) : 5;
 
     const body = {
       products: orderProducts,
@@ -199,12 +219,17 @@ async function createOrder({ products, customerData, tipAmount, deliveryDateTime
         phoneNumber: ((customerData && customerData.phoneNumber) || (customerData && customerData.phone) || '').replace(/[^0-9]/g, ''),
         companyName: ''
       },
-      tipAmount: tipAmount,
+      tipAmt: tipAmtOC,
+      tipPct: tipPct,
+      serviceChargeAmt: serviceChargeAmt,
+      serviceChargePct: serviceChargePct,
       deliveryDateTime: deliveryDateTime,
       deliveryInstructions: deliveryInstructions
     };
 
-    console.log('[createOrder] sending:', JSON.stringify(body).slice(0, 500));
+    // Log the FULL request body (it was truncated at 500 chars, which cut the product
+    // list off after ~2 items and made it impossible to verify what was actually sent).
+    console.log('[createOrder] sending:', JSON.stringify(body));
     const response = await fetch('https://api.getbevvi.com/api/bevvibot/createOrder', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -219,6 +244,27 @@ async function createOrder({ products, customerData, tipAmount, deliveryDateTime
     const orderId    = data.orderNumber || data.order_id || data.orderId || data.id || '';
     const paymentUrl = data.orderLink   || data.payment_url || data.paymentUrl || data.checkoutUrl || '';
     const apiSuccess = data.success === true || data.success === 'true';
+
+    // Make a per-product rejection actionable. Bevvi's order API keys on UPC and
+    // returns "No Product found for the upc:XXXX" when a product its search index
+    // lists is missing from its order catalog (real case: Ruffino Prosecco 083085904081
+    // at the NYC store — search returns it, createOrder rejects it, even with productId
+    // and establishmentId sent). Previously this surfaced as a generic "order failed,
+    // contact support"; now we name the exact item so Rachel can offer to swap JUST
+    // that one and place the rest.
+    const errMsgOC = String((data.error && data.error.message) || data.message || data.error || '');
+    const upcMatch = errMsgOC.match(/No Product found for the upc:\s*([A-Za-z0-9]+)/i);
+    if (!apiSuccess && upcMatch) {
+      const badUpc = upcMatch[1];
+      const badItem = orderProducts.find(function(p){ return String(p.upc) === badUpc; });
+      const badName = badItem ? badItem.name : ('UPC ' + badUpc);
+      console.log('[createOrder] unfulfillable item:', badName, '(upc ' + badUpc + ') — Bevvi order catalog lacks it though search returned it');
+      return {
+        success: false, order_id: '', payment_url: '',
+        unfulfillable_item: badName, unfulfillable_upc: badUpc,
+        error: 'Bevvi cannot fulfill "' + badName + '" at this store right now (their order catalog does not have UPC ' + badUpc + ', although it appears in search). The rest of the order is fine — swap this one item to proceed.'
+      };
+    }
 
     if (apiSuccess && (orderId || paymentUrl)) {
       return { success: true, order_id: String(orderId), payment_url: String(paymentUrl), error: '' };
