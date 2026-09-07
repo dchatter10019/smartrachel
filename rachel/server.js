@@ -1391,13 +1391,21 @@ app.post('/chat', async (req, res) => {
           customer: customerObj,
           delivery_datetime: od.delivery_datetime,
           delivery_instructions: od.delivery_instructions || '',
-          zip: state.zip
+          zip: state.zip,
+          // The exact figures the customer just approved in the summary. The post-order
+          // confirmation must quote THESE — the createCorpOrder response carries no tip
+          // field, and the LLM was narrating "Tip: $0.00" against an approved $113.91.
+          approved_totals: {
+            product_total: od.productTotal, tax: od.tax, service: od.service, tip: od.tip,
+            delivery: 25.00,
+            grand_total: Math.round(((od.productTotal || 0) + (od.tax || 0) + (od.service || 0) + (od.tip || 0) + 25) * 100) / 100
+          }
         });
         const fp2 = fingerprint(placeMsg);
         state.lastFingerprint = fp2;
         const gbrainCtx = email ? await getCustomerContext('', '', context?.client_id || 'airculinaire', email).catch(() => '') : '';
         context.saved_zip = state.zip;
-        const addrRule2 = '\n\n## DELIVERY\nZip: ' + state.zip + '. Address: ' + state.address + '. Age and address verified.\n\n## ORDER INSTRUCTION\nThe user message contains a JSON system instruction. Parse it and immediately call ShoppingAgent with intent=place_order using the line_items, customer, delivery_datetime, delivery_instructions and zip from the JSON (pass delivery_instructions through verbatim, even if empty). Do not ask for any more information.';
+        const addrRule2 = '\n\n## DELIVERY\nZip: ' + state.zip + '. Address: ' + state.address + '. Age and address verified.\n\n## ORDER INSTRUCTION\nThe user message contains a JSON system instruction. Parse it and immediately call ShoppingAgent with intent=place_order using the line_items, customer, delivery_datetime, delivery_instructions and zip from the JSON (pass delivery_instructions through verbatim, even if empty). Do not ask for any more information. In your confirmation reply, quote the amounts from approved_totals EXACTLY (product total, tax, service charge, tip, delivery, grand total) — never recompute them and never show a tip of $0.00; the API response does not include these figures and the customer already approved them.';
         const orderOutput = await callRachel({ sessionKey, message: placeMsg, context, format, gbrainContext: gbrainCtx, addressRule: addrRule2, email, alreadyConfirmed: true });
         // Persist the customer's contact details for repeat orders. GBrain stores no
         // name/phone, so the previous successful order is the only source — without
