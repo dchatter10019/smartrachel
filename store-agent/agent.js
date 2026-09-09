@@ -378,9 +378,24 @@ async function executeTool(name, input) {
       });
 
       const data = await res.json();
+      // Log the FULL response. Previously only the request was logged, so we could never
+      // see what Bevvi accepted, rejected, or computed (fees, delivery, echoed fields) —
+      // a blind spot that hid silent field-name mismatches for weeks.
+      console.log('[place_order] createCorpOrder response (' + res.status + '):', JSON.stringify(data));
       const arr  = Array.isArray(data) ? data[0] : data;
-      const orderId    = arr.orderNumber || arr.order_id || '';
       const paymentUrl = arr.url || arr.orderLink || arr.payment_url || '';
+      // Bevvi does not return the order number in the body — only inside the checkout
+      // JWT's payload ({"orderNumber":"BEVVI-AI-INFO-..."}). Every order was being
+      // recorded with order_id '' as a result. Decode it (no verification needed; we
+      // only read the public payload) so history and cancellations have a reference.
+      let orderId = arr.orderNumber || arr.order_id || '';
+      if (!orderId) {
+        try {
+          const tok = arr.token || (paymentUrl.match(/token=([^&]+)/) || [])[1] || '';
+          const payload = tok.split('.')[1];
+          if (payload) orderId = JSON.parse(Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')).orderNumber || '';
+        } catch (e) {}
+      }
       const success    = arr.success === true || arr.success === 'true' || !!paymentUrl;
 
       return { success, order_id: orderId, payment_url: paymentUrl, error: success ? '' : (arr.message || arr.error?.message || 'Order failed') };
