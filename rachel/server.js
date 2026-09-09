@@ -371,6 +371,21 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
         console.log('[product-discussed] SKIPPED overwrite — existing basket has', existingCount, 'item(s), narrow search result not saved as active order');
         return;
       }
+      // A multi-option pick list is NOT an order. Real bug: "need a KJ Chardonnay and
+      // a 12-pack Corona" returned 5 candidates (two KJ sizes, two Corona sizes, Corona
+      // Light); all 5 were captured as the basket, the customer's pick of two was only
+      // narrated, and the order placed with all five (\$215 instead of ~\$60). Only
+      // auto-capture an unambiguous result: at most one candidate per requested item.
+      try {
+        const arr = JSON.parse(lineItems || '[]');
+        const byLabel = {};
+        arr.forEach(it => { const k = String(it.label || it.name || '').toLowerCase(); byLabel[k] = (byLabel[k] || 0) + 1; });
+        const hasMultiPerRequest = Object.values(byLabel).some(n => n > 1);
+        if (hasMultiPerRequest || arr.length > 3) {
+          console.log('[product-discussed] SKIPPED capture — multi-option pick list (' + arr.length + ' candidates), waiting for the customer to choose');
+          return;
+        }
+      } catch (e) {}
       const key = makeCacheKey(em || email, state.zip, state.lastFingerprint);
       packageCache[key] = lineItems;
       state.lastLineItems = lineItems;
@@ -772,6 +787,9 @@ app.post('/chat', async (req, res) => {
 
     // ── STATE: addr_new ────────────────────────────────────────────────────
     if (state.step === 'addr_new') {
+      // Strip a conversational prefix so "address is 425 W 53rd St" is stored as the
+      // address, not the sentence (real bug: summary read "Delivery to: address is 425...").
+      message = message.replace(/^\s*(?:my |the |our )?(?:new |delivery |shipping )?address(?: is|:)?\s*/i, '').replace(/^\s*(?:deliver(?: it)? to|ship(?: it)? to|send(?: it)? to)\s*:?\s*/i, '').trim();
       const zipMatch = message.match(/\b(\d{5})\b/);
       if (zipMatch) {
         const candidateZip = zipMatch[1];

@@ -975,7 +975,7 @@ async function executeTool(name, input) {
               store_url: winner.store_url,
               products: (function() {
                 console.log('[shopping-agent] bid_items:', JSON.stringify(winner.bid_items.slice(0,2)));
-                return winner.bid_items.filter(function(i){ return i.available; }).map(function(i){ return { name: i.matched || i.name, upc: i.upc, qty: i.quantity, product_id: i.product_id || '', establishmentId: i.establishmentId || '' }; });
+                return winner.bid_items.filter(function(i){ return i.available; }).map(function(i){ return { name: i.matched || i.name, upc: i.upc, qty: i.quantity, price: i.unit_price || 0, product_id: i.product_id || '', establishmentId: i.establishmentId || '' }; });
               })(),
               customer: { firstName: c.firstName||c.first_name||'', lastName: c.lastName||c.last_name||'', email: c.email||'', address: c.address||'', city: c.city||'', state: c.state||'', zipcode: c.zipcode||zip||'', phone: c.phone||c.phoneNumber||'' },
               account_email: input.email || '',

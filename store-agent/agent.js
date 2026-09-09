@@ -348,6 +348,7 @@ async function executeTool(name, input) {
           upc:             p.upc || '',
           name:            p.name || '',
           quantity:        p.qty || p.quantity || 1,
+          price:           parseFloat(p.price) || 0,
           establishmentId: p.establishmentId || ''
         })),
         customerData: {
