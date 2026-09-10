@@ -948,119 +948,88 @@ async function executeTool(name, input) {
     const products = JSON.parse(input.line_items || '[]');
     const c = input.customer || {};
 
-    // Try orchestrator first — broadcast RFQ to find best store
+    // DIRECT createCorpOrder. The store-agent/orchestrator RFQ layer is bypassed:
+    // every zip maps to exactly one store (so bidding never competed), it re-matched
+    // products by name (a needless failure point), it kept a THIRD zip list (gitignored,
+    // and the reason a whole morning of Bronx orders failed), and its <80%-coverage
+    // fallback silently routed to the WRONG endpoint (createOrder). The basket already
+    // carries everything createCorpOrder needs per product — productId, upc, name,
+    // quantity, establishmentId (mixed establishments are accepted; verified).
+    // No delivery fee is sent — Bevvi determines delivery at checkout.
     try {
-      const rfqBasket = products.map(function(item) {
-        return { name: item.name, category: item.category || item.label || '', quantity: item.qty || 1, max_price: (item.price || 0) * 1.3, upc: item.upc || '' };
+      const productTotal = products.reduce((s, p) => s + (parseFloat(p.price) || 0) * (p.qty || p.quantity || 1), 0);
+      const serviceChargePct = 10;
+      const serviceChargeAmt = Math.round(productTotal * (serviceChargePct / 100) * 100) / 100;
+      const tipAmt = input.tip_amount || Math.round(productTotal * 0.05 * 100) / 100;
+      const tipPct = productTotal > 0 ? Math.round((tipAmt / productTotal) * 100) : 5;
+      const parseAddr = (addr) => {
+        const a = String(addr || '').replace(/\s+/g, ' ').trim();
+        let m = a.match(/^(.*?),\s*([A-Za-z .'-]+?)[,\s]+([A-Z]{2})[,\s]+(\d{5})(?:-\d{4})?\s*$/);
+        if (m) return { street: m[1].trim(), city: m[2].trim(), state: m[3], zip: m[4] };
+        return { street: a, city: c.city || '', state: c.state || '', zip: c.zipcode || zip || '' };
+      };
+      const pa = parseAddr(c.address);
+      const body = {
+        email: input.account_email || c.email || input.email || '',
+        products: products.map(p => ({
+          productId:       p.product_id || p.productId || '',
+          upc:             p.upc || '',
+          name:            p.name || '',
+          quantity:        p.qty || p.quantity || 1,
+          establishmentId: p.establishmentId || ''
+        })),
+        customerData: {
+          firstName:     c.firstName || c.first_name || '',
+          lastName:      c.lastName  || c.last_name  || '',
+          email:         c.email || '',
+          streetAddress: c.streetAddress || pa.street,
+          aptSuiteNum:   c.aptSuiteNum || '',
+          city:          c.city || pa.city,
+          state:         c.state || pa.state,
+          zipcode:       c.zipcode || pa.zip || zip || '',
+          phoneNumber:   (c.phone || c.phoneNumber || '').replace(/\D/g, '')
+        },
+        tipAmt, tipPct, serviceChargeAmt, serviceChargePct,
+        deliveryDateTime:     input.delivery_datetime || '',
+        deliveryInstructions: input.delivery_instructions || ''
+      };
+      console.log('[shopping-agent] createCorpOrder body:', JSON.stringify(body));
+      const res = await fetch('https://api-client.getbevvi.com/api/bevvibot/createCorpOrder', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
       });
-      const rfqRes = await fetch('http://127.0.0.1:8200/mcp', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'broadcast_rfq', arguments: { delivery_zip: zip || '10010', basket: rfqBasket } } })
-      });
-      const rfqText = await rfqRes.text();
-      const rfqLine = rfqText.split('\n').find(function(l){ return l.startsWith('data:'); });
-      if (rfqLine) {
-        const rfqMsg = JSON.parse(rfqLine.replace('data:', '').trim());
-        const rfqResult = JSON.parse(rfqMsg.result.content[0].text);
-        if (rfqResult.success && rfqResult.winner && rfqResult.winner.coverage_pct >= 80) {
-          const winner = rfqResult.winner;
-          console.log('[shopping-agent] place_order via orchestrator → winner:', winner.store, '$' + winner.estimated_grand_total);
-          // Place order via winning store agent
-          console.log('[shopping-agent] calling place_winning_order on:', winner.store_url);
-          const orderRes = await fetch('http://127.0.0.1:8200/mcp', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'place_winning_order', arguments: {
-              store_url: winner.store_url,
-              products: (function() {
-                console.log('[shopping-agent] bid_items:', JSON.stringify(winner.bid_items.slice(0,2)));
-                return winner.bid_items.filter(function(i){ return i.available; }).map(function(i){ return { name: i.matched || i.name, upc: i.upc, qty: i.quantity, price: i.unit_price || 0, product_id: i.product_id || '', establishmentId: i.establishmentId || '' }; });
-              })(),
-              customer: { firstName: c.firstName||c.first_name||'', lastName: c.lastName||c.last_name||'', email: c.email||'', address: c.address||'', city: c.city||'', state: c.state||'', zipcode: c.zipcode||zip||'', phone: c.phone||c.phoneNumber||'' },
-              account_email: input.email || '',
-              tip_amount: input.tip_amount || 0,
-              delivery_datetime: input.delivery_datetime || '',
-              delivery_instructions: input.delivery_instructions || ''
-            }}})
-          });
-          const orderText = await orderRes.text();
-          console.log('[shopping-agent] place_winning_order response:', orderText.slice(0,200));
-          const orderLine = orderText.split('\n').find(function(l){ return l.startsWith('data:'); });
-          if (orderLine) {
-            const orderMsg = JSON.parse(orderLine.replace('data:', '').trim());
-            const orderResult = JSON.parse(orderMsg.result.content[0].text);
-            if (orderResult && orderResult.success) {
-              const orderLog = JSON.stringify({
-                ts: new Date().toISOString(),
-                order_id: orderResult.order_id || '',
-                store: winner.store,
-                store_id: winner.store_url,
-                amount: winner.estimated_grand_total,
-                email: input.email || '',
-                zip: input.zip || ''
-              });
-              console.log('[order-placed] ' + orderLog);
-              require('fs').appendFileSync('/home/ubuntu/logs/orders.jsonl', orderLog + '\n');
-
-              // Itemized history — separate from the summary log above, so "what did I
-              // buy" queries can answer with actual products, not just order totals.
-              try {
-                const items = (winner.bid_items || []).filter(function(i){ return i.available; }).map(function(i){
-                  return {
-                    name: i.matched || i.name || i.requested || '',
-                    upc: i.upc || '',
-                    qty: i.quantity || 1,
-                    unit_price: i.unit_price || 0,
-                    line_total: i.line_total || 0
-                  };
-                });
-                const historyEntry = JSON.stringify({
-                  ts: new Date().toISOString(),
-                  order_id: orderResult.order_id || '',
-                  email: (input.email || '').toLowerCase(),
-                  store: winner.store,
-                  zip: input.zip || '',
-                  delivery_datetime: input.delivery_datetime || '',
-                  items: items,
-                  item_count: items.length,
-                  grand_total: winner.estimated_grand_total
-                });
-                require('fs').appendFileSync('/home/ubuntu/logs/order_history.jsonl', historyEntry + '\n');
-              } catch(e) { console.error('[order-history] log error:', e.message); }
-            }
-            return Object.assign({}, orderResult, { winning_store: winner.store, all_bids: rfqResult.all_bids });
-          }
-        } else {
-          console.log('[shopping-agent] orchestrator: no winner (coverage < 80%), falling back to direct createOrder');
-        }
+      const data = await res.json();
+      console.log('[shopping-agent] createCorpOrder response (' + res.status + '):', JSON.stringify(data));
+      const arr = Array.isArray(data) ? data[0] : (data || {});
+      const paymentUrl = arr.url || arr.orderLink || arr.payment_url || '';
+      let orderId = arr.orderNumber || arr.order_id || '';
+      if (!orderId) {
+        try {
+          const tok = arr.token || (paymentUrl.match(/token=([^&]+)/) || [])[1] || '';
+          const payload = tok.split('.')[1];
+          if (payload) orderId = JSON.parse(Buffer.from(payload.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8')).orderNumber || '';
+        } catch (e) {}
       }
-    } catch(e) {
-      console.error('[shopping-agent] orchestrator place_order error:', e.message, '— falling back to direct createOrder');
+      const success = arr.success === true || arr.success === 'true' || !!paymentUrl;
+      if (!success) {
+        const errMsg = String((arr.error && arr.error.message) || arr.message || arr.error || 'Order failed');
+        const upcMatch = errMsg.match(/No Product found for the upc:\s*([A-Za-z0-9]+)/i);
+        if (upcMatch) {
+          const bad = products.find(p => String(p.upc) === upcMatch[1]);
+          return { success: false, order_id: '', payment_url: '', unfulfillable_item: bad ? bad.name : ('UPC ' + upcMatch[1]), unfulfillable_upc: upcMatch[1], error: errMsg };
+        }
+        return { success: false, order_id: '', payment_url: '', error: errMsg };
+      }
+      // Order history (summary + itemized) for order_history queries.
+      try {
+        const orderLog = JSON.stringify({ ts: new Date().toISOString(), order_id: orderId, store: loc.kitchen, amount: Math.round((productTotal + serviceChargeAmt + tipAmt) * 100) / 100, email: input.email || c.email || '', zip });
+        require('fs').appendFileSync('/home/ubuntu/logs/orders.jsonl', orderLog + '\n');
+        const items = products.map(p => ({ name: p.name || '', upc: p.upc || '', qty: p.qty || p.quantity || 1, unit_price: parseFloat(p.price) || 0, line_total: Math.round((parseFloat(p.price) || 0) * (p.qty || p.quantity || 1) * 100) / 100 }));
+        require('fs').appendFileSync('/home/ubuntu/logs/order-items.jsonl', JSON.stringify({ ts: new Date().toISOString(), order_id: orderId, email: input.email || c.email || '', items }) + '\n');
+      } catch (e) { console.error('[shopping-agent] order log error:', e.message); }
+      return { success: true, order_id: orderId, payment_url: paymentUrl, store: friendlyStore(loc.kitchen), error: '' };
+    } catch (e) {
+      return { success: false, order_id: '', payment_url: '', error: 'createCorpOrder failed: ' + e.message };
     }
-
-    // Fallback: direct createOrder via Bevvi API
-    const { createOrder } = require('/home/ubuntu/rachel/functions.js');
-    const establishmentId = products[0] && products[0].establishmentId ? products[0].establishmentId : '';
-    const result = await createOrder({
-      products: products,
-      customerData: {
-        firstName: c.firstName || c.first_name || '',
-        lastName:  c.lastName  || c.last_name  || '',
-        email:     c.email     || '',
-        address:   c.address   || '',
-        city:      c.city      || '',
-        state:     c.state     || '',
-        zipcode:   c.zipcode   || zip || '',
-        phone:     c.phone     || c.phoneNumber || ''
-      },
-      tipAmount:            input.tip_amount || 0,
-      deliveryDateTime:     input.delivery_datetime || '',
-      deliveryInstructions: input.delivery_instructions || '',
-      client:               loc.client,
-      establishmentId:      establishmentId
-    });
-    return result;
   }
 
   return { error: 'Unknown intent: ' + name };

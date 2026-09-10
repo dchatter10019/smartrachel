@@ -1312,7 +1312,7 @@ app.post('/chat', async (req, res) => {
       const tax = Math.round(productTotal * 0.10 * 100) / 100;
       const service = Math.round(productTotal * 0.10 * 100) / 100;
       const tip = Math.round(productTotal * 0.05 * 100) / 100;
-      const delivery = 25.00;
+      const delivery = 25.00; // Quoted as an ESTIMATE only; not sent on the order (Bevvi backend to apply delivery)
       const grandTotal = Math.round((productTotal + tax + service + tip + delivery) * 100) / 100;
       state.orderData.grandTotal = grandTotal;
       state.orderData.productName = productName;
@@ -1332,7 +1332,7 @@ app.post('/chat', async (req, res) => {
           'Estimated tax (10%): $' + tax.toFixed(2) + '\n' +
           'Service charge (10%): $' + service.toFixed(2) + '\n' +
           'Tip (5%): $' + tip.toFixed(2) + '\n' +
-          'Delivery: $' + delivery.toFixed(2) + '\n' +
+          'Estimated delivery: $' + delivery.toFixed(2) + '\n' +
           '*Estimated grand total: $' + grandTotal.toFixed(2) + '*\n\n' +
           'Shall I go ahead and place this order?'
         : 'Order summary ready. Grand total: $' + grandTotal.toFixed(2) + '. Confirm?';
@@ -1416,6 +1416,7 @@ app.post('/chat', async (req, res) => {
           approved_totals: {
             product_total: od.productTotal, tax: od.tax, service: od.service, tip: od.tip,
             delivery: 25.00,
+            delivery: 0,
             grand_total: Math.round(((od.productTotal || 0) + (od.tax || 0) + (od.service || 0) + (od.tip || 0) + 25) * 100) / 100
           }
         });
@@ -1423,7 +1424,7 @@ app.post('/chat', async (req, res) => {
         state.lastFingerprint = fp2;
         const gbrainCtx = email ? await getCustomerContext('', '', context?.client_id || 'airculinaire', email).catch(() => '') : '';
         context.saved_zip = state.zip;
-        const addrRule2 = '\n\n## DELIVERY\nZip: ' + state.zip + '. Address: ' + state.address + '. Age and address verified.\n\n## ORDER INSTRUCTION\nThe user message contains a JSON system instruction. Parse it and immediately call ShoppingAgent with intent=place_order using the line_items, customer, delivery_datetime, delivery_instructions and zip from the JSON (pass delivery_instructions through verbatim, even if empty). Do not ask for any more information. In your confirmation reply, quote the amounts from approved_totals EXACTLY (product total, tax, service charge, tip, delivery, grand total) — never recompute them and never show a tip of $0.00; the API response does not include these figures and the customer already approved them.';
+        const addrRule2 = '\n\n## DELIVERY\nZip: ' + state.zip + '. Address: ' + state.address + '. Age and address verified.\n\n## ORDER INSTRUCTION\nThe user message contains a JSON system instruction. Parse it and immediately call ShoppingAgent with intent=place_order using the line_items, customer, delivery_datetime, delivery_instructions and zip from the JSON (pass delivery_instructions through verbatim, even if empty). Do not ask for any more information. In your confirmation reply, quote the amounts from approved_totals EXACTLY (product total, tax, service charge, tip, grand total) — never recompute them and never show a tip of $0.00. Label the delivery line "Estimated delivery: $25.00" (it is an estimate; the final delivery charge is confirmed at checkout); the API response does not include these figures and the customer already approved them.';
         const orderOutput = await callRachel({ sessionKey, message: placeMsg, context, format, gbrainContext: gbrainCtx, addressRule: addrRule2, email, alreadyConfirmed: true });
         // Persist the customer's contact details for repeat orders. GBrain stores no
         // name/phone, so the previous successful order is the only source — without
@@ -1647,7 +1648,7 @@ app.post('/chat', async (req, res) => {
         const tax = Math.round(productTotal * 0.10 * 100) / 100;
         const service = Math.round(productTotal * 0.10 * 100) / 100;
         const tip = Math.round(productTotal * 0.05 * 100) / 100;
-        const delivery = 25.00;
+        const delivery = 25.00; // Quoted as an ESTIMATE only; not sent on the order (Bevvi backend to apply delivery)
         const grandTotal = Math.round((productTotal + tax + service + tip + delivery) * 100) / 100;
 
         summary = format === 'slack'
@@ -1659,7 +1660,7 @@ app.post('/chat', async (req, res) => {
             'Estimated tax (10%): $' + tax.toFixed(2) + '\n' +
             'Service charge (10%): $' + service.toFixed(2) + '\n' +
             'Tip (5%): $' + tip.toFixed(2) + '\n' +
-            'Delivery: $' + delivery.toFixed(2) + '\n' +
+            'Estimated delivery: $' + delivery.toFixed(2) + '\n' +
             '*Estimated grand total: $' + grandTotal.toFixed(2) + '*' +
             (downloadUrl ? '\n\n<' + downloadUrl + '|Download proposal>' : '') +
             '\n\nWould you like me to email this to anyone, place the order, or make any changes?'
