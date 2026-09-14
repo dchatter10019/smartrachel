@@ -239,6 +239,113 @@ function getChannelNote(format) {
 }
 
 // ── Rachel chat wrapper ────────────────────────────────────────────────────
+// Hoisted so BOTH the confirm_substitute tool path and the deterministic pick-list
+// handler (in the request handler, outside callRachel's scope) share one implementation.
+async function applyBasketSubstitute(sessionKey, email, originalItem, replacementName, replacementPrice, replacementSize) {
+      // The LLM calls this explicitly whenever it recognizes the customer has confirmed
+      // a substitute, in ANY phrasing — replacing the earlier, fundamentally fragile
+      // approach of trying to detect confirmations by regex-matching the customer's raw
+      // text after the fact (which missed real phrasings across many rounds of tonight's
+      // testing). The LLM already understands intent correctly; this just makes sure
+      // that understanding reliably becomes a real state change, not just narration.
+      try {
+        const state = getState(sessionKey);
+        if (!replacementName) return { success: false, error: 'replacement_name required' };
+        let items = [];
+        try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+        const originalBrandWord = originalItem ? originalItem.split(' ')[0].toLowerCase() : null;
+        let qtyToUse = 1;
+        let categoryToUse = '';
+        if (originalBrandWord) {
+          const removeIdx = items.findIndex(it => (it.name || it.label || '').toLowerCase().includes(originalBrandWord));
+          if (removeIdx >= 0) {
+            qtyToUse = items[removeIdx].qty || items[removeIdx].quantity || 1;
+            categoryToUse = items[removeIdx].category || '';
+            items.splice(removeIdx, 1);
+          }
+        }
+        // Resolve the replacement to a REAL catalog product. Real bug: the LLM called
+        // confirm_substitute without a price, and this pushed a hollow placeholder —
+        // $0.00, empty product_id/upc/establishmentId — which showed as "pending
+        // confirmation (currently $0.00)" in the basket and could never be ordered.
+        // Look the product up by name so a swapped item is always orderable; use the
+        // LLM-supplied size/price only to pick the right variant among matches.
+        let resolved = null;
+        try {
+          const rr = await fetch('http://127.0.0.1:8300/mcp', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: replacementName, limit: 8 }], zip: state.zip || '', email: email } } })
+          });
+          const rt = await rr.text();
+          const rl = rt.split('\n').find(l => l.startsWith('data:'));
+          const rd = rl ? JSON.parse(rl.replace('data:', '').trim()) : null;
+          const rres = rd ? JSON.parse(rd.result.content[0].text) : null;
+          const prods = (rres && rres.results && rres.results[0] && rres.results[0].products) || [];
+          // Strip size/pack suffixes BEFORE comparing names, otherwise the catalog name
+          // "Angostura Bitters - 4 OZ" reads as "angosturabitters4oz" and gets treated as
+          // a different variant of "angosturabitters" (real regression: the correct plain
+          // bitters scored negative and the swap stored a $0 placeholder).
+          const stripSize = s => String(s || '').replace(/\s*[-—]?\s*\d+(\.\d+)?\s*(ml|l|oz|liter|litre)\b.*$/i, '').replace(/\s*\d+\s*x\s*\d+\s*oz.*$/i, '');
+          const norm = s => stripSize(s).toLowerCase().replace(/[^a-z0-9]/g, '');
+          const wantSize = String(replacementSize || '').toLowerCase().replace(/[^a-z0-9]/g, ''), wantName = norm(replacementName);
+          const scored = prods.map(p => {
+            const pn = norm(p.name), ps = norm(p.sizeStr || p.size || '');
+            let s = 0;
+            // Exact match wins. A candidate that CONTAINS the wanted name with extra words
+            // ("angosturabitterscocoa" for wanted "angosturabitters") is a DIFFERENT product
+            // — penalize it, don't reward it (real bug: plain Angostura Bitters resolved to
+            // the Cocoa variant, so the displayed swap silently didn't happen at the
+            // product level). Only reward the reverse (wanted name has extra descriptors).
+            if (pn === wantName) s += 100;
+            else if (wantName.indexOf(pn) >= 0) s += 40;      // candidate is a shorter core of the wanted name
+            else if (pn.indexOf(wantName) >= 0) s -= 30;      // candidate has extra words = different variant
+            if (wantSize && ps && ps.indexOf(wantSize) >= 0) s += 30;
+            const pp = parseFloat(p.salePrice || p.price) || 0;
+            if (replacementPrice && pp && Math.abs(pp - replacementPrice) < 0.01) s += 20;
+            return { p, s };
+          }).sort((a, b) => b.s - a.s);
+          if (scored.length && scored[0].s > 0) resolved = scored[0].p;
+        } catch (e) { console.log('[confirm-substitute] product lookup failed:', e.message); }
+        if (resolved) {
+          console.log('[confirm-substitute] resolved', JSON.stringify(replacementName), '->', resolved.name, '$' + (resolved.salePrice || resolved.price));
+        } else {
+          console.log('[confirm-substitute] WARNING: could not resolve', JSON.stringify(replacementName), 'to a catalog product; storing as supplied');
+        }
+        const rp = resolved ? (parseFloat(resolved.salePrice || resolved.price) || replacementPrice || 0) : (replacementPrice || 0);
+        items.push({
+          label: replacementName, name: resolved ? resolved.name : replacementName, qty: qtyToUse, quantity: qtyToUse,
+          price: rp, size: resolved ? (resolved.sizeStr || resolved.size || replacementSize || '') : (replacementSize || ''),
+          url: resolved ? (resolved.url || '') : '', product_id: resolved ? ((resolved.corpProductFilter && resolved.corpProductFilter.corpProductId) || resolved.product_id || resolved.id || '') : '',
+          upc: resolved ? (resolved.upc || '') : '', establishmentId: resolved ? (resolved.establishmentId || '') : '', category: categoryToUse
+        });
+        const newLineItems = JSON.stringify(items);
+        const key2 = makeCacheKey(email, state.zip, state.lastFingerprint);
+        packageCache[key2] = newLineItems;
+        state.lastLineItems = newLineItems;
+        if (originalItem && state.pendingSubstitutes) {
+          state.pendingSubstitutes = state.pendingSubstitutes.filter(p => p !== originalItem);
+        }
+        saveFlowState();
+        try { saveBasket(email, newLineItems, '', 'slack').catch(() => {}); } catch (e) {}
+        console.log('[confirm-substitute-tool] replaced', JSON.stringify(originalItem), 'with', JSON.stringify(replacementName), 'qty', qtyToUse);
+        return { success: true, replaced: originalItem, with: replacementName, qty: qtyToUse };
+      } catch (e) {
+        console.error('[confirm-substitute-tool] error:', e.message);
+        return { success: false, error: e.message };
+      }
+}
+// Convert a wall-clock time in America/New_York to a UTC ISO string (DST-aware via
+// Intl). The server runs in UTC, so chrono's parse of "5 pm" is 17:00 UTC = 1 PM
+// Eastern — every delivery time was silently 4-5h off. Stores are US/Eastern; Bevvi
+// wants deliveryDateTime as 2026-09-13T17:00:00.000Z (a UTC instant).
+function nyToUtcIso(dateStr, hour, minute) {
+  const guess = new Date(Date.UTC(+dateStr.slice(0,4), +dateStr.slice(5,7)-1, +dateStr.slice(8,10), hour, minute));
+  const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour12: false, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+  const parts = Object.fromEntries(fmt.formatToParts(guess).map(p => [p.type, p.value]));
+  const nyAsUtc = Date.UTC(+parts.year, +parts.month-1, +parts.day, +parts.hour % 24, +parts.minute);
+  return new Date(guess.getTime() - (nyAsUtc - guess.getTime())).toISOString();
+}
+
 async function callRachel({ sessionKey, message, context, format, gbrainContext, addressRule, email, onProposalGenerated, alreadyConfirmed }) {
   const messages = sessions[sessionKey] || [];
   const channelNote = getChannelNote(format);
@@ -381,7 +488,10 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
         const byLabel = {};
         arr.forEach(it => { const k = String(it.label || it.name || '').toLowerCase(); byLabel[k] = (byLabel[k] || 0) + 1; });
         const hasMultiPerRequest = Object.values(byLabel).some(n => n > 1);
-        if (hasMultiPerRequest || arr.length > 3) {
+        // Stricter: ANY multi-result search is a pick list, never an order. The label-
+        // based check missed 3 distinct-name Kim Crawford options (no shared label,
+        // not >3), captured all three, and the order shipped with four items.
+        if (hasMultiPerRequest || arr.length > 1) {
           console.log('[product-discussed] SKIPPED capture — multi-option pick list (' + arr.length + ' candidates), waiting for the customer to choose');
           return;
         }
@@ -455,99 +565,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
         return { success: true, empty: false, line_items: JSON.stringify(items), line_items_display: disp.join('\n'), product_total: total.toFixed(2), item_count: items.length };
       } catch (e) { return { success: false, error: e.message }; }
     },
-    onSubstituteConfirmed: async (originalItem, replacementName, replacementPrice, replacementSize) => {
-      // The LLM calls this explicitly whenever it recognizes the customer has confirmed
-      // a substitute, in ANY phrasing — replacing the earlier, fundamentally fragile
-      // approach of trying to detect confirmations by regex-matching the customer's raw
-      // text after the fact (which missed real phrasings across many rounds of tonight's
-      // testing). The LLM already understands intent correctly; this just makes sure
-      // that understanding reliably becomes a real state change, not just narration.
-      try {
-        const state = getState(sessionKey);
-        if (!replacementName) return { success: false, error: 'replacement_name required' };
-        let items = [];
-        try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
-        const originalBrandWord = originalItem ? originalItem.split(' ')[0].toLowerCase() : null;
-        let qtyToUse = 1;
-        let categoryToUse = '';
-        if (originalBrandWord) {
-          const removeIdx = items.findIndex(it => (it.name || it.label || '').toLowerCase().includes(originalBrandWord));
-          if (removeIdx >= 0) {
-            qtyToUse = items[removeIdx].qty || items[removeIdx].quantity || 1;
-            categoryToUse = items[removeIdx].category || '';
-            items.splice(removeIdx, 1);
-          }
-        }
-        // Resolve the replacement to a REAL catalog product. Real bug: the LLM called
-        // confirm_substitute without a price, and this pushed a hollow placeholder —
-        // $0.00, empty product_id/upc/establishmentId — which showed as "pending
-        // confirmation (currently $0.00)" in the basket and could never be ordered.
-        // Look the product up by name so a swapped item is always orderable; use the
-        // LLM-supplied size/price only to pick the right variant among matches.
-        let resolved = null;
-        try {
-          const rr = await fetch('http://127.0.0.1:8300/mcp', {
-            method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
-            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: replacementName, limit: 8 }], zip: state.zip || '', email: email } } })
-          });
-          const rt = await rr.text();
-          const rl = rt.split('\n').find(l => l.startsWith('data:'));
-          const rd = rl ? JSON.parse(rl.replace('data:', '').trim()) : null;
-          const rres = rd ? JSON.parse(rd.result.content[0].text) : null;
-          const prods = (rres && rres.results && rres.results[0] && rres.results[0].products) || [];
-          // Strip size/pack suffixes BEFORE comparing names, otherwise the catalog name
-          // "Angostura Bitters - 4 OZ" reads as "angosturabitters4oz" and gets treated as
-          // a different variant of "angosturabitters" (real regression: the correct plain
-          // bitters scored negative and the swap stored a $0 placeholder).
-          const stripSize = s => String(s || '').replace(/\s*[-—]?\s*\d+(\.\d+)?\s*(ml|l|oz|liter|litre)\b.*$/i, '').replace(/\s*\d+\s*x\s*\d+\s*oz.*$/i, '');
-          const norm = s => stripSize(s).toLowerCase().replace(/[^a-z0-9]/g, '');
-          const wantSize = String(replacementSize || '').toLowerCase().replace(/[^a-z0-9]/g, ''), wantName = norm(replacementName);
-          const scored = prods.map(p => {
-            const pn = norm(p.name), ps = norm(p.sizeStr || p.size || '');
-            let s = 0;
-            // Exact match wins. A candidate that CONTAINS the wanted name with extra words
-            // ("angosturabitterscocoa" for wanted "angosturabitters") is a DIFFERENT product
-            // — penalize it, don't reward it (real bug: plain Angostura Bitters resolved to
-            // the Cocoa variant, so the displayed swap silently didn't happen at the
-            // product level). Only reward the reverse (wanted name has extra descriptors).
-            if (pn === wantName) s += 100;
-            else if (wantName.indexOf(pn) >= 0) s += 40;      // candidate is a shorter core of the wanted name
-            else if (pn.indexOf(wantName) >= 0) s -= 30;      // candidate has extra words = different variant
-            if (wantSize && ps && ps.indexOf(wantSize) >= 0) s += 30;
-            const pp = parseFloat(p.salePrice || p.price) || 0;
-            if (replacementPrice && pp && Math.abs(pp - replacementPrice) < 0.01) s += 20;
-            return { p, s };
-          }).sort((a, b) => b.s - a.s);
-          if (scored.length && scored[0].s > 0) resolved = scored[0].p;
-        } catch (e) { console.log('[confirm-substitute] product lookup failed:', e.message); }
-        if (resolved) {
-          console.log('[confirm-substitute] resolved', JSON.stringify(replacementName), '->', resolved.name, '$' + (resolved.salePrice || resolved.price));
-        } else {
-          console.log('[confirm-substitute] WARNING: could not resolve', JSON.stringify(replacementName), 'to a catalog product; storing as supplied');
-        }
-        const rp = resolved ? (parseFloat(resolved.salePrice || resolved.price) || replacementPrice || 0) : (replacementPrice || 0);
-        items.push({
-          label: replacementName, name: resolved ? resolved.name : replacementName, qty: qtyToUse, quantity: qtyToUse,
-          price: rp, size: resolved ? (resolved.sizeStr || resolved.size || replacementSize || '') : (replacementSize || ''),
-          url: resolved ? (resolved.url || '') : '', product_id: resolved ? ((resolved.corpProductFilter && resolved.corpProductFilter.corpProductId) || resolved.product_id || resolved.id || '') : '',
-          upc: resolved ? (resolved.upc || '') : '', establishmentId: resolved ? (resolved.establishmentId || '') : '', category: categoryToUse
-        });
-        const newLineItems = JSON.stringify(items);
-        const key2 = makeCacheKey(email, state.zip, state.lastFingerprint);
-        packageCache[key2] = newLineItems;
-        state.lastLineItems = newLineItems;
-        if (originalItem && state.pendingSubstitutes) {
-          state.pendingSubstitutes = state.pendingSubstitutes.filter(p => p !== originalItem);
-        }
-        saveFlowState();
-        try { saveBasket(email, newLineItems, '', 'slack').catch(() => {}); } catch (e) {}
-        console.log('[confirm-substitute-tool] replaced', JSON.stringify(originalItem), 'with', JSON.stringify(replacementName), 'qty', qtyToUse);
-        return { success: true, replaced: originalItem, with: replacementName, qty: qtyToUse };
-      } catch (e) {
-        console.error('[confirm-substitute-tool] error:', e.message);
-        return { success: false, error: e.message };
-      }
-    }
+    onSubstituteConfirmed: async (originalItem, replacementName, replacementPrice, replacementSize) => applyBasketSubstitute(sessionKey, email, originalItem, replacementName, replacementPrice, replacementSize)
   });
   sessions[sessionKey] = result.messages;
   return scrubDisabledOffers(formatResponse(result.response, format), format);
@@ -1232,7 +1250,9 @@ app.post('/chat', async (req, res) => {
       }
       const parsedDate = parsedResults[0].start.date();
       const requestedHour = parsedDate.getHours() + parsedDate.getMinutes() / 60;
-      const dateStr = parsedDate.toISOString().slice(0, 10);
+      // Use the parsed calendar fields directly (the date the customer stated), not
+      // toISOString() — which is UTC and shifts evening times to the next day.
+      const dateStr = parsedDate.getFullYear() + '-' + String(parsedDate.getMonth() + 1).padStart(2, '0') + '-' + String(parsedDate.getDate()).padStart(2, '0');
 
       let establishmentId = '';
       try {
@@ -1262,6 +1282,17 @@ app.post('/chat', async (req, res) => {
             return res.json({ text: ask, response: ask });
           }
           finalDeliveryText = matchedWindow.deliveryTime;
+          try { state.orderData.delivery_date_label = new Date(dateStr + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }); } catch (e) {}
+          // Bevvi needs a real datetime, not a window string with no date. Real bug: we
+          // sent deliveryDateTime '03:00 PM - 04:00 PM EST' — no day at all. Combine
+          // the validated date with the window's start time into an ISO datetime.
+          try {
+            const win = parseTimeWindow(matchedWindow.deliveryTime);
+            if (win) {
+              const hh = Math.floor(win.start), mm = Math.round((win.start - hh) * 60);
+              state.orderData.delivery_datetime_iso = nyToUtcIso(dateStr, hh, mm);   // e.g. 2026-09-13T21:00:00.000Z for 5 PM EDT
+            }
+          } catch (e) {}
         }
       }
 
@@ -1326,7 +1357,7 @@ app.post('/chat', async (req, res) => {
         ? '*Order Summary*\n\n' +
           (multiLines ? multiLines.join('\n') : productName + ' x' + qty + ' — $' + unitPrice.toFixed(2) + ' ea = $' + productTotal.toFixed(2)) + '\n' +
           'Delivery to: ' + state.address + '\n' +
-          'Delivery: ' + state.orderData.delivery_datetime + '\n' +
+          'Delivery: ' + (state.orderData.delivery_date_label ? state.orderData.delivery_date_label + ', ' : '') + state.orderData.delivery_datetime + '\n' +
           (state.orderData.delivery_instructions ? 'Delivery instructions: ' + state.orderData.delivery_instructions + '\n' : '') + '\n' +
           'Product total: $' + productTotal.toFixed(2) + '\n' +
           'Estimated tax (10%): $' + tax.toFixed(2) + '\n' +
@@ -1367,13 +1398,18 @@ app.post('/chat', async (req, res) => {
         // old comma-split produced city="NY 10451" and no state — Bevvi rejected it
         // ("should be street address, city, state zip"). State was also hardcoded 'NY',
         // which would break every Boston/Dallas/Scottsdale/Miami order.
-        const addrRaw = String(state.address || '').replace(/\s+/g, ' ').trim();
+        // Strip a conversational prefix here too — an address saved BEFORE the entry-time
+        // strip existed still carried it ("streetAddress: 'address is 425 west 53rd st'").
+        const addrRaw = String(state.address || '').replace(/\s+/g, ' ').replace(/^\s*(?:my |the |our )?(?:new |delivery |shipping )?address(?: is|:)?\s*/i, '').trim();
         let street = addrRaw, city = '', stateCode = '', zipc = state.zip || '';
         {
           // Comma before the city: unambiguous.
           let m = addrRaw.match(/^(.*?),\s*([A-Za-z .'-]+?)[,\s]+([A-Z]{2})[,\s]+(\d{5})(?:-\d{4})?\s*$/);
           if (m) { street = m[1].trim(); city = m[2].trim(); stateCode = m[3]; zipc = m[4]; }
-          else {
+          // "425 W 53rd St, NY, NY 10019": the comma-anchored city is the state code. Map
+          // the common abbreviations to their city; otherwise leave it for the fallback.
+          if (m && /^[A-Za-z]{2,3}$/.test(city)) { city = ({ NY: 'New York', NYC: 'New York', LA: 'Los Angeles', SF: 'San Francisco', DC: 'Washington' })[city.toUpperCase()] || ''; }
+          if (!m || !city) {
             // No comma between street and city (a two-line address collapsed to one line):
             // split on the LAST street-suffix word, so "101 E 150th St Bronx" -> St | Bronx
             // and "1250 Broadway 2nd Floor New York" -> Floor | New York.
@@ -1407,7 +1443,8 @@ app.post('/chat', async (req, res) => {
           _system: 'place_order',
           line_items: updatedLineItems || '[]',
           customer: customerObj,
-          delivery_datetime: od.delivery_datetime,
+          delivery_datetime: od.delivery_datetime_iso || od.delivery_datetime,
+          delivery_window: od.delivery_datetime,
           delivery_instructions: od.delivery_instructions || '',
           zip: state.zip,
           // The exact figures the customer just approved in the summary. The post-order
@@ -1420,6 +1457,10 @@ app.post('/chat', async (req, res) => {
             grand_total: Math.round(((od.productTotal || 0) + (od.tax || 0) + (od.service || 0) + (od.tip || 0) + 25) * 100) / 100
           }
         });
+        // Full, untruncated log of exactly what we hand to the LLM for placement — the
+        // tool-call log is sliced and orderData is cleared on success, which left no way
+        // to tell whether a field (e.g. delivery_instructions) was dropped or never given.
+        console.log('[order] place_order payload:', JSON.stringify({ delivery_datetime: od.delivery_datetime, delivery_datetime_iso: od.delivery_datetime_iso, delivery_instructions: od.delivery_instructions, name: od.name, phone: od.phone, items: (JSON.parse(updatedLineItems || '[]')).length }));
         const fp2 = fingerprint(placeMsg);
         state.lastFingerprint = fp2;
         const gbrainCtx = email ? await getCustomerContext('', '', context?.client_id || 'airculinaire', email).catch(() => '') : '';
@@ -1820,6 +1861,49 @@ app.post('/chat', async (req, res) => {
     // sessions[sessionKey] — confirmed via direct diagnostic logging tonight that the
     // raw API conversation history does not reliably contain the real reply text.
     const lastAssistantTextGate = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
+
+    // DETERMINISTIC PICK-LIST selection. Prompt guidance alone kept failing: after a
+    // numbered option list, the customer's "1" or a restated option name produced no
+    // confirm_substitute call — the LLM just re-searched and re-listed forever. Resolve
+    // the choice here, without the LLM: parse "N. Name — size — $price" lines from the
+    // last reply, match the message by number or name, and add via the same real-product
+    // resolution path (onSubstituteConfirmed). Skipped if the basket already has it.
+    try {
+      const pickLines = [];
+      const reLine = /^\s*(\d{1,2})[\.\)]\s*\*?([^\n*—$]+?)\*?\s*(?:—\s*([^—$\n]*?))?\s*—?\s*\$([\d.]+)/gm;
+      let pm;
+      while ((pm = reLine.exec(lastAssistantTextGate)) !== null) {
+        pickLines.push({ n: parseInt(pm[1]), name: pm[2].trim(), size: (pm[3] || '').trim(), price: parseFloat(pm[4]) });
+      }
+      console.log('[pick-list] gate — lines:', pickLines.length, '| orderStep:', state.orderStep, '| proposalStep:', state.proposalStep, '| msg:', JSON.stringify(message).slice(0, 30));
+      if (pickLines.length >= 2 && !state.orderStep && !state.proposalStep) {
+        const msgClean = message.replace(/\*/g, '').trim();
+        const norm = s => String(s || '').toLowerCase().replace(/\s*[-—]?\s*\d+(\.\d+)?\s*(ml|l|oz)\b.*$/i, '').replace(/[^a-z0-9]/g, '');
+        let picked = null;
+        const numM = msgClean.match(/^(?:option\s*|#\s*)?(\d{1,2})\s*\.?$/i);
+        if (numM) picked = pickLines.find(l => l.n === parseInt(numM[1])) || null;
+        if (!picked) {
+          const mN = norm(msgClean);
+          const exact = pickLines.filter(l => norm(l.name) === mN || mN.indexOf(norm(l.name)) >= 0 && norm(l.name).length >= 6);
+          if (exact.length === 1) picked = exact[0];
+          else if (exact.length > 1) { // prefer size match when several share a name
+            const sz = (msgClean.match(/\d+(\.\d+)?\s*(mL|ML|L|oz|OZ)\b/) || [''])[0].toLowerCase().replace(/\s+/g, '');
+            picked = exact.find(l => l.size.toLowerCase().replace(/\s+/g, '') === sz) || exact[0];
+          }
+        }
+        if (picked) {
+          let already = false;
+          try { already = JSON.parse(state.lastLineItems || '[]').some(it => norm(it.name) === norm(picked.name)); } catch (e) {}
+          if (!already) {
+            console.log('[pick-list] deterministic selection:', JSON.stringify(picked));
+            const r = await applyBasketSubstitute(sessionKey, email, '', picked.name + (picked.size ? ' - ' + picked.size : ''), picked.price, picked.size);
+            const added = picked.name + (picked.size ? ' — ' + picked.size : '') + ' — $' + picked.price.toFixed(2);
+            const reply = 'Got it — ' + added + ' added to your order. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+            return res.json({ text: reply, response: reply });
+          }
+        }
+      }
+    } catch (e) { console.log('[pick-list] error:', e.message); }
     // Loop fix: once a selection has been resolved (a merge succeeded), the same
     // "which would you like?" prompt must not keep re-opening the gate on every later
     // message — that caused the LLM to re-present the already-chosen options forever.
