@@ -1131,12 +1131,16 @@ async function buildPackage(iv) {
       // that is actually a beer / wine / spirit.
       function categorySane(p, cat){
         var nm=String(p.name||'').toLowerCase();
-        var spiritW=/vodka|rum|bourbon|whiskey|whisky|gin\b|tequila|scotch|cognac|brandy|mezcal|liqueur|cold brew|kahlua|amaro|aperol|campari|vermouth/;
-        var wineW=/wine|cabernet|merlot|pinot|chardonnay|sauvignon|riesling|zinfandel|malbec|syrah|shiraz|chianti|prosecco|champagne|brut|sparkling|ros[eé]/;
-        var beerW=/beer|lager|ale\b|ipa|pilsner|pilsener|stout|porter|cider|seltzer|\d+\s*x\s*\d+\s*oz/;
+        // WORD BOUNDARIES on every keyword. Real bug: "rum" matched inside "ConundRUM",
+        // so a correct wine result was silently rejected as a spirit and the item was
+        // reported unavailable (also: "gin" in Ginger Beer, "amaro" in Amarone, etc.).
+        var spiritW=/\b(vodka|rum|bourbon|whiskey|whisky|gin|tequila|scotch|cognac|brandy|mezcal|liqueur|cold brew|kahlua|amaro|aperol|campari|vermouth)\b/;
+        var wineW=/\b(wine|cabernet|merlot|pinot|chardonnay|sauvignon|riesling|zinfandel|malbec|syrah|shiraz|chianti|prosecco|champagne|brut|sparkling|ros[eé])\b/;
+        var beerW=/\b(beer|lager|ale|ipa|pilsner|pilsener|stout|porter|cider|seltzer)\b|\d+\s*x\s*\d+\s*oz/;
+        var beerOnlyW=/\b(lager|ale|ipa|pilsner|stout|porter)\b|\d+\s*x\s*\d+\s*oz/;
         if(cat==="beer")    return !spiritW.test(nm) && !wineW.test(nm) && beerW.test(nm);
-        if(cat==="wine")    return !spiritW.test(nm) && !/lager|ale\b|ipa|pilsner|stout|porter|\d+\s*x\s*\d+\s*oz/.test(nm);
-        if(cat==="spirits") return !wineW.test(nm) && !/lager|ipa|pilsner|stout|porter|\bbeer\b/.test(nm);
+        if(cat==="wine")    return !spiritW.test(nm) && !beerOnlyW.test(nm);
+        if(cat==="spirits") return !wineW.test(nm) && !/\b(lager|ipa|pilsner|stout|porter|beer)\b/.test(nm);
         return true; // mixers: don't over-constrain
       }
       var found=results[n].filter(function(p){return !isMini(p)&&categorySane(p,catN);});
@@ -1200,7 +1204,18 @@ async function buildPackage(iv) {
       // mismatch exactly like "not found" — push to the same `unavailable` array
       // (reusing the entire already-built and verified pendingSubstitutes -> search ->
       // merge pipeline) instead of silently adding the wrong-size item to the basket.
-      var requestedSizeMatch = np.name.match(/\d+(\.\d+)?\s*(mL|ML|L|oz|OZ)\b/i);
+      // Compare like with like. Real bug: request "Stella ... 24x11 OZ Bottle" matched
+      // "11 OZ" (first number-unit pair) and was compared against the catalog's whole
+      // pack string "24 x 11 OZ bottle" -> mismatch -> reported unavailable, even
+      // though the search had found it. If the request has a pack format (NxM OZ),
+      // compare pack-to-pack with whitespace removed; otherwise compare bottle sizes.
+      var reqPack = np.name.match(/(\d+)\s*x\s*(\d+(?:\.\d+)?)\s*(oz|OZ|ml|ML)\b/i);
+      var requestedSizeMatch = reqPack ? null : np.name.match(/\d+(\.\d+)?\s*(mL|ML|L|oz|OZ)\b/i);
+      if (reqPack && best.sizeStr) {
+        var packKey = function(s){ var m=String(s||'').toLowerCase().match(/(\d+)\s*x\s*(\d+(?:\.\d+)?)\s*(oz|ml)/); return m ? (m[1]+'x'+m[2]+m[3]) : ''; };
+        var reqPK = packKey(np.name), foundPK = packKey(best.sizeStr) || packKey(best.name);
+        if (reqPK && foundPK && reqPK !== foundPK) { unavailable.push(np.name); continue; }
+      }
       if (requestedSizeMatch && best.sizeStr) {
         var reqSizeNorm = requestedSizeMatch[0].toLowerCase().replace(/\s+/g, '');
         var foundSizeNorm = String(best.sizeStr).toLowerCase().replace(/\s+/g, '');
