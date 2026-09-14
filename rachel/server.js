@@ -2,26 +2,32 @@
 // ── Store coverage check via Orchestrator ──────────────────────────────
 const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || 'http://127.0.0.1:8200';
 
+// Zip coverage via Bevvi's API, not the local store registry. The registry is the
+// store-agent layer we no longer route orders through; product search and
+// createCorpOrder both key on ?zipcode=. Real bug: 332 Pine St, San Francisco 94104
+// was rejected as "no store" because the registry has no SF entry — Bevvi serves it
+// (under client 'airculinaire'). Probe each known client; remember the one that works
+// per zip so search/order use it too (fooda vs airculinaire differ by zip: the Bronx
+// is fooda-only, SF is airculinaire-only).
+const KNOWN_CLIENTS = ['fooda', 'airculinaire'];
+const zipClientCache = {};
 async function checkStoreCoverage(zip) {
   try {
-    const fetchFn = (...args) => import('node-fetch').then(({default: f}) => f(...args));
-    const res = await fetchFn(`${ORCHESTRATOR_URL}/mcp`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        jsonrpc: '2.0', id: 1,
-        method: 'tools/call',
-        params: { name: 'get_stores_for_zip', arguments: { zip } }
-      })
-    });
-    const text = await res.text();
-    const line = text.split('\n').find(l => l.startsWith('data:'));
-    if (!line) return null;
-    const msg = JSON.parse(line.replace('data:', '').trim());
-    return JSON.parse(msg.result.content[0].text);
+    for (const client of KNOWN_CLIENTS) {
+      const url = 'https://api.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode=' + encodeURIComponent(zip) + '&searchBy=' + encodeURIComponent('wine') + '&client=' + encodeURIComponent(client) + '&limit=1';
+      const res = await fetch(url);
+      const data = await res.json().catch(() => []);
+      if (Array.isArray(data) && data.length > 0) {
+        zipClientCache[zip] = client;
+        console.log('[coverage] zip', zip, 'served by client', client);
+        return { zip, store_count: 1, client, stores: [{ name: client }] };
+      }
+    }
+    console.log('[coverage] zip', zip, 'not served by any known client');
+    return { zip, store_count: 0, stores: [] };
   } catch (e) {
     console.error('[rachel] checkStoreCoverage error:', e.message);
-    return null; // null = "couldn't verify" — treated as fail-open below
+    return null;
   }
 }
 
@@ -338,6 +344,39 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
 // Intl). The server runs in UTC, so chrono's parse of "5 pm" is 17:00 UTC = 1 PM
 // Eastern — every delivery time was silently 4-5h off. Stores are US/Eastern; Bevvi
 // wants deliveryDateTime as 2026-09-13T17:00:00.000Z (a UTC instant).
+// Store timezone from the delivery address's state. Real bug: an SF order ("11 am PST")
+// was parsed by chrono as 19:00 UTC, matched the "07:00 PM" window by bare number, and
+// was sent as 23:00Z (4 PM PST) — five hours off for a real customer.
+const STATE_TZ = { CA:'America/Los_Angeles', WA:'America/Los_Angeles', OR:'America/Los_Angeles', NV:'America/Los_Angeles',
+  AZ:'America/Phoenix', CO:'America/Denver', UT:'America/Denver', NM:'America/Denver', MT:'America/Denver', ID:'America/Denver', WY:'America/Denver',
+  TX:'America/Chicago', IL:'America/Chicago', MN:'America/Chicago', WI:'America/Chicago', MO:'America/Chicago', LA:'America/Chicago', OK:'America/Chicago', KS:'America/Chicago', NE:'America/Chicago', IA:'America/Chicago', AR:'America/Chicago', MS:'America/Chicago', AL:'America/Chicago', TN:'America/Chicago', KY:'America/Chicago', SD:'America/Chicago', ND:'America/Chicago',
+  HI:'Pacific/Honolulu', AK:'America/Anchorage' };
+function zoneForAddress(addr) {
+  const m = String(addr || '').match(/\b([A-Z]{2})\s+\d{5}(?:-\d{4})?\s*$/i);
+  const st = m ? m[1].toUpperCase() : '';
+  return STATE_TZ[st] || 'America/New_York';
+}
+// Explicit zone the customer typed (e.g. "11 am PST") -> IANA. Returns '' if none.
+function explicitZoneIn(text) {
+  const m = String(text || '').match(/\b(PST|PDT|PT|MST|MDT|MT|CST|CDT|CT|EST|EDT|ET)\b/i);
+  if (!m) return '';
+  const z = m[1].toUpperCase();
+  return /^P/.test(z) ? 'America/Los_Angeles' : /^M/.test(z) ? 'America/Denver' : /^C/.test(z) ? 'America/Chicago' : 'America/New_York';
+}
+// ASSUMPTION (confirm with Bevvi): getDeliveryDateTimes windows are STORE-LOCAL wall-clock
+// times with a hardcoded "EST" label — the SF and NYC stores return identical window
+// strings, which fits a mislabeled local schedule far better than an SF store genuinely
+// opening at 8 AM Pacific. If Bevvi says windows are always Eastern, set this to
+// 'America/New_York' and the matching converts accordingly.
+const WINDOWS_ARE_STORE_LOCAL = true;
+// Wall-clock in an arbitrary IANA zone -> UTC ISO (generalization of nyToUtcIso).
+function zonedToUtcIso(dateStr, hour, minute, zone) {
+  const guess = new Date(Date.UTC(+dateStr.slice(0,4), +dateStr.slice(5,7)-1, +dateStr.slice(8,10), hour, minute));
+  const fmt = new Intl.DateTimeFormat('en-US', { timeZone: zone, hour12: false, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+  const parts = Object.fromEntries(fmt.formatToParts(guess).map(p => [p.type, p.value]));
+  const asUtc = Date.UTC(+parts.year, +parts.month-1, +parts.day, +parts.hour % 24, +parts.minute);
+  return new Date(guess.getTime() - (asUtc - guess.getTime())).toISOString();
+}
 function nyToUtcIso(dateStr, hour, minute) {
   const guess = new Date(Date.UTC(+dateStr.slice(0,4), +dateStr.slice(5,7)-1, +dateStr.slice(8,10), hour, minute));
   const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour12: false, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
@@ -1243,13 +1282,32 @@ app.post('/chat', async (req, res) => {
     }
     if (state.orderStep === 'details') {
      if (!state.orderData.datetime_validated) {
-      const parsedResults = chrono.parse(message, new Date(), { forwardDate: true });
+      // Parse as WALL-CLOCK. If the customer typed a zone ("11 am PST"), record it but
+      // strip it before chrono sees it — otherwise chrono converts to UTC and the bare
+      // hour no longer means what the customer said.
+      const custZone = explicitZoneIn(message);
+      const storeZone = zoneForAddress(state.address);
+      const msgForParse = message.replace(/\b(PST|PDT|PT|MST|MDT|MT|CST|CDT|CT|EST|EDT|ET)\b/gi, '').replace(/\s+/g, ' ').trim();
+      const parsedResults = chrono.parse(msgForParse, new Date(), { forwardDate: true });
       if (!parsedResults.length || !parsedResults[0].start.isCertain('hour')) {
         const ask = 'Could you give me a specific delivery date and time? (e.g. \"tomorrow at 5pm\" or \"August 5th at 2pm\")';
         return res.json({ text: ask, response: ask });
       }
       const parsedDate = parsedResults[0].start.date();
-      const requestedHour = parsedDate.getHours() + parsedDate.getMinutes() / 60;
+      let requestedHour = parsedDate.getHours() + parsedDate.getMinutes() / 60;
+      // The customer's stated hour is in custZone (if given) else the store zone. Windows
+      // are in windowZone. Shift the hour between zones for matching when they differ.
+      const windowZone = WINDOWS_ARE_STORE_LOCAL ? storeZone : 'America/New_York';
+      const fromZone = custZone || storeZone;
+      if (fromZone !== windowZone) {
+        try {
+          const iso = zonedToUtcIso(parsedDate.getFullYear() + '-' + String(parsedDate.getMonth()+1).padStart(2,'0') + '-' + String(parsedDate.getDate()).padStart(2,'0'), parsedDate.getHours(), parsedDate.getMinutes(), fromZone);
+          const inWin = new Intl.DateTimeFormat('en-US', { timeZone: windowZone, hour12: false, hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(iso));
+          const h = +inWin.find(x => x.type === 'hour').value % 24, mi = +inWin.find(x => x.type === 'minute').value;
+          requestedHour = h + mi / 60;
+          console.log('[delivery-tz] customer', fromZone, parsedDate.getHours() + ':' + parsedDate.getMinutes(), '-> window zone', windowZone, h + ':' + mi);
+        } catch (e) {}
+      }
       // Use the parsed calendar fields directly (the date the customer stated), not
       // toISOString() — which is UTC and shifts evening times to the next day.
       const dateStr = parsedDate.getFullYear() + '-' + String(parsedDate.getMonth() + 1).padStart(2, '0') + '-' + String(parsedDate.getDate()).padStart(2, '0');
@@ -1290,7 +1348,7 @@ app.post('/chat', async (req, res) => {
             const win = parseTimeWindow(matchedWindow.deliveryTime);
             if (win) {
               const hh = Math.floor(win.start), mm = Math.round((win.start - hh) * 60);
-              state.orderData.delivery_datetime_iso = nyToUtcIso(dateStr, hh, mm);   // e.g. 2026-09-13T21:00:00.000Z for 5 PM EDT
+              state.orderData.delivery_datetime_iso = zonedToUtcIso(dateStr, hh, mm, windowZone);   // window start in the store's zone -> UTC instant
             }
           } catch (e) {}
         }
@@ -2162,24 +2220,25 @@ app.post('/chat', async (req, res) => {
             let items = [];
             try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
             let qtyToUse = 1;
-            let categoryToUse = '';
+            // Route through applyBasketSubstitute so the item is RESOLVED to a real catalog
+            // product (productId/upc/establishmentId). This block used to hand-build the
+            // line item with product_id:'', upc:'', establishmentId:'' — real bug: a
+            // "yes" to a Tito's substitute pushed a bare name, and createCorpOrder failed
+            // on a product with no identifiers ("system error placing the order").
             if (originalBrandWord) {
               const removeIdx = items.findIndex(it => (it.name || it.label || '').toLowerCase().includes(originalBrandWord));
-              if (removeIdx >= 0) {
-                qtyToUse = items[removeIdx].qty || items[removeIdx].quantity || 1;
-                categoryToUse = items[removeIdx].category || '';
-                items.splice(removeIdx, 1);
-              }
+              if (removeIdx >= 0) qtyToUse = items[removeIdx].qty || items[removeIdx].quantity || 1;
             }
-            items.push({
-              label: matched.name, name: matched.name, qty: qtyToUse, quantity: qtyToUse,
-              price: matched.price, size: matched.size, url: '', product_id: '', upc: '',
-              establishmentId: '', category: categoryToUse
-            });
-            const newLineItems = JSON.stringify(items);
-            const key = makeCacheKey(email, state.zip, state.lastFingerprint);
-            packageCache[key] = newLineItems;
-            state.lastLineItems = newLineItems;
+            await applyBasketSubstitute(sessionKey, email, hasOriginalToReplace ? originalItemName : '', matched.name + (matched.size ? ' - ' + matched.size : ''), matched.price, matched.size);
+            // applyBasketSubstitute adds at qty 1 (or the replaced item's qty when it finds
+            // the original); enforce the intended qty explicitly.
+            try {
+              const itemsAfter = JSON.parse(state.lastLineItems || '[]');
+              const normQ = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+              const added = itemsAfter.find(it => normQ(it.name).indexOf(normQ(matched.name).slice(0, 12)) >= 0);
+              if (added && qtyToUse > 1) { added.qty = qtyToUse; added.quantity = qtyToUse; state.lastLineItems = JSON.stringify(itemsAfter); }
+            } catch (e) {}
+            const newLineItems = state.lastLineItems;
             if (hasOriginalToReplace) state.pendingSubstitutes = state.pendingSubstitutes.filter(p => p !== originalItemName);
             saveFlowState();
             try { saveBasket(email, newLineItems, '', format).catch(() => {}); } catch (e) {}

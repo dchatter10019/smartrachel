@@ -84,9 +84,24 @@ const CLIENT_MAP = {
   'Revere - MA': 'airculinaire'
 };
 
+// For zips outside ZIP_MAP, the client is NOT always 'airculinaire' (the old default):
+// the Bronx is fooda-only, San Francisco is airculinaire-only. Probe Bevvi once per
+// zip and cache which client returns products, so search and createCorpOrder use it.
+const unmappedZipClient = {};
+async function discoverClientForZip(zip) {
+  if (unmappedZipClient[zip]) return unmappedZipClient[zip];
+  for (const client of ['fooda', 'airculinaire']) {
+    try {
+      const r = await fetch('https://api.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode=' + encodeURIComponent(zip) + '&searchBy=wine&client=' + client + '&limit=1');
+      const d = await r.json().catch(() => []);
+      if (Array.isArray(d) && d.length) { unmappedZipClient[zip] = client; console.log('[resolveLocation] zip', zip, '-> client', client, '(discovered)'); return client; }
+    } catch (e) {}
+  }
+  return 'airculinaire';
+}
 function resolveLocation(zip) {
   const kitchen = ZIP_MAP[zip] || '';
-  const client = CLIENT_MAP[kitchen] || 'airculinaire';
+  const client = CLIENT_MAP[kitchen] || unmappedZipClient[zip] || 'airculinaire';
   if (kitchen) return { kitchen, client, zip };
   // No hardcoded kitchen_location mapping for this zip — the search API can now
   // resolve directly from zipcode, so fall back to a zip-sentinel instead of
@@ -386,6 +401,7 @@ function formatProduct(p) {
 }
 
 async function executeTool(name, input) {
+  { const z = input && (input.zip || (input.customer && input.customer.zipcode)); if (z && !ZIP_MAP[z] && !unmappedZipClient[z]) await discoverClientForZip(z); }
   console.log('[shopping-agent] intent:', name, JSON.stringify(input).slice(0, 150));
 
   if (name === 'product_query') {
@@ -956,6 +972,16 @@ async function executeTool(name, input) {
     // carries everything createCorpOrder needs per product — productId, upc, name,
     // quantity, establishmentId (mixed establishments are accepted; verified).
     // No delivery fee is sent — Bevvi determines delivery at checkout.
+    // Hard backstop: never send Bevvi a product with no identifiers. A line item that
+    // reached placement as a bare name (no productId AND no upc) cannot be ordered and
+    // Bevvi returns an opaque error. Refuse up front and name the item so Rachel can
+    // resolve it, instead of "system error placing the order".
+    const unresolved = products.filter(p => !(p.product_id || p.productId) && !p.upc);
+    if (unresolved.length) {
+      const names = unresolved.map(p => p.name || '(unnamed)');
+      console.log('[shopping-agent] place_order refused — unresolved items:', JSON.stringify(names));
+      return { success: false, order_id: '', payment_url: '', unresolved_items: names, error: 'These items are not linked to a catalog product and cannot be ordered yet: ' + names.join(', ') + '. Re-select them from search results to continue.' };
+    }
     try {
       const productTotal = products.reduce((s, p) => s + (parseFloat(p.price) || 0) * (p.qty || p.quantity || 1), 0);
       const serviceChargePct = 10;
