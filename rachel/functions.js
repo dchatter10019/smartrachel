@@ -628,7 +628,11 @@ async function buildPackage(iv) {
       var sizeStr=p.size&&p.units?String(p.size)+String(p.units):"";
       var purl=p.url?p.url:(p.slug?"https://airculinaire.getbevvi.com/productdetail/"+p.slug:"");
       var pid=(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||"";
-      return {name:p.name||"",price:parseFloat(price)||0,sizeStr:sizeStr,url:purl,product_id:pid,upc:p.upc||p.origanlUpc||"",establishmentId:p.establishmentId||""};
+      // Carry Bevvi's category/subCategory through. Real bug: categorySane's "trust
+      // Bevvi's category first" branch never ran because this mapping dropped the
+      // field — the guard fell back to a name regex and rejected every RTD can
+      // (Fresca, Topo Chico, Minute Maid, Simply Spiked) as "not a beer".
+      return {name:p.name||"",price:parseFloat(price)||0,sizeStr:sizeStr,url:purl,product_id:pid,upc:p.upc||p.origanlUpc||"",establishmentId:p.establishmentId||"",category:p.category||"",subCategory:p.subCategory||p.subcategory||""};
     }).filter(function(p){return p.price>0&&p.name;});
   }
 
@@ -1118,7 +1122,31 @@ async function buildPackage(iv) {
       if (corrections[lower]) {
         results = await doSearch(corrections[lower]);
       }
+      // Distinctive-word fallback. The chain above is brand-first, and for a brand shared
+      // by many products the brand terms return the WRONG items and the chain stops,
+      // satisfied. Real bug: "Jack Daniel's Mixed with Coca-Cola Cocktail" — "jack
+      // daniel(s)" returns the whiskies; only "coca-cola cocktail" reaches the RTD can.
+      // Retry with the non-brand, non-size words that actually distinguish the item,
+      // and only accept results whose names contain most of them.
+      if (!results.length || !results.some(function(r){ return nameOverlap(r.name, name) >= 0.6; })) {
+        var stop = /^(the|and|with|of|a|an|mixed|pack|packs|pk|bottle|bottles|can|cans|oz|ml|l|x)$/i;
+        var toks = name.replace(/['\u2019]/g, '').replace(/[^a-zA-Z0-9\- ]/g, ' ').split(/\s+/).filter(function(w){ return w && !stop.test(w) && !/^\d/.test(w); });
+        if (toks.length > 2) {
+          var distinctive = toks.slice(-3).join(' ');   // trailing words are the distinguishing ones
+          var alt = await doSearch(distinctive, category);
+          var good = alt.filter(function(r){ return nameOverlap(r.name, name) >= 0.6; });
+          if (good.length) { console.log('[search] distinctive-word fallback hit for', JSON.stringify(name), 'via', JSON.stringify(distinctive)); return good; }
+        }
+      }
       return results;
+    }
+    // Fraction of the requested name's meaningful words present in a candidate name.
+    function nameOverlap(candName, reqName) {
+      var norm = function(s){ return String(s||'').toLowerCase().replace(/['\u2019]/g,'').replace(/[^a-z0-9 ]/g,' ').split(/\s+/).filter(function(w){ return w.length > 2 && !/^\d+$/.test(w) && !/^(the|and|with|pack|bottle|can|cans|oz|ml)$/.test(w); }); };
+      var req = norm(reqName), cand = new Set(norm(candName));
+      if (!req.length) return 0;
+      var hit = req.filter(function(w){ return cand.has(w); }).length;
+      return hit / req.length;
     }
     var results=await Promise.all(namedProducts.map(function(np){return doSearchWithFallbacks(np.name, np.category);}));
     for (var n=0;n<namedProducts.length;n++) {
@@ -1131,6 +1159,19 @@ async function buildPackage(iv) {
       // that is actually a beer / wine / spirit.
       function categorySane(p, cat){
         var nm=String(p.name||'').toLowerCase();
+        // Trust Bevvi's own category field before any name regex. Real bug: four
+        // available RTD cans (Fresca, Simply Spiked, Topo Chico, Minute Maid) were
+        // rejected from a beer slot because their names carry no beer word — Bevvi
+        // files them under Liquor / Beer / Cocktails & Spirits. A beer/RTD slot accepts
+        // Bevvi's Beer, Ready to Drink, and any canned/packed Liquor or Cocktail.
+        var bc=String(p.category||'').toLowerCase(), bsc=String(p.subCategory||p.subcategory||'').toLowerCase();
+        var isPacked=/\d+\s*x\s*\d+\s*oz|\d+\s*-?\s*pack\b|\(\d+\s*pack\)|\bcan\b|\bcans\b/.test(nm);
+        if (bc) {
+          if (cat==="beer")    return /beer|seltzer|cider|ready to drink|rtd/.test(bc+' '+bsc) || (isPacked && /liquor|cocktail|spirit/.test(bc+' '+bsc));
+          if (cat==="wine")    return /wine|champagne|sparkling|prosecco/.test(bc+' '+bsc) && !/liquor|spirit|beer/.test(bc);
+          if (cat==="spirits") return /liquor|spirit|cocktail|whisk|vodka|gin|rum|tequila/.test(bc+' '+bsc) || (!/wine|beer/.test(bc) && !isPacked);
+          return true;
+        }
         // WORD BOUNDARIES on every keyword. Real bug: "rum" matched inside "ConundRUM",
         // so a correct wine result was silently rejected as a spirit and the item was
         // reported unavailable (also: "gin" in Ginger Beer, "amaro" in Amarone, etc.).
