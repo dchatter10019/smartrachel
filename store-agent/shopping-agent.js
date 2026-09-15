@@ -996,7 +996,10 @@ async function executeTool(name, input) {
       };
       const pa = parseAddr(c.address);
       const body = {
-        email: input.account_email || c.email || input.email || '',
+        // Top-level email = the LOGGED-IN user (account holder), never the recipient.
+        // The old fallback chain could pick up customer.email — the recipient's — when
+        // the LLM placed it there, misattributing the order.
+        email: input.account_email || input.email || '',
         products: products.map(p => ({
           productId:       p.product_id || p.productId || '',
           upc:             p.upc || '',

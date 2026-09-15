@@ -315,7 +315,14 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
         if (resolved) {
           console.log('[confirm-substitute] resolved', JSON.stringify(replacementName), '->', resolved.name, '$' + (resolved.salePrice || resolved.price));
         } else {
-          console.log('[confirm-substitute] WARNING: could not resolve', JSON.stringify(replacementName), 'to a catalog product; storing as supplied');
+          // Never store an unresolved name. Real bug: the LLM invented "Kendall-Jackson
+          // Vintner's Reserve Sauvignon Blanc" (catalog: "Kendall Jackson Sauvignon
+          // Blanc"), the lookup failed, and this stored a bare line with no product_id
+          // or establishmentId — which then skipped delivery validation (summary showed
+          // the raw "tomorrow at 5 pm") and would be refused at placement. Return a
+          // structured failure the LLM must act on instead.
+          console.log('[confirm-substitute] REFUSED: could not resolve', JSON.stringify(replacementName), 'to a catalog product — not added');
+          return { success: false, unresolved_replacement: replacementName, error: 'Could not find "' + replacementName + '" in the catalog. Search for it and present the real matches so the customer can pick one; do not assume a product name.' };
         }
         const rp = resolved ? (parseFloat(resolved.salePrice || resolved.price) || replacementPrice || 0) : (replacementPrice || 0);
         const newPid = resolved ? ((resolved.corpProductFilter && resolved.corpProductFilter.corpProductId) || resolved.product_id || resolved.id || '') : '';
@@ -1287,6 +1294,20 @@ app.post('/chat', async (req, res) => {
       if (ph) { state.orderData.phone = ph[0].replace(/\D/g, ''); }
       const nameOnly = ph ? t.replace(ph[0], '').replace(/[,;]+/g, ' ').trim() : t;
       if (!state.orderData.name && nameOnly) state.orderData.name = nameOnly;
+      // Recipient email is a required step (business decision): asked right after the
+      // name; if the customer skips it, it falls back to the account email. This
+      // replaces the old 'email_confirm' step (which asked a weaker version later).
+      state.orderStep = 'recipient_email';
+      saveFlowState();
+      const askE = 'What email should we use for the delivery recipient? (Reply "same" to use ' + (email || 'your account email') + '.)';
+      return res.json({ text: askE, response: askE });
+    }
+    if (state.orderStep === 'recipient_email') {
+      const em = message.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+      // Fallback to the account email on "same"/skip/no email found.
+      state.orderData.email = em ? em[0] : (email || '');
+      state.orderData.account_email = email || '';
+      if (!em) console.log('[order] recipient email not given — falling back to account email');
       if (state.orderData.phone) {
         state.orderStep = 'details';
         saveFlowState();
@@ -1301,22 +1322,13 @@ app.post('/chat', async (req, res) => {
     }
     if (state.orderStep === 'phone') {
       state.orderData.phone = message.replace(/\D/g, '');
-      // Email is already on file (profile) and was shown as a correction point; a
-      // separate "confirm your email" turn is redundant. Only ask if we have none.
-      if (state.orderData.email || email) {
-        state.orderData.email = state.orderData.email || email;
-        state.orderStep = 'details';
-        saveFlowState();
-        const kd = state.orderData.known_date;
-        const askD = kd ? ('Thanks! Delivering on ' + kd + ' — what time works, and any delivery instructions for the driver?') : 'Thanks! What delivery date and time would you like?';
-        return res.json({ text: askD, response: askD });
-      }
-      state.orderStep = 'email_confirm';
+      if (!state.orderData.email) state.orderData.email = email || '';
+      state.orderData.account_email = state.orderData.account_email || email || '';
+      state.orderStep = 'details';
       saveFlowState();
-      const ask = format === 'slack'
-        ? 'Your email on file is *' + email + '* — shall I use this for the order, or would you like to use a different one?'
-        : 'Your email on file is ' + email + ' — shall I use this, or provide a different one?';
-      return res.json({ text: ask, response: ask });
+      const kd = state.orderData.known_date;
+      const askD = kd ? ('Thanks! Delivering on ' + kd + ' — what time works, and any delivery instructions for the driver?') : 'Thanks! What delivery date and time would you like?';
+      return res.json({ text: askD, response: askD });
     }
     if (state.orderStep === 'email_confirm') {
       // If yes or empty, use existing email. Otherwise use provided email
@@ -1430,6 +1442,15 @@ app.post('/chat', async (req, res) => {
         const askI = 'Any delivery instructions for the driver? (e.g. buzzer or door code, loading dock, floor/suite, or an on-site contact) — or say "none".';
         return res.json({ text: askI, response: askI });
       }
+      // Never present an unvalidated delivery time. If no ISO instant was produced (no
+      // establishment to validate against, or validation skipped), do not fall through
+      // to a summary that echoes the customer's raw words as if confirmed.
+      if (!state.orderData.delivery_datetime_iso) {
+        state.orderStep = 'details';
+        saveFlowState();
+        const askV = 'I couldn\'t confirm a delivery window for that time yet. Could you give me a specific date and time (e.g. "Sept 16 at 5pm")?';
+        return res.json({ text: askV, response: askV });
+      }
       state.orderStep = 'confirm';
       saveFlowState();
       // Build order summary
@@ -1478,6 +1499,8 @@ app.post('/chat', async (req, res) => {
       const summary = format === 'slack'
         ? '*Order Summary*\n\n' +
           (multiLines ? multiLines.join('\n') : productName + ' x' + qty + ' — $' + unitPrice.toFixed(2) + ' ea = $' + productTotal.toFixed(2)) + '\n' +
+          'For: ' + (state.orderData.name || '') + (state.orderData.phone ? ' | ' + state.orderData.phone : '') + '\n' +
+          'Recipient email: ' + (state.orderData.email || email || '') + '\n' +
           'Delivery to: ' + state.address + '\n' +
           'Delivery: ' + (state.orderData.delivery_date_label ? state.orderData.delivery_date_label + ', ' : '') + (state.orderData.delivery_window_display || state.orderData.delivery_datetime) + '\n' +
           (state.orderData.delivery_instructions ? 'Delivery instructions: ' + state.orderData.delivery_instructions + '\n' : '') + '\n' +
@@ -1565,6 +1588,7 @@ app.post('/chat', async (req, res) => {
           _system: 'place_order',
           line_items: updatedLineItems || '[]',
           customer: customerObj,
+          account_email: od.account_email || email || '',   // top-level createCorpOrder email = the logged-in user
           delivery_datetime: od.delivery_datetime_iso || od.delivery_datetime,
           delivery_window: od.delivery_datetime,
           delivery_instructions: od.delivery_instructions || '',
