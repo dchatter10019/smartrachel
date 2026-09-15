@@ -318,12 +318,30 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
           console.log('[confirm-substitute] WARNING: could not resolve', JSON.stringify(replacementName), 'to a catalog product; storing as supplied');
         }
         const rp = resolved ? (parseFloat(resolved.salePrice || resolved.price) || replacementPrice || 0) : (replacementPrice || 0);
-        items.push({
-          label: replacementName, name: resolved ? resolved.name : replacementName, qty: qtyToUse, quantity: qtyToUse,
-          price: rp, size: resolved ? (resolved.sizeStr || resolved.size || replacementSize || '') : (replacementSize || ''),
-          url: resolved ? (resolved.url || '') : '', product_id: resolved ? ((resolved.corpProductFilter && resolved.corpProductFilter.corpProductId) || resolved.product_id || resolved.id || '') : '',
-          upc: resolved ? (resolved.upc || '') : '', establishmentId: resolved ? (resolved.establishmentId || '') : '', category: categoryToUse
-        });
+        const newPid = resolved ? ((resolved.corpProductFilter && resolved.corpProductFilter.corpProductId) || resolved.product_id || resolved.id || '') : '';
+        const newName = resolved ? resolved.name : replacementName;
+        const normN = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        // Duplicate guard: if this product is ALREADY in the basket (same product_id, or
+        // same normalized name when no id), merge into that line instead of pushing a
+        // second one. Real bug: a basket held "2x Kendall Jackson" AND "4x Kendall
+        // Jackson" (same id) plus two "1x Bacardi" lines — $426 real vs $339 quoted; an
+        // order would have charged for 6 Chardonnays and 2 Bacardis.
+        const dupIdx = items.findIndex(it => (newPid && it.product_id === newPid) || (!newPid && normN(it.name) === normN(newName)));
+        if (dupIdx >= 0) {
+          const ex = items[dupIdx];
+          // A replace sets the quantity; an add (no original) tops it up.
+          ex.qty = originalItem ? qtyToUse : ((ex.qty || ex.quantity || 1) + (qtyToUse || 1));
+          ex.quantity = ex.qty;
+          if (rp) ex.price = rp;
+          console.log('[confirm-substitute] merge into existing line:', ex.name, '-> qty', ex.qty);
+        } else {
+          items.push({
+            label: replacementName, name: newName, qty: qtyToUse, quantity: qtyToUse,
+            price: rp, size: resolved ? (resolved.sizeStr || resolved.size || replacementSize || '') : (replacementSize || ''),
+            url: resolved ? (resolved.url || '') : '', product_id: newPid,
+            upc: resolved ? (resolved.upc || '') : '', establishmentId: resolved ? (resolved.establishmentId || '') : '', category: categoryToUse
+          });
+        }
         const newLineItems = JSON.stringify(items);
         const key2 = makeCacheKey(email, state.zip, state.lastFingerprint);
         packageCache[key2] = newLineItems;
@@ -595,6 +613,21 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
         const state = getState(sessionKey);
         let items = [];
         try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+        // Self-heal duplicates left by earlier sessions: collapse lines sharing a
+        // product_id (or normalized name) by summing quantities, and persist.
+        {
+          const seen = new Map(); const merged = [];
+          const nk = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          for (const it of items) {
+            const k = it.product_id || ('n:' + nk(it.name));
+            if (seen.has(k)) { const ex = seen.get(k); ex.qty = (ex.qty || ex.quantity || 1) + (it.qty || it.quantity || 1); ex.quantity = ex.qty; }
+            else { seen.set(k, it); merged.push(it); }
+          }
+          if (merged.length !== items.length) {
+            console.log('[show-basket] collapsed', items.length - merged.length, 'duplicate line(s)');
+            items = merged; state.lastLineItems = JSON.stringify(items); saveFlowState();
+          }
+        }
         if (!items.length) return { success: true, empty: true, line_items: '[]', line_items_display: '', product_total: '0.00' };
         const disp = items.map(li => {
           const qty = li.qty || li.quantity || 1, price = parseFloat(li.price) || 0;
@@ -772,11 +805,25 @@ app.post('/chat', async (req, res) => {
         } else {
           s.addrConfirmed = !!s.address;
         }
-        s.step = s.address ? 'ready' : 'addr_new';
         if (s.ageVerified && capsGreet.requires_age_verification) {
           greet += '\u2713 Age verified.\n\n';
         }
-        greet += 'How can I help you today?';
+        // Ask for the delivery address up front (business decision): every later search
+        // is then scoped to the right store/client, and the customer isn't interrupted
+        // mid-request. The existing 'addr' / 'addr_new' handlers take the answer, check
+        // coverage, and reply "Got it! Delivering to X. How can I help you today?". If
+        // the customer types a product request here instead, those handlers stash it
+        // as pendingIntent and replay it once the address is confirmed.
+        if (s.address && capsGreet.mention_saved_address) {
+          s.step = 'addr';
+          greet += 'I have your delivery address on file as ' + s.address + ' \u2014 shall I use this for your order?';
+        } else if (s.address) {
+          s.step = 'ready';
+          greet += 'How can I help you today?';
+        } else {
+          s.step = 'addr_new';
+          greet += 'What is your delivery address? (Include street, city, state, and zip)';
+        }
       } else {
         s.step = 'age';
         greet += 'Before we get started — are you 21 or older?';
@@ -1954,6 +2001,7 @@ app.post('/chat', async (req, res) => {
           try { already = JSON.parse(state.lastLineItems || '[]').some(it => norm(it.name) === norm(picked.name)); } catch (e) {}
           if (!already) {
             console.log('[pick-list] deterministic selection:', JSON.stringify(picked));
+            state.lastPickResolved = { name: picked.name, size: picked.size, at: Date.now() };
             const r = await applyBasketSubstitute(sessionKey, email, '', picked.name + (picked.size ? ' - ' + picked.size : ''), picked.price, picked.size);
             const added = picked.name + (picked.size ? ' — ' + picked.size : '') + ' — $' + picked.price.toFixed(2);
             const reply = 'Got it — ' + added + ' added to your order. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
@@ -2313,6 +2361,18 @@ app.post('/chat', async (req, res) => {
     // the LLM re-asks "would you also like to add mixers...?" on every later turn.
     try {
       const stMx = getState(sessionKey);
+      // After a deterministic pick-list add, the LLM's context still holds the option
+      // list with no sign it was answered, so it re-presents the options on every later
+      // request (real loop: "add a grey goose" re-listed the Kendall Jackson options;
+      // "estimated full price" re-listed BOTH lists). Tell it the pick is resolved and
+      // show the live basket so additions are treated as additions.
+      if (stMx.lastPickResolved && Date.now() - stMx.lastPickResolved.at < 30 * 60 * 1000) {
+        fullAddrRule += `\n\n## PICK LIST RESOLVED\nThe customer already chose "${stMx.lastPickResolved.name}${stMx.lastPickResolved.size ? ' ' + stMx.lastPickResolved.size : ''}" from the options you presented; it is IN the basket. Do NOT re-present those options or ask which one they want again. Treat any new product request as an ADDITION to the basket.`;
+      }
+      try {
+        const liveItems = JSON.parse(stMx.lastLineItems || '[]');
+        if (liveItems.length) fullAddrRule += `\n\n## CURRENT BASKET (authoritative)\n` + liveItems.map(li => `${li.qty || li.quantity || 1}x ${li.name} — $${(parseFloat(li.price) || 0).toFixed(2)}`).join('\n') + `\nWhen the customer asks for the estimate, price, or to place the order, use THESE items — never re-list options for items already here.`;
+      } catch (e) {}
       if (stMx.mixerAnswered) fullAddrRule += `\n\n## MIXERS ALREADY ANSWERED\nThe customer has already answered the mixers/water/soda/ice/cups question for this package. Do NOT ask it again. End replies with the place-order / proposal / changes options instead.`;
     } catch (e) {}
       // Inject the persisted event parameters (OUTSIDE the saved_package branch: that
