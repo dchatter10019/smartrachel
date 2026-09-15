@@ -12,4 +12,8 @@ done
 out=$(npx --yes eslint@8 --no-eslintrc --parser-options=ecmaVersion:2022 --env node,es2022 \
   --rule '{"no-const-assign":"error","no-undef":"error"}' $FILES 2>&1 | grep -E "no-const-assign|no-undef")
 if [ -n "$out" ]; then echo "$out"; fail=1; fi
+# Un-awaited async calls: node --check and eslint both miss these (a Promise silently
+# stands in for the value). Flag assignments from known async functions with no await.
+ua=$(grep -nE "=\s*(inferPriceRange|searchProducts|searchWithFallbacks|buildPackage|getCustomerProfile|applyBasketSubstitute|checkStoreCoverage|checkDeliveryAvailability)\(" $FILES | grep -v "await " || true)
+if [ -n "$ua" ]; then echo "UN-AWAITED ASYNC CALL:"; echo "$ua"; fail=1; fi
 [ $fail -eq 0 ] && echo "PRECHECK OK — safe to restart" || { echo "PRECHECK FAILED — do not restart"; exit 1; }

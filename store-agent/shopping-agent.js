@@ -792,19 +792,44 @@ async function executeTool(name, input) {
     const profile = await getCustomerProfile(input.email);
     const priceRange = input.budget_per_bottle ?
       { min: input.budget_per_bottle * 0.7, max: input.budget_per_bottle * 1.3 } :
-      inferPriceRange(profile, input.category || input.occasion);
+      // Most specific first: "white wine" (occasion) over bare "wine" (category). Real bug:
+      // bare "wine" used the overall average ($89.99, inflated by Champagne purchases) ->
+      // a $27 floor that dropped the customer's own $21 La Crema.
+      // `await` was MISSING here: inferPriceRange is async, so priceRange was a Promise,
+      // priceRange.min/.max were undefined, every price comparison failed, and the
+      // supplement search returned 0 products since the day it was written (log showed
+      // 'range undefined-undefined'). Recommendations were always 0-1 items as a result.
+      await inferPriceRange(profile, (input.occasion && /wine|red|white|sparkling|champagne|vodka|gin|rum|whisk|bourbon|tequila|beer/i.test(input.occasion)) ? input.occasion : (input.category || input.occasion));
     // Build search terms — prefer customer's top products, fall back to category
     const searchTerms = [];
     if (profile && profile.top_products && profile.top_products.length > 0) {
       const cat = (input.category || '').toLowerCase();
+      // Sparkling is NOT white wine (business decision). A "white wine" ask excludes
+      // Champagne/Prosecco/Cava; a "sparkling"/"champagne" ask returns only those.
+      // Word boundaries throughout — 'gin' in Ginger, 'rum' in Conundrum, 'ale' in
+      // Ale-house were false category hits. top_products arrive from GBrain ranked by
+      // purchase frequency, and that order is preserved so the go-to leads.
+      const wantSparkling = /sparkling|champagne|prosecco|cava|bubbl/.test(cat);
+      const wantWhite = /white/.test(cat), wantRed = /\bred\b|rouge/.test(cat);
       profile.top_products.forEach(function(p) {
-        const pl = p.toLowerCase();
-        const isWine = pl.includes('chardonnay') || pl.includes('cabernet') || pl.includes('pinot') || pl.includes('rose') || pl.includes('merlot') || pl.includes('sauvignon') || pl.includes('malbec');
-        const isSpirits = pl.includes('vodka') || pl.includes('gin') || pl.includes('rum') || pl.includes('whiskey') || pl.includes('bourbon') || pl.includes('tequila') || pl.includes('scotch');
-        const isBeer = pl.includes('beer') || pl.includes('lager') || pl.includes('ipa') || pl.includes('ale');
-        if (!cat || (cat === 'wine' && isWine) || (cat === 'spirits' && isSpirits) || (cat === 'beer' && isBeer) || (!isWine && !isSpirits && !isBeer)) {
-          searchTerms.push(p);
-        }
+        const pl = ' ' + p.toLowerCase() + ' ';
+        const isSparklingRec = /\b(champagne|prosecco|cava|sparkling|brut|cremant|spumante|lambrusco)\b/.test(pl);
+        const isWhiteRec = !isSparklingRec && /\b(chardonnay|sauvignon blanc|pinot grigio|pinot gris|riesling|moscato|white|blanc|albari|viognier|chablis|gavi|soave|falanghina|vermentino|chenin)\b/.test(pl);
+        const isRedRec = !isSparklingRec && /\b(cabernet|merlot|pinot noir|malbec|syrah|shiraz|zinfandel|red|rouge|chianti|nebbiolo|sangiovese|tempranillo|bordeaux|rioja)\b/.test(pl);
+        const isRoseRec = /\bros[eé]\b/.test(pl);
+        const isWine = isSparklingRec || isWhiteRec || isRedRec || isRoseRec || /\bwine\b/.test(pl);
+        const isSpirits = /\b(vodka|gin|rum|whiskey|whisky|bourbon|tequila|scotch|cognac|brandy|mezcal|liqueur)\b/.test(pl);
+        const isBeer = /\b(beer|lager|ipa|ale|pilsner|stout|porter|seltzer|cider)\b/.test(pl);
+        let ok;
+        if (!cat) ok = true;
+        else if (wantSparkling) ok = isSparklingRec;
+        else if (wantWhite) ok = isWhiteRec;
+        else if (wantRed) ok = isRedRec;
+        else if (cat.indexOf('wine') >= 0) ok = isWine && !isSparklingRec;   // "wine" alone = still wines
+        else if (cat.indexOf('spirit') >= 0 || /vodka|gin|rum|whisk|bourbon|tequila|scotch/.test(cat)) ok = isSpirits;
+        else if (cat.indexOf('beer') >= 0) ok = isBeer;
+        else ok = !isWine && !isSpirits && !isBeer;
+        if (ok) searchTerms.push(p);
       });
     }
     if (searchTerms.length === 0) {
@@ -820,10 +845,13 @@ async function executeTool(name, input) {
       // stored as past-order names that don't hit Bevvi's exact search -> 0 results ->
       // Rachel narrated names from memory with no prices and nothing orderable.
       const results = await searchWithFallbacks(loc.kitchen, loc.client, searchTerms[si], 10);
-      results.forEach(function(p) { if (!seen[p.name]) { seen[p.name] = true; allRaw.push(p); } });
+      results.forEach(function(p) { if (!seen[p.name]) { seen[p.name] = true; p._fromHistory = true; allRaw.push(p); } });
     }
+    // The customer's own history picks bypass the price floor — they've bought them
+    // repeatedly, so they're always shown. The inferred range is a guide for NEW
+    // suggestions, not a filter on proven favorites.
     let filtered = allRaw
-      .filter(function(p) { const price = p.salePrice || p.price || 0; return price >= priceRange.min && price <= priceRange.max && price > 0; })
+      .filter(function(p) { const price = p.salePrice || p.price || 0; return price > 0 && (p._fromHistory || (price >= priceRange.min && price <= priceRange.max)); })
       .slice(0, 8).map(formatProduct);
 
     // If too few results from preferred brands, supplement with category search
@@ -831,15 +859,26 @@ async function executeTool(name, input) {
       const fallbackTerm = input.category || 'wine';
       const fallbackRaw = await searchProducts(loc.kitchen, loc.client, fallbackTerm, 20, priceRange.min, priceRange.max);
       const existingNames = new Set(filtered.map(function(p) { return p.name; }));
+      // supplement sparkling exclusion: the history filter drops Champagne for a "white
+      // wine" ask, but the supplement search returned a Veuve among Bevvi's 20 "white
+      // wine" results and only price-filtered it. Apply the same category rule here.
+      const catL = String(input.category || input.occasion || '').toLowerCase();
+      const wantSparklingS = /sparkling|champagne|prosecco|cava|bubbl/.test(catL);
+      const isSparklingP = function(p){ return /\b(champagne|prosecco|cava|sparkling|brut|cremant|spumante|lambrusco)\b/i.test(String(p.name || '') + ' ' + String(p.subCategory || p.subcategory || '')); };
       const fallback = fallbackRaw
         .filter(function(p) { 
           const price = p.salePrice || p.price || 0; 
-          return price >= priceRange.min && price <= priceRange.max && price > 0 && !existingNames.has(p.name);
+          if (!(price >= priceRange.min && price <= priceRange.max && price > 0 && !existingNames.has(p.name))) return false;
+          if (/wine|white|red/.test(catL) && !wantSparklingS && isSparklingP(p)) return false;
+          if (wantSparklingS && !isSparklingP(p)) return false;
+          return true;
         })
         .slice(0, 8 - filtered.length)
         .map(formatProduct);
       filtered = filtered.concat(fallback);
+      console.log('[recommendation] supplement:', fallbackRaw.length, 'raw ->', fallback.length, 'kept (range', priceRange.min + '-' + priceRange.max + ')');
     }
+    console.log('[recommendation] returning', filtered.length, 'products:', filtered.map(function(p){ return (p.name || '').slice(0, 30) + ' $' + p.price; }).join(' | '));
     const buyer = scoreBuyer(profile);
     return {
       success: true, products: filtered,
