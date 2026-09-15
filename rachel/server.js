@@ -1978,7 +1978,8 @@ app.post('/chat', async (req, res) => {
       const reLine = /^\s*(\d{1,2})[\.\)]\s*\*?([^\n*—$]+?)\*?\s*(?:—\s*([^—$\n]*?))?\s*—?\s*\$([\d.]+)/gm;
       let pm;
       while ((pm = reLine.exec(lastAssistantTextGate)) !== null) {
-        pickLines.push({ n: parseInt(pm[1]), name: pm[2].trim(), size: (pm[3] || '').trim(), price: parseFloat(pm[4]) });
+        // Strip Slack bold markers that can cling to the edges ("750 ML*" showed in a reply).
+        pickLines.push({ n: parseInt(pm[1]), name: pm[2].replace(/\*/g, '').trim(), size: (pm[3] || '').replace(/\*/g, '').trim(), price: parseFloat(pm[4]) });
       }
       console.log('[pick-list] gate — lines:', pickLines.length, '| orderStep:', state.orderStep, '| proposalStep:', state.proposalStep, '| msg:', JSON.stringify(message).slice(0, 30));
       if (pickLines.length >= 2 && !state.orderStep && !state.proposalStep) {
