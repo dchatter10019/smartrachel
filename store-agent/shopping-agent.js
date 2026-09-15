@@ -815,7 +815,11 @@ async function executeTool(name, input) {
     let allRaw = [];
     const seen = {};
     for (var si = 0; si < searchTerms.length; si++) {
-      const results = await searchProducts(loc.kitchen, loc.client, searchTerms[si], 10);
+      // Use the fallback chain, not a single exact-string search. Real bug: the customer's
+      // top products ("La Crema Chardonnay", "Veuve Clicquot Yellow Label Brut") are
+      // stored as past-order names that don't hit Bevvi's exact search -> 0 results ->
+      // Rachel narrated names from memory with no prices and nothing orderable.
+      const results = await searchWithFallbacks(loc.kitchen, loc.client, searchTerms[si], 10);
       results.forEach(function(p) { if (!seen[p.name]) { seen[p.name] = true; allRaw.push(p); } });
     }
     let filtered = allRaw

@@ -186,6 +186,25 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         // guests and sized everything at 1 unit. A prompt rule asks the LLM to reuse
         // them; this guarantees it. Only fills what's missing — never overrides a value
         // the LLM did supply (the customer may genuinely be changing it).
+        // RECOMMENDATION ROUTING (deterministic). The LLM routed "recommend a white wine"
+        // to product_query, so only the customer's price tier was applied — their actual
+        // top_products (the history that surfaces "Kendall Jackson", which they've bought
+        // repeatedly) were never consulted. If the customer is asking for a suggestion,
+        // force the recommendation intent and carry the category over.
+        if (saInput.intent === 'product_query') {
+          const m = String(customerMessage || '').toLowerCase();
+          const wantsRec = /\b(recommend|recommendation|suggest|suggestion|what(?:'s| is) good|what do you (?:recommend|suggest|think)|pick (?:something|one|a)|any (?:good|nice)|your (?:pick|favorite)|something (?:nice|good))\b/.test(m);
+          if (wantsRec) {
+            const q = (Array.isArray(saInput.queries) && saInput.queries[0]) || {};
+            const cat = q.category || (/\bwine\b/.test(m) ? 'wine' : /\b(vodka|gin|rum|tequila|whisk|bourbon|scotch|spirit)/.test(m) ? 'spirits' : /\b(beer|lager|ipa|seltzer)\b/.test(m) ? 'beer' : '');
+            const occ = q.name || '';
+            console.log('[ShoppingAgent] RECOMMENDATION ROUTING: product_query ->', 'recommendation', '| category:', cat, '| occasion:', occ);
+            saInput.intent = 'recommendation';
+            if (cat) saInput.category = cat;
+            if (occ) saInput.occasion = occ;
+            delete saInput.queries;
+          }
+        }
         // PARAM-CHANGE OVERRIDE: when the customer's message only changes ONE parameter
         // (budget / guests / hours), rebuild from the persisted eventParams VERBATIM and
         // apply just that change. The LLM only relays the new value. Real bug: on
