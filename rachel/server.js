@@ -395,6 +395,22 @@ function zonedToUtcIso(dateStr, hour, minute, zone) {
   const asUtc = Date.UTC(+parts.year, +parts.month-1, +parts.day, +parts.hour % 24, +parts.minute);
   return new Date(guess.getTime() - (asUtc - guess.getTime())).toISOString();
 }
+// Re-express a store window ("04:00 PM - 05:00 PM EST", in windowZone) in the
+// customer's zone for DISPLAY. The instant we send is already correct; this is so a
+// West-Coast customer who said "1 pm PST" sees "1:00 PM - 2:00 PM PT", not "04:00 PM
+// EST" (correct underneath, but reads as "Rachel ignored my timezone").
+function fmtWindowInZone(windowStr, dateStr, windowZone, custZone) {
+  try {
+    if (!custZone || custZone === windowZone) return windowStr;
+    const win = parseTimeWindow(windowStr); if (!win) return windowStr;
+    const abbr = { 'America/Los_Angeles': 'PT', 'America/Denver': 'MT', 'America/Chicago': 'CT', 'America/New_York': 'ET', 'America/Phoenix': 'MST', 'Pacific/Honolulu': 'HST', 'America/Anchorage': 'AKT' }[custZone] || custZone;
+    const fmtOne = (h) => {
+      const iso = zonedToUtcIso(dateStr, Math.floor(h), Math.round((h - Math.floor(h)) * 60), windowZone);
+      return new Intl.DateTimeFormat('en-US', { timeZone: custZone, hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(iso));
+    };
+    return fmtOne(win.start) + ' - ' + fmtOne(win.end) + ' ' + abbr + ' (' + windowStr.replace(/\s*EST\s*$/i, ' ET') + ')';
+  } catch (e) { return windowStr; }
+}
 function nyToUtcIso(dateStr, hour, minute) {
   const guess = new Date(Date.UTC(+dateStr.slice(0,4), +dateStr.slice(5,7)-1, +dateStr.slice(8,10), hour, minute));
   const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour12: false, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
@@ -1382,11 +1398,12 @@ app.post('/chat', async (req, res) => {
             }
           }
           if (!matchedWindow) {
-            const optionsText = avail.deliveryTimes.map(w => w.displayTime).join(', ');
+            const optionsText = avail.deliveryTimes.map(w => fmtWindowInZone(w.displayTime, dateStr, windowZone, custZone)).join(', ');
             const ask = 'That time isn\'t available on ' + dateStr + '. Here are the available delivery windows: ' + optionsText + '. Which one works for you?';
             return res.json({ text: ask, response: ask });
           }
           finalDeliveryText = matchedWindow.deliveryTime;
+          state.orderData.delivery_window_display = fmtWindowInZone(matchedWindow.deliveryTime, dateStr, windowZone, custZone);
           try { state.orderData.delivery_date_label = new Date(dateStr + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }); } catch (e) {}
           // Bevvi needs a real datetime, not a window string with no date. Real bug: we
           // sent deliveryDateTime '03:00 PM - 04:00 PM EST' — no day at all. Combine
@@ -1462,7 +1479,7 @@ app.post('/chat', async (req, res) => {
         ? '*Order Summary*\n\n' +
           (multiLines ? multiLines.join('\n') : productName + ' x' + qty + ' — $' + unitPrice.toFixed(2) + ' ea = $' + productTotal.toFixed(2)) + '\n' +
           'Delivery to: ' + state.address + '\n' +
-          'Delivery: ' + (state.orderData.delivery_date_label ? state.orderData.delivery_date_label + ', ' : '') + state.orderData.delivery_datetime + '\n' +
+          'Delivery: ' + (state.orderData.delivery_date_label ? state.orderData.delivery_date_label + ', ' : '') + (state.orderData.delivery_window_display || state.orderData.delivery_datetime) + '\n' +
           (state.orderData.delivery_instructions ? 'Delivery instructions: ' + state.orderData.delivery_instructions + '\n' : '') + '\n' +
           'Product total: $' + productTotal.toFixed(2) + '\n' +
           'Estimated tax (10%): $' + tax.toFixed(2) + '\n' +
