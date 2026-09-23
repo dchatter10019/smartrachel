@@ -1317,6 +1317,9 @@ app.post('/chat', async (req, res) => {
     // 'can you ensure the quantities are correct' is a basket check). Everything else
     // falls through to the existing path unchanged; regex remains the fallback.
     let clsIntent = null, clsRef = '';
+    // clear stale classifier label: eventParams persists across turns (guests/budget for
+    // rebuilds), so last turn's 'recommend' must not rewrite this turn's product query.
+    if (state.eventParams && state.eventParams.classified_intent) { delete state.eventParams.classified_intent; delete state.eventParams.classified_ref; }
     if (!state.orderStep && !state.proposalStep && !state.pendingQtyFor && !isInternalMsg) {
       try {
         const { classifyIntent } = require('./classify-intent.js');
@@ -1326,6 +1329,9 @@ app.post('/chat', async (req, res) => {
         if (cr.source === 'llm' && cr.confidence >= 0.75 && ['place_order','show_basket','change_time','change_instructions','change_contact','recommend'].includes(cr.intent)) {
           clsIntent = cr.intent; clsRef = cr.ref || '';
           console.log('[classify->route]', clsIntent, cr.confidence.toFixed(2), '|', JSON.stringify(message).slice(0, 60));
+          // Hand the label to rachel.js's executeTool via eventParams (already threaded
+          // through; context is not) so the recommendation rewrite fires on it.
+          state.eventParams = Object.assign({}, state.eventParams || {}, { classified_intent: clsIntent, classified_ref: clsRef });
         }
       } catch (e) {}
     }
@@ -1334,7 +1340,11 @@ app.post('/chat', async (req, res) => {
       // An explicit order request always restarts the flow. Real bug: a crash mid-entry
       // left orderStep='confirm' on disk; the next 'place the order' didn't trigger and
       // fell into the stale confirm handler ('$0.00 estimated'). Same guard proposals have.
-      console.log('[order] explicit re-request while orderStep=' + state.orderStep + ' — resetting stale flow');
+      console.log('[order] explicit re-request while orderStep=' + state.orderStep + ' — resetting stale flow (details preserved)');
+      { const od0 = state.orderData || {};
+        if (od0.name || od0.phone) state.savedCustomer = { name: od0.name || (state.savedCustomer || {}).name || '', phone: od0.phone || (state.savedCustomer || {}).phone || '', email: od0.email || (state.savedCustomer || {}).email || '' };
+        if (od0.delivery_datetime_iso) { state.savedDeliveryIso = od0.delivery_datetime_iso; state.savedDeliveryWindow = od0.delivery_window_display || od0.delivery_datetime; state.savedDeliveryLabel = od0.delivery_date_label || ''; }
+        if (od0.delivery_instructions) state.savedInstructions = od0.delivery_instructions; }
       state.orderStep = null; state.orderData = null; saveFlowState();
     }
     if (clsIntent === 'show_basket') {
@@ -1348,11 +1358,40 @@ app.post('/chat', async (req, res) => {
         }
       } catch (e) {}
     }
+    // change_instructions outside confirm: update the saved instructions (used at the next
+    // summary) in one step, from the classifier's extracted ref.
+    if (!state.orderStep && !state.proposalStep && (clsIntent === 'change_instructions' || (/\b(instruction|instructions|note|notes|tell the driver|for the driver)\b/i.test(message) && /\b(change|update|set|add|make it|use)\b/i.test(message)))) {
+      const txt = (clsRef || message.replace(/^.*?\b(instructions?|notes?|driver)\b\s*(to|:|-|—|should|is|are)?\s*/i, '')).trim();
+      state.savedInstructions = /^(none|no|nothing|remove|clear)\b/i.test(txt) ? '' : txt;
+      if (state.orderData) state.orderData.delivery_instructions = state.savedInstructions;
+      saveFlowState();
+      console.log('[order] instructions change outside confirm ->', JSON.stringify(state.savedInstructions));
+      const r1 = state.savedInstructions ? ('Got it — delivery instructions set to "' + state.savedInstructions + '". They\'ll be on the order when you place it.') : 'Got it — delivery instructions cleared.';
+      return res.json({ text: r1, response: r1 });
+    }
+    // change_contact outside confirm: update the saved name/phone/email in one step.
+    if (!state.orderStep && !state.proposalStep && (clsIntent === 'change_contact' || (/\b(phone|number|email|e-mail|name)\b/i.test(message) && /\b(change|update|use|switch|correct|fix|set)\b/i.test(message)))) {
+      const cm = message.replace(/<tel:[^|>]*\|([^>]*)>/g, '$1').replace(/<mailto:[^|>]*\|([^>]*)>/g, '$1').replace(/<([^>]+)>/g, '$1');
+      const sc = Object.assign({}, state.savedCustomer || {});
+      const ph = cm.match(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/), em = cm.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+      const nm = /\bname\b/i.test(cm) ? cm.match(/\bname\b\s*(?:to|is|:)?\s*([A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+)+)/) : null;
+      const changed = [];
+      if (ph && /\b(phone|number|cell|mobile|contact)\b/i.test(cm)) { sc.phone = ph[0].replace(/\D/g, ''); changed.push('phone ' + sc.phone); }
+      if (em && /\b(email|e-mail|mail)\b/i.test(cm)) { sc.email = em[0]; changed.push('email ' + sc.email); }
+      if (nm) { sc.name = nm[1].trim(); changed.push('name ' + sc.name); }
+      if (changed.length) {
+        state.savedCustomer = sc; saveFlowState();
+        console.log('[order] contact change outside confirm ->', changed.join(', '));
+        const r2 = 'Got it — updated ' + changed.join(', ') + '. I\'ll use that on the order.';
+        return res.json({ text: r2, response: r2 });
+      }
+    }
     // time change outside confirm: with a basket and saved contact details, "change the
     // delivery time" is an order-flow request even when not at the summary. Enter at
     // the date step (contact skipped) instead of letting the LLM say "no time saved".
     if (!state.orderStep && !state.proposalStep && (state.savedCustomer || {}).name &&
-        /\b(time|date|slot|window|\d{1,2}\s*(am|pm))\b/i.test(message) && /\b(change|different|instead|move|make it|update|reschedule|switch)\b/i.test(message) && !/\b(instruction|note|address)\b/i.test(message)) {
+        (clsIntent === 'change_time' ||
+        (/\b(time|date|slot|window|\d{1,2}\s*(am|pm))\b/i.test(message) && /\b(change|different|instead|move|make it|update|reschedule|switch)\b/i.test(message) && !/\b(instruction|note|address)\b/i.test(message)))) {
       let bcT = 0; try { bcT = (JSON.parse(state.lastLineItems || '[]') || []).length; } catch (e) {}
       if (bcT >= 1) {
         const sc = state.savedCustomer;
@@ -1691,15 +1730,81 @@ app.post('/chat', async (req, res) => {
       // (yes/no)' re-ask — a dead end at exactly the moment a customer notices something
       // missing. Exit the order flow (keeping name/phone/email/date so they're
       // pre-filled next time), acknowledge, and let the request go through normally.
+      // classifier-assisted confirm: await the label at this decision point (~1s) and let it
+      // steer which handler runs; the regexes remain as fallback.
+      let cls = null;
+      try {
+        const { classifyIntent } = require('./classify-intent.js');
+        const lastRc = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
+        const cr = await classifyIntent(message, { lastKind: 'yes_no', orderStep: 'confirm', basketSize: 0, lastQuestion: lastRc.slice(0, 160) });
+        if (cr.source === 'llm' && cr.confidence >= 0.7) cls = cr.intent;
+        if (cls) console.log('[classify@confirm]', cls, cr.confidence.toFixed(2));
+      } catch (e) {}
+      // CONTACT CHANGE at confirm: "use the phone number at X", "change my email to Y".
+      // Real bug: there was NO handler for this — the classifier labeled it change_contact
+      // (0.82) but the message fell to the generic re-confirm and nothing changed.
+      const cleanMsgC = message.replace(/<tel:[^|>]*\|([^>]*)>/g, '$1').replace(/<mailto:[^|>]*\|([^>]*)>/g, '$1').replace(/<([^>]+)>/g, '$1');
+      const wantsContactChange = /\b(change|update|use|switch|different|instead|correct|fix|make it|set)\b/i.test(cleanMsgC) && /\b(phone|number|cell|mobile|email|e-mail|name)\b/i.test(cleanMsgC);
+      if ((cls === 'change_contact' || wantsContactChange) && !yesWords.some(w => msgLower === w)) {
+        const phoneM = cleanMsgC.match(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/);
+        const emailM = cleanMsgC.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+        const nameM  = /\bname\b/i.test(cleanMsgC) ? cleanMsgC.match(/\bname\b\s*(?:to|is|:)?\s*([A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+)+)/) : null;
+        const changed = [];
+        if (phoneM && /\b(phone|number|cell|mobile|contact)\b/i.test(cleanMsgC)) { state.orderData.phone = phoneM[0].replace(/\D/g, ''); changed.push('phone'); }
+        if (emailM && /\b(email|e-mail|mail)\b/i.test(cleanMsgC)) { state.orderData.email = emailM[0]; changed.push('email'); }
+        if (nameM) { state.orderData.name = nameM[1].trim(); changed.push('name'); }
+        if (changed.length) {
+          state.savedCustomer = { name: state.orderData.name, phone: state.orderData.phone, email: state.orderData.email };
+          saveFlowState();
+          console.log('[order] contact change at confirm ->', changed.join(','));
+          return renderOrderSummary(state, email, format, res);
+        }
+      }
       // TIME CHANGE at confirm — handled in-flow, not exited to the LLM. Real bug:
       // "change the delivery time to 3 pm tomorrow" exited the order flow and the LLM
       // replied "there's no delivery time set to change" — nothing re-asked the time.
       // Keep the order, keep contact details, re-validate the new time, re-render.
+      // ADDRESS CHANGE at confirm. Real bug: with no change_address label the classifier
+      // picked change_instructions and the whole sentence was STORED as the driver
+      // instructions. An address change can mean a different store (different client and
+      // catalog), so: re-check coverage, clear the delivery time (windows are per store),
+      // and if the serving client changed, the basket must be rebuilt — say so honestly.
+      const isAddrChange = cls === 'change_address' || (/\b(address|deliver to|delivery location|ship to)\b/i.test(message) && /\b(change|update|different|instead|use|switch|move)\b/i.test(message) && /\b\d{5}\b/.test(message));
+      if (isAddrChange && !yesWords.some(w => msgLower === w)) {
+        const newAddr = message.replace(/^.*?\b(address|deliver to|delivery location|ship to)\b\s*(to|is|:)?\s*/i, '').trim();
+        const zm = newAddr.match(/\b(\d{5})\b/);
+        if (zm) {
+          const prevCov = await checkStoreCoverage(state.zip);
+          const cov = await checkStoreCoverage(zm[1]);
+          if (!cov || !cov.store_count) {
+            const rNo = 'I can\'t deliver to ' + zm[1] + ' yet — no store serves that zip. Keep the current address, or try a different one?';
+            return res.json({ text: rNo, response: rNo });
+          }
+          const sameStore = prevCov && cov && prevCov.client === cov.client;
+          state.address = newAddr; state.zip = zm[1]; state.addrConfirmed = true;
+          state.orderData.delivery_datetime_iso = null; state.orderData.delivery_datetime = null; state.orderData.delivery_window_display = null; state.orderData.datetime_validated = false;
+          state.savedDeliveryIso = null; state.savedDeliveryWindow = null; state.savedDeliveryLabel = null;
+          const od0 = state.orderData;
+          state.savedCustomer = { name: od0.name, phone: od0.phone, email: od0.email };
+          if (od0.delivery_instructions && !/\b\d{5}\b/.test(od0.delivery_instructions)) state.savedInstructions = od0.delivery_instructions;
+          console.log('[order] address change at confirm ->', newAddr, '| same store:', sameStore);
+          if (sameStore) {
+            state.orderStep = 'details'; saveFlowState();
+            const rA = 'Delivery address updated to ' + newAddr + '. Delivery windows differ by address — what delivery date and time would you like?';
+            return res.json({ text: rA, response: rA });
+          }
+          // Different store: the basket was built for the old one. Clear the order flow
+          // and ask to rebuild rather than ship items the new store may not carry.
+          state.orderStep = null; state.orderData = null; state.lastLineItems = '[]'; saveFlowState();
+          const rB = 'Delivery address updated to ' + newAddr + '. That\'s served by a different store, so your basket needs to be rebuilt for it — tell me what you\'d like and I\'ll put it together again.';
+          return res.json({ text: rB, response: rB });
+        }
+      }
       // INSTRUCTIONS CHANGE at confirm: "change the delivery instructions to X", "add a note:
       // X", "tell the driver X". Real bug: this matched the TIME-change pattern (it contains
       // "delivery" + "change") and asked for a time. Parse the new text, update, re-render.
       const isInstrChange = /\b(instruction|instructions|note|notes|tell the driver|driver should|for the driver)\b/i.test(message) && !yesWords.some(w => msgLower === w);
-      if (isInstrChange) {
+      if (cls === 'change_instructions' || isInstrChange) {
         const newInstr = message.replace(/^.*?\b(instructions?|notes?|driver)\b\s*(to|:|-|—|should|is|are)?\s*/i, '').trim();
         state.orderData.delivery_instructions = /^(none|no|nothing|remove|clear)\b/i.test(newInstr) ? '' : newInstr;
         state.savedInstructions = state.orderData.delivery_instructions;
@@ -1710,7 +1815,7 @@ app.post('/chat', async (req, res) => {
       // Time change: require an explicit time/date word — "delivery" alone is not enough
       // (it also appears in "delivery instructions" / "delivery address").
       const isTimeChangeC = /\b(time|date|slot|window|when|\d{1,2}\s*(am|pm))\b/i.test(message) && /\b(change|different|instead|move|make it|update|reschedule|switch)\b/i.test(message) && !/\b(instruction|note|address)\b/i.test(message);
-      if (isTimeChangeC && !yesWords.some(w => msgLower === w)) {
+      if ((cls === 'change_time' || isTimeChangeC) && !yesWords.some(w => msgLower === w)) {
         const hasTime = /\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\bnoon\b|\bmidnight\b/i.test(message);
         state.orderData.delivery_datetime_iso = null; state.orderData.delivery_datetime = null;
         state.orderData.delivery_window_display = null; state.orderData.datetime_validated = false;

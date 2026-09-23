@@ -194,7 +194,10 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         if (saInput.intent === 'product_query') {
           const m = String(customerMessage || '').toLowerCase();
           const wantsRec = /\b(recommend|recommendation|suggest|suggestion|what(?:'s| is) good|what do you (?:recommend|suggest|think)|pick (?:something|one|a)|any (?:good|nice)|your (?:pick|favorite)|something (?:nice|good))\b/.test(m);
-          if (wantsRec) {
+          // Classifier label first ('show me a nice white wine' is a recommend ask with no
+          // keyword); the regex remains the fallback when the classifier didn't run.
+          const clsRec = eventParams && eventParams.classified_intent === 'recommend';
+          if (clsRec || wantsRec) {
             const q = (Array.isArray(saInput.queries) && saInput.queries[0]) || {};
             const cat = q.category || (/\bwine\b/.test(m) ? 'wine' : /\b(vodka|gin|rum|tequila|whisk|bourbon|scotch|spirit)/.test(m) ? 'spirits' : /\b(beer|lager|ipa|seltzer)\b/.test(m) ? 'beer' : '');
             const occ = q.name || '';
