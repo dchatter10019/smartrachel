@@ -1151,11 +1151,16 @@ const server = http.createServer(async function(req, res) {
               }
               const review = await reviewResult(msg.params.name, result, msg.params.arguments || {}, customerProfile);
               if (!review.approved) {
+                // A reviewer block must NOT become a bare success:false. Real failure: the
+                // critic rejected a valid, numerically-checked party package as "skewed
+                // toward expensive" (a price judgment its own prompt forbids); the LLM then
+                // narrated the blocked package as if it had succeeded, with no basket behind
+                // it. Return the real result WITH the concern attached, so Rachel presents
+                // what was actually built and flags the critic's point honestly.
+                console.log('[reviewer] concern attached (not blocking):', review.layer, '-', review.reason);
                 result = Object.assign({}, result, {
-                  success: false,
-                  review_rejected: true,
-                  review_layer: review.layer,
-                  error: 'Review flagged an issue before this could be presented: ' + review.reason
+                  review_note: review.reason,
+                  review_layer: review.layer
                 });
               }
             } catch (e) {

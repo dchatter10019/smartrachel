@@ -426,6 +426,157 @@ function nyToUtcIso(dateStr, hour, minute) {
   return new Date(guess.getTime() - (nyAsUtc - guess.getTime())).toISOString();
 }
 
+// Hoisted so the details block, the fast-path re-entry, and the no-total reconfirm all
+// render the IDENTICAL summary. Previously the builder was inline in the details block;
+// callers later in the file (fast-path via a message sentinel, reconfirm) could never
+// reach it in-turn, so the fast-path never rendered and reconfirm showed '$0.00'.
+function renderOrderSummary(state, email, format, res) {
+  state.orderStep = 'confirm';
+  saveFlowState();
+    // Build order summary
+    let productName = 'Product';
+    let unitPrice = 0;
+    if (state.lastLineItems) {
+      try {
+        const items = typeof state.lastLineItems === 'string' ? JSON.parse(state.lastLineItems) : state.lastLineItems;
+        if (items && items.length > 0) {
+          productName = items[0].name || 'Product';
+          unitPrice = parseFloat(items[0].price || items[0].unit_price || 0);
+        }
+      } catch(e) {}
+    }
+    const qty = state.orderData.qty;
+    // Multi-item basket: sum all lines and build an itemized summary
+    let multiLines = null;
+    let multiTotal = 0;
+    try {
+      const allItems = typeof state.lastLineItems === 'string' ? JSON.parse(state.lastLineItems) : state.lastLineItems;
+      if (allItems && allItems.length > 1) {
+        multiLines = allItems.map(it => {
+          const q = it.qty || it.quantity || 1;
+          const p = parseFloat(it.price || it.unit_price || 0);
+          const lt = Math.round(q * p * 100) / 100;
+          multiTotal += lt;
+          return q + 'x ' + (it.name || it.label) + ' — $' + p.toFixed(2) + ' ea = $' + lt.toFixed(2);
+        });
+        multiTotal = Math.round(multiTotal * 100) / 100;
+      }
+    } catch(e) {}
+    const productTotal = multiLines ? multiTotal : Math.round(unitPrice * qty * 100) / 100;
+    const tax = Math.round(productTotal * 0.10 * 100) / 100;
+    const service = Math.round(productTotal * 0.10 * 100) / 100;
+    const tip = Math.round(productTotal * 0.05 * 100) / 100;
+    const delivery = 25.00; // Quoted as an ESTIMATE only; not sent on the order (Bevvi backend to apply delivery)
+    const grandTotal = Math.round((productTotal + tax + service + tip + delivery) * 100) / 100;
+    state.orderData.grandTotal = grandTotal;
+    state.orderData.productName = productName;
+    state.orderData.unitPrice = unitPrice;
+    state.orderData.productTotal = productTotal;
+    state.orderData.tax = tax;
+    state.orderData.service = service;
+    state.orderData.tip = tip;
+    saveFlowState();
+    const summary = format === 'slack'
+      ? '*Order Summary*\n\n' +
+        (multiLines ? multiLines.join('\n') : productName + ' x' + qty + ' — $' + unitPrice.toFixed(2) + ' ea = $' + productTotal.toFixed(2)) + '\n' +
+        'For: ' + (state.orderData.name || '') + (state.orderData.phone ? ' | ' + state.orderData.phone : '') + '\n' +
+        'Recipient email: ' + (state.orderData.email || email || '') + '\n' +
+        'Delivery to: ' + state.address + '\n' +
+        'Delivery: ' + (state.orderData.delivery_date_label ? state.orderData.delivery_date_label + ', ' : '') + (state.orderData.delivery_window_display || state.orderData.delivery_datetime) + '\n' +
+        (state.orderData.delivery_instructions ? 'Delivery instructions: ' + state.orderData.delivery_instructions + '\n' : '') + '\n' +
+        'Product total: $' + productTotal.toFixed(2) + '\n' +
+        'Estimated tax (10%): $' + tax.toFixed(2) + '\n' +
+        'Service charge (10%): $' + service.toFixed(2) + '\n' +
+        'Tip (5%): $' + tip.toFixed(2) + '\n' +
+        'Estimated delivery: $' + delivery.toFixed(2) + '\n' +
+        '*Estimated grand total: $' + grandTotal.toFixed(2) + '*\n\n' +
+        'Shall I go ahead and place this order?'
+      : 'Order summary ready. Grand total: $' + grandTotal.toFixed(2) + '. Confirm?';
+    return res.json({ text: summary, response: summary });
+}
+// Hoisted so the details step AND the time-change handlers (which sit later in the file)
+// can validate a delivery time from the message they already have, in the same turn.
+// Real complaint: 'change the delivery time to 3 pm tomorrow' re-asked for the time
+// because validation was inline in the details block and unreachable from the confirm
+// handler. Returns a res.json(...) response when it must ask (unparseable / unavailable),
+// or null on success with the validated window stored on state.orderData.
+async function validateDeliveryTime(state, message, email, format, res) {
+  // Parse as WALL-CLOCK. If the customer typed a zone ("11 am PST"), record it but
+  // strip it before chrono sees it — otherwise chrono converts to UTC and the bare
+  // hour no longer means what the customer said.
+  const custZone = explicitZoneIn(message);
+  const storeZone = zoneForAddress(state.address);
+  const msgForParse = message.replace(/\b(PST|PDT|PT|MST|MDT|MT|CST|CDT|CT|EST|EDT|ET)\b/gi, '').replace(/\s+/g, ' ').trim();
+  const parsedResults = chrono.parse(msgForParse, new Date(), { forwardDate: true });
+  if (!parsedResults.length || !parsedResults[0].start.isCertain('hour')) {
+    const ask = 'Could you give me a specific delivery date and time? (e.g. \"tomorrow at 5pm\" or \"August 5th at 2pm\")';
+    return res.json({ text: ask, response: ask });
+  }
+  const parsedDate = parsedResults[0].start.date();
+  let requestedHour = parsedDate.getHours() + parsedDate.getMinutes() / 60;
+  // The customer's stated hour is in custZone (if given) else the store zone. Windows
+  // are in windowZone. Shift the hour between zones for matching when they differ.
+  const windowZone = WINDOWS_ARE_STORE_LOCAL ? storeZone : 'America/New_York';
+  const fromZone = custZone || storeZone;
+  if (fromZone !== windowZone) {
+    try {
+      const iso = zonedToUtcIso(parsedDate.getFullYear() + '-' + String(parsedDate.getMonth()+1).padStart(2,'0') + '-' + String(parsedDate.getDate()).padStart(2,'0'), parsedDate.getHours(), parsedDate.getMinutes(), fromZone);
+      const inWin = new Intl.DateTimeFormat('en-US', { timeZone: windowZone, hour12: false, hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(iso));
+      const h = +inWin.find(x => x.type === 'hour').value % 24, mi = +inWin.find(x => x.type === 'minute').value;
+      requestedHour = h + mi / 60;
+      console.log('[delivery-tz] customer', fromZone, parsedDate.getHours() + ':' + parsedDate.getMinutes(), '-> window zone', windowZone, h + ':' + mi);
+    } catch (e) {}
+  }
+  // Use the parsed calendar fields directly (the date the customer stated), not
+  // toISOString() — which is UTC and shifts evening times to the next day.
+  const dateStr = parsedDate.getFullYear() + '-' + String(parsedDate.getMonth() + 1).padStart(2, '0') + '-' + String(parsedDate.getDate()).padStart(2, '0');
+
+  let establishmentId = '';
+  try {
+    const items = typeof state.lastLineItems === 'string' ? JSON.parse(state.lastLineItems) : state.lastLineItems;
+    if (items && items.length > 0) establishmentId = items[0].establishmentId || '';
+  } catch(e) {}
+
+  let finalDeliveryText = message.trim();
+  if (establishmentId) {
+    const avail = await checkDeliveryAvailability(establishmentId, dateStr);
+    if (avail && Array.isArray(avail.deliveryTimes)) {
+      if (avail.deliveryTimes.length === 0) {
+        const ask = 'Looks like there\'s no delivery availability on ' + dateStr + ' for this store. Could you try a different date?';
+        return res.json({ text: ask, response: ask });
+      }
+      let matchedWindow = null;
+      for (const w of avail.deliveryTimes) {
+        const win = parseTimeWindow(w.deliveryTime);
+        if (win && requestedHour >= win.start && requestedHour < win.end) {
+          matchedWindow = w;
+          break;
+        }
+      }
+      if (!matchedWindow) {
+        const optionsText = avail.deliveryTimes.map(w => fmtWindowInZone(w.displayTime, dateStr, windowZone, custZone)).join(', ');
+        const ask = 'That time isn\'t available on ' + dateStr + '. Here are the available delivery windows: ' + optionsText + '. Which one works for you?';
+        return res.json({ text: ask, response: ask });
+      }
+      finalDeliveryText = matchedWindow.deliveryTime;
+      state.orderData.delivery_window_display = fmtWindowInZone(matchedWindow.deliveryTime, dateStr, windowZone, custZone);
+      try { state.orderData.delivery_date_label = new Date(dateStr + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }); } catch (e) {}
+      // Bevvi needs a real datetime, not a window string with no date. Real bug: we
+      // sent deliveryDateTime '03:00 PM - 04:00 PM EST' — no day at all. Combine
+      // the validated date with the window's start time into an ISO datetime.
+      try {
+        const win = parseTimeWindow(matchedWindow.deliveryTime);
+        if (win) {
+          const hh = Math.floor(win.start), mm = Math.round((win.start - hh) * 60);
+          state.orderData.delivery_datetime_iso = zonedToUtcIso(dateStr, hh, mm, windowZone);   // window start in the store's zone -> UTC instant
+        }
+      } catch (e) {}
+    }
+  }
+
+  state.orderData.delivery_datetime = finalDeliveryText;
+  return null;
+}
 async function callRachel({ sessionKey, message, context, format, gbrainContext, addressRule, email, onProposalGenerated, alreadyConfirmed }) {
   const messages = sessions[sessionKey] || [];
   const channelNote = getChannelNote(format);
@@ -1142,7 +1293,44 @@ app.post('/chat', async (req, res) => {
     // a quantity word, to avoid misfiring on unrelated sentences that merely contain "order".
     const orderProductPattern = /^(order|buy|get|i want|i'd like|i need)\s+(me\s+)?(a|an|\d+|one|two|three|four|five)\s+\w/i;
     const isDirectOrderRequest = orderProductPattern.test(message.trim()) && /\border\b|\bbuy\b/i.test(message.slice(0, 15));
-    if ((orderTriggers.some(t => msgLower.includes(t)) || isDirectOrderRequest) && !state.orderStep && !state.proposalStep) {
+    // ORDER INTENT (regex), not a literal phrase list. Real bug: "lets order" matched
+    // none of the fixed phrases, so the deterministic order flow never engaged and the
+    // LLM improvised its own — different wording, different question order, none of
+    // the pre-fill/skip/validation safeguards. Natural forms now all route here.
+    const orderIntentRe = /^\s*(?:ok(?:ay)?[,!]?\s*)?(?:(?:let'?s|lets)\s+(?:order|do it|go|place|buy|proceed|finalize|check ?out)|(?:i(?:'m| am)\s+)?ready\s+to\s+(?:order|buy|check ?out|place)|place\s+(?:the|this|my|an?)?\s*order|order\s+(?:it|this|now|that|these)|go\s+ahead(?:\s+and\s+(?:order|place|buy))?|proceed(?:\s+with\s+(?:the\s+)?order)?|finali[sz]e(?:\s+(?:the|my)\s+order)?|check ?out|buy\s+(?:it|this|these|now)|i(?:'ll| will)\s+take\s+(?:it|them|these|that)|submit(?:\s+(?:the|my)\s+order)?|confirm\s+(?:the|my)\s+order|complete\s+(?:the|my)\s+order|make\s+(?:the|it\s+an?)\s+order|purchase(?:\s+(?:it|this|these))?)\b/i;
+    const hasOrderIntent = orderIntentRe.test(message) || orderTriggers.some(t => msgLower.includes(t));
+    if ((hasOrderIntent || isDirectOrderRequest) && state.orderStep && state.orderStep !== 'placing' && !state.proposalStep) {
+      // An explicit order request always restarts the flow. Real bug: a crash mid-entry
+      // left orderStep='confirm' on disk; the next 'place the order' didn't trigger and
+      // fell into the stale confirm handler ('$0.00 estimated'). Same guard proposals have.
+      console.log('[order] explicit re-request while orderStep=' + state.orderStep + ' — resetting stale flow');
+      state.orderStep = null; state.orderData = null; saveFlowState();
+    }
+    // time change outside confirm: with a basket and saved contact details, "change the
+    // delivery time" is an order-flow request even when not at the summary. Enter at
+    // the date step (contact skipped) instead of letting the LLM say "no time saved".
+    if (!state.orderStep && !state.proposalStep && (state.savedCustomer || {}).name &&
+        /\b(time|date|slot|window|\d{1,2}\s*(am|pm))\b/i.test(message) && /\b(change|different|instead|move|make it|update|reschedule|switch)\b/i.test(message) && !/\b(instruction|note|address)\b/i.test(message)) {
+      let bcT = 0; try { bcT = (JSON.parse(state.lastLineItems || '[]') || []).length; } catch (e) {}
+      if (bcT >= 1) {
+        const sc = state.savedCustomer;
+        state.orderData = { qty: null, name: sc.name, phone: sc.phone, email: sc.email || email || '', account_email: email || '' };
+        state.orderStep = 'details';
+        state.savedDeliveryIso = null; state.savedDeliveryWindow = null; state.savedDeliveryLabel = null;
+        saveFlowState();
+        console.log('[order] time change outside confirm — entering at the date step');
+        if (/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\bnoon\b|\bmidnight\b/i.test(message)) {
+          const stripped = message.replace(/\b(change|update|move|switch|reschedule)\b\s*(the|my)?\s*(delivery\s+)?(time|date|slot|window)?\s*(to|for)?\s*/i, '').trim();
+          const askResp = await validateDeliveryTime(state, stripped, email, format, res);
+          if (askResp) return askResp;
+          state.orderData.instructions_asked = true; state.orderData.delivery_instructions = state.savedInstructions || '';
+          return renderOrderSummary(state, email, format, res);
+        }
+        const askT = 'Sure — what delivery date and time would you like instead?';
+        return res.json({ text: askT, response: askT });
+      }
+    }
+    if ((hasOrderIntent || isDirectOrderRequest) && !state.orderStep && !state.proposalStep) {
       const caps = getCapabilities(format);
       if (!caps.can_place_order) {
         // Capability disabled — never start the real order state machine. Let Rachel
@@ -1156,6 +1344,30 @@ app.post('/chat', async (req, res) => {
         return res.json({ text: outputOB, response: outputOB });
       }
       state.orderData = {};
+      // FAST-PATH re-entry: if the customer's details AND a validated delivery instant
+      // are already known (saved when they changed course at the confirm step, or from a
+      // prior order this session), don't walk the five questions again. Real bug: after
+      // 'add a red wine' at confirm, 'place the order' re-asked name, email, phone, and
+      // date — everything given two minutes earlier — because the pre-fill only existed
+      // in one of the three entry branches. This runs before all of them.
+      {
+        const sc = state.savedCustomer || {};
+        let bc = 0; try { bc = (JSON.parse(state.lastLineItems || '[]') || []).length; } catch (e) {}
+        if (bc >= 1 && sc.name && sc.phone && state.savedDeliveryIso) {
+          state.orderData = { qty: null, name: sc.name, phone: sc.phone, email: sc.email || email || '', account_email: email || '',
+            delivery_datetime: state.savedDeliveryWindow || '', delivery_window_display: state.savedDeliveryWindow || '',
+            delivery_date_label: state.savedDeliveryLabel || '', delivery_datetime_iso: state.savedDeliveryIso,
+            delivery_instructions: state.savedInstructions || '', instructions_asked: true, datetime_validated: true };
+          state.orderStep = 'confirm';
+          saveFlowState();
+          console.log('[order] FAST-PATH re-entry — all details known, going straight to summary');
+          return renderOrderSummary(state, email, format, res);
+        }
+      }
+      // fast-path must not fall through: the entry branches below each return their own
+      // prompt (or crashed, stranding orderStep='confirm'). Skip them when the fast path
+      // has already set the state; execution continues to the __show_summary__ hook.
+      if (message !== '__show_summary__') {
       // Hydrate basket up front so we know if this is a multi-item package order
       if (email && !state.lastLineItems) {
         try {
@@ -1172,6 +1384,7 @@ app.post('/chat', async (req, res) => {
       if (basketItemCount > 1) {
         // Multi-item package: quantities are already per-line in the basket. Skip qty.
         state.orderData.qty = null;
+        { const skipped = contactKnownSkip(); if (skipped) return skipped; }
         state.orderStep = 'name';
         saveFlowState();
         const ask = 'What is your full name — the person placing the order? (first and last). If someone else will receive the delivery, you can give their contact in the delivery instructions later.';
@@ -1227,14 +1440,27 @@ app.post('/chat', async (req, res) => {
         const ask = 'What is your full name — the person placing the order? (first and last). If someone else will receive the delivery, you can give their contact in the delivery instructions later.';
         return res.json({ text: ask, response: ask });
       }
+      // Skip the quantity question if it was already set at pick time (or stated).
+      // Real bug: the customer answered "how many bottles?" when picking, then
+      // "lets order" asked it AGAIN — the entry branch didn't know it was confirmed.
+      { let one = null; try { const it = JSON.parse(state.lastLineItems || '[]'); if (it.length === 1) one = it[0]; } catch (e) {}
+        if (one && one.qty_confirmed) {
+          state.orderData.qty = one.qty || 1;
+          { const skipped = contactKnownSkip(); if (skipped) return skipped; }
+          state.orderStep = 'name'; saveFlowState();
+          const askN = 'What is your full name — the person placing the order? (first and last). If someone else will receive the delivery, you can give their contact in the delivery instructions later.';
+          return res.json({ text: askN, response: askN });
+        } }
       state.orderStep = 'qty';
       saveFlowState();
       const ask = 'How many bottles would you like to order?';
       return res.json({ text: ask, response: ask });
+      } // end fast-path guard
     }
     if (state.orderStep === 'qty') {
       const qtyMatch = message.match(/\b(\d+)\b/);
       state.orderData.qty = qtyMatch ? parseInt(qtyMatch[1]) : 1;
+      { const skipped = contactKnownSkip(); if (skipped) return skipped; }
       state.orderStep = 'name';
       saveFlowState();
       // Load basket to get product info
@@ -1286,6 +1512,19 @@ app.post('/chat', async (req, res) => {
       }
       state.orderStep = 'details';
       saveFlowState();
+    }
+    // A command or question at a contact-detail step is NOT the answer. Real bug: at
+    // "What is your full name?", "Show me the basket" was stored as the customer's name
+    // and the flow moved on to email. Recognize it, exit the order flow (details kept),
+    // and let the command run normally; the customer says 'place the order' to resume.
+    const isOrderStepNonAnswer = /^\s*(show|what|where|how|can you|could you|do you|is there|list|display|view|cancel|stop|never ?mind|forget it|go back|help|reset)\b/i.test(message) || /\?\s*$/.test(message);
+    if ((state.orderStep === 'name' || state.orderStep === 'recipient_email' || state.orderStep === 'phone') && isOrderStepNonAnswer) {
+      const od0 = state.orderData || {};
+      if (od0.name || od0.phone) state.savedCustomer = { name: od0.name || (state.savedCustomer || {}).name || '', phone: od0.phone || (state.savedCustomer || {}).phone || '', email: od0.email || (state.savedCustomer || {}).email || '' };
+      state.orderStep = null; state.orderData = null;
+      saveFlowState();
+      console.log('[order] non-answer at contact step — exiting order flow, handling as a normal request');
+      // fall through: the message is handled below as a normal request
     }
     if (state.orderStep === 'name') {
       // The "missing info" reply may contain name AND phone in one message.
@@ -1357,80 +1596,8 @@ app.post('/chat', async (req, res) => {
     }
     if (state.orderStep === 'details') {
      if (!state.orderData.datetime_validated) {
-      // Parse as WALL-CLOCK. If the customer typed a zone ("11 am PST"), record it but
-      // strip it before chrono sees it — otherwise chrono converts to UTC and the bare
-      // hour no longer means what the customer said.
-      const custZone = explicitZoneIn(message);
-      const storeZone = zoneForAddress(state.address);
-      const msgForParse = message.replace(/\b(PST|PDT|PT|MST|MDT|MT|CST|CDT|CT|EST|EDT|ET)\b/gi, '').replace(/\s+/g, ' ').trim();
-      const parsedResults = chrono.parse(msgForParse, new Date(), { forwardDate: true });
-      if (!parsedResults.length || !parsedResults[0].start.isCertain('hour')) {
-        const ask = 'Could you give me a specific delivery date and time? (e.g. \"tomorrow at 5pm\" or \"August 5th at 2pm\")';
-        return res.json({ text: ask, response: ask });
-      }
-      const parsedDate = parsedResults[0].start.date();
-      let requestedHour = parsedDate.getHours() + parsedDate.getMinutes() / 60;
-      // The customer's stated hour is in custZone (if given) else the store zone. Windows
-      // are in windowZone. Shift the hour between zones for matching when they differ.
-      const windowZone = WINDOWS_ARE_STORE_LOCAL ? storeZone : 'America/New_York';
-      const fromZone = custZone || storeZone;
-      if (fromZone !== windowZone) {
-        try {
-          const iso = zonedToUtcIso(parsedDate.getFullYear() + '-' + String(parsedDate.getMonth()+1).padStart(2,'0') + '-' + String(parsedDate.getDate()).padStart(2,'0'), parsedDate.getHours(), parsedDate.getMinutes(), fromZone);
-          const inWin = new Intl.DateTimeFormat('en-US', { timeZone: windowZone, hour12: false, hour: '2-digit', minute: '2-digit' }).formatToParts(new Date(iso));
-          const h = +inWin.find(x => x.type === 'hour').value % 24, mi = +inWin.find(x => x.type === 'minute').value;
-          requestedHour = h + mi / 60;
-          console.log('[delivery-tz] customer', fromZone, parsedDate.getHours() + ':' + parsedDate.getMinutes(), '-> window zone', windowZone, h + ':' + mi);
-        } catch (e) {}
-      }
-      // Use the parsed calendar fields directly (the date the customer stated), not
-      // toISOString() — which is UTC and shifts evening times to the next day.
-      const dateStr = parsedDate.getFullYear() + '-' + String(parsedDate.getMonth() + 1).padStart(2, '0') + '-' + String(parsedDate.getDate()).padStart(2, '0');
-
-      let establishmentId = '';
-      try {
-        const items = typeof state.lastLineItems === 'string' ? JSON.parse(state.lastLineItems) : state.lastLineItems;
-        if (items && items.length > 0) establishmentId = items[0].establishmentId || '';
-      } catch(e) {}
-
-      let finalDeliveryText = message.trim();
-      if (establishmentId) {
-        const avail = await checkDeliveryAvailability(establishmentId, dateStr);
-        if (avail && Array.isArray(avail.deliveryTimes)) {
-          if (avail.deliveryTimes.length === 0) {
-            const ask = 'Looks like there\'s no delivery availability on ' + dateStr + ' for this store. Could you try a different date?';
-            return res.json({ text: ask, response: ask });
-          }
-          let matchedWindow = null;
-          for (const w of avail.deliveryTimes) {
-            const win = parseTimeWindow(w.deliveryTime);
-            if (win && requestedHour >= win.start && requestedHour < win.end) {
-              matchedWindow = w;
-              break;
-            }
-          }
-          if (!matchedWindow) {
-            const optionsText = avail.deliveryTimes.map(w => fmtWindowInZone(w.displayTime, dateStr, windowZone, custZone)).join(', ');
-            const ask = 'That time isn\'t available on ' + dateStr + '. Here are the available delivery windows: ' + optionsText + '. Which one works for you?';
-            return res.json({ text: ask, response: ask });
-          }
-          finalDeliveryText = matchedWindow.deliveryTime;
-          state.orderData.delivery_window_display = fmtWindowInZone(matchedWindow.deliveryTime, dateStr, windowZone, custZone);
-          try { state.orderData.delivery_date_label = new Date(dateStr + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }); } catch (e) {}
-          // Bevvi needs a real datetime, not a window string with no date. Real bug: we
-          // sent deliveryDateTime '03:00 PM - 04:00 PM EST' — no day at all. Combine
-          // the validated date with the window's start time into an ISO datetime.
-          try {
-            const win = parseTimeWindow(matchedWindow.deliveryTime);
-            if (win) {
-              const hh = Math.floor(win.start), mm = Math.round((win.start - hh) * 60);
-              state.orderData.delivery_datetime_iso = zonedToUtcIso(dateStr, hh, mm, windowZone);   // window start in the store's zone -> UTC instant
-            }
-          } catch (e) {}
-        }
-      }
-
-      state.orderData.delivery_datetime = finalDeliveryText;
+      const askResp = await validateDeliveryTime(state, message, email, format, res);
+      if (askResp) return askResp;
      } // end !datetime_validated — a validated replay skips parse+availability, keeps the stored window
       // New step: delivery instructions (buzzer/door code, loading dock, on-site contact).
       // agent.js already accepts delivery_instructions and sends it to the Bevvi API as
@@ -1451,70 +1618,91 @@ app.post('/chat', async (req, res) => {
         const askV = 'I couldn\'t confirm a delivery window for that time yet. Could you give me a specific date and time (e.g. "Sept 16 at 5pm")?';
         return res.json({ text: askV, response: askV });
       }
-      state.orderStep = 'confirm';
+      return renderOrderSummary(state, email, format, res);
+    }
+    // Contact details already given this order (saved when the customer changed course
+    // at confirm, or from the previous order): skip name/email/phone and go straight to
+    // the date question. Used by every entry branch so no path re-asks.
+    // `function`, not `const` arrow: it's called from order-entry branches ABOVE this
+    // point, and a const isn't hoisted — real crash: "Cannot access 'contactKnownSkip'
+    // before initialization" on "place the order" with a 2-item basket.
+    function contactKnownSkip() {
+      const sc = state.savedCustomer || {};
+      if (!(sc.name && sc.phone)) return null;
+      state.orderData.name = sc.name; state.orderData.phone = sc.phone;
+      state.orderData.email = sc.email || email || ''; state.orderData.account_email = email || '';
+      state.orderStep = 'details';
       saveFlowState();
-      // Build order summary
-      let productName = 'Product';
-      let unitPrice = 0;
-      if (state.lastLineItems) {
-        try {
-          const items = typeof state.lastLineItems === 'string' ? JSON.parse(state.lastLineItems) : state.lastLineItems;
-          if (items && items.length > 0) {
-            productName = items[0].name || 'Product';
-            unitPrice = parseFloat(items[0].price || items[0].unit_price || 0);
-          }
-        } catch(e) {}
-      }
-      const qty = state.orderData.qty;
-      // Multi-item basket: sum all lines and build an itemized summary
-      let multiLines = null;
-      let multiTotal = 0;
-      try {
-        const allItems = typeof state.lastLineItems === 'string' ? JSON.parse(state.lastLineItems) : state.lastLineItems;
-        if (allItems && allItems.length > 1) {
-          multiLines = allItems.map(it => {
-            const q = it.qty || it.quantity || 1;
-            const p = parseFloat(it.price || it.unit_price || 0);
-            const lt = Math.round(q * p * 100) / 100;
-            multiTotal += lt;
-            return q + 'x ' + (it.name || it.label) + ' — $' + p.toFixed(2) + ' ea = $' + lt.toFixed(2);
-          });
-          multiTotal = Math.round(multiTotal * 100) / 100;
-        }
-      } catch(e) {}
-      const productTotal = multiLines ? multiTotal : Math.round(unitPrice * qty * 100) / 100;
-      const tax = Math.round(productTotal * 0.10 * 100) / 100;
-      const service = Math.round(productTotal * 0.10 * 100) / 100;
-      const tip = Math.round(productTotal * 0.05 * 100) / 100;
-      const delivery = 25.00; // Quoted as an ESTIMATE only; not sent on the order (Bevvi backend to apply delivery)
-      const grandTotal = Math.round((productTotal + tax + service + tip + delivery) * 100) / 100;
-      state.orderData.grandTotal = grandTotal;
-      state.orderData.productName = productName;
-      state.orderData.unitPrice = unitPrice;
-      state.orderData.productTotal = productTotal;
-      state.orderData.tax = tax;
-      state.orderData.service = service;
-      state.orderData.tip = tip;
-      saveFlowState();
-      const summary = format === 'slack'
-        ? '*Order Summary*\n\n' +
-          (multiLines ? multiLines.join('\n') : productName + ' x' + qty + ' — $' + unitPrice.toFixed(2) + ' ea = $' + productTotal.toFixed(2)) + '\n' +
-          'For: ' + (state.orderData.name || '') + (state.orderData.phone ? ' | ' + state.orderData.phone : '') + '\n' +
-          'Recipient email: ' + (state.orderData.email || email || '') + '\n' +
-          'Delivery to: ' + state.address + '\n' +
-          'Delivery: ' + (state.orderData.delivery_date_label ? state.orderData.delivery_date_label + ', ' : '') + (state.orderData.delivery_window_display || state.orderData.delivery_datetime) + '\n' +
-          (state.orderData.delivery_instructions ? 'Delivery instructions: ' + state.orderData.delivery_instructions + '\n' : '') + '\n' +
-          'Product total: $' + productTotal.toFixed(2) + '\n' +
-          'Estimated tax (10%): $' + tax.toFixed(2) + '\n' +
-          'Service charge (10%): $' + service.toFixed(2) + '\n' +
-          'Tip (5%): $' + tip.toFixed(2) + '\n' +
-          'Estimated delivery: $' + delivery.toFixed(2) + '\n' +
-          '*Estimated grand total: $' + grandTotal.toFixed(2) + '*\n\n' +
-          'Shall I go ahead and place this order?'
-        : 'Order summary ready. Grand total: $' + grandTotal.toFixed(2) + '. Confirm?';
-      return res.json({ text: summary, response: summary });
+      console.log('[order] contact known — skipping name/email/phone');
+      const a = 'Ordering as ' + sc.name + ', ' + sc.phone + ', ' + state.orderData.email + ' — tell me if any of that should change. What delivery date and time would you like?';
+      return res.json({ text: a, response: a });
+    }
+    if (state.orderStep === 'confirm' && message === '__show_summary__') {
+      // Re-entry summary: rebuild from the saved details so the customer can confirm or change.
+      state.orderStep = 'details';            // the details block below builds the summary
+      state.orderData.datetime_validated = true;
+      message = state.orderData.delivery_datetime || 'x';
     }
     if (state.orderStep === 'confirm') {
+      // CHANGE REQUEST at confirm: "add a red wine", "remove X", "swap", "change the
+      // date". Real bug: any non-yes/no reply got a rigid 'shall I place the order?
+      // (yes/no)' re-ask — a dead end at exactly the moment a customer notices something
+      // missing. Exit the order flow (keeping name/phone/email/date so they're
+      // pre-filled next time), acknowledge, and let the request go through normally.
+      // TIME CHANGE at confirm — handled in-flow, not exited to the LLM. Real bug:
+      // "change the delivery time to 3 pm tomorrow" exited the order flow and the LLM
+      // replied "there's no delivery time set to change" — nothing re-asked the time.
+      // Keep the order, keep contact details, re-validate the new time, re-render.
+      // INSTRUCTIONS CHANGE at confirm: "change the delivery instructions to X", "add a note:
+      // X", "tell the driver X". Real bug: this matched the TIME-change pattern (it contains
+      // "delivery" + "change") and asked for a time. Parse the new text, update, re-render.
+      const isInstrChange = /\b(instruction|instructions|note|notes|tell the driver|driver should|for the driver)\b/i.test(message) && !yesWords.some(w => msgLower === w);
+      if (isInstrChange) {
+        const newInstr = message.replace(/^.*?\b(instructions?|notes?|driver)\b\s*(to|:|-|—|should|is|are)?\s*/i, '').trim();
+        state.orderData.delivery_instructions = /^(none|no|nothing|remove|clear)\b/i.test(newInstr) ? '' : newInstr;
+        state.savedInstructions = state.orderData.delivery_instructions;
+        saveFlowState();
+        console.log('[order] instructions change at confirm ->', JSON.stringify(state.orderData.delivery_instructions));
+        return renderOrderSummary(state, email, format, res);
+      }
+      // Time change: require an explicit time/date word — "delivery" alone is not enough
+      // (it also appears in "delivery instructions" / "delivery address").
+      const isTimeChangeC = /\b(time|date|slot|window|when|\d{1,2}\s*(am|pm))\b/i.test(message) && /\b(change|different|instead|move|make it|update|reschedule|switch)\b/i.test(message) && !/\b(instruction|note|address)\b/i.test(message);
+      if (isTimeChangeC && !yesWords.some(w => msgLower === w)) {
+        const hasTime = /\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\bnoon\b|\bmidnight\b/i.test(message);
+        state.orderData.delivery_datetime_iso = null; state.orderData.delivery_datetime = null;
+        state.orderData.delivery_window_display = null; state.orderData.datetime_validated = false;
+        state.orderStep = 'details';
+        saveFlowState();
+        console.log('[order] time change at confirm — re-validating in-flow; time in message:', hasTime);
+        if (hasTime) {
+          const stripped = message.replace(/\b(change|update|move|switch|reschedule)\b\s*(the|my)?\s*(delivery\s+)?(time|date|slot|window)?\s*(to|for)?\s*/i, '').trim();
+          const askResp = await validateDeliveryTime(state, stripped, email, format, res);
+          if (askResp) return askResp;
+          state.orderData.instructions_asked = true;   // keep existing instructions
+          return renderOrderSummary(state, email, format, res);
+        }
+        const askT = 'Sure — what delivery date and time would you like instead?';
+        return res.json({ text: askT, response: askT });
+      } else {
+      const isChange = /\b(add|also|remove|drop|take out|swap|replace|change|instead|different|another|more|less|fewer|update|edit)\b/i.test(message) && !yesWords.some(w => msgLower === w);
+      if (isChange) {
+        const od0 = state.orderData || {};
+        state.savedCustomer = { name: od0.name || (state.savedCustomer || {}).name || '', phone: od0.phone || (state.savedCustomer || {}).phone || '', email: od0.email || (state.savedCustomer || {}).email || '' };
+        // A time-change at confirm ("change the delivery time", "make it 3 pm") must NOT
+        // carry the old delivery instant into the fast-path; keep contact details, drop
+        // the time so it's re-asked. An item change keeps everything.
+        const isTimeChange = /\b(time|date|deliver(?:y)?\s+(?:time|date|slot|window)|when|earlier|later|tomorrow|today|am|pm)\b/i.test(message) && /\b(change|different|instead|move|make it|update)\b/i.test(message);
+        if (od0.delivery_datetime_iso && !isTimeChange) { state.savedDeliveryIso = od0.delivery_datetime_iso; state.savedDeliveryWindow = od0.delivery_window_display || od0.delivery_datetime; state.savedDeliveryLabel = od0.delivery_date_label || ''; }
+        else if (isTimeChange) { state.savedDeliveryIso = null; state.savedDeliveryWindow = null; state.savedDeliveryLabel = null; console.log('[order] time-change at confirm — contact kept, delivery time will be re-asked'); }
+        if (od0.delivery_instructions) state.savedInstructions = od0.delivery_instructions;
+        state.orderStep = null; state.orderData = null;
+        saveFlowState();
+        console.log('[order] change request at confirm — exiting order flow, details saved for re-entry');
+        // Fall through: the message is handled as a normal request below (add/swap/etc.),
+        // and the LLM is told to prompt for 'place the order' once done.
+        context.order_change_note = 'The customer was at the order-confirmation step and asked for a change. Make the change, then say: "Done — say \'place the order\' when you\'re ready and I\'ll show the updated summary."';
+      } else
       if (yesWords.some(w => msgLower.includes(w))) {
         state.orderStep = 'placing';
         saveFlowState();
@@ -1632,9 +1820,16 @@ app.post('/chat', async (req, res) => {
       } else {
         // Re-show confirmation
         const od = state.orderData;
-        const reconfirm = 'Please confirm — shall I place the order for ' + od.productName + ' x' + od.qty + ' for $' + (od.grandTotal || 0).toFixed(2) + '? (yes/no)';
+        if (!od.grandTotal) {
+          // No computed total means the summary never rendered; render it now instead of
+          // asking the customer to confirm '$0.00'.
+          return renderOrderSummary(state, email, format, res);
+        }
+        let itemCountRC = 1; try { itemCountRC = JSON.parse(state.lastLineItems || '[]').length || 1; } catch (e) {}
+        const reconfirm = 'Please confirm — shall I place this order (' + itemCountRC + ' item' + (itemCountRC === 1 ? '' : 's') + ', $' + (od.grandTotal || 0).toFixed(2) + ' estimated)? Reply yes to place it, no to cancel, or tell me what to change.';
         return res.json({ text: reconfirm, response: reconfirm });
       }
+      } // end non-time-change branch
     }
 
     // ── Order state machine ────────────────────────────────────────────────────
@@ -2008,6 +2203,15 @@ app.post('/chat', async (req, res) => {
     // raw API conversation history does not reliably contain the real reply text.
     const lastAssistantTextGate = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
 
+    // Quantity answer for the item just picked (see pendingQtyFor below).
+    if (state.pendingQtyFor && /^\s*(\d{1,3})\s*(?:x|bottles?|cases?|packs?)?\s*\.?\s*$/i.test(message) && !state.orderStep && !state.proposalStep) {
+      const q = parseInt(message.match(/\d{1,3}/)[0]);
+      const nm = state.pendingQtyFor; state.pendingQtyFor = null;
+      try { const it = JSON.parse(state.lastLineItems || '[]'); const nk = s => String(s||'').toLowerCase().replace(/[^a-z0-9]/g,''); const row = it.find(x => nk(x.name).indexOf(nk(nm).slice(0,12)) >= 0); if (row) { row.qty = q; row.quantity = q; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); } } catch (e) {}
+      saveFlowState();
+      const reply = 'Got it — ' + q + 'x ' + nm + ' in your order. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+      return res.json({ text: reply, response: reply });
+    }
     // DETERMINISTIC PICK-LIST selection. Prompt guidance alone kept failing: after a
     // numbered option list, the customer's "1" or a restated option name produced no
     // confirm_substitute call — the LLM just re-searched and re-listed forever. Resolve
@@ -2031,7 +2235,20 @@ app.post('/chat', async (req, res) => {
         if (numM) picked = pickLines.find(l => l.n === parseInt(numM[1])) || null;
         if (!picked) {
           const mN = norm(msgClean);
-          const exact = pickLines.filter(l => norm(l.name) === mN || mN.indexOf(norm(l.name)) >= 0 && norm(l.name).length >= 6);
+          // Tolerant match — fuzzy prefix/overlap, not exact. Real bug: the customer typed
+          // "La Crema Chardonnay Sonoma Coas" (one letter short) and the exact-name check
+          // failed, so the options were re-listed. Accept if the message is a prefix of
+          // the option (>= 8 chars), the option is a prefix of the message, or they share
+          // >= 70% of meaningful words.
+          const words = s => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(w => w.length > 2 && !/^\d+$/.test(w) && !/^(the|and|with|ml|oz|bottle|can|pack)$/.test(w));
+          const mW = words(msgClean);
+          const scored = pickLines.map(l => {
+            const lN = norm(l.name), lW = words(l.name);
+            const prefix = (mN.length >= 8 && lN.indexOf(mN) === 0) || (lN.length >= 8 && mN.indexOf(lN) === 0);
+            const overlap = lW.length ? lW.filter(w => mW.includes(w)).length / lW.length : 0;
+            return { l, s: prefix ? 1 : overlap };
+          }).filter(x => x.s >= 0.7).sort((a, b) => b.s - a.s);
+          const exact = scored.length && (scored.length === 1 || scored[0].s > scored[1].s) ? [scored[0].l] : scored.map(x => x.l);
           if (exact.length === 1) picked = exact[0];
           else if (exact.length > 1) { // prefer size match when several share a name
             const sz = (msgClean.match(/\d+(\.\d+)?\s*(mL|ML|L|oz|OZ)\b/) || [''])[0].toLowerCase().replace(/\s+/g, '');
@@ -2046,7 +2263,19 @@ app.post('/chat', async (req, res) => {
             state.lastPickResolved = { name: picked.name, size: picked.size, at: Date.now() };
             const r = await applyBasketSubstitute(sessionKey, email, '', picked.name + (picked.size ? ' - ' + picked.size : ''), picked.price, picked.size);
             const added = picked.name + (picked.size ? ' — ' + picked.size : '') + ' — $' + picked.price.toFixed(2);
-            const reply = 'Got it — ' + added + ' added to your order. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+            // Ask quantity ONCE, at pick time — never silently default to 1 (real
+            // complaint: a red wine was added at 1x with no question, while the white
+            // got asked at order time). If the customer stated a number, use it.
+            const qm = msgClean.match(/\b(\d{1,3})\s*(?:x|bottles?|cases?|packs?)?\b/i);
+            const statedQty = qm && parseInt(qm[1]) > 0 && parseInt(qm[1]) < 500 && !/^\d{1,2}$/.test(msgClean.trim()) ? parseInt(qm[1]) : 0;
+            if (statedQty > 1) {
+              try { const it = JSON.parse(state.lastLineItems || '[]'); const nk = s => String(s||'').toLowerCase().replace(/[^a-z0-9]/g,''); const row = it.find(x => nk(x.name).indexOf(nk(picked.name).slice(0,12)) >= 0); if (row) { row.qty = statedQty; row.quantity = statedQty; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); saveFlowState(); } } catch (e) {}
+              const reply = 'Got it — ' + statedQty + 'x ' + added + ' added to your order. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+              return res.json({ text: reply, response: reply });
+            }
+            state.pendingQtyFor = picked.name;
+            saveFlowState();
+            const reply = 'Got it — ' + added + '. How many bottles would you like?';
             return res.json({ text: reply, response: reply });
           }
         }
