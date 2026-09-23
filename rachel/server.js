@@ -1251,6 +1251,19 @@ app.post('/chat', async (req, res) => {
 
     // ── STATE: ready — pass to Rachel ──────────────────────────────────────
     console.log('[turn] state.step:', state.step, '| pendingSubstitutes:', JSON.stringify(state.pendingSubstitutes), '| message:', JSON.stringify(message).slice(0,80));
+    // SHADOW classify: label every turn with the LLM classifier and log it beside what
+    // the regex/state-machine path does — acting on NOTHING yet. Once real traffic shows
+    // agreement (or shows where the classifier is better), it takes over routing.
+    const isInternalMsg = /^__/.test(message) || /^\d{1,2}:\d{2}\s*[AP]M\s*-\s*\d{1,2}:\d{2}\s*[AP]M/i.test(message) || (state.orderData && message === state.orderData.delivery_datetime);
+    if (!isInternalMsg) try {   // skip internal sentinels / replayed windows
+      const { classifyIntent } = require('./classify-intent.js');
+      const lastR = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
+      const lastKind = /how many/i.test(lastR) ? 'how_many' : /^\s*1[\.\)]\s/m.test(lastR) ? 'numbered_list' : /shall i (go ahead|place)|\(yes\/no\)/i.test(lastR) ? 'yes_no' : /full name|phone number|email/i.test(lastR) ? 'contact_question' : /date and time|what time/i.test(lastR) ? 'time_question' : 'other';
+      let bsz = 0; try { bsz = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
+      classifyIntent(message, { lastKind, orderStep: state.orderStep, basketSize: bsz, lastQuestion: lastR.slice(0, 160) }).then(c => {
+        console.log('[classify] ' + c.intent + ' (' + c.confidence.toFixed(2) + (c.ref ? ', ref=' + JSON.stringify(c.ref) : '') + (c.qty ? ', qty=' + c.qty : '') + ') [' + c.source + '] lastKind=' + lastKind + ' step=' + (state.orderStep || '-') + ' | ' + JSON.stringify(message).slice(0, 60));
+      }).catch(() => {});
+    } catch (e) {}
     if (state.step !== 'ready') {
       // Shouldn\'t happen but fallback
       const ask = 'What is your delivery address? (Include street, city, state, and zip)';
@@ -1298,13 +1311,42 @@ app.post('/chat', async (req, res) => {
     // LLM improvised its own — different wording, different question order, none of
     // the pre-fill/skip/validation safeguards. Natural forms now all route here.
     const orderIntentRe = /^\s*(?:ok(?:ay)?[,!]?\s*)?(?:(?:let'?s|lets)\s+(?:order|do it|go|place|buy|proceed|finalize|check ?out)|(?:i(?:'m| am)\s+)?ready\s+to\s+(?:order|buy|check ?out|place)|place\s+(?:the|this|my|an?)?\s*order|order\s+(?:it|this|now|that|these)|go\s+ahead(?:\s+and\s+(?:order|place|buy))?|proceed(?:\s+with\s+(?:the\s+)?order)?|finali[sz]e(?:\s+(?:the|my)\s+order)?|check ?out|buy\s+(?:it|this|these|now)|i(?:'ll| will)\s+take\s+(?:it|them|these|that)|submit(?:\s+(?:the|my)\s+order)?|confirm\s+(?:the|my)\s+order|complete\s+(?:the|my)\s+order|make\s+(?:the|it\s+an?)\s+order|purchase(?:\s+(?:it|this|these))?)\b/i;
-    const hasOrderIntent = orderIntentRe.test(message) || orderTriggers.some(t => msgLower.includes(t));
+    // CLASSIFIER ROUTING (safe subset). Awaited here — only for messages not already
+    // inside a deterministic step — and only high-confidence labels for intents where
+    // the classifier is clearly better than regex ('lets order' missed the phrase list;
+    // 'can you ensure the quantities are correct' is a basket check). Everything else
+    // falls through to the existing path unchanged; regex remains the fallback.
+    let clsIntent = null, clsRef = '';
+    if (!state.orderStep && !state.proposalStep && !state.pendingQtyFor && !isInternalMsg) {
+      try {
+        const { classifyIntent } = require('./classify-intent.js');
+        const lastR2 = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
+        let bsz2 = 0; try { bsz2 = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
+        const cr = await classifyIntent(message, { lastKind: 'other', orderStep: null, basketSize: bsz2, lastQuestion: lastR2.slice(0, 160) });
+        if (cr.source === 'llm' && cr.confidence >= 0.75 && ['place_order','show_basket','change_time','change_instructions','change_contact','recommend'].includes(cr.intent)) {
+          clsIntent = cr.intent; clsRef = cr.ref || '';
+          console.log('[classify->route]', clsIntent, cr.confidence.toFixed(2), '|', JSON.stringify(message).slice(0, 60));
+        }
+      } catch (e) {}
+    }
+    const hasOrderIntent = clsIntent === 'place_order' || orderIntentRe.test(message) || orderTriggers.some(t => msgLower.includes(t));
     if ((hasOrderIntent || isDirectOrderRequest) && state.orderStep && state.orderStep !== 'placing' && !state.proposalStep) {
       // An explicit order request always restarts the flow. Real bug: a crash mid-entry
       // left orderStep='confirm' on disk; the next 'place the order' didn't trigger and
       // fell into the stale confirm handler ('$0.00 estimated'). Same guard proposals have.
       console.log('[order] explicit re-request while orderStep=' + state.orderStep + ' — resetting stale flow');
       state.orderStep = null; state.orderData = null; saveFlowState();
+    }
+    if (clsIntent === 'show_basket') {
+      try {
+        const items = JSON.parse(state.lastLineItems || '[]');
+        if (items.length) {
+          const lines = items.map(li => (li.qty || li.quantity || 1) + 'x ' + li.name + ' — $' + (parseFloat(li.price) || 0).toFixed(2) + ' ea = $' + ((li.qty || li.quantity || 1) * (parseFloat(li.price) || 0)).toFixed(2));
+          const tot = items.reduce((a, li) => a + (li.qty || li.quantity || 1) * (parseFloat(li.price) || 0), 0);
+          const reply = 'Here\'s your current basket:\n\n' + lines.join('\n') + '\n\nProduct total: $' + tot.toFixed(2) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+          return res.json({ text: reply, response: reply });
+        }
+      } catch (e) {}
     }
     // time change outside confirm: with a basket and saved contact details, "change the
     // delivery time" is an order-flow request even when not at the summary. Enter at

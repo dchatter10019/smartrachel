@@ -157,17 +157,26 @@ async function gbrainQuery(query) {
   } catch(e) { return null; }
 }
 
+const profileSlugCache = {};
 async function getCustomerProfile(email) {
   if (!email) return null;
   // Use get_page directly for guaranteed accuracy
   let raw = null;
   try {
     // Query GBrain first to get the customer name, then use name-based slug
-    const queryRaw = await gbrainQuery('customer email ' + email);
-    let slug = null;
-    if (queryRaw) {
-      const nameMatch = queryRaw.match(/^# ([^\n]+)/m);
-      if (nameMatch) slug = 'customers/' + nameMatch[1].toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '');
+    // The slug is derived from a NAME extracted from a semantic search result, so any
+    // search miss (GBrain hiccup, result without a '# Name' heading) -> 'no slug' -> no
+    // profile, even though the page exists. Real log: succeeds at 23901/23908, fails
+    // in between, succeeds at 23966. Cache the resolved slug per email and reuse it
+    // when the search misses, so the profile is a one-time lookup, not a coin flip.
+    let slug = profileSlugCache[email] || null;
+    if (!slug) {
+      const queryRaw = await gbrainQuery('customer email ' + email);
+      if (queryRaw) {
+        const nameMatch = queryRaw.match(/^# ([^\n]+)/m);
+        if (nameMatch) slug = 'customers/' + nameMatch[1].toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-+$/, '');
+      }
+      if (slug) { profileSlugCache[email] = slug; console.log('[getCustomerProfile] slug resolved and cached:', email, '->', slug); }
     }
     if (!slug) throw new Error('no slug');
     const pageRes = await fetch(GBRAIN_URL + '/mcp', {
@@ -1019,7 +1028,9 @@ async function executeTool(name, input) {
     // reached placement as a bare name (no productId AND no upc) cannot be ordered and
     // Bevvi returns an opaque error. Refuse up front and name the item so Rachel can
     // resolve it, instead of "system error placing the order".
-    const unresolved = products.filter(p => !(p.product_id || p.productId) && !p.upc);
+    // Also refuse a blank establishmentId: Bevvi's proxy crashes (502) rather than
+    // rejecting it, and it took a per-item bisection to find. Name the item.
+    const unresolved = products.filter(p => (!(p.product_id || p.productId) && !p.upc) || !p.establishmentId);
     if (unresolved.length) {
       const names = unresolved.map(p => p.name || '(unnamed)');
       console.log('[shopping-agent] place_order refused — unresolved items:', JSON.stringify(names));
@@ -1066,10 +1077,22 @@ async function executeTool(name, input) {
         deliveryInstructions: input.delivery_instructions || ''
       };
       console.log('[shopping-agent] createCorpOrder body:', JSON.stringify(body));
-      const res = await fetch('https://api-client.getbevvi.com/api/bevvibot/createCorpOrder', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-      });
-      const data = await res.json();
+      const ctrlCO = new AbortController(); const tCO = setTimeout(() => ctrlCO.abort(), 20000);
+      let res;
+      try {
+        res = await fetch('https://api-client.getbevvi.com/api/bevvibot/createCorpOrder', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctrlCO.signal
+        });
+      } finally { clearTimeout(tCO); }
+      // Bevvi's proxy returns HTML (502/503) when its upstream crashes; res.json() threw on
+      // it and the failure was logged nowhere. Read text first, log it, then parse.
+      const rawCO = await res.text();
+      let data;
+      try { data = JSON.parse(rawCO); }
+      catch (e) {
+        console.error('[shopping-agent] createCorpOrder NON-JSON response (' + res.status + '):', rawCO.slice(0, 200).replace(/\s+/g, ' '));
+        return { success: false, order_id: '', payment_url: '', error: 'Bevvi order service returned HTTP ' + res.status + ' (upstream error, not a problem with the items or details)' };
+      }
       console.log('[shopping-agent] createCorpOrder response (' + res.status + '):', JSON.stringify(data));
       const arr = Array.isArray(data) ? data[0] : (data || {});
       const paymentUrl = arr.url || arr.orderLink || arr.payment_url || '';

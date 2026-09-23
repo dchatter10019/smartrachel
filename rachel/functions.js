@@ -1045,7 +1045,13 @@ async function buildPackage(iv) {
       }
       lineItems.push({label:label,name:picks[i].product.name,qty:finalQty,upc:picks[i].product.upc||'',
         price:picks[i].product.price,size:picks[i].product.sizeStr,
-        url:picks[i].product.url,product_id:picks[i].product.product_id,category:category});
+        url:picks[i].product.url,product_id:picks[i].product.product_id,
+        // establishmentId was never carried on the EVENT-package path (the named-product
+        // path at ~1300 has it). Real failure: every party package shipped items with a
+        // blank establishment; Bevvi's order proxy crashes (502) on them. It only ever
+        // worked when a pass-2 tier upgrade happened to replace an item with a fresh,
+        // establishment-bearing search result.
+        establishmentId:picks[i].product.establishmentId||'',category:category});
     }
   }
 
