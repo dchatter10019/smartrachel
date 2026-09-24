@@ -1624,8 +1624,10 @@ app.post('/chat', async (req, res) => {
     }
     if (state.orderStep === 'recipient_email') {
       const em = message.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
-      // Fallback to the account email on "same"/skip/no email found.
-      state.orderData.email = em ? em[0] : (email || '');
+      // Fallback to the account email on "same"/skip/no email found. Lowercased: phone
+      // keyboards capitalize the first letter and Bevvi's account lookup is case-sensitive
+      // (real failure: 'Dipanjan@getbevvi.com' -> 'Invalid accountId').
+      state.orderData.email = (em ? em[0] : (email || '')).toLowerCase();
       state.orderData.account_email = email || '';
       if (!em) console.log('[order] recipient email not given — falling back to account email');
       if (state.orderData.phone) {
