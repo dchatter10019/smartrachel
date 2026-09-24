@@ -999,9 +999,12 @@ app.post('/chat', async (req, res) => {
         try {
           const d2c = await getD2CSession(email);
           if (d2c) {
-            s.ageVerified = d2c.age_verified || false;
-            s.zip = d2c.delivery_zip || '';
-            s.address = d2c.delivery_address || '';
+            // COMPLIANCE: age verification is per-session and per-person. Never inherit it
+            // from a saved profile (invited users are bound to another account's email).
+            s.ageVerified = false;
+            // Do NOT inherit the profile's delivery address either — each user sets their own.
+            s.zip = '';
+            s.address = '';
           }
         } catch(e) {}
       }
@@ -1050,9 +1053,9 @@ app.post('/chat', async (req, res) => {
       try {
         const d2c = await getD2CSession(email);
         if (d2c) {
-          state.ageVerified = state.ageVerified || d2c.age_verified || false;
-          if (!state.zip) state.zip = d2c.delivery_zip || '';
-          if (!state.address) state.address = d2c.delivery_address || '';
+          // COMPLIANCE: do not inherit age verification from the saved profile.
+          state.ageVerified = state.ageVerified || false;
+          // Do not inherit the saved address; the user sets their own this session.
         }
       } catch(e) {}
     }

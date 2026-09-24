@@ -123,7 +123,7 @@ async function saveD2CSession(userEmail, sessionData) {
       } catch(e) {}
     }
 
-    const ageVerifiedValue = sessionData.age_verified === false ? false : true;
+    const ageVerifiedValue = sessionData.age_verified === true;
 
     const frontmatter = [
       '---',
@@ -152,7 +152,7 @@ async function saveD2CSession(userEmail, sessionData) {
 
 ## Onboarding
 - Email: ${userEmail}
-- Age verified: true
+- Age verified: ${ageVerifiedValue}
 - Delivery address: ${address}
 - Delivery zip: ${zip}
 - Last seen: ${now}
