@@ -1449,7 +1449,11 @@ app.post('/chat', async (req, res) => {
     const qtyTokens = (message.match(/\b\d+\s*(?:x\b|bottles?|cases?|packs?|btls?)\b|\b\d+x\b/gi) || []).length;
     const listLines = message.split(/\n/).map(l => l.trim()).filter(Boolean).length;
     const isMultiItem = qtyTokens >= 2 || listLines >= 2;
-    if (clsIntent === 'add_item' && isMultiItem) { console.log('[add-item] multi-item list — deferring to custom_list'); clsIntent = null; }
+    // Several names in one ref ('Decoy, Louis Jadot, Wolffer') are picks, not one product —
+    // real bug: searched as one string, 0 matches, "couldn't find" after Rachel had just
+    // listed all three. Defer to the multi-pick resolver / LLM.
+    const multiName = clsRef && clsRef.split(/\s*(?:,|;|\band\b|\bplus\b|&)\s*/i).filter(x => x.trim().length > 1).length >= 2;
+    if (clsIntent === 'add_item' && (isMultiItem || multiName)) { console.log('[add-item] multi-item/multi-name — deferring'); clsIntent = null; }
     if (clsIntent === 'add_item' && clsRef && !state.orderStep && !state.proposalStep) {
       try {
         const rr = await fetch('http://127.0.0.1:8300/mcp', {
@@ -2516,6 +2520,63 @@ app.post('/chat', async (req, res) => {
     // last reply, match the message by number or name, and add via the same real-product
     // resolution path (onSubstituteConfirmed). Skipped if the basket already has it.
     try {
+      // ── MULTI-PICK RESOLVER ────────────────────────────────────────────────────
+      // Handles what the flat parser can't: several picks in one message ('give me decoy,
+      // louis jadot and wolffer'; 'Sauv Blanc 1, Pinot noir 2, rose 4') and GROUPED option
+      // lists (a heading per varietal, each numbered from 1). Names are resolved against
+      // what Rachel just listed — never re-searched. A pick whose varietal is already in
+      // the basket REPLACES that item (a re-price), keeping its quantity.
+      try {
+        const normP = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        const lineRe2 = /^\s*(?:[-•*]\s*|(\d{1,2})[.)]\s*)?(.+?)\s*(?:—|–|-)\s*(?:(\d+(?:\.\d+)?\s*(?:ml|l|oz)\b[^$\n]*?)\s*(?:—|–|-)\s*)?\$\s*([\d.,]+)\s*(?:ea\b.*)?$/i;
+        const groups = []; let cur = null;
+        for (const raw of String(lastAssistantTextGate || '').split('\n')) {
+          const line = raw.replace(/\*/g, '').trim(); if (!line) continue;
+          const lm = line.match(lineRe2);
+          if (lm) { if (!cur) { cur = { heading: '', options: [] }; groups.push(cur); } cur.options.push({ n: lm[1] ? parseInt(lm[1]) : cur.options.length + 1, name: lm[2].trim(), size: (lm[3] || '').trim(), price: parseFloat(lm[4].replace(/,/g, '')) }); }
+          else if (line.length <= 60 && !/\$/.test(line) && !/\?$/.test(line) && (/[:]$/.test(line) || line.split(/\s+/).length <= 4)) { cur = { heading: line.replace(/[:]$/, '').trim(), options: [] }; groups.push(cur); }
+        }
+        const realGroups = groups.filter(g => g.options.length);
+        const allOpts = realGroups.flatMap(g => g.options.map(o => Object.assign({ heading: g.heading }, o)));
+        const partsRaw = message.replace(/^\s*(ok(ay)?[,.!\s]*)?(please\s+)?(give me|i'?ll (take|have|go with)|let'?s (go with|do)|go with|add|i want|i'd like|the)\s+/i, '').split(/\s*(?:,|;|\n|\band\b|\bplus\b|&)\s*/i).map(x => x.trim()).filter(Boolean);
+        const isGrouped = realGroups.length >= 2;
+        if (allOpts.length && (partsRaw.length >= 2 || isGrouped) && !state.orderStep && !state.proposalStep) {
+          const picks = []; const bareNums = [];
+          const wordsOf = x => normP(x).split(/[^a-z0-9]+/).filter(w => w.length >= 3);
+          const headMatch = (cat) => { const cw = wordsOf(cat); return realGroups.find(g => { const hw = wordsOf(g.heading); return cw.length && cw.every(c => hw.some(h => h.startsWith(c) || c.startsWith(h))); }); };
+          for (const part of partsRaw) {
+            const cm = part.match(/^(.*?[a-z].*?)\s*#?\s*(\d{1,2})\s*$/i);
+            if (cm) { const g = headMatch(cm[1]); const n = parseInt(cm[2]); const o = g && (g.options.find(x => x.n === n) || g.options[n - 1]); if (o) { picks.push(Object.assign({ heading: g.heading }, o)); continue; } }
+            if (/^\d{1,2}$/.test(part)) { bareNums.push(parseInt(part)); continue; }
+            const pw = wordsOf(part.replace(/^the\s+/i, '')); if (!pw.length) continue;
+            let best = null, bestScore = 0;
+            for (const o of allOpts) { const ow = wordsOf(o.name + ' ' + o.heading); const hit = pw.filter(w => ow.some(x => x === w || (w.length >= 4 && x.startsWith(w)) || (x.length >= 4 && w.startsWith(x)))).length; const sc = hit / pw.length; if (sc > bestScore) { bestScore = sc; best = o; } }
+            if (best && bestScore >= 0.5) picks.push(best);
+          }
+          if (bareNums.length) { if (realGroups.length === 1) bareNums.forEach(n => { const o = realGroups[0].options.find(x => x.n === n) || realGroups[0].options[n - 1]; if (o) picks.push(Object.assign({ heading: realGroups[0].heading }, o)); }); else if (bareNums.length === realGroups.length) bareNums.forEach((n, i) => { const g = realGroups[i]; const o = g.options.find(x => x.n === n) || g.options[n - 1]; if (o) picks.push(Object.assign({ heading: g.heading }, o)); }); }
+          if (picks.length && (partsRaw.length >= 2 || picks.length >= 2 || isGrouped)) {
+            const VAR = ['sauvignon','blanc','pinot','noir','grigio','gris','chardonnay','cabernet','merlot','rose','riesling','malbec','syrah','shiraz','zinfandel','champagne','prosecco','cava','tequila','vodka','gin','rum','bourbon','whiskey','whisky','scotch','mezcal','beer','ipa','lager','cider','sparkling','red','white'];
+            const varOf = x => new Set(wordsOf(x).filter(w => VAR.includes(w)));
+            let items = []; try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+            const done = [];
+            for (const pk of picks) {
+              const pv = varOf(pk.heading + ' ' + pk.name);
+              const target = pv.size ? items.find(it => { const iv = varOf(it.name); return [...pv].some(v => iv.has(v)) && normP(it.name) !== normP(pk.name); }) : null;
+              const repl = pk.name + (pk.size && pk.name.indexOf(pk.size) < 0 ? ' - ' + pk.size : '');
+              const r = await applyBasketSubstitute(sessionKey, email, target ? target.name : '', repl, pk.price, pk.size);
+              if (r && r.success === false) { done.push('could not resolve ' + pk.name); continue; }
+              retirePendingFor(state, pk.name);
+              done.push((target ? (target.qty || target.quantity || 1) + 'x ' + pk.name + ' (replacing ' + target.name + ')' : '1x ' + pk.name) + ' — $' + pk.price.toFixed(2));
+              try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+            }
+            console.log('[multi-pick]', JSON.stringify(partsRaw), '->', JSON.stringify(done));
+            const lines2 = items.map(li => (li.qty || li.quantity || 1) + 'x ' + li.name + ' — $' + (parseFloat(li.price) || 0).toFixed(2) + ' ea = $' + ((li.qty || li.quantity || 1) * (parseFloat(li.price) || 0)).toFixed(2));
+            const tot2 = items.reduce((a, li) => a + (li.qty || li.quantity || 1) * (parseFloat(li.price) || 0), 0);
+            const rMP = 'Got it:\n' + done.map(d => '• ' + d).join('\n') + '\n\nUpdated basket:\n' + lines2.join('\n') + '\n\nProduct total: $' + tot2.toFixed(2) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+            return res.json({ text: rMP, response: rMP });
+          }
+        }
+      } catch (e) { console.log('[multi-pick] error, falling through:', e.message); }
       const pickLines = [];
       const reLine = /^\s*(\d{1,2})[\.\)]\s*\*?([^\n*—$]+?)\*?\s*(?:—\s*([^—$\n]*?))?\s*—?\s*\$([\d.]+)/gm;
       let pm;
