@@ -153,7 +153,7 @@ async function transcribeOrderImages(images, caption) {
       else content.push({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } });
     }
     content.push({ type: 'text', text: 'This was sent to a beverage-ordering assistant' + (caption ? ' with the caption: "' + caption + '"' : '') + `.
-If it contains a list of drinks to order (handwritten, printed, an invoice, a receipt, an order form), transcribe it as a shopping list — ONE item per line, in the form "<qty> x <product name> <size if shown>". Use the quantities shown; if a quantity is missing, use 1. Correct obvious misspellings of well-known brands. Ignore prices, totals, dates, and non-drink lines.
+If it contains a list of drinks to order (handwritten, printed, an invoice, a receipt, an order form), transcribe it as a shopping list — ONE item per line, in the form "<qty> x <product name> <size if shown>". Use the quantities shown; if a quantity is missing, use 1. Correct obvious misspellings of well-known brands. When a line is a category rather than a brand, write it as a clean search phrase with the distinctive term first and NO parentheses — e.g. "2 x Burgundy red wine 750 mL", "1 x Napa Cabernet 750 mL", "6 x IPA beer". Ignore prices, totals, dates, and non-drink lines.
 If it is NOT a list of drinks to order (a menu photo, a bottle photo, a screenshot, something unrelated), do not invent a list.
 Reply ONLY with JSON: {"is_order": true|false, "list": "<lines joined with \\n, or empty>", "note": "<one short sentence about what the image is, or what was unclear>"}` });
     const r = await vc.messages.create({ model: 'claude-sonnet-4-6', max_tokens: 800, messages: [{ role: 'user', content }] });
@@ -1543,12 +1543,44 @@ app.post('/chat', async (req, res) => {
       try {
         const rr = await fetch('http://127.0.0.1:8300/mcp', {
           method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
-          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: clsRef, limit: 6 }], zip: state.zip || '', email: email } } })
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: clsRef.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim(), limit: 8 }], zip: state.zip || '', email: email } } })
         });
         const rt = await rr.text(); const rl = rt.split('\n').find(l => l.startsWith('data:'));
         const rd = rl ? JSON.parse(rl.replace('data:', '').trim()) : null;
         const rres = rd ? JSON.parse(rd.result.content[0].text) : null;
         let prods = (rres && rres.results && rres.results[0] && rres.results[0].products) || [];
+        // Relevance on DESCRIPTIVE requests. Real case: 'Red Wine (French Burgundy) 750ml'
+        // matched the generic words and returned Chiantis and Merlots, presented as if they
+        // fit. Keep only products whose names carry the request's distinctive terms (with
+        // synonyms: Burgundy<->Bourgogne); if none do, say so and show the closest.
+        const WINE_SYN = { burgundy: ['bourgogne','burgundy'], bourgogne: ['bourgogne','burgundy'], bordeaux: ['bordeaux','medoc','pauillac','margaux','st julien','saint julien','pomerol','st emilion','saint emilion'], chianti: ['chianti'], rioja: ['rioja'], champagne: ['champagne'], prosecco: ['prosecco'], cava: ['cava'], sancerre: ['sancerre'], chablis: ['chablis'], barolo: ['barolo'], brunello: ['brunello'], napa: ['napa'], sonoma: ['sonoma'], provence: ['provence'], tuscan: ['tuscan','toscana'], rhone: ['rhone','rhône','cotes du rhone'], malbec: ['malbec'], pinot: ['pinot'], cabernet: ['cabernet'], chardonnay: ['chardonnay'], sauvignon: ['sauvignon'], riesling: ['riesling'], syrah: ['syrah','shiraz'], zinfandel: ['zinfandel'], merlot: ['merlot'], tempranillo: ['tempranillo'], sangiovese: ['sangiovese'], nebbiolo: ['nebbiolo'] };
+        const GENERIC = new Set(['red','white','rose','rosé','wine','wines','bottle','bottles','ml','l','oz','x','french','italian','spanish','californian','american','dry','sweet','sparkling','still','of','the','a','an','nice','good','some','case','pack']);
+        const cleanRef = clsRef.replace(/[()]/g, ' ').toLowerCase();
+        const distinct = cleanRef.split(/[^a-zà-ÿ]+/).filter(w => w.length > 2 && !GENERIC.has(w) && !/^\d+$/.test(w));
+        const regionTerms = distinct.filter(w => WINE_SYN[w]);
+        if (regionTerms.length) {
+          const syns = [].concat(...regionTerms.map(w => WINE_SYN[w]));
+          const nzr = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          // Search the synonyms themselves: 'french burgundy' matched 'I Love French' and
+          // champagnes while the Louis Jadot BOURGOGNE never came back. Query each synonym
+          // and merge before filtering.
+          try {
+            const seen = new Set(prods.map(pr => pr.product_id || pr.id || pr.name));
+            const rrS = await fetch('http://127.0.0.1:8300/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+              body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: syns.slice(0, 3).map(sy => ({ name: sy, limit: 6 })), zip: state.zip || '', email: email } } }) });
+            const rtS = await rrS.text(); const rlS = rtS.split('\n').find(l => l.startsWith('data:'));
+            const rdS = rlS ? JSON.parse(rlS.replace('data:', '').trim()) : null;
+            const rresS = rdS ? JSON.parse(rdS.result.content[0].text) : null;
+            for (const q of ((rresS && rresS.results) || [])) for (const pr of (q.products || [])) { const k = pr.product_id || pr.id || pr.name; if (!seen.has(k)) { seen.add(k); prods.push(pr); } }
+          } catch (e) { console.log('[add-item] synonym search error:', e.message); }
+          const relevant = prods.filter(pr => syns.some(sy => nzr(pr.name).indexOf(nzr(sy)) >= 0));
+          if (relevant.length) prods = relevant;
+          else {
+            const closest = prods.slice(0, 4).map((pr, i) => (i + 1) + '. ' + pr.name + ' — $' + (parseFloat(pr.salePrice || pr.price) || 0).toFixed(2)).join('\n');
+            const rNR = 'I don\'t have a ' + regionTerms.join(' ') + ' wine in this store\'s catalog right now. The closest matches I found:\n\n' + closest + '\n\nWant one of these, or should I look for something else?';
+            return res.json({ text: rNR, response: rNR });
+          }
+        }
         // Honor a stated size ("vodka 750ml" must not offer 1 L / 375 mL).
         const sizeM = clsRef.match(/(\d+(?:\.\d+)?)\s*(ml|l|oz)\b/i);
         if (sizeM && prods.length > 1) {
