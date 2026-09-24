@@ -119,6 +119,32 @@ const sessions = {};       // sessionKey -> messages[]
 // per session here instead — this is what candidate-extraction (for the substitute-
 // merge logic) needs to scan, not the internal API conversation history.
 const lastRepliesBySession = {}; // sessionKey -> array of recent outgoing reply texts
+// Write the ACTUAL outgoing reply into the LLM history. Real bug: the final assistant
+// entry in sessions[] is often empty (a turn's only model output can be a tool_use),
+// and deterministic replies never touch the history at all — so hours later the LLM
+// saw an earlier question with a blank answer and answered it AGAIN before the new one.
+function recordTurn(sessionKey, userText, replyText) {
+  try {
+    if (!replyText || /^__/.test(String(userText || ''))) return;
+    const hist = sessions[sessionKey] = sessions[sessionKey] || [];
+    const textOf = m => Array.isArray(m.content) ? m.content.filter(b => b.type === 'text').map(b => b.text).join('') : String(m.content || '');
+    const last = hist[hist.length - 1];
+    if (last && last.role === 'assistant') {
+      const hasTool = Array.isArray(last.content) && last.content.some(b => b.type === 'tool_use');
+      if (!hasTool && textOf(last).trim().length < 40) last.content = [{ type: 'text', text: replyText }];
+    } else {
+      if (!(last && last.role === 'user' && textOf(last) === userText)) hist.push({ role: 'user', content: String(userText) });
+      hist.push({ role: 'assistant', content: [{ type: 'text', text: replyText }] });
+    }
+    // Trim to ~40 messages, cutting only at a plain user text message so tool_use /
+    // tool_result pairs are never split (the API rejects orphaned tool_results).
+    if (hist.length > 40) {
+      let i = hist.length - 40;
+      while (i < hist.length && !(hist[i].role === 'user' && (typeof hist[i].content === 'string' || (Array.isArray(hist[i].content) && hist[i].content.every(b => b.type === 'text'))))) i++;
+      if (i > 0 && i < hist.length) hist.splice(0, i);
+    }
+  } catch (e) {}
+}
 const packageCache = {};   // cacheKey -> line_items (L1)
 
 // flowState persisted to disk
@@ -1251,6 +1277,8 @@ app.post('/chat', async (req, res) => {
 
     // ── STATE: ready — pass to Rachel ──────────────────────────────────────
     console.log('[turn] state.step:', state.step, '| pendingSubstitutes:', JSON.stringify(state.pendingSubstitutes), '| message:', JSON.stringify(message).slice(0,80));
+    { const _turnMsg = message; const _json = res.json.bind(res);
+      res.json = (payload) => { try { recordTurn(sessionKey, _turnMsg, payload && (payload.text || payload.response)); } catch (e) {} return _json(payload); }; }
     // SHADOW classify: label every turn with the LLM classifier and log it beside what
     // the regex/state-machine path does — acting on NOTHING yet. Once real traffic shows
     // agreement (or shows where the classifier is better), it takes over routing.
