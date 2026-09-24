@@ -1326,8 +1326,12 @@ app.post('/chat', async (req, res) => {
         const lastR2 = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
         let bsz2 = 0; try { bsz2 = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
         const cr = await classifyIntent(message, { lastKind: 'other', orderStep: null, basketSize: bsz2, lastQuestion: lastR2.slice(0, 160) });
-        if (cr.source === 'llm' && cr.confidence >= 0.75 && ['place_order','show_basket','change_time','change_instructions','change_contact','recommend'].includes(cr.intent)) {
-          clsIntent = cr.intent; clsRef = cr.ref || '';
+        // Per-intent thresholds: the cost of a wrong route differs. show_basket is harmless
+        // if wrong (0.65); place_order starts a multi-step flow (0.75); add_item changes
+        // the basket (0.8).
+        const THRESH = { place_order: 0.75, show_basket: 0.65, change_time: 0.75, change_instructions: 0.75, change_contact: 0.75, recommend: 0.65, add_item: 0.8 };
+        if (cr.source === 'llm' && THRESH[cr.intent] !== undefined && cr.confidence >= THRESH[cr.intent]) {
+          clsIntent = cr.intent; clsRef = cr.ref || ''; var clsQty = cr.qty || 0;
           console.log('[classify->route]', clsIntent, cr.confidence.toFixed(2), '|', JSON.stringify(message).slice(0, 60));
           // Hand the label to rachel.js's executeTool via eventParams (already threaded
           // through; context is not) so the recommendation rewrite fires on it.
@@ -1350,13 +1354,85 @@ app.post('/chat', async (req, res) => {
     if (clsIntent === 'show_basket') {
       try {
         const items = JSON.parse(state.lastLineItems || '[]');
+        // single-product estimate: if the previous reply was a lookup of ONE product that
+        // isn't in the basket, 'estimated price' means THAT product (real confusion:
+        // 'price of a Duckhorn cab' -> 'estimated price' -> got the basket total instead).
+        {
+          const lastR = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
+          const one = lastR.replace(/\*/g, '').match(/^\s*([^\n]+?)\s+—\s+([^\n—$]*?)\s*—\s*\$([\d,.]+)\s*$/m);
+          const nk = x => String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+          const isList = /^\s*1[\.\)]\s/m.test(lastR);
+          if (one && !isList && !items.some(it => nk(it.name).indexOf(nk(one[1]).slice(0, 12)) >= 0)) {
+            const pp = parseFloat(one[3].replace(/,/g, '')) || 0;
+            const tax1 = Math.round(pp * 10) / 100, svc1 = Math.round(pp * 10) / 100, tip1 = Math.round(pp * 5) / 100, del1 = 25.00;
+            const g1 = Math.round((pp + tax1 + svc1 + tip1 + del1) * 100) / 100;
+            const r1 = 'Estimated all-in for 1x ' + one[1].trim() + (one[2] ? ' — ' + one[2].trim() : '') + ':\n\n' +
+              'Product: $' + pp.toFixed(2) + '\nEstimated tax (10%): $' + tax1.toFixed(2) + '\nService charge (10%): $' + svc1.toFixed(2) +
+              '\nTip (5%): $' + tip1.toFixed(2) + '\nEstimated delivery: $' + del1.toFixed(2) + '\n*Estimated total: $' + g1.toFixed(2) + '*' +
+              '\n\nEstimates — actual totals may vary.' +
+              (items.length ? '\n\n(Your basket has ' + items.length + ' other item' + (items.length === 1 ? '' : 's') + ' — say "show my basket" for that total.)' : '') +
+              '\n\nWant me to add it to your order?';
+            state.pendingAddOffer = { name: one[1].trim(), size: (one[2] || '').trim(), price: pp }; saveFlowState();
+            return res.json({ text: r1, response: r1 });
+          }
+        }
         if (items.length) {
           const lines = items.map(li => (li.qty || li.quantity || 1) + 'x ' + li.name + ' — $' + (parseFloat(li.price) || 0).toFixed(2) + ' ea = $' + ((li.qty || li.quantity || 1) * (parseFloat(li.price) || 0)).toFixed(2));
           const tot = items.reduce((a, li) => a + (li.qty || li.quantity || 1) * (parseFloat(li.price) || 0), 0);
-          const reply = 'Here\'s your current basket:\n\n' + lines.join('\n') + '\n\nProduct total: $' + tot.toFixed(2) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+          // Full estimate, same math as the order summary. Real regression: 'estimated
+          // price' routed here (show_basket 0.90) and got only the product total — no tax,
+          // service, tip, or delivery.
+          const tax = Math.round(tot * 10) / 100, svc = Math.round(tot * 10) / 100, tip = Math.round(tot * 5) / 100, del = 25.00;
+          const grand = Math.round((tot + tax + svc + tip + del) * 100) / 100;
+          const reply = 'Here\'s your current basket:\n\n' + lines.join('\n') +
+            '\n\nProduct total: $' + tot.toFixed(2) +
+            '\nEstimated tax (10%): $' + tax.toFixed(2) +
+            '\nService charge (10%): $' + svc.toFixed(2) +
+            '\nTip (5%): $' + tip.toFixed(2) +
+            '\nEstimated delivery: $' + del.toFixed(2) +
+            '\n*Estimated grand total: $' + grand.toFixed(2) + '*' +
+            '\n\nEstimates — actual totals may vary.\n\nWould you like to place the order, generate a PDF proposal, or make any changes?';
           return res.json({ text: reply, response: reply });
         }
       } catch (e) {}
+    }
+    // ADD_ITEM (deterministic). Real gap: 'I want to add a Macallan 18' -> the LLM found
+    // exactly one match and asked 'Would you like to add this?' — the customer had
+    // already said add, moved on, and the basket never got it. One match -> add now
+    // (qty from the message, else ask); several -> numbered list (the pick-list handler
+    // resolves it); none -> say so.
+    if (clsIntent === 'add_item' && clsRef && !state.orderStep && !state.proposalStep) {
+      try {
+        const rr = await fetch('http://127.0.0.1:8300/mcp', {
+          method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: clsRef, limit: 6 }], zip: state.zip || '', email: email } } })
+        });
+        const rt = await rr.text(); const rl = rt.split('\n').find(l => l.startsWith('data:'));
+        const rd = rl ? JSON.parse(rl.replace('data:', '').trim()) : null;
+        const rres = rd ? JSON.parse(rd.result.content[0].text) : null;
+        const prods = (rres && rres.results && rres.results[0] && rres.results[0].products) || [];
+        console.log('[add-item] ref=' + JSON.stringify(clsRef) + ' matches=' + prods.length);
+        if (prods.length === 1) {
+          const pr = prods[0]; const price = parseFloat(pr.salePrice || pr.price) || 0; const size = pr.sizeStr || pr.size || '';
+          await applyBasketSubstitute(sessionKey, email, '', pr.name, price, size);
+          const label = pr.name + (size && pr.name.indexOf(size) < 0 ? ' — ' + size : '') + ' — $' + price.toFixed(2);
+          if (clsQty > 1) {
+            try { const it = JSON.parse(state.lastLineItems || '[]'); const nk = x => String(x||'').toLowerCase().replace(/[^a-z0-9]/g,''); const row = it.find(x => nk(x.name) === nk(pr.name)); if (row) { row.qty = clsQty; row.quantity = clsQty; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); saveFlowState(); } } catch (e) {}
+            const rA = 'Added ' + clsQty + 'x ' + label + ' to your order. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+            return res.json({ text: rA, response: rA });
+          }
+          state.pendingQtyFor = pr.name; saveFlowState();
+          const rB = 'Added ' + label + '. How many bottles would you like?';
+          return res.json({ text: rB, response: rB });
+        }
+        if (prods.length > 1) {
+          const lines = prods.map((pr, i) => (i + 1) + '. ' + pr.name + (pr.sizeStr && pr.name.indexOf(pr.sizeStr) < 0 ? ' — ' + pr.sizeStr : '') + ' — $' + (parseFloat(pr.salePrice || pr.price) || 0).toFixed(2));
+          const rC = 'I found a few options for ' + clsRef + ':\n\n' + lines.join('\n') + '\n\nWhich one would you like to add?';
+          return res.json({ text: rC, response: rC });
+        }
+        const rD = 'I couldn\'t find ' + clsRef + ' at this store. Want me to look for something similar?';
+        return res.json({ text: rD, response: rD });
+      } catch (e) { console.log('[add-item] error, falling through:', e.message); }
     }
     // change_instructions outside confirm: update the saved instructions (used at the next
     // summary) in one step, from the classifier's extracted ref.
@@ -2352,6 +2428,19 @@ app.post('/chat', async (req, res) => {
     // raw API conversation history does not reliably contain the real reply text.
     const lastAssistantTextGate = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
 
+    // Affirmative to a deterministic add offer ('Want me to add it?' -> 'yes do that').
+    // Real bug: the 'yes' went to the LLM, which didn't know what was offered and
+    // re-searched instead of adding. Any offer our code makes, our code must answer.
+    if (state.pendingAddOffer && !state.orderStep && !state.proposalStep) {
+      const off = state.pendingAddOffer; state.pendingAddOffer = null; saveFlowState();
+      if (/^\s*(yes|yes please|yeah|yep|sure|ok|okay|please|do it|do that|yes do that|add it|go ahead|absolutely)\b/i.test(message)) {
+        await applyBasketSubstitute(sessionKey, email, '', off.name + (off.size ? ' - ' + off.size : ''), off.price, off.size);
+        state.pendingQtyFor = off.name; saveFlowState();
+        const rY = 'Added ' + off.name + (off.size ? ' — ' + off.size : '') + ' — $' + off.price.toFixed(2) + '. How many bottles would you like?';
+        return res.json({ text: rY, response: rY });
+      }
+      // any other message: the offer lapses and the message is handled normally
+    }
     // Quantity answer for the item just picked (see pendingQtyFor below).
     if (state.pendingQtyFor && /^\s*(\d{1,3})\s*(?:x|bottles?|cases?|packs?)?\s*\.?\s*$/i.test(message) && !state.orderStep && !state.proposalStep) {
       const q = parseInt(message.match(/\d{1,3}/)[0]);
