@@ -13,7 +13,7 @@ Differences from Slack, all forced by the channel:
 """
 import os, re, json, time, logging, threading
 from flask import Flask, request, Response, render_template_string, abort
-import secrets, base64, io
+import secrets, base64, io, subprocess, html as _html
 import httpx
 from twilio.rest import Client
 from twilio.request_validator import RequestValidator
@@ -269,6 +269,106 @@ def webhook():
     log.info(f"[{phone}] {body[:80]}")
     threading.Thread(target=handle, args=(frm, phone, body, pname), daemon=True).start()
     return Response("<Response></Response>", mimetype="application/xml")   # ack now; reply via REST
+
+# ── ADMIN INVITES PAGE ─────────────────────────────────────────────────────────
+ADMIN_USER = os.environ.get("ADMIN_USER", "")
+ADMIN_PASS = os.environ.get("ADMIN_PASS", "")
+INVITE_BASE = os.environ.get("INVITE_BASE_URL", "https://mcp.getbevvi.com/whatsapp/invite/")
+def _admin_ok():
+    a = request.authorization
+    return bool(ADMIN_USER and ADMIN_PASS and a and a.username == ADMIN_USER and a.password == ADMIN_PASS)
+def _need_auth():
+    return Response("Login required", 401, {"WWW-Authenticate": 'Basic realm="Bevvi Rachel admin"'})
+def create_invite(name, email, uses, days, note=""):
+    with _inv_lock:
+        d = _jload(INVITES_FILE); tok = secrets.token_urlsafe(9)
+        d[tok] = {"name": name.strip(), "email": (email or "").strip().lower(), "uses_left": max(1, int(uses or 1)), "expires": time.time() + max(1, int(days or 14)) * 86400, "created": time.time(), "note": note, "used_by": []}
+        _jsave(INVITES_FILE, d)
+    return tok
+def send_invite_email(tok, name, email, days):
+    first = (name.split()[0] if name else "there"); link = INVITE_BASE + tok
+    subject = "Your invite to Rachel, Bevvi's beverage specialist"
+    body = (f"Hi {first},\n\nYou're invited to Rachel — Bevvi's beverage specialist on WhatsApp. Order wine, spirits and beer, "
+            f"or plan a full bar for an event, just by chatting.\n\nOpen this link on your phone to get started:\n{link}\n\n"
+            f"It takes one tap: enter your mobile number, then send the access code from WhatsApp. The link is good for {days} days.\n\n— The Bevvi team")
+    js = "require('/home/ubuntu/rachel/email-utils.js').sendEmail(JSON.parse(process.argv[1]), process.argv[2], process.argv[3]).then(()=>console.log('sent')).catch(e=>{console.error(e.message); process.exit(1);})"
+    r = subprocess.run(["node", "-e", js, json.dumps([email]), subject, body], cwd="/home/ubuntu/rachel", capture_output=True, text=True, timeout=60)
+    return r.returncode == 0, (r.stderr or r.stdout).strip()
+
+ADMIN_PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Rachel · Invites</title><style>
+body{margin:0;font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#f6f3ef;color:#222}.wrap{max-width:1040px;margin:32px auto;padding:0 16px}
+h1{display:flex;align-items:center;gap:12px;font-size:22px}.logo{width:40px;height:40px;border-radius:50%;background:#b0272b;color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:13px}
+.card{background:#fff;border-radius:14px;padding:20px;box-shadow:0 6px 24px rgba(0,0,0,.06);margin-bottom:20px}
+form.new{display:grid;grid-template-columns:1.2fr 1.4fr .5fr .5fr auto auto;gap:10px;align-items:end}label{font-size:12px;color:#666;display:block;margin-bottom:4px}
+input[type=text],input[type=email],input[type=number]{width:100%;box-sizing:border-box;padding:10px;border:1px solid #ccc;border-radius:10px;font-size:15px}
+.btn{background:#b0272b;color:#fff;border:0;border-radius:10px;padding:11px 16px;font-weight:600;cursor:pointer;font-size:14px}.btn.sec{background:#eee;color:#222}.btn.sm{padding:6px 10px;font-size:12px}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:left;padding:10px 8px;border-bottom:1px solid #eee;vertical-align:top}th{color:#666;font-weight:600;font-size:12px}
+.st{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600}.open{background:#e6f6ea;color:#1b6b34}.used{background:#eef;color:#334}.expired,.revoked{background:#fdecec;color:#8a1f1f}
+.link{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:#444;word-break:break-all}.flash{background:#e6f6ea;color:#1b6b34;padding:10px 14px;border-radius:10px;margin-bottom:14px}.flash.err{background:#fdecec;color:#8a1f1f}
+.muted{color:#777;font-size:12px}
+</style></head><body><div class="wrap">
+<h1><span class="logo">bevvi</span> Rachel invites</h1>
+{% if flash %}<div class="flash {{ 'err' if flash_err else '' }}">{{ flash }}</div>{% endif %}
+<div class="card"><form class="new" method="post" action="/whatsapp/admin/create">
+<div><label>Name</label><input type="text" name="name" placeholder="Katie Weeks" required></div>
+<div><label>Email (optional — pre-fills their account)</label><input type="email" name="email" placeholder="katie@company.com"></div>
+<div><label>Uses</label><input type="number" name="uses" value="1" min="1"></div>
+<div><label>Days</label><input type="number" name="days" value="14" min="1"></div>
+<div><label>&nbsp;</label><label style="display:flex;gap:6px;align-items:center;font-size:14px;color:#222"><input type="checkbox" name="send" value="1" checked> Email the link</label></div>
+<div><label>&nbsp;</label><button class="btn" type="submit">Create invite</button></div>
+</form><p class="muted">The invitee opens the link, enters their mobile number, and sends the access code from WhatsApp to +{{ digits }}. That verifies the number and activates Rachel for them.</p></div>
+<div class="card"><table><tr><th>Created</th><th>Name</th><th>Email</th><th>Status</th><th>Uses left</th><th>Used by</th><th>Link</th><th></th></tr>
+{% for t,v in rows %}<tr>
+<td class="muted">{{ v.created_s }}</td><td>{{ v.name }}</td><td>{{ v.email }}</td>
+<td><span class="st {{ v.status }}">{{ v.status }}</span></td><td>{{ v.uses_left }}</td><td class="muted">{{ v.used_by|join(', ') }}</td>
+<td><span class="link">{{ base }}{{ t }}</span><br><button class="btn sec sm" onclick="navigator.clipboard.writeText('{{ base }}{{ t }}');this.textContent='Copied'">Copy</button></td>
+<td>{% if v.status == 'open' %}<form method="post" action="/whatsapp/admin/revoke" style="display:inline"><input type="hidden" name="token" value="{{ t }}"><button class="btn sec sm">Revoke</button></form>
+{% if v.email %}<form method="post" action="/whatsapp/admin/resend" style="display:inline;margin-left:4px"><input type="hidden" name="token" value="{{ t }}"><button class="btn sec sm">Resend email</button></form>{% endif %}{% endif %}</td>
+</tr>{% endfor %}</table></div>
+<p class="muted">Verified numbers: {{ verified }}</p>
+</div></body></html>"""
+
+def _admin_rows():
+    d = _jload(INVITES_FILE); now = time.time(); rows = []
+    for t, v in sorted(d.items(), key=lambda kv: -kv[1].get("created", 0)):
+        st = "revoked" if v.get("revoked") else ("expired" if v.get("expires", 0) < now else ("used" if v.get("uses_left", 0) <= 0 else "open"))
+        vv = dict(v); vv["status"] = st; vv["created_s"] = time.strftime("%b %d %H:%M", time.localtime(v.get("created", 0))); vv["used_by"] = v.get("used_by", [])
+        rows.append((t, vv))
+    return rows
+
+@app.route("/whatsapp/admin", methods=["GET"])
+def admin_page():
+    if not _admin_ok(): return _need_auth()
+    ids = _load_ids(); verified = sum(1 for v in ids.values() if v.get("verified"))
+    return render_template_string(ADMIN_PAGE, rows=_admin_rows(), base=INVITE_BASE, digits=re.sub(r"\D", "", FROM), verified=verified, flash=request.args.get("m", ""), flash_err=request.args.get("e") == "1")
+
+@app.route("/whatsapp/admin/create", methods=["POST"])
+def admin_create():
+    if not _admin_ok(): return _need_auth()
+    name = request.form.get("name", ""); email = request.form.get("email", ""); uses = request.form.get("uses", 1); days = request.form.get("days", 14)
+    tok = create_invite(name, email, uses, days)
+    msg = f"Invite created for {name}."
+    if request.form.get("send") and email:
+        ok, err = send_invite_email(tok, name, email, days)
+        msg += (f" Emailed to {email}." if ok else f" EMAIL FAILED: {err}")
+        if not ok: return Response("", 302, {"Location": "/whatsapp/admin?e=1&m=" + _html.escape(msg)})
+    return Response("", 302, {"Location": "/whatsapp/admin?m=" + _html.escape(msg)})
+
+@app.route("/whatsapp/admin/revoke", methods=["POST"])
+def admin_revoke():
+    if not _admin_ok(): return _need_auth()
+    with _inv_lock:
+        d = _jload(INVITES_FILE); t = request.form.get("token", "")
+        if t in d: d[t]["revoked"] = True; _jsave(INVITES_FILE, d)
+    return Response("", 302, {"Location": "/whatsapp/admin?m=Invite%20revoked."})
+
+@app.route("/whatsapp/admin/resend", methods=["POST"])
+def admin_resend():
+    if not _admin_ok(): return _need_auth()
+    d = _jload(INVITES_FILE); t = request.form.get("token", ""); v = d.get(t)
+    if not v or not v.get("email"): return Response("", 302, {"Location": "/whatsapp/admin?e=1&m=No%20email%20on%20that%20invite."})
+    ok, err = send_invite_email(t, v.get("name", ""), v["email"], max(1, int((v.get("expires", time.time()) - time.time()) // 86400)))
+    return Response("", 302, {"Location": "/whatsapp/admin?" + ("m=Email%20resent." if ok else "e=1&m=" + _html.escape("EMAIL FAILED: " + err))})
 
 @app.route("/whatsapp/health")
 def health(): return {"ok": True, "from": FROM}
