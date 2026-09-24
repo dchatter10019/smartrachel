@@ -123,6 +123,19 @@ const lastRepliesBySession = {}; // sessionKey -> array of recent outgoing reply
 // entry in sessions[] is often empty (a turn's only model output can be a tool_use),
 // and deterministic replies never touch the history at all — so hours later the LLM
 // saw an earlier question with a blank answer and answered it AGAIN before the new one.
+// Retire pending substitutes that an added item resolves (real bug: 'Dry Rose 750 mL'
+// stayed pending after Whispering Angel was added via the pick list, so a later bare
+// 'Yes' reopened the substitute gate on an unrelated question).
+function retirePendingFor(state, addedName) {
+  try {
+    if (!state || !Array.isArray(state.pendingSubstitutes) || !state.pendingSubstitutes.length) return;
+    const norm = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const addedWords = new Set(norm(addedName).split(/[^a-z]+/).filter(w => w.length > 3));
+    const before = state.pendingSubstitutes.length;
+    state.pendingSubstitutes = state.pendingSubstitutes.filter(pn => !norm(pn).split(/[^a-z]+/).some(w => w.length > 3 && addedWords.has(w)));
+    if (state.pendingSubstitutes.length !== before) console.log('[substitute-tracking] retired pending after add:', addedName, '->', JSON.stringify(state.pendingSubstitutes));
+  } catch (e) {}
+}
 function recordTurn(sessionKey, userText, replyText) {
   try {
     if (!replyText || /^__/.test(String(userText || ''))) return;
@@ -1429,6 +1442,14 @@ app.post('/chat', async (req, res) => {
     // already said add, moved on, and the basket never got it. One match -> add now
     // (qty from the message, else ask); several -> numbered list (the pick-list handler
     // resolves it); none -> say so.
+    // A multi-item list is not an add. Real bug: a five-line shopping list was labeled
+    // add_item with the WHOLE list as ref; one search returned six vodkas, presented as
+    // "options for vodka x3, St-Germain x1, ..." — the customer rightly asked why she was
+    // being asked item by item. Two or more quantity tokens or lines -> custom_list path.
+    const qtyTokens = (message.match(/\b\d+\s*(?:x\b|bottles?|cases?|packs?|btls?)\b|\b\d+x\b/gi) || []).length;
+    const listLines = message.split(/\n/).map(l => l.trim()).filter(Boolean).length;
+    const isMultiItem = qtyTokens >= 2 || listLines >= 2;
+    if (clsIntent === 'add_item' && isMultiItem) { console.log('[add-item] multi-item list — deferring to custom_list'); clsIntent = null; }
     if (clsIntent === 'add_item' && clsRef && !state.orderStep && !state.proposalStep) {
       try {
         const rr = await fetch('http://127.0.0.1:8300/mcp', {
@@ -1438,11 +1459,20 @@ app.post('/chat', async (req, res) => {
         const rt = await rr.text(); const rl = rt.split('\n').find(l => l.startsWith('data:'));
         const rd = rl ? JSON.parse(rl.replace('data:', '').trim()) : null;
         const rres = rd ? JSON.parse(rd.result.content[0].text) : null;
-        const prods = (rres && rres.results && rres.results[0] && rres.results[0].products) || [];
+        let prods = (rres && rres.results && rres.results[0] && rres.results[0].products) || [];
+        // Honor a stated size ("vodka 750ml" must not offer 1 L / 375 mL).
+        const sizeM = clsRef.match(/(\d+(?:\.\d+)?)\s*(ml|l|oz)\b/i);
+        if (sizeM && prods.length > 1) {
+          const want = (sizeM[1] + sizeM[2]).toLowerCase();
+          const nz = x => String(x || '').toLowerCase().replace(/\s+/g, '');
+          const bySize = prods.filter(pr => nz(pr.sizeStr || pr.size).indexOf(want) >= 0 || nz(pr.name).indexOf(want) >= 0);
+          if (bySize.length) prods = bySize;
+        }
         console.log('[add-item] ref=' + JSON.stringify(clsRef) + ' matches=' + prods.length);
         if (prods.length === 1) {
           const pr = prods[0]; const price = parseFloat(pr.salePrice || pr.price) || 0; const size = pr.sizeStr || pr.size || '';
           await applyBasketSubstitute(sessionKey, email, '', pr.name, price, size);
+            retirePendingFor(state, pr.name);
           const label = pr.name + (size && pr.name.indexOf(size) < 0 ? ' — ' + size : '') + ' — $' + price.toFixed(2);
           if (clsQty > 1) {
             try { const it = JSON.parse(state.lastLineItems || '[]'); const nk = x => String(x||'').toLowerCase().replace(/[^a-z0-9]/g,''); const row = it.find(x => nk(x.name) === nk(pr.name)); if (row) { row.qty = clsQty; row.quantity = clsQty; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); saveFlowState(); } } catch (e) {}
@@ -2463,6 +2493,7 @@ app.post('/chat', async (req, res) => {
       const off = state.pendingAddOffer; state.pendingAddOffer = null; saveFlowState();
       if (/^\s*(yes|yes please|yeah|yep|sure|ok|okay|please|do it|do that|yes do that|add it|go ahead|absolutely)\b/i.test(message)) {
         await applyBasketSubstitute(sessionKey, email, '', off.name + (off.size ? ' - ' + off.size : ''), off.price, off.size);
+            retirePendingFor(state, off.name);
         state.pendingQtyFor = off.name; saveFlowState();
         const rY = 'Added ' + off.name + (off.size ? ' — ' + off.size : '') + ' — $' + off.price.toFixed(2) + '. How many bottles would you like?';
         return res.json({ text: rY, response: rY });
@@ -2521,6 +2552,14 @@ app.post('/chat', async (req, res) => {
             picked = exact.find(l => l.size.toLowerCase().replace(/\s+/g, '') === sz) || exact[0];
           }
         }
+        if (picked && /^\d+(\.\d+)?\s*(ml|l|oz)$/i.test(picked.name)) {
+          // Size-only option lines ("1. 50 mL — $4.39"): the product name is in the heading
+          // ("Tito's Handmade Vodka is available in several sizes:"). Recover it, or hand
+          // off to the LLM rather than add a bare "750 mL".
+          const head = lastAssistantTextGate.replace(/\*/g, '').match(/([A-Z][^\n:]{2,60}?)\s+(?:is available|comes in|is offered|options|sizes)/);
+          if (head) { picked = Object.assign({}, picked, { size: picked.name, name: head[1].trim() }); }
+          else { console.log('[pick-list] size-only option with no product heading — deferring to LLM'); picked = null; }
+        }
         if (picked) {
           let already = false;
           try { already = JSON.parse(state.lastLineItems || '[]').some(it => norm(it.name) === norm(picked.name)); } catch (e) {}
@@ -2528,6 +2567,7 @@ app.post('/chat', async (req, res) => {
             console.log('[pick-list] deterministic selection:', JSON.stringify(picked));
             state.lastPickResolved = { name: picked.name, size: picked.size, at: Date.now() };
             const r = await applyBasketSubstitute(sessionKey, email, '', picked.name + (picked.size ? ' - ' + picked.size : ''), picked.price, picked.size);
+            retirePendingFor(state, picked.name);
             const added = picked.name + (picked.size ? ' — ' + picked.size : '') + ' — $' + picked.price.toFixed(2);
             // Ask quantity ONCE, at pick time — never silently default to 1 (real
             // complaint: a red wine was added at 1x with no question, while the white
@@ -2752,7 +2792,16 @@ app.post('/chat', async (req, res) => {
               const sentenceBoundarySingle = namePartSingle.match(/.*[.!?:]\s*/);
               if (sentenceBoundarySingle) namePartSingle = namePartSingle.slice(sentenceBoundarySingle[0].length);
               const nameSingle = namePartSingle.replace(/^\s*\d+[\.\)]\s*/, '').replace(/\*/g, '').trim();
-              if (nameSingle && nameSingle.split(' ').length <= 8) {
+              // Real bug: 'Yes' to Rachel's clarifying question "To clarify — ... around
+              // $20/bottle ...?" was read as accepting a product named "To clarify" at $20.
+              // Require an offer shape: no question/clarifier lead-in, and a price that is
+              // a line/list price (not "around $20", "$20/bottle", "$20 per bottle").
+              const lastTxtT0 = substantiveAssistantTexts[substantiveAssistantTexts.length - 1] || '';
+              const looksLikeQuestionName = /^(to clarify|just to (confirm|clarify)|do you|would you|should i|shall i|which|can i|could i|are you|is that|so you)/i.test(nameSingle);
+              const priceIsRate = /(around|about|approx\.?|roughly|under|over|up to|~)\s*\$\s*[\d.,]+/i.test(lastTxtT0) || /\$\s*[\d.,]+\s*(\/|per\b|a bottle|each bottle|apiece)/i.test(lastTxtT0);
+              const looksLikeOffer = !looksLikeQuestionName && !priceIsRate;
+              if (!looksLikeOffer) console.log('[substitute-merge] Tier 0 skipped — last reply is a question/rate, not a product offer:', JSON.stringify(nameSingle));
+              if (looksLikeOffer && nameSingle && nameSingle.split(' ').length <= 8) {
                 const sizeMatchSingle = beforeOnlyPrice.match(/\d+(\.\d+)?\s*(mL|ML|L|oz|OZ)\b/);
                 if (!matched) matched = { name: nameSingle, price: parseFloat(onlyPriceMatch[1]), size: sizeMatchSingle ? sizeMatchSingle[0] : '' };
                 console.log('[substitute-merge] Tier 0 (bare affirmative to single-candidate question) matched:', nameSingle);
@@ -2814,7 +2863,12 @@ app.post('/chat', async (req, res) => {
               const removeIdx = items.findIndex(it => (it.name || it.label || '').toLowerCase().includes(originalBrandWord));
               if (removeIdx >= 0) qtyToUse = items[removeIdx].qty || items[removeIdx].quantity || 1;
             }
-            await applyBasketSubstitute(sessionKey, email, hasOriginalToReplace ? originalItemName : '', matched.name + (matched.size ? ' - ' + matched.size : ''), matched.price, matched.size);
+            const subRes = await applyBasketSubstitute(sessionKey, email, hasOriginalToReplace ? originalItemName : '', matched.name + (matched.size ? ' - ' + matched.size : ''), matched.price, matched.size);
+            if (subRes && subRes.success === false) {
+              // Never claim a replacement that was refused (unresolved product).
+              const rRef = 'I couldn\'t find "' + matched.name + '" in the catalog, so nothing was changed. Tell me the product you\'d like and I\'ll look it up.';
+              return res.json({ text: rRef, response: rRef });
+            }
             // applyBasketSubstitute adds at qty 1 (or the replaced item's qty when it finds
             // the original); enforce the intended qty explicitly.
             try {
