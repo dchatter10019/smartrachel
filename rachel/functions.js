@@ -18,8 +18,8 @@ async function getProductURL({ product_name, kitchen_location, client_id, min_pr
     // API supports resolving directly from zipcode, so use that param instead.
     const isZipSentinel = kitchen_location.indexOf('zip:') === 0;
     const url = isZipSentinel
-      ? `https://api.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode=${encodeURIComponent(kitchen_location.slice(4))}&searchBy=${encodeURIComponent(product_name)}&limit=${limit}&client=${encodeURIComponent(client_id || '')}${min_price > 0 ? '&min='+min_price : ''}${max_price < 999999 ? '&max='+max_price : ''}`
-      : `https://api.getbevvi.com/api/corpproducts/searchCorpProducts?location=${encodeURIComponent(kitchen_location)}&searchBy=${encodeURIComponent(product_name)}&limit=${limit}&client=${encodeURIComponent(client_id || '')}${min_price > 0 ? '&min='+min_price : ''}${max_price < 999999 ? '&max='+max_price : ''}`;
+      ? `https://api-client.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode=${encodeURIComponent(kitchen_location.slice(4))}&searchBy=${encodeURIComponent(product_name)}&limit=${limit}&client=bevvibot${min_price > 0 ? '&min='+min_price : ''}${max_price < 999999 ? '&max='+max_price : ''}`
+      : `https://api-client.getbevvi.com/api/corpproducts/searchCorpProducts?location=${encodeURIComponent(kitchen_location)}&searchBy=${encodeURIComponent(product_name)}&limit=${limit}&client=bevvibot${min_price > 0 ? '&min='+min_price : ''}${max_price < 999999 ? '&max='+max_price : ''}`;
     const response = await fetch(url);
     if (!response.ok) return { product_found: false, product_id: "", products_json: "[]", result_count: 0, debug_info: `API HTTP error: ${response.status}` };
 
@@ -57,7 +57,7 @@ async function getProductURL({ product_name, kitchen_location, client_id, min_pr
 
 async function addToCart({ accountId, client, location, quantity = 1, product_id }) {
   try {
-    const url = `https://api.getbevvi.com/api/bevvibot/addToShoppingCart?accountId=${encodeURIComponent(accountId)}&client=${encodeURIComponent(client)}&location=${encodeURIComponent(location)}&quantity=${encodeURIComponent(quantity)}&corpproduct=${encodeURIComponent(product_id)}`;
+    const url = `https://api.getbevvi.com/api/bevvibot/addToShoppingCart?accountId=${encodeURIComponent(accountId)}&client=bevvibot&location=${encodeURIComponent(location)}&quantity=${encodeURIComponent(quantity)}&corpproduct=${encodeURIComponent(product_id)}`;
     const response = await fetch(url, { method: 'GET', headers: { 'Content-Type': 'application/json' } });
     const data = await response.json();
     if (!response.ok) return { success: false, error: `API error: ${response.status} - ${data?.message || 'Unknown error'}` };
@@ -298,7 +298,7 @@ async function getProductURLByZip({ product_name, zipcode, client_id, min_price,
       // Direct zipcode-based search — API now resolves the store from zipcode itself,
       // no kitchen_location mapping needed.
       const effectiveClient = client_id || 'airculinaire';
-      const scUrl = 'https://api.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode=' + encodeURIComponent(zipcode) + '&searchBy=' + encodeURIComponent(product_name || '') + '&limit=100&client=' + encodeURIComponent(effectiveClient) + (min_price > 0.01 ? '&min='+min_price : '') + (max_price < 9999 ? '&max='+max_price : '');
+      const scUrl = 'https://api-client.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode=' + encodeURIComponent(zipcode) + '&searchBy=' + encodeURIComponent(product_name || '') + '&limit=100&client=' + encodeURIComponent(effectiveClient) + (min_price > 0.01 ? '&min='+min_price : '') + (max_price < 9999 ? '&max='+max_price : '');
       const scRes = await fetch(scUrl);
       if (scRes.ok) {
         const scData = await scRes.json();
@@ -318,7 +318,7 @@ async function getProductURLByZip({ product_name, zipcode, client_id, min_price,
     }
     {
       // Fall back to getProducts API for unmapped zips
-      const url = 'https://api.getbevvi.com/api/corpproducts/getProducts?zipcode=' + encodeURIComponent(zipcode);
+      const url = 'https://api-client.getbevvi.com/api/corpproducts/getProducts?zipcode=' + encodeURIComponent(zipcode);
       const response = await fetch(url);
       if (!response.ok) return { product_found: false, products_json: '[]', result_count: 0, debug_info: 'API error: ' + response.status };
       const json = await response.json();
@@ -347,7 +347,7 @@ async function getProductURLByZip({ product_name, zipcode, client_id, min_price,
       const kitchenLoc = ZIP_TO_KITCHEN[zipcode];
       if (kitchenLoc) {
         console.log('[getProducts] fallback to searchCorpProducts for', zipcode, '→', kitchenLoc);
-        const fallbackUrl = 'https://api.getbevvi.com/api/corpproducts/searchCorpProducts?location=' + encodeURIComponent(kitchenLoc) + '&searchBy=' + encodeURIComponent(product_name || '') + '&limit=100&client=' + encodeURIComponent(client_id || 'airculinaire');
+        const fallbackUrl = 'https://api-client.getbevvi.com/api/corpproducts/searchCorpProducts?location=' + encodeURIComponent(kitchenLoc) + '&searchBy=' + encodeURIComponent(product_name || '') + '&limit=100&client=' + encodeURIComponent(client_id || 'airculinaire');
         const fbRes = await fetch(fallbackUrl);
         if (fbRes.ok) {
           const fbData = await fbRes.json();
@@ -419,7 +419,7 @@ async function getProductURLByZip({ product_name, zipcode, client_id, min_price,
       if (kitchenLoc && product_name) {
         try {
           console.log('[getProducts] fallback searchCorpProducts:', zipcode, '->', kitchenLoc);
-          const fbUrl = 'https://api.getbevvi.com/api/corpproducts/searchCorpProducts?location=' + encodeURIComponent(kitchenLoc) + '&searchBy=' + encodeURIComponent(product_name) + '&limit=20&client=' + encodeURIComponent(client_id || 'airculinaire');
+          const fbUrl = 'https://api-client.getbevvi.com/api/corpproducts/searchCorpProducts?location=' + encodeURIComponent(kitchenLoc) + '&searchBy=' + encodeURIComponent(product_name) + '&limit=20&client=' + encodeURIComponent(client_id || 'airculinaire');
           const fbRes = await fetch(fbUrl);
           if (fbRes.ok) {
             const fbData = await fbRes.json();
@@ -502,7 +502,10 @@ async function buildPackage(iv) {
       '10019': 'Celonis - NYC', '10022': 'Celonis - NYC', '10028': 'Celonis - NYC'
     };
     const CLIENT_MAP = { 'Teterboro - NJ': 'airculinaire', 'Celonis - NYC': 'fooda' };
-    kitchenLocation = ZIP_MAP[iv.zipcode] || '';
+    // Always search by ZIP. The kitchen-name (location=) variant is client-specific and
+    // returns nothing under client=bevvibot; the backend resolves the store from the zip.
+    // Real regression: 10019/10451/02110 (mapped) returned 0 while 94104 (unmapped) worked.
+    kitchenLocation = iv.zipcode ? 'ZIP:' + String(iv.zipcode).trim() : (ZIP_MAP[iv.zipcode] || '');
     if (kitchenLocation) clientName = CLIENT_MAP[kitchenLocation] || 'airculinaire'; // always use mapped client
   }
 
@@ -617,8 +620,8 @@ async function buildPackage(iv) {
   async function rawSearch(term) {
     var isZipSentinel = kitchenLocation.indexOf('zip:') === 0;
     var url = isZipSentinel
-      ? "https://api.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode="+encodeURIComponent(kitchenLocation.slice(4))+"&searchBy="+encodeURIComponent(term)+"&limit=100&client="+encodeURIComponent(clientName)
-      : "https://api.getbevvi.com/api/corpproducts/searchCorpProducts?location="+encodeURIComponent(kitchenLocation)+"&searchBy="+encodeURIComponent(term)+"&limit=100&client="+encodeURIComponent(clientName);
+      ? "https://api-client.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode="+encodeURIComponent(kitchenLocation.slice(4))+"&searchBy="+encodeURIComponent(term)+"&limit=100&client="+encodeURIComponent(clientName)
+      : "https://api-client.getbevvi.com/api/corpproducts/searchCorpProducts?location="+encodeURIComponent(kitchenLocation)+"&searchBy="+encodeURIComponent(term)+"&limit=100&client="+encodeURIComponent(clientName);
     var res=await fetch(url);
     if (!res.ok) return [];
     var data=await res.json();

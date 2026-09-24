@@ -30,5 +30,13 @@
     "can_email_support": true,
     "requires_age_verification": true,
     "mention_saved_address": true
+  },
+  "whatsapp": {
+    "can_place_order": true,
+    "can_generate_proposal": true,
+    "can_add_to_cart": true,
+    "can_email_support": true,
+    "requires_age_verification": true,
+    "mention_saved_address": true
   }
 }

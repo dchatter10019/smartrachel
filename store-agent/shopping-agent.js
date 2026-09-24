@@ -8,7 +8,7 @@ const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args
 const PORT = 8300;
 const GBRAIN_URL = 'http://127.0.0.1:7700';
 const GBRAIN_TOKEN = 'gbrain_71d7392edf8a722d8816739407f1455d13fff00a0c7b12e3afa208b4d081ebf4';
-const BEVVI_API = 'https://api.getbevvi.com';
+const BEVVI_API = 'https://api-client.getbevvi.com';
 const packageModel = require('/home/ubuntu/rachel/package-model.js');
 const { classifyProduct } = require('/home/ubuntu/rachel/brand-lists.js');
 
@@ -92,7 +92,7 @@ async function discoverClientForZip(zip) {
   if (unmappedZipClient[zip]) return unmappedZipClient[zip];
   for (const client of ['fooda', 'airculinaire']) {
     try {
-      const r = await fetch('https://api.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode=' + encodeURIComponent(zip) + '&searchBy=wine&client=' + client + '&limit=1');
+      const r = await fetch('https://api-client.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode=' + encodeURIComponent(zip) + '&searchBy=wine&client=' + client + '&limit=1');
       const d = await r.json().catch(() => []);
       if (Array.isArray(d) && d.length) { unmappedZipClient[zip] = client; console.log('[resolveLocation] zip', zip, '-> client', client, '(discovered)'); return client; }
     } catch (e) {}
@@ -100,8 +100,8 @@ async function discoverClientForZip(zip) {
   return 'airculinaire';
 }
 function resolveLocation(zip) {
-  const kitchen = ZIP_MAP[zip] || '';
-  const client = CLIENT_MAP[kitchen] || unmappedZipClient[zip] || 'airculinaire';
+  const kitchen = zip ? 'zip:' + String(zip).trim() : '';   // always search by zip (ZIP_MAP kitchen names are client-specific; retired with client=bevvibot)
+  const client = 'bevvibot'   // BOT client: store resolved by zip on Bevvi's side (ZIP_MAP/unmappedZipClient retired);
   if (kitchen) return { kitchen, client, zip };
   // No hardcoded kitchen_location mapping for this zip — the search API can now
   // resolve directly from zipcode, so fall back to a zip-sentinel instead of
@@ -289,9 +289,9 @@ async function searchProducts(location, client, query, limit, minPrice, maxPrice
     let url;
     if (location && location.indexOf('zip:') === 0) {
       const zipVal = location.slice(4);
-      url = BEVVI_API + '/api/corpproducts/searchCorpProducts?zipcode=' + encodeURIComponent(zipVal) + '&searchBy=' + encodeURIComponent(query) + '&client=' + encodeURIComponent(client) + '&limit=' + (limit || 10);
+      url = BEVVI_API + '/api/corpproducts/searchCorpProducts?zipcode=' + encodeURIComponent(zipVal) + '&searchBy=' + encodeURIComponent(query) + '&client=bevvibot' + '&limit=' + (limit || 10);
     } else {
-      url = BEVVI_API + '/api/corpproducts/searchCorpProducts?location=' + encodeURIComponent(location) + '&searchBy=' + encodeURIComponent(query) + '&client=' + encodeURIComponent(client) + '&limit=' + (limit || 10);
+      url = BEVVI_API + '/api/corpproducts/searchCorpProducts?location=' + encodeURIComponent(location) + '&searchBy=' + encodeURIComponent(query) + '&client=bevvibot' + '&limit=' + (limit || 10);
     }
     if (minPrice !== undefined && minPrice > 0) url += '&min=' + minPrice;
     if (maxPrice !== undefined && maxPrice < 10000) url += '&max=' + maxPrice;

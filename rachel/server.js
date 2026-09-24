@@ -13,8 +13,8 @@ const KNOWN_CLIENTS = ['fooda', 'airculinaire'];
 const zipClientCache = {};
 async function checkStoreCoverage(zip) {
   try {
-    for (const client of KNOWN_CLIENTS) {
-      const url = 'https://api.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode=' + encodeURIComponent(zip) + '&searchBy=' + encodeURIComponent('wine') + '&client=' + encodeURIComponent(client) + '&limit=1';
+    for (const client of ['bevvibot']) {   // single probe: the backend resolves the store from the zip (KNOWN_CLIENTS retired)
+      const url = 'https://api-client.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode=' + encodeURIComponent(zip) + '&searchBy=' + encodeURIComponent('wine') + '&client=bevvibot' + '&limit=1';
       const res = await fetch(url);
       const data = await res.json().catch(() => []);
       if (Array.isArray(data) && data.length > 0) {
@@ -1196,7 +1196,9 @@ app.post('/chat', async (req, res) => {
         }
         const ok = `Got it! Delivering to ${state.address}. How can I help you today?`;
         return res.json({ text: ok, response: ok });
-      } else if (noWords.some(w => msgLower === w || msgLower.startsWith(w + ' '))) {
+      } else if (!/\b\d{5}\b/.test(message) && noWords.some(w => msgLower === w || msgLower.startsWith(w + ' '))) {
+        // Only a BARE no asks again. 'No, use 100 Federal St, Boston, MA 02110' carries the
+        // answer — the zip branch below handles it in one turn (real case: it re-asked).
         state.step = 'addr_new';
         // Keep pendingIntent as-is so the original request can still be replayed once a new address is confirmed
         const ask = 'No problem! What is your delivery address? (Include street, city, state, and zip)';
