@@ -103,7 +103,7 @@ const KITCHEN_TO_CLIENT = {
 };
 
 const app = express();
-app.use(express.json({ limit: '2mb' }));
+app.use(express.json({ limit: '25mb' }));   // base64 photos of order lists
 
 const PORT = process.env.RACHEL_PORT || 3500;
 
@@ -135,6 +135,49 @@ function retirePendingFor(state, addedName) {
     state.pendingSubstitutes = state.pendingSubstitutes.filter(pn => !norm(pn).split(/[^a-z]+/).some(w => w.length > 3 && addedWords.has(w)));
     if (state.pendingSubstitutes.length !== before) console.log('[substitute-tracking] retired pending after add:', addedName, '->', JSON.stringify(state.pendingSubstitutes));
   } catch (e) {}
+}
+// Resolve a typed address with Google Geocoding: returns { formatted, zip, city, state,
+// lat, lng } or null. Real case: a new invited user typed '3300 Admiral Boland Way, San
+// Diego CA' (no zip) and the flow stalled on a repeated generic prompt. Google resolves
+// it (92101); we hand the existing parser the normalized address so nothing downstream
+// changes. Key: GOOGLE_MAPS_API_KEY in /etc/rachel.env (Geocoding API, restricted).
+// Read a photo/scan of an order (handwritten list, printed order sheet, past invoice)
+// into a shopping list with Claude vision. Returns { is_order, list, note }.
+async function transcribeOrderImages(images, caption) {
+  try {
+    const Anthropic = require('@anthropic-ai/sdk');
+    const vc = new Anthropic.Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const content = [];
+    for (const im of images.slice(0, 4)) {
+      if (/^application\/pdf$/i.test(im.media_type)) content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: im.data } });
+      else content.push({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } });
+    }
+    content.push({ type: 'text', text: 'This was sent to a beverage-ordering assistant' + (caption ? ' with the caption: "' + caption + '"' : '') + `.
+If it contains a list of drinks to order (handwritten, printed, an invoice, a receipt, an order form), transcribe it as a shopping list — ONE item per line, in the form "<qty> x <product name> <size if shown>". Use the quantities shown; if a quantity is missing, use 1. Correct obvious misspellings of well-known brands. Ignore prices, totals, dates, and non-drink lines.
+If it is NOT a list of drinks to order (a menu photo, a bottle photo, a screenshot, something unrelated), do not invent a list.
+Reply ONLY with JSON: {"is_order": true|false, "list": "<lines joined with \\n, or empty>", "note": "<one short sentence about what the image is, or what was unclear>"}` });
+    const r = await vc.messages.create({ model: 'claude-sonnet-4-6', max_tokens: 800, messages: [{ role: 'user', content }] });
+    const txt = (r.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
+    const m = txt.match(/\{[\s\S]*\}/); const j = m ? JSON.parse(m[0]) : null;
+    if (!j) return { is_order: false, list: '', note: 'could not read the image' };
+    return { is_order: !!j.is_order && !!(j.list || '').trim(), list: String(j.list || '').trim(), note: String(j.note || '').trim() };
+  } catch (e) { console.log('[vision] error:', e.message); return { is_order: false, list: '', note: 'error reading the image' }; }
+}
+async function geocodeAddress(text) {
+  const key = process.env.GOOGLE_MAPS_API_KEY;
+  if (!key || !text) return null;
+  try {
+    const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 6000);
+    const r = await fetch('https://maps.googleapis.com/maps/api/geocode/json?region=us&address=' + encodeURIComponent(text) + '&key=' + key, { signal: ctrl.signal });
+    clearTimeout(t);
+    const d = await r.json();
+    if (d.status !== 'OK' || !d.results || !d.results[0]) { console.log('[geocode] no match:', d.status, JSON.stringify(text).slice(0, 60)); return null; }
+    const g = d.results[0]; const comp = {};
+    for (const c of (g.address_components || [])) for (const ty of c.types) comp[ty] = c.short_name;
+    if (!comp.postal_code || !comp.street_number) { console.log('[geocode] partial (no zip/street number):', g.formatted_address); return null; }
+    const formatted = String(g.formatted_address || '').replace(/,\s*USA$/i, '');
+    return { formatted, zip: comp.postal_code, city: comp.locality || comp.sublocality || comp.neighborhood || '', state: comp.administrative_area_level_1 || '', lat: g.geometry.location.lat, lng: g.geometry.location.lng };
+  } catch (e) { console.log('[geocode] error:', e.message); return null; }
 }
 function recordTurn(sessionKey, userText, replyText) {
   try {
@@ -862,7 +905,24 @@ app.post('/chat', async (req, res) => {
   // reassigning `message = state.savedEventDate` when client+date are already saved.
   // As a const this threw "Assignment to constant variable" at runtime — a TypeError
   // that node --check cannot catch — on exactly the path where both were remembered.
-  let { message, context, gbrain_context, session_id, format = 'markdown', skip_gbrain = false } = req.body;
+  let { message, context, gbrain_context, session_id, format = 'markdown', skip_gbrain = false, images = null } = req.body;
+  // Photos / scans of an order (from WhatsApp media or Slack file uploads): transcribe
+  // with vision, show the customer what was read, and run the list through the normal
+  // pipeline (age/address gating and the custom_list build all apply unchanged).
+  let imagePrefix = '';
+  if (Array.isArray(images) && images.length) {
+    const caption = String(message || '').trim();
+    const t = await transcribeOrderImages(images, caption);
+    console.log('[vision] is_order=' + t.is_order + ' lines=' + (t.list ? t.list.split('\n').length : 0) + ' | ' + t.note);
+    if (t.is_order) {
+      message = t.list + (caption && !/^(here|this is|my order|order|list|photo|image)/i.test(caption) ? '\n' + caption : '');
+      imagePrefix = 'From your photo I read:\n' + t.list + '\n\n(Tell me if anything\'s off.)\n\n';
+    } else {
+      const rNI = 'I looked at the photo but didn\'t see a drinks list to order from' + (t.note ? ' — ' + t.note : '') + '. Send a photo of a written or printed list and I\'ll build it, or just type what you\'d like.';
+      return res.json({ text: rNI, response: rNI });
+    }
+  }
+  if (imagePrefix) { const _j0 = res.json.bind(res); res.json = (payload) => { try { if (payload && typeof payload.text === 'string') { payload.text = imagePrefix + payload.text; payload.response = imagePrefix + (payload.response || ''); } } catch (e) {} return _j0(payload); }; }
 
   if (!message) return res.status(400).json({ error: 'message required' });
 
@@ -1106,6 +1166,26 @@ app.post('/chat', async (req, res) => {
     }
 
     // ── STATE: addr_new ────────────────────────────────────────────────────
+    // Address normalization via Google at the address steps (and an address change at
+    // confirm). A zip-less address gets its zip; a sloppy one ('425 west 53rd st, NY, NY
+    // 10019') becomes a clean one. The parser below then sees a complete address.
+    if ((['addr', 'addr_new'].includes(state.step) || (state.orderStep === 'confirm' && /\b(address|deliver to|delivery location)\b/i.test(message)))
+        && /\b\d{1,6}\s+[A-Za-z]/.test(message) && !/^\s*(yes|yeah|yep|no|nope|same)\b/i.test(message)) {
+      const addrText = message.replace(/^.*?\b(address|deliver to|delivery location|ship to)\b\s*(to|is|:)?\s*/i, '').replace(/^(no|nope|use|instead)[,.\s]+/i, '').trim();
+      const geo = await geocodeAddress(addrText);
+      if (geo) {
+        const hadZip = (message.match(/\b(\d{5})\b/) || [])[1];
+        if (!hadZip || hadZip === geo.zip) {
+          console.log('[geocode]', JSON.stringify(addrText).slice(0, 60), '->', geo.formatted);
+          message = message.replace(addrText, geo.formatted);
+          state.geocoded = { formatted: geo.formatted, zip: geo.zip, lat: geo.lat, lng: geo.lng };
+        } else console.log('[geocode] zip mismatch, keeping typed address:', hadZip, 'vs', geo.zip);
+      } else if (!/\b\d{5}\b/.test(message) && ['addr', 'addr_new'].includes(state.step)) {
+        // No match and no zip: ask specifically rather than repeating the generic prompt.
+        const rG = 'I couldn\'t find that address — could you double-check the street number and city, or add the zip code? (e.g. "' + addrText + ', 10019")';
+        return res.json({ text: rG, response: rG });
+      }
+    }
     if (state.step === 'addr_new') {
       // Strip a conversational prefix so "address is 425 W 53rd St" is stored as the
       // address, not the sentence (real bug: summary read "Delivery to: address is 425...").

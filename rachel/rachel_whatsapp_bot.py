@@ -156,7 +156,7 @@ _seen_sids: dict[str, float] = {}
 EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 
 # ── Rachel ────────────────────────────────────────────────────────────────────
-def ask_rachel(phone: str, text: str, user_email: str) -> str:
+def ask_rachel(phone: str, text: str, user_email: str, images=None) -> str:
     # Session keyed on the phone (stable for WhatsApp); email carried for profile/orders.
     session_key = f"whatsapp-{phone}"
     payload = {
@@ -166,8 +166,9 @@ def ask_rachel(phone: str, text: str, user_email: str) -> str:
         "gbrain_context": "",
         "context": {"kitchen_location": "", "client_id": "airculinaire", "user_email": user_email, "account_id": ""},
     }
+    if images: payload["images"] = images
     try:
-        r = httpx.post(RACHEL_URL, json=payload, timeout=180)
+        r = httpx.post(RACHEL_URL, json=payload, timeout=240)
         return r.json().get("text", "Sorry, I hit a snag — try again in a second.")
     except Exception as e:
         log.error(f"[rachel] error: {e}")
@@ -191,12 +192,24 @@ def send(to: str, text: str):
         try: twilio.messages.create(from_=FROM, to=to, body=part)
         except Exception as e: log.error(f"[twilio] send error to {to}: {e}")
 
-# ── message handling ──────────────────────────────────────────────────────────
-def handle(to: str, phone: str, text: str, profile_name: str):
-    with _lock_for(phone):
-        _handle_unlocked(to, phone, text, profile_name)
+# ── media (photos / scans of an order) ───────────────────────────────────────
+SUPPORTED_MEDIA = ("image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf")
+def fetch_media(url: str, ctype: str):
+    """Twilio media URLs need account auth. Returns {media_type, data(base64)} or None."""
+    try:
+        r = httpx.get(url, auth=(ACCOUNT_SID, AUTH_TOKEN), follow_redirects=True, timeout=30)
+        if r.status_code != 200 or not r.content: log.warning(f"[media] fetch {r.status_code} {url[:60]}"); return None
+        if len(r.content) > 15 * 1024 * 1024: log.warning("[media] too large, skipped"); return None
+        return {"media_type": ctype, "data": base64.b64encode(r.content).decode()}
+    except Exception as e:
+        log.error(f"[media] error: {e}"); return None
 
-def _handle_unlocked(to: str, phone: str, text: str, profile_name: str):
+# ── message handling ──────────────────────────────────────────────────────────
+def handle(to: str, phone: str, text: str, profile_name: str, images=None):
+    with _lock_for(phone):
+        _handle_unlocked(to, phone, text, profile_name, images)
+
+def _handle_unlocked(to: str, phone: str, text: str, profile_name: str, images=None):
     ident = get_identity(phone)
     email = ident.get("email", "")
     low = text.lower().strip()
@@ -222,13 +235,14 @@ def _handle_unlocked(to: str, phone: str, text: str, profile_name: str):
     # Twilio delivered the note AFTER the answer. Now the note re-checks `done` right
     # before sending, and the reply JOINS the note thread so a note in flight always
     # lands first. Threshold raised so ordinary 8s lookups don't trigger it.
+    if images: send(to, "Reading your photo 📷 — one moment.")
     done = threading.Event()
     def slow_note():
         if not done.wait(SLOW_NOTE_AFTER) and not done.is_set():
             send(to, "One moment — putting that together 🍷")
     t = threading.Thread(target=slow_note, daemon=True); t.start()
     try:
-        reply = ask_rachel(phone, text, email)
+        reply = ask_rachel(phone, text, email, images)
     finally:
         done.set()
     t.join(timeout=3)   # let an in-flight note finish before the reply goes out
@@ -246,7 +260,15 @@ def webhook():
     phone = frm.replace("whatsapp:", "")
     now = time.time()
     for k in [k for k, t in _seen_sids.items() if now - t > 600]: _seen_sids.pop(k, None)
-    if not sid or sid in _seen_sids or not body or not frm.startswith("whatsapp:"):
+    images = []
+    try:
+        for i in range(int(request.form.get("NumMedia", "0") or 0)):
+            ct = (request.form.get(f"MediaContentType{i}") or "").lower(); u = request.form.get(f"MediaUrl{i}")
+            if u and ct in SUPPORTED_MEDIA:
+                m = fetch_media(u, ct)
+                if m: images.append(m)
+    except Exception as e: log.error(f"[media] parse error: {e}")
+    if not sid or sid in _seen_sids or (not body and not images) or not frm.startswith("whatsapp:"):
         return Response("<Response></Response>", mimetype="application/xml")
     _seen_sids[sid] = now
     jm = re.match(r"^\s*join\s*#?\s*(\d{6})\s*$", body, re.I)
@@ -266,8 +288,8 @@ def webhook():
             _told_invite_only[phone] = time.time()
             threading.Thread(target=send, args=(frm, "Hi! Rachel is invite-only right now. If you have an invite link from Bevvi, open it to get your access code and send it here. Otherwise ask your Bevvi contact for one."), daemon=True).start()
         log.info(f"[webhook] blocked (not verified) {phone}"); return Response("<Response></Response>", mimetype="application/xml")
-    log.info(f"[{phone}] {body[:80]}")
-    threading.Thread(target=handle, args=(frm, phone, body, pname), daemon=True).start()
+    log.info(f"[{phone}] {body[:80]}" + (f" [+{len(images)} media]" if images else ""))
+    threading.Thread(target=handle, args=(frm, phone, body, pname, images or None), daemon=True).start()
     return Response("<Response></Response>", mimetype="application/xml")   # ack now; reply via REST
 
 # ── ADMIN INVITES PAGE ─────────────────────────────────────────────────────────

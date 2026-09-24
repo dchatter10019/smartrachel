@@ -144,7 +144,7 @@ def clear_history(user_id: str):
         gbrain_cache.pop(user_id, None)
 
 # ── RACHEL RESPONSE ───────────────────────────────────────────────────────────
-def ask_rachel(user_id: str, text: str, customer_context: str = "", user_email: str = "", is_new_session: bool = False) -> str:
+def ask_rachel(user_id: str, text: str, customer_context: str = "", user_email: str = "", is_new_session: bool = False, images=None) -> str:
     try:
         # Session key: prefer the customer's email over the raw Slack user_id.
         # Real bug found: the same person has DIFFERENT Slack user_ids across different
@@ -166,7 +166,8 @@ def ask_rachel(user_id: str, text: str, customer_context: str = "", user_email: 
                 "account_id": ""
             }
         }
-        r = httpx.post("http://127.0.0.1:3500/chat", json=payload, timeout=180)
+        if images: payload["images"] = images
+        r = httpx.post("http://127.0.0.1:3500/chat", json=payload, timeout=240)
         data = r.json()
         reply = data.get("text", "Sorry, I hit a snag — try again in a second.")
         return reply
@@ -207,6 +208,35 @@ def handle(event: dict, say, client):
     with _lock_for(user_id):
         return _handle_unlocked(event, say, client)
 
+import base64 as _b64
+SUPPORTED_MEDIA = ("image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf")
+def fetch_slack_files(event: dict):
+    """Photos/scans of an order attached to a Slack message. Needs the files:read scope."""
+    out = []
+    for f in (event.get("files") or [])[:4]:
+        ct = (f.get("mimetype") or "").lower(); url = f.get("url_private_download") or f.get("url_private")
+        if not url or ct not in SUPPORTED_MEDIA: continue
+        try:
+            r = httpx.get(url, headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}, follow_redirects=True, timeout=30)
+            if r.status_code != 200 or r.headers.get("content-type", "").startswith("text/html"):
+                log.warning(f"[files] fetch failed ({r.status_code}) — is the files:read scope granted?"); continue
+            if len(r.content) > 15 * 1024 * 1024: log.warning("[files] too large, skipped"); continue
+            out.append({"media_type": ct, "data": _b64.b64encode(r.content).decode()})
+        except Exception as e:
+            log.error(f"[files] error: {e}")
+    return out
+
+def _react(client, channel, ts, add=None, remove=None):
+    """Reaction feedback: 👀 while working, ✅ when replied. Needs the reactions:write scope;
+    fails quietly without it."""
+    try:
+        if remove: client.reactions_remove(channel=channel, timestamp=ts, name=remove)
+    except Exception: pass
+    try:
+        if add: client.reactions_add(channel=channel, timestamp=ts, name=add)
+    except Exception as e:
+        if "missing_scope" in str(e): log.warning("[slack] reactions need the reactions:write scope")
+
 def _handle_unlocked(event: dict, say, client):
     if is_bot(event):
         return
@@ -215,7 +245,8 @@ def _handle_unlocked(event: dict, say, client):
     text     = event.get("text", "").strip()
     channel  = event.get("channel", "")
 
-    if not text or not user_id:
+    images = fetch_slack_files(event) if event.get("files") else []
+    if (not text and not images) or not user_id:
         return
 
     if not is_allowed(user_id):
@@ -229,7 +260,7 @@ def _handle_unlocked(event: dict, say, client):
     except Exception:
         pass
 
-    if not text:
+    if not text and not images:
         return
 
     # Special commands
@@ -255,10 +286,11 @@ def _handle_unlocked(event: dict, say, client):
         gbrain_cache[user_id] = get_customer_context(client, user_id)
 
     # Show typing indicator
+    _react(client, channel, event.get("ts"), add="eyes")
     try:
         client.chat_postEphemeral(
             channel=channel, user=user_id,
-            text="Rachel is thinking... 🍷"
+            text=("Reading your photo... 📷 (this takes a moment)" if images else "Rachel is thinking... 🍷")
         )
     except Exception:
         pass
@@ -274,8 +306,9 @@ def _handle_unlocked(event: dict, say, client):
     history = get_history(user_id)
     is_new_session = len(history) == 0
     
-    reply = ask_rachel(user_id, text, gbrain_cache[user_id], user_email, is_new_session)
+    reply = ask_rachel(user_id, text, gbrain_cache[user_id], user_email, is_new_session, images or None)
     say(reply)
+    _react(client, channel, event.get("ts"), add="white_check_mark", remove="eyes")
 
 # ── EVENT LISTENERS ───────────────────────────────────────────────────────────
 
@@ -285,7 +318,9 @@ def handle_message(event, say, client, ack=None):
         ack()
     # Ignore Slack system messages (channel joins/leaves, edits, deletions, bot messages, etc.)
     # These come through as "message" events with a subtype, not real customer messages.
-    if event.get("subtype"):
+    # A photo/scan of an order arrives as subtype 'file_share' — that IS a real customer
+    # message. Every other subtype (joins, edits, deletions, bot messages) is still dropped.
+    if event.get("subtype") and event.get("subtype") != "file_share":
         return
     # Fast dedup check BEFORE any async work
     msg_id = event.get("client_msg_id") or event.get("event_ts") or event.get("ts", "")
