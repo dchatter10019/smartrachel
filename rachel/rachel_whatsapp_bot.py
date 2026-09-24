@@ -12,7 +12,8 @@ Differences from Slack, all forced by the channel:
   line boundaries. Slack's <url|text> links become "text: url".
 """
 import os, re, json, time, logging, threading
-from flask import Flask, request, Response
+from flask import Flask, request, Response, render_template_string, abort
+import secrets, base64, io
 import httpx
 from twilio.rest import Client
 from twilio.request_validator import RequestValidator
@@ -27,6 +28,9 @@ PUBLIC_URL  = os.environ.get("PUBLIC_WEBHOOK_URL", "https://mcp.getbevvi.com/wha
 RACHEL_URL  = os.environ.get("RACHEL_URL", "http://127.0.0.1:3500/chat")
 ALLOWED     = {p.strip() for p in os.environ.get("WHATSAPP_ALLOWED", "").split(",") if p.strip()}  # empty = open
 IDENTITY_FILE = os.environ.get("WHATSAPP_IDENTITY_FILE", "/home/ubuntu/logs/whatsapp-identities.json")
+INVITES_FILE  = os.environ.get("WHATSAPP_INVITES_FILE", "/home/ubuntu/logs/whatsapp-invites.json")
+PENDING_FILE  = os.environ.get("WHATSAPP_PENDING_FILE", "/home/ubuntu/logs/whatsapp-pending.json")
+CODE_TTL      = 30 * 60   # seconds a JOIN code stays valid
 SLOW_NOTE_AFTER = 12.0   # seconds before sending "one moment"
 CHUNK = 1500            # under Twilio's 1600-char WhatsApp body cap
 
@@ -49,6 +53,97 @@ def get_identity(phone: str) -> dict:
 def set_identity(phone: str, **fields):
     with _id_lock:
         d = _load_ids(); d.setdefault(phone, {}).update(fields); _save_ids(d)
+
+# ── INVITE GATE ────────────────────────────────────────────────────────────────
+# Invite link -> customer enters phone -> page shows a 6-digit code + "Open WhatsApp"
+# (prefills "JOIN <code>") -> the JOIN message arrives FROM their phone -> verified.
+# User-initiated, so no SMS (A2P) or WhatsApp template (OTP) is needed, and the phone is
+# proven by the message itself rather than by a typed number.
+_inv_lock = threading.Lock()
+def _jload(path):
+    try:
+        with open(path) as f: return json.load(f)
+    except Exception: return {}
+def _jsave(path, d):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f: json.dump(d, f, indent=1)
+    os.replace(tmp, path)
+def norm_phone(raw: str) -> str:
+    d = re.sub(r"\D", "", raw or "")
+    if len(d) == 10: d = "1" + d
+    return ("+" + d) if 11 <= len(d) <= 15 else ""
+def invite_valid(tok: str):
+    inv = _jload(INVITES_FILE).get(tok)
+    if not inv or inv.get("revoked") or inv.get("expires", 0) < time.time() or inv.get("uses_left", 0) <= 0: return None
+    return inv
+def is_verified(phone: str) -> bool:
+    return bool(get_identity(phone).get("verified"))
+def issue_code(tok: str, phone: str) -> str:
+    with _inv_lock:
+        pend = _jload(PENDING_FILE)
+        now = time.time()
+        for k in [k for k, v in pend.items() if v.get("expires", 0) < now]: pend.pop(k, None)
+        code = "".join(secrets.choice("0123456789") for _ in range(6))
+        while code in pend: code = "".join(secrets.choice("0123456789") for _ in range(6))
+        pend[code] = {"phone": phone, "token": tok, "expires": now + CODE_TTL}
+        _jsave(PENDING_FILE, pend)
+    return code
+def redeem_code(code: str, phone: str):
+    """Returns (ok, message). On success the phone is verified and the invite consumed."""
+    with _inv_lock:
+        pend = _jload(PENDING_FILE); rec = pend.get(code)
+        if not rec or rec.get("expires", 0) < time.time(): return False, "That code isn't valid or has expired — open your invite link again to get a new one."
+        if rec.get("phone") != phone: return False, "That code was issued for a different phone number — open your invite link from this phone to get one for it."
+        invs = _jload(INVITES_FILE); inv = invs.get(rec["token"])
+        if not inv or inv.get("revoked") or inv.get("uses_left", 0) <= 0: return False, "That invite is no longer active."
+        inv["uses_left"] = inv.get("uses_left", 1) - 1; inv.setdefault("used_by", []).append(phone); invs[rec["token"]] = inv; _jsave(INVITES_FILE, invs)
+        pend.pop(code, None); _jsave(PENDING_FILE, pend)
+    fields = {"verified": True, "invite": rec["token"], "first_seen": time.time()}
+    if inv.get("email"): fields["email"] = inv["email"].lower()
+    if inv.get("name"):  fields["name"]  = inv["name"]
+    set_identity(phone, **fields)
+    log.info(f"[invite] {phone} verified via {rec['token']} ({inv.get('name','')})")
+    return True, ""
+_told_invite_only: dict = {}   # phone -> ts of the one polite refusal per day
+
+INVITE_PAGE = """<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bevvi · Rachel invite</title><style>
+body{margin:0;font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#f6f3ef;color:#222}
+.card{max-width:420px;margin:48px auto;background:#fff;border-radius:18px;padding:32px 28px;box-shadow:0 8px 30px rgba(0,0,0,.08)}
+.logo{width:56px;height:56px;border-radius:50%;background:#b0272b;color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;font-size:18px;margin-bottom:18px}
+h1{font-size:22px;margin:0 0 8px}p{line-height:1.45;color:#444}input{width:100%;box-sizing:border-box;font-size:18px;padding:14px;border:1px solid #ccc;border-radius:12px;margin:12px 0}
+.btn{display:block;text-align:center;background:#25D366;color:#fff;text-decoration:none;font-weight:600;padding:16px;border-radius:12px;font-size:17px;border:0;width:100%;cursor:pointer}
+.code{font-size:40px;letter-spacing:6px;font-weight:700;text-align:center;margin:18px 0;color:#b0272b}.muted{color:#777;font-size:14px}img{display:block;margin:16px auto;max-width:180px}
+</style></head><body><div class="card"><div class="logo">bevvi</div>{{ body|safe }}</div></body></html>"""
+
+@app.route("/whatsapp/invite/<tok>", methods=["GET", "POST"])
+def invite_page(tok):
+    inv = invite_valid(tok)
+    if not inv:
+        return render_template_string(INVITE_PAGE, body="<h1>This invite isn't active</h1><p>It may have expired or already been used. Ask your Bevvi contact for a fresh link.</p>"), 410
+    who = (" " + inv["name"].split()[0]) if inv.get("name") else ""
+    if request.method == "GET":
+        return render_template_string(INVITE_PAGE, body=f"""<h1>You're invited{who}</h1>
+<p>Rachel is Bevvi's beverage specialist on WhatsApp — order wine, spirits and beer, or plan a full bar for an event, by chatting.</p>
+<form method="post"><label class="muted">Your mobile number (the one you use on WhatsApp)</label>
+<input name="phone" type="tel" placeholder="(917) 555-0123" required autofocus>
+<button class="btn" type="submit">Get my access code</button></form>""")
+    phone = norm_phone(request.form.get("phone", ""))
+    if not phone:
+        return render_template_string(INVITE_PAGE, body="<h1>Hmm, that number didn't look right</h1><p>Please go back and enter your mobile number with area code.</p>"), 400
+    code = issue_code(tok, phone)
+    digits = re.sub(r"\D", "", FROM)
+    wa = f"https://wa.me/{digits}?text=JOIN%20{code}"
+    qr_html = ""
+    try:
+        import qrcode; buf = io.BytesIO(); qrcode.make(wa).save(buf, format="PNG")
+        qr_html = f'<img src="data:image/png;base64,{base64.b64encode(buf.getvalue()).decode()}" alt="QR">'
+    except Exception: pass
+    return render_template_string(INVITE_PAGE, body=f"""<h1>One tap to start</h1>
+<p>Tap below — it opens WhatsApp with your access code ready to send. Sending it from <b>{phone}</b> activates Rachel for you.</p>
+<div class="code">{code}</div>
+<a class="btn" href="{wa}">Open WhatsApp</a>
+<p class="muted">On a computer? Scan with your phone, or message <b>+{digits}</b> on WhatsApp with: <b>JOIN {code}</b>. The code is valid for 30 minutes.</p>{qr_html}""")
 
 # ── per-phone serialization + dedup (same pattern as the Slack bot) ───────────
 _locks: dict[str, threading.Lock] = {}
@@ -154,8 +249,23 @@ def webhook():
     if not sid or sid in _seen_sids or not body or not frm.startswith("whatsapp:"):
         return Response("<Response></Response>", mimetype="application/xml")
     _seen_sids[sid] = now
-    if ALLOWED and phone not in ALLOWED:
-        log.info(f"[webhook] blocked {phone}"); return Response("<Response></Response>", mimetype="application/xml")
+    jm = re.match(r"^\s*join\s*#?\s*(\d{6})\s*$", body, re.I)
+    if jm:
+        def _join():
+            ok, msg = redeem_code(jm.group(1), phone)
+            if ok:
+                ident = get_identity(phone)
+                send(frm, ask_rachel(phone, "__greeting__", ident.get("email", "")))
+            else:
+                send(frm, msg)
+        threading.Thread(target=_join, daemon=True).start()
+        return Response("<Response></Response>", mimetype="application/xml")
+    if not is_verified(phone) and phone not in ALLOWED:
+        # One polite refusal per day, then silence (no reply burns no trial messages).
+        if time.time() - _told_invite_only.get(phone, 0) > 86400:
+            _told_invite_only[phone] = time.time()
+            threading.Thread(target=send, args=(frm, "Hi! Rachel is invite-only right now. If you have an invite link from Bevvi, open it to get your access code and send it here. Otherwise ask your Bevvi contact for one."), daemon=True).start()
+        log.info(f"[webhook] blocked (not verified) {phone}"); return Response("<Response></Response>", mimetype="application/xml")
     log.info(f"[{phone}] {body[:80]}")
     threading.Thread(target=handle, args=(frm, phone, body, pname), daemon=True).start()
     return Response("<Response></Response>", mimetype="application/xml")   # ack now; reply via REST

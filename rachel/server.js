@@ -1477,9 +1477,34 @@ app.post('/chat', async (req, res) => {
         console.log('[add-item] ref=' + JSON.stringify(clsRef) + ' matches=' + prods.length);
         if (prods.length === 1) {
           const pr = prods[0]; const price = parseFloat(pr.salePrice || pr.price) || 0; const size = pr.sizeStr || pr.size || '';
+          const nz = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          let itemsA = []; try { itemsA = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+          // Already in the basket: say so, don't add a duplicate line.
+          const same = itemsA.find(it => nz(it.name) === nz(pr.name) || nz(it.name).indexOf(nz(pr.name).slice(0, 14)) === 0);
+          if (same) {
+            const q0 = same.qty || same.quantity || 1;
+            const rS = pr.name + ' is already in your order (' + q0 + ' bottle' + (q0 === 1 ? '' : 's') + '). Want to change the quantity, or add something else?';
+            return res.json({ text: rS, response: rS });
+          }
+          // Replace-in-varietal: "let's go with Tito's for vodka" when the basket holds another
+          // vodka means REPLACE it and keep the quantity (3 bottles stay 3), not add a new line.
+          const VARS2 = ['sauvignon','blanc','pinot','noir','grigio','gris','chardonnay','cabernet','merlot','rose','riesling','malbec','syrah','shiraz','zinfandel','champagne','prosecco','cava','tequila','vodka','gin','rum','bourbon','whiskey','whisky','scotch','mezcal','sparkling','liqueur'];
+          const nv2 = x => new Set(String(x||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').split(/[^a-z]+/).filter(w => VARS2.includes(w)));
+          const pvA = nv2(pr.name + ' ' + (pr.category || '') + ' ' + (pr.subCategory || '') + ' ' + message);
+          const targetA = pvA.size ? itemsA.find(it => { const iv = nv2(it.name); return [...pvA].some(v => iv.has(v)); }) : null;
+          const labelR = pr.name + (size && nz(pr.name).indexOf(nz(size)) < 0 ? ' — ' + size : '') + ' — $' + price.toFixed(2);
+          if (targetA) {
+            const rr2 = await applyBasketSubstitute(sessionKey, email, targetA.name, pr.name, price, size);
+            if (!(rr2 && rr2.success === false)) {
+              retirePendingFor(state, pr.name);
+              const kq = targetA.qty || targetA.quantity || 1;
+              const rT = 'Got it — ' + kq + 'x ' + labelR + ' (replacing ' + targetA.name + '). Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+              return res.json({ text: rT, response: rT });
+            }
+          }
           await applyBasketSubstitute(sessionKey, email, '', pr.name, price, size);
             retirePendingFor(state, pr.name);
-          const label = pr.name + (size && pr.name.indexOf(size) < 0 ? ' — ' + size : '') + ' — $' + price.toFixed(2);
+          const label = pr.name + (size && nz(pr.name).indexOf(nz(size)) < 0 ? ' — ' + size : '') + ' — $' + price.toFixed(2);
           if (clsQty > 1) {
             try { const it = JSON.parse(state.lastLineItems || '[]'); const nk = x => String(x||'').toLowerCase().replace(/[^a-z0-9]/g,''); const row = it.find(x => nk(x.name) === nk(pr.name)); if (row) { row.qty = clsQty; row.quantity = clsQty; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); saveFlowState(); } } catch (e) {}
             const rA = 'Added ' + clsQty + 'x ' + label + ' to your order. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
@@ -2629,8 +2654,26 @@ app.post('/chat', async (req, res) => {
           if (!already) {
             console.log('[pick-list] deterministic selection:', JSON.stringify(picked));
             state.lastPickResolved = { name: picked.name, size: picked.size, at: Date.now() };
-            const r = await applyBasketSubstitute(sessionKey, email, '', picked.name + (picked.size ? ' - ' + picked.size : ''), picked.price, picked.size);
+            // Replace-in-varietal (same rule as the multi-pick resolver): if the basket already
+            // holds a wine/spirit of this varietal, the pick REPLACES it and keeps the quantity.
+            // Real bug: Whispering Angel 2x -> Wölffer picked via this path -> added at 1x.
+            let replTarget = null;
+            try {
+              const VARS = ['sauvignon','blanc','pinot','noir','grigio','gris','chardonnay','cabernet','merlot','rose','riesling','malbec','syrah','shiraz','zinfandel','champagne','prosecco','cava','tequila','vodka','gin','rum','bourbon','whiskey','whisky','scotch','mezcal','sparkling'];
+              const nv = x => new Set(String(x||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').split(/[^a-z]+/).filter(w => VARS.includes(w)));
+              const heading = (lastAssistantTextGate.replace(/\*/g,'').match(/([A-Z][^\n:]{2,60}?)\s+(?:options|alternatives|is available|comes in)/) || [])[1] || '';
+              const pv = nv(heading + ' ' + picked.name);
+              const items0 = JSON.parse(state.lastLineItems || '[]');
+              const nk0 = x => String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+              if (pv.size) replTarget = items0.find(it => { const iv = nv(it.name); return [...pv].some(v => iv.has(v)) && nk0(it.name) !== nk0(picked.name); }) || null;
+            } catch (e) {}
+            const r = await applyBasketSubstitute(sessionKey, email, replTarget ? replTarget.name : '', picked.name + (picked.size ? ' - ' + picked.size : ''), picked.price, picked.size);
             retirePendingFor(state, picked.name);
+            if (replTarget && !(r && r.success === false)) {
+              const keptQty = replTarget.qty || replTarget.quantity || 1;
+              const rR = 'Got it — ' + keptQty + 'x ' + picked.name + (picked.size ? ' — ' + picked.size : '') + ' — $' + picked.price.toFixed(2) + ' (replacing ' + replTarget.name + '). Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+              return res.json({ text: rR, response: rR });
+            }
             const added = picked.name + (picked.size ? ' — ' + picked.size : '') + ' — $' + picked.price.toFixed(2);
             // Ask quantity ONCE, at pick time — never silently default to 1 (real
             // complaint: a red wine was added at 1x with no question, while the white
