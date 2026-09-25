@@ -1228,7 +1228,12 @@ async function buildPackage(iv) {
         var nonRose=found.filter(function(x){return !/ros[eé]|blush/.test(String(x.name||'').toLowerCase());});
         if(nonRose.length) found=nonRose;
       }
+      // A customer-stated size wins before anything else (real bug: "Tito's 750ml" — the
+      // 750 mL was in the results, the price-desc sort put the 1.75 L first, and the size
+      // check then declared the 750 mL "unavailable").
+      var reqSizeSort=(String(np.name||'').match(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/i)||[''])[0].toLowerCase().replace(/\s+/g,'');
       found.sort(function(a,b) {
+        if(reqSizeSort){ var sa=String(a.sizeStr||'').toLowerCase().replace(/\s+/g,'')===reqSizeSort?0:1, sb=String(b.sizeStr||'').toLowerCase().replace(/\s+/g,'')===reqSizeSort?0:1; if(sa!==sb) return sa-sb; }
         var ea=nameKey(a)===reqKey?1:0, eb=nameKey(b)===reqKey?1:0; if(ea!==eb) return eb-ea;
         function score(x){var s=0;var ln=x.name.toLowerCase();for(var t=0;t<terms.length;t++) if(ln.indexOf(terms[t])>=0) s++;return s;}
         var d=score(b)-score(a);if(d) return d;

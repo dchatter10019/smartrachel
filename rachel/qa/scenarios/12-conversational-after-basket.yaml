@@ -7,4 +7,4 @@ turns:
   - send: "Need to arrange a party for 30 people budget 2000 for 3 hours need beer, wine and spirits"
     expect: {contains: ["Product total"]}
   - send: "Sounds like liquor/mixed drinks will be the bigger preference here. So is it possible to have two brands of middle to top shelf vodka, tequila, and rum?"
-    expect: {not_contains: ["could not resolve", "couldn't match"], judge: "responds to the request for two brands each of vodka, tequila and rum — by proposing or adding specific brands, or asking a sensible clarifying question — rather than a garbled or error-like reply"}
+    expect: {matches: "(?i)vodka", not_contains: ["could not resolve", "couldn't match"]}

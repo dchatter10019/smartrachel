@@ -1036,7 +1036,7 @@ app.post('/chat', async (req, res) => {
 
     // ── D2C flow — state machine ───────────────────────────────────────────
     const state = getState(sessionKey);
-    const msgLower = message.toLowerCase().trim().replace(/\*/g, '').replace(/_/g, '');
+    let msgLower = message.toLowerCase().trim().replace(/\*/g, '').replace(/_/g, '');
 
     // Capture a mentioned quantity from ANY message (e.g. "need a bottle of opus", "get me
     // 2 bottles") and persist it on state, since the actual "how many bottles?" question may
@@ -1168,8 +1168,31 @@ app.post('/chat', async (req, res) => {
         return res.json({ text: bye, response: bye });
       } else {
         const ask = 'Before we get started — are you 21 or older?';
+        // A substantive first message (an order, a question) is kept and replayed after the
+        // gate instead of being discarded — real gap on email/WhatsApp, where the first
+        // message usually IS the order.
+        const greetingOnly = msgLower.length < 12 || /^(hi|hello|hey|yo|hola|good (morning|afternoon|evening)|reset)[\s!.,]*$/i.test(msgLower);
+        if (!greetingOnly) {
+          state.pendingIntent = message; saveFlowState();
+          const ack = 'Thanks — I have your request and will pick it up right after one quick check. Are you 21 or older?';
+          return res.json({ text: ack, response: ack });
+        }
         return res.json({ text: ask, response: ask });
       }
+    }
+    // Pre-gate message stashed above: if it contains a delivery address, run that through
+    // the address step now and replay the rest once the address is accepted; if the flow is
+    // already ready (saved address), replay it whole.
+    if (state.pendingIntent && state.step === 'addr_new') {
+      const am = state.pendingIntent.match(/\b(\d{1,6}\s+[A-Za-z0-9.'#\- ]{3,60}?(?:,\s*[A-Za-z. ]{2,40}){1,3},?\s+\d{5})\b/);
+      if (am) {
+        const rest = state.pendingIntent.replace(am[1], '').replace(/\b(deliver(?:ed|y)?\s+(?:to|at)|ship(?:ped)?\s+to|address(?: is)?:?)\s*(?=,|\.|\s+on\b|\s*$)/i, '').trim();
+        message = am[1]; msgLower = message.toLowerCase();
+        state.pendingIntent = rest.replace(/\s+/g, ' ').length > 8 ? rest : null; saveFlowState();
+        console.log('[age] pre-gate message: address', JSON.stringify(message), '| replaying rest:', JSON.stringify((state.pendingIntent || '').slice(0, 80)));
+      }
+    } else if (state.pendingIntent && state.step === 'ready' && state.ageVerified) {
+      message = state.pendingIntent; msgLower = message.toLowerCase(); state.pendingIntent = null; saveFlowState();
     }
 
     // ── STATE: addr_new ────────────────────────────────────────────────────
@@ -1488,6 +1511,13 @@ app.post('/chat', async (req, res) => {
         // if wrong (0.65); place_order starts a multi-step flow (0.75); add_item changes
         // the basket (0.8).
         const THRESH = { place_order: 0.75, show_basket: 0.65, change_time: 0.75, change_instructions: 0.75, change_contact: 0.75, recommend: 0.65, add_item: 0.8 };
+        // place_order with an EMPTY basket and named products is a build request, not a
+        // checkout (real bug: "I'd like to order 3 bottles of Tito's…" at 0.78 jumped to
+        // "What is your full name?" with nothing in the basket).
+        if (cr.source === 'llm' && cr.intent === 'place_order' && bsz2 === 0 && (cr.ref || /\b\d+\s*(bottles?|cases?|x)\b/i.test(message))) {
+          console.log('[classify] place_order with empty basket + products -> treated as build, not checkout');
+          cr.intent = 'custom_list';
+        }
         if (cr.source === 'llm' && THRESH[cr.intent] !== undefined && cr.confidence >= THRESH[cr.intent]) {
           clsIntent = cr.intent; clsRef = cr.ref || ''; var clsQty = cr.qty || 0;
           console.log('[classify->route]', clsIntent, cr.confidence.toFixed(2), '|', JSON.stringify(message).slice(0, 60));

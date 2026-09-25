@@ -14,6 +14,18 @@ RACHEL_EMAIL = 'rachelai@getbevvi.com'
 ANTHROPIC_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 POLL_INTERVAL = 60
 THREAD_SESSIONS = {}  # thread_id -> session_id for Rachel chat continuity
+THREAD_FILE = '/home/ubuntu/logs/email-thread-sessions.json'
+try:
+    import json as _json
+    THREAD_SESSIONS = _json.load(open(THREAD_FILE))
+except Exception:
+    THREAD_SESSIONS = {}
+def _persist_threads():
+    try:
+        import json as _json
+        _json.dump(THREAD_SESSIONS, open(THREAD_FILE, 'w'))
+    except Exception as e:
+        log.error(f'thread persist failed: {e}')
 
 logging.basicConfig(level=logging.INFO, format='[%(asctime)s] %(message)s',
     handlers=[logging.FileHandler('/home/ubuntu/logs/email-agent.log')])
@@ -41,7 +53,8 @@ def get_email(service, msg_id):
         for part in p.get('parts', []): get_body(part)
     get_body(msg['payload'])
     return {'id': msg_id, 'thread_id': msg['threadId'],
-            'from': headers.get('from', ''), 'subject': headers.get('subject', ''), 'body': body.strip()}
+            'from': headers.get('from', ''), 'subject': headers.get('subject', ''), 'body': body.strip(),
+            'message_id': headers.get('message-id', ''), 'references': headers.get('references', '')}
 
 def parse_with_claude(from_email, subject, body):
     prompt = f"""Extract beverage order info from this email. Return ONLY JSON with these fields:
@@ -177,9 +190,14 @@ def format_clarification(order, missing):
     fields = ', '.join(missing)
     return f"Thank you for reaching out to Bevvi! To prepare your beverage proposal, I need a few more details: {fields}. Please reply with this information and I'll get your proposal ready right away."
 
-def send_reply(service, thread_id, to, subject, body, pdf_path=None):
+def send_reply(service, thread_id, to, subject, body, pdf_path=None, in_reply_to=None, references=None):
     msg = MIMEMultipart()
     msg['To'] = to
+    # Threading headers so the CUSTOMER's client (Outlook, Apple Mail, Gmail) groups the
+    # reply with their email and their next reply comes back into the same thread/session.
+    if in_reply_to:
+        msg['In-Reply-To'] = in_reply_to
+        msg['References'] = ((references or '') + ' ' + in_reply_to).strip()
     msg['Subject'] = subject if subject.startswith('Re:') else f'Re: {subject}'
     msg.attach(MIMEText(body, 'plain'))
     if pdf_path and os.path.exists(pdf_path):
@@ -221,42 +239,24 @@ def process(service, email):
         session_id = THREAD_SESSIONS[thread_id]
         rachel_response = chat_with_rachel(email['body'], session_id, sender_email)
         if rachel_response:
-            send_reply(service, thread_id, sender_email, email['subject'], rachel_response)
+            send_reply(service, thread_id, sender_email, email['subject'], rachel_response, in_reply_to=email.get('message_id'), references=email.get('references'))
             log.info(f'Continuation reply sent for thread {thread_id[:8]}...')
         service.users().messages().modify(userId='me',id=email['id'],body={'removeLabelIds':['UNREAD']}).execute()
         return
 
-    # New thread — parse and build proposal
+    # New thread: every email goes through Rachel's chat, like every other channel. Her
+    # state machine handles the age gate (keeping the order text to replay after "yes"),
+    # the address, named products and event requests. The old email-only parser asked
+    # customers for "guests, budget, event_type" when they had simply named products.
     session_id = f'email-{thread_id[:16]}-{sender_email.split("@")[0]}'
-    order = parse_with_claude(email['from'], email['subject'], email['body'])
-    order['sender_email'] = sender_email
-    log.info(f"Parsed: confidence={order.get('confidence')}, guests={order.get('guests')}, budget={order.get('budget')}")
-
     rachel_response = chat_with_rachel(email['body'], session_id, sender_email)
-
-    if order.get('confidence') == 'low':
-        body = format_clarification(order, order.get('missing_fields', ['event details']))
-        send_reply(service, thread_id, sender_email, email['subject'], body)
-    else:
-        package = build_package(order, sender_email)
-        pdf_path = None
-        if package:
-            pdf_path = gen_pdf(package,
-                order.get('client_name', sender_email.split('@')[0]),
-                order.get('event_date', ''))
-
-        email_body = format_package(package, order) if package else rachel_response
-        if pdf_path:
-            email_body += '\n\nA PDF proposal is attached.'
-
-        send_reply(service, thread_id, sender_email, email['subject'], email_body, pdf_path)
-        log.info(f"Initial proposal sent: ${package.get('estimated_grand_total') if package else 'N/A'}")
-
-        # Save to GBrain for cross-channel continuity
+    if rachel_response:
+        send_reply(service, thread_id, sender_email, email['subject'], rachel_response, in_reply_to=email.get('message_id'), references=email.get('references'))
+        log.info('Initial reply sent via Rachel chat')
         save_to_gbrain(sender_email, thread_id)
 
     # Save session for this thread
-    THREAD_SESSIONS[thread_id] = session_id
+    THREAD_SESSIONS[thread_id] = session_id; _persist_threads()
     log.info(f'Thread {thread_id[:8]}... -> session {session_id}')
 
     service.users().messages().modify(userId='me',id=email['id'],body={'removeLabelIds':['UNREAD']}).execute()

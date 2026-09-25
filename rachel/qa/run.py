@@ -53,6 +53,53 @@ class SlackTransport:
             elif got and last_new and time.time() - last_new > 6: break   # quiet for 6s: reply complete
         return "\n".join(got) if got else "<<NO REPLY within %ds>>" % timeout, round(time.time() - t0, 1)
 
+class EmailTransport:
+    """Real email: as rachel_qa@ (same service account, domain-wide delegation), email
+    rachelai@, reply in-thread for later turns, wait for Rachel's reply in the thread."""
+    QA_FROM = os.environ.get("QA_EMAIL_FROM", "rachel_qa@getbevvi.com")
+    RACHEL = os.environ.get("RACHEL_EMAIL", "rachelai@getbevvi.com")
+    def __init__(self, name):
+        from google.oauth2 import service_account
+        from googleapiclient.discovery import build
+        creds = service_account.Credentials.from_service_account_file("/home/ubuntu/config/gmail-service-account.json", scopes=["https://www.googleapis.com/auth/gmail.modify"])
+        self.svc = build("gmail", "v1", credentials=creds.with_subject(self.QA_FROM), cache_discovery=False)
+        self.rsvc = build("gmail", "v1", credentials=creds.with_subject(self.RACHEL), cache_discovery=False)   # to mark our sends unread (API-sent mail arrives pre-read)
+        self.subject = f"QA {name} {int(time.time())}"; self.thread = None; self.last_msg_id = None; self.seen = set(); self.marked = set()
+    def _body(self, msg):
+        import base64 as b64
+        def walk(p):
+            if p.get("mimeType") == "text/plain" and p.get("body", {}).get("data"): return b64.urlsafe_b64decode(p["body"]["data"]).decode("utf-8", "ignore")
+            for q in p.get("parts", []) or []:
+                t = walk(q)
+                if t: return t
+            return ""
+        return walk(msg["payload"]).strip()
+    def send(self, text, images=None, timeout=300):
+        import base64 as b64
+        from email.mime.text import MIMEText
+        m = MIMEText(text); m["To"] = self.RACHEL; m["From"] = self.QA_FROM; m["Subject"] = self.subject if not self.last_msg_id else "Re: " + self.subject
+        if self.last_msg_id: m["In-Reply-To"] = self.last_msg_id; m["References"] = self.last_msg_id
+        body = {"raw": b64.urlsafe_b64encode(m.as_bytes()).decode()}
+        if self.thread: body["threadId"] = self.thread
+        sent = self.svc.users().messages().send(userId="me", body=body).execute()
+        self.thread = sent["threadId"]; self.seen.add(sent["id"]); t0 = time.time()
+        for _ in range(6):   # API-sent mail arrives pre-read in Rachel's mailbox: mark just this one unread
+            time.sleep(3)
+            got = self.rsvc.users().messages().list(userId="me", q=f'from:{self.QA_FROM} subject:"{self.subject}" newer_than:1h', maxResults=5).execute().get("messages", [])
+            fresh = [g for g in got if g["id"] not in self.marked]
+            if fresh:
+                self.rsvc.users().messages().modify(userId="me", id=fresh[0]["id"], body={"addLabelIds": ["UNREAD"]}).execute(); self.marked.add(fresh[0]["id"]); break
+        while time.time() - t0 < timeout:   # Rachel's reply: search our inbox by subject, not by thread id (thread ids are per-mailbox)
+            time.sleep(10)
+            got = self.svc.users().messages().list(userId="me", q=f'from:{self.RACHEL} subject:"{self.subject}" newer_than:1h', maxResults=5).execute().get("messages", [])
+            for g in got:
+                if g["id"] in self.seen: continue
+                msg = self.svc.users().messages().get(userId="me", id=g["id"], format="full").execute()
+                hdr = {h["name"].lower(): h["value"] for h in msg["payload"].get("headers", [])}
+                self.seen.add(g["id"]); self.last_msg_id = hdr.get("message-id", ""); self.thread = msg.get("threadId", self.thread)
+                return self._body(msg) or "<<empty body>>", round(time.time() - t0, 1)
+        return "<<NO REPLY within %ds>>" % timeout, round(time.time() - t0, 1)
+
 def send(session, text, fmt, email, images=None):
     payload = {"message": text, "session_id": session, "format": fmt, "gbrain_context": "", "qa": True,
                "context": {"kitchen_location": "", "client_id": "airculinaire", "user_email": email, "account_id": ""}}
@@ -102,7 +149,7 @@ def load_image(path):
 
 def run_scenario(sc, verbose):
     name = sc["name"]; fmt = sc.get("format", "slack"); transport = sc.get("transport", "http")
-    slack = SlackTransport() if transport == "slack" else None
+    slack = SlackTransport() if transport == "slack" else (EmailTransport(name) if transport == "email" else None)
     email = sc.get("email") or (f"qa-{name}-{int(time.time())}@getbevvi.com" if sc.get("fresh") else QA_EMAIL)
     session = f"qa-{name}-{int(time.time())}"
     print(f"\n▶ {name}  [{transport if transport != 'http' else fmt}]")

@@ -174,7 +174,7 @@ ${lastBasket ? `\n## Last Basket\n${lastBasket.map(i => `- ${i.qty || i.quantity
 async function saveBasket(userEmail, basket, total, channel) {
   // QA identities never train the learned price profile (real bug: dry-run baskets drifted
   // the spirits floor upward until a named Tito's was reported 'unavailable').
-  if (/^qa-[^@]*@getbevvi\.com$/i.test(String(userEmail || ''))) { console.log('[gbrain] basket save skipped for QA identity:', userEmail); return; }
+  if (/^(qa-[^@]*|rachel_qa)@getbevvi\.com$/i.test(String(userEmail || ''))) { console.log('[gbrain] basket save skipped for QA identity:', userEmail); return; }
   if (!userEmail || !basket) return;
   try {
     const fs = require('fs');
