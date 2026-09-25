@@ -2695,6 +2695,7 @@ app.post('/chat', async (req, res) => {
         const groups = []; let cur = null;
         for (const raw of String(lastAssistantTextGate || '').split('\n')) {
           const line = raw.replace(/\*/g, '').trim(); if (!line) continue;
+          if (/^\s*\d{1,3}x\s/i.test(line) || /\bea\s*=\s*\$/.test(line)) continue;   // basket line, not an option
           const lm = line.match(lineRe2);
           if (lm) { if (!cur) { cur = { heading: '', options: [] }; groups.push(cur); } cur.options.push({ n: lm[1] ? parseInt(lm[1]) : cur.options.length + 1, name: lm[2].trim(), size: (lm[3] || '').trim(), price: parseFloat(lm[4].replace(/,/g, '')) }); }
           else if (!/\$/.test(line) && !/^\d{1,2}[.)]/.test(line) && !/^[-•]/.test(line) && !/\?$/.test(line) && line.length <= 140 && /^[A-Za-zÀ-ÿ]/.test(line)) {
@@ -2707,7 +2708,14 @@ app.post('/chat', async (req, res) => {
         const allOpts = realGroups.flatMap(g => g.options.map(o => Object.assign({ heading: g.heading }, o)));
         const partsRaw = message.replace(/^\s*(ok(ay)?[,.!\s]*)?(please\s+)?(give me|i'?ll (take|have|go with)|let'?s (go with|do)|go with|add|i want|i'd like|the)\s+/i, '').split(/\s*(?:,|;|\n|\band\b|\bplus\b|&)\s*/i).map(x => x.trim()).filter(Boolean);
         const isGrouped = realGroups.length >= 2;
-        if (allOpts.length && (partsRaw.length >= 2 || isGrouped) && !state.orderStep && !state.proposalStep) {
+        // GUARDS (real failure: 'is it possible to have two brands of vodka, tequila, and rum?'
+        // was split on commas and matched against the BASKET listing in the previous reply).
+        const lastRTxt = String(lastAssistantTextGate || '');
+        const looksLikeOptionList = /\b(which (one|ones|would you)|options?|alternatives?|choose|pick one|would you like to add)\b/i.test(lastRTxt) && /^\s*\d{1,2}[.)]\s/m.test(lastRTxt);
+        const looksLikeSelection = !/\?/.test(message) && message.length <= 120 && partsRaw.every(pt => pt.split(/\s+/).length <= 6)
+          && !/\b(is it possible|can (we|you)|could (we|you)|sounds like|prefer|would like|i think|maybe|instead of|what about|how about|let'?s have|two brands|more of|less of)\b/i.test(message)
+          && !(clsIntent && !['select_option', 'add_item'].includes(clsIntent));
+        if (allOpts.length && looksLikeOptionList && looksLikeSelection && (partsRaw.length >= 2 || isGrouped) && !state.orderStep && !state.proposalStep) {
           const picks = []; const bareNums = [];
           const wordsOf = x => normP(x).split(/[^a-z0-9]+/).filter(w => w.length >= 3);
           const headMatch = (cat) => { const cw = wordsOf(cat); return realGroups.find(g => { const hw = wordsOf(g.heading); return cw.length && cw.every(c => hw.some(h => h.startsWith(c) || c.startsWith(h))); }); };

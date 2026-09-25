@@ -17,3 +17,8 @@ if [ -n "$out" ]; then echo "$out"; fail=1; fi
 ua=$(grep -nE "=\s*(inferPriceRange|searchProducts|searchWithFallbacks|buildPackage|getCustomerProfile|applyBasketSubstitute|checkStoreCoverage|checkDeliveryAvailability)\(" $FILES | grep -v "await " || true)
 if [ -n "$ua" ]; then echo "UN-AWAITED ASYNC CALL:"; echo "$ua"; fail=1; fi
 [ $fail -eq 0 ] && echo "PRECHECK OK — safe to restart" || { echo "PRECHECK FAILED — do not restart"; exit 1; }
+
+# --smoke: run the QA smoke set (~2 min) after lint passes. Use before a restart you care about.
+if [ "${1:-}" = "--smoke" ]; then
+  echo "Running QA smoke set..."; cd /home/ubuntu/rachel && ./qa/run.py --smoke 2>&1 | grep -v "^       " | tail -6 || { echo "SMOKE FAILED — do not restart"; exit 1; }
+fi
