@@ -2730,16 +2730,22 @@ app.post('/chat', async (req, res) => {
           && !/\b(is it possible|can (we|you)|could (we|you)|sounds like|prefer|would like|i think|maybe|instead of|what about|how about|let'?s have|two brands|more of|less of)\b/i.test(message)
           && !(clsIntent && !['select_option', 'add_item'].includes(clsIntent));
         if (allOpts.length && looksLikeOptionList && looksLikeSelection && (partsRaw.length >= 2 || isGrouped) && !state.orderStep && !state.proposalStep) {
-          const picks = []; const bareNums = [];
+          const picks = []; const bareNums = []; const done = [];
           const wordsOf = x => normP(x).split(/[^a-z0-9]+/).filter(w => w.length >= 3);
           const headMatch = (cat) => { const cw = wordsOf(cat); return realGroups.find(g => { const hw = wordsOf(g.heading); return cw.length && cw.every(c => hw.some(h => h.startsWith(c) || c.startsWith(h))); }); };
           const resolvedParts = new Set();
           for (const part of partsRaw) {
             const cm = part.match(/^(.*?[a-z].*?)\s*#?\s*(\d{1,2})\s*$/i);
             if (cm) {
-              const g = headMatch(cm[1]); const n = parseInt(cm[2]);
+              const n = parseInt(cm[2]);
+              const gAny = (() => { const cw = wordsOf(cm[1]); return groups.find(gg => { const hw = wordsOf(gg.heading); return cw.length && cw.every(c => hw.some(h => h.startsWith(c) || c.startsWith(h))); }); })();
+              const g = gAny && gAny.options.length ? gAny : null;
               let o = g && (g.options.find(x => x.n === n) || g.options[n - 1]);
-              if (!o) { const glob = allOpts.find(x => x.n === n); if (glob) o = glob; }   // continuous numbering: 'Pinot Noir 2' = global #2
+              // A heading that EXISTS but offered nothing ('Sauvignon Blanc — no alternative found')
+              // must not fall through to the global option N (real bug: 'Sauvignon Blanc 1' and
+              // 'rosé 1' both grabbed global #1, Louis Jadot Pinot Noir, three times over).
+              if (!o && gAny && !gAny.options.length) { done.push('no alternatives were listed for ' + gAny.heading + ' — nothing changed there'); resolvedParts.add(part); continue; }
+              if (!o && !gAny) { const glob = allOpts.find(x => x.n === n); if (glob) o = glob; }   // unknown category word: continuous numbering
               if (o) { picks.push(Object.assign({ heading: (g && g.heading) || o.heading }, o)); resolvedParts.add(part); continue; }
             }
             if (/^\d{1,2}$/.test(part)) { bareNums.push(parseInt(part)); resolvedParts.add(part); continue; }
@@ -2753,8 +2759,8 @@ app.post('/chat', async (req, res) => {
             const VAR = ['sauvignon','blanc','pinot','noir','grigio','gris','chardonnay','cabernet','merlot','rose','riesling','malbec','syrah','shiraz','zinfandel','champagne','prosecco','cava','tequila','vodka','gin','rum','bourbon','whiskey','whisky','scotch','mezcal','beer','ipa','lager','cider','sparkling','red','white'];
             const varOf = x => new Set(wordsOf(x).filter(w => VAR.includes(w)));
             let items = []; try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
-            const done = [];
-            for (const pk of picks) {
+            const seenPick = new Set(); const uniqPicks = picks.filter(pk => { const k = normP(pk.name); if (seenPick.has(k)) return false; seenPick.add(k); return true; });
+            for (const pk of uniqPicks) {
               const pv = varOf(pk.heading + ' ' + pk.name);
               const target = pv.size ? items.find(it => { const iv = varOf(it.name); return [...pv].some(v => iv.has(v)) && normP(it.name) !== normP(pk.name); }) : null;
               // Catalog lookup needs a clean name: drop emoji/markers ('⭐', '✓') and fold
