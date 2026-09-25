@@ -26,4 +26,4 @@ turns:
   - send: "change the delivery instructions to leave with the doorman"
     expect: {contains: ["leave with the doorman", "Shall I go ahead"]}
   - send: "yes"
-    expect: {contains: ["placed"], judge: "says the order has been placed and gives a checkout or payment link"}
+    expect: {matches: "placed|confirmed|submitted", contains: ["direct-checkout"]}

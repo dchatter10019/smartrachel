@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -o pipefail
 # Pre-restart safety check for Rachel services.
 # node --check only catches syntax errors; it CANNOT catch reassigning a const
 # (a runtime TypeError). That bit us twice in one day. Run this before any restart.
