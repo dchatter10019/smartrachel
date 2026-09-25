@@ -29,6 +29,30 @@ def judge(reply, criterion):
     except Exception as e:
         print("   judge error:", e); return False
 
+class SlackTransport:
+    """Real Slack: DM Rachel as the QA user (SLACK_QA_USER_TOKEN), wait for her reply."""
+    def __init__(self):
+        from slack_sdk import WebClient
+        self.user = WebClient(token=os.environ["SLACK_QA_USER_TOKEN"])
+        bot = WebClient(token=os.environ["SLACK_BOT_TOKEN"]).auth_test()
+        self.bot_user = bot["user_id"]
+        self.dm = self.user.conversations_open(users=self.bot_user)["channel"]["id"]
+    def send(self, text, images=None, timeout=150):
+        if images:
+            r = self.user.files_upload_v2(channel=self.dm, file=base64.b64decode(images[0]["data"]), filename="order.jpg", initial_comment=text or None)
+            ts = str(time.time())
+        else:
+            ts = self.user.chat_postMessage(channel=self.dm, text=text)["ts"]
+        t0 = time.time(); got = []; last_new = None
+        while time.time() - t0 < timeout:
+            time.sleep(2.5)
+            msgs = self.user.conversations_history(channel=self.dm, oldest=ts, limit=20)["messages"]
+            bot_msgs = [m for m in msgs if m.get("user") == self.bot_user]
+            texts = [m.get("text", "") for m in sorted(bot_msgs, key=lambda m: float(m["ts"]))]
+            if texts and texts != got: got = texts; last_new = time.time()
+            elif got and last_new and time.time() - last_new > 6: break   # quiet for 6s: reply complete
+        return "\n".join(got) if got else "<<NO REPLY within %ds>>" % timeout, round(time.time() - t0, 1)
+
 def send(session, text, fmt, email, images=None):
     payload = {"message": text, "session_id": session, "format": fmt, "gbrain_context": "", "qa": True,
                "context": {"kitchen_location": "", "client_id": "airculinaire", "user_email": email, "account_id": ""}}
@@ -77,16 +101,17 @@ def load_image(path):
     return [{"media_type": mt, "data": base64.b64encode(open(p, "rb").read()).decode()}]
 
 def run_scenario(sc, verbose):
-    name = sc["name"]; fmt = sc.get("format", "slack")
+    name = sc["name"]; fmt = sc.get("format", "slack"); transport = sc.get("transport", "http")
+    slack = SlackTransport() if transport == "slack" else None
     email = sc.get("email") or (f"qa-{name}-{int(time.time())}@getbevvi.com" if sc.get("fresh") else QA_EMAIL)
     session = f"qa-{name}-{int(time.time())}"
-    print(f"\n▶ {name}  [{fmt}]")
+    print(f"\n▶ {name}  [{transport if transport != 'http' else fmt}]")
     replies = []; failures = []
     for i, turn in enumerate(sc["turns"], 1):
         text = turn.get("send", ""); images = load_image(turn["image"]) if turn.get("image") else None
         pos = _log_size()
         try:
-            reply, secs = send(session, text, fmt, email, images)
+            reply, secs = slack.send(text, images) if slack else send(session, text, fmt, email, images)
         except Exception as e:
             reply, secs = f"<<ERROR {e}>>", 0
         replies.append({"turn": i, "send": text, "reply": reply, "secs": secs})

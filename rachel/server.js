@@ -915,7 +915,7 @@ app.post('/chat', async (req, res) => {
   // QA DRY-RUN: a session id starting with 'qa-' (or qa:true) never places real orders
   // or sends real email — place_order and SendEmail simulate success. Everything else
   // (search, builds, proposals) runs for real so tests exercise the actual catalog.
-  const isQA = !!(req.body.qa) || /^qa-/i.test(String(session_id || ''));
+  const isQA = !!(req.body.qa) || /^qa-/i.test(String(session_id || '')) || /^(qa-[^@]*|rachel_qa)@getbevvi\.com$/i.test(String((context && context.user_email) || ''));   // QA identities are dry-run on EVERY channel
   let imagePrefix = '';
   if (Array.isArray(images) && images.length) {
     const caption = String(message || '').trim();

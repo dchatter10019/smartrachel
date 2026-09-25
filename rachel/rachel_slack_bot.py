@@ -184,7 +184,14 @@ def is_allowed(user_id: str) -> bool:
     return user_id in ALLOWED_USERS
 
 def is_bot(event: dict) -> bool:
-    return bool(event.get("bot_id") or event.get("subtype") == "bot_message")
+    # Messages posted by a human THROUGH an app (user token) carry bot_id/app_id but a
+    # real user — those are customers (and the QA harness). Only true bot messages and
+    # Rachel's own posts are ignored. Real bug: the QA user's DMs were silently dropped.
+    if event.get("subtype") == "bot_message": return True
+    if event.get("bot_id") and not event.get("user"): return True
+    return event.get("user") == _BOT_USER_ID
+
+_BOT_USER_ID = None
 
 # Per-user serialization. Slack Bolt runs each event in its own thread, so two
 # DIFFERENT messages from the same user sent in quick succession ran ask_rachel
@@ -351,5 +358,9 @@ if __name__ == "__main__":
     log.info("Rachel bot starting — Socket Mode + GBrain memory")
     log.info(f"GBrain: {GBRAIN_URL}")
     log.info(f"Channel: {RACHEL_CHANNEL_ID}")
+    try:
+        _BOT_USER_ID = app.client.auth_test()["user_id"]; log.info(f"Bot user id: {_BOT_USER_ID}")
+    except Exception as e:
+        log.warning(f"auth_test failed: {e}")
     handler = SocketModeHandler(app, SLACK_APP_TOKEN)
     handler.start()
