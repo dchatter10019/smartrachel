@@ -1,0 +1,14 @@
+name: proposal-options
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "3 bottles Tito's vodka 750ml, 2 bottles Whispering Angel rosé, 1 Patron Silver"
+    expect: {contains: ["Product total"]}
+  - send: "show my basket"
+    expect: {contains: ["Patron", "Tito"]}
+  - send: "generate the proposal without the subtotals"
+    expect: {matches: "client|company|event date|proposal"}
+  - send: "QA Test Co"
+  - send: "Oct 15"
+    expect: {contains: ["proposal"], log_contains: ["options injected into generate_proposal"], pdf_contains: ["SPIRITS", "Patron"], pdf_not_contains: ["Wine Total", "Spirits Total", "OTHER"]}

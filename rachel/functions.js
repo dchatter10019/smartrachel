@@ -1203,15 +1203,19 @@ async function buildPackage(iv) {
       var prefer750=(catN==="wine"||catN==="spirits")&&!/\d+(\.\d+)?\s*(mL|ML|L|oz|OZ)\b/i.test(np.name||'');
       // (750 mL preference is applied as a tiebreaker inside the main sort below —
       // a standalone pre-sort here was silently overwritten by that sort.)
-      if (found.length===0){unavailable.push(np.name);continue;}
+      if (found.length===0){console.log('[buildPackage] UNAVAILABLE (no search results):', JSON.stringify(np.name));unavailable.push(np.name);continue;}
       var capMin=0,capMax=0;
       if (catN==="wine"){capMin=capWineMin;capMax=capWineMax;}
       else if (catN==="beer"){capMin=capBeerMin;capMax=capBeerMax;}
       else if (catN==="spirits"){capMin=capSpiritMin;capMax=capSpiritMax;}
       if (capMin||capMax) {
         var inRange=found.filter(function(p){return p.price>=(capMin||0)&&p.price<=(capMax||999999);});
+        // Price caps are a PREFERENCE for a named product, never a reason to drop it. Real
+        // bug: "3 bottles Tito's 750ml" was reported "isn't available at this location"
+        // because every Tito's match fell below the learned spirits floor (the profile
+        // had drifted upward). The customer named it; they get it.
         if (inRange.length>0) found=inRange;
-        else{unavailable.push(np.name+" (none within caps)");continue;}
+        else console.log('[buildPackage] caps', capMin, '-', capMax, 'exclude every match for', JSON.stringify(np.name), '— keeping matches (named product)');
       }
       var terms=np.name.toLowerCase().split(/\s+/);
       // Exact-name preference: a candidate whose size-stripped name equals the request
@@ -1264,12 +1268,13 @@ async function buildPackage(iv) {
       if (reqPack && best.sizeStr) {
         var packKey = function(s){ var m=String(s||'').toLowerCase().match(/(\d+)\s*x\s*(\d+(?:\.\d+)?)\s*(oz|ml)/); return m ? (m[1]+'x'+m[2]+m[3]) : ''; };
         var reqPK = packKey(np.name), foundPK = packKey(best.sizeStr) || packKey(best.name);
-        if (reqPK && foundPK && reqPK !== foundPK) { unavailable.push(np.name); continue; }
+        if (reqPK && foundPK && reqPK !== foundPK) { console.log('[buildPackage] UNAVAILABLE (pack mismatch):', JSON.stringify(np.name), 'wanted', reqPK, 'found', foundPK); unavailable.push(np.name); continue; }
       }
       if (requestedSizeMatch && best.sizeStr) {
         var reqSizeNorm = requestedSizeMatch[0].toLowerCase().replace(/\s+/g, '');
         var foundSizeNorm = String(best.sizeStr).toLowerCase().replace(/\s+/g, '');
         if (reqSizeNorm !== foundSizeNorm) {
+          console.log('[buildPackage] UNAVAILABLE (size mismatch):', JSON.stringify(np.name), 'best match:', JSON.stringify(best && best.name));
           unavailable.push(np.name);
           continue;
         }

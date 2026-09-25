@@ -37,13 +37,38 @@ def send(session, text, fmt, email, images=None):
     r = httpx.post(RACHEL, json=payload, timeout=240)
     return r.json().get("text", ""), round(time.time() - t0, 1)
 
-def check(reply, expect):
+LOG = "/home/ubuntu/logs/rachel.log"
+def _log_size():
+    try: return os.path.getsize(LOG)
+    except Exception: return 0
+def _log_since(pos):
+    try:
+        with open(LOG, "rb") as f: f.seek(pos); return f.read().decode("utf-8", "ignore")
+    except Exception: return ""
+def check(reply, expect, log_text=""):
     fails = []; low = reply.lower()
+    for s in expect.get("log_contains", []):
+        if s not in log_text: fails.append(f"log missing {s!r}")
     for s in expect.get("contains", []):
         if s.lower() not in low: fails.append(f"missing {s!r}")
     for s in expect.get("not_contains", []):
         if s.lower() in low: fails.append(f"should not contain {s!r}")
     if "matches" in expect and not re.search(expect["matches"], reply, re.I | re.M): fails.append(f"no match /{expect['matches']}/")
+    if "pdf_contains" in expect or "pdf_not_contains" in expect:
+        m = re.search(r"https?://\S+?\.pdf", reply)
+        txt = ""
+        if m:
+            try:
+                import subprocess, tempfile
+                pdf = httpx.get(m.group(0), timeout=30).content
+                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f: f.write(pdf); path = f.name
+                txt = subprocess.run(["pdftotext", "-layout", path, "-"], capture_output=True, text=True, timeout=30).stdout
+            except Exception as e: fails.append(f"pdf read error: {e}")
+        else: fails.append("no PDF link in reply")
+        for s_ in expect.get("pdf_contains", []):
+            if s_.lower() not in txt.lower(): fails.append(f"PDF missing {s_!r}")
+        for s_ in expect.get("pdf_not_contains", []):
+            if s_.lower() in txt.lower(): fails.append(f"PDF should not contain {s_!r}")
     if "judge" in expect and not judge(reply, expect["judge"]): fails.append(f"judge NO: {expect['judge']}")
     return fails
 
@@ -59,12 +84,13 @@ def run_scenario(sc, verbose):
     replies = []; failures = []
     for i, turn in enumerate(sc["turns"], 1):
         text = turn.get("send", ""); images = load_image(turn["image"]) if turn.get("image") else None
+        pos = _log_size()
         try:
             reply, secs = send(session, text, fmt, email, images)
         except Exception as e:
             reply, secs = f"<<ERROR {e}>>", 0
         replies.append({"turn": i, "send": text, "reply": reply, "secs": secs})
-        fails = check(reply, turn.get("expect", {}))
+        fails = check(reply, turn.get("expect", {}), _log_since(pos))
         mark = "✓" if not fails else "✗"
         print(f"  {mark} {i:>2}. {text[:48]!r:52} {secs:>5}s" + ("" if not fails else "  ← " + "; ".join(fails)))
         if verbose or fails: print("       " + reply[:600].replace("\n", "\n       "))

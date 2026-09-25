@@ -1463,6 +1463,17 @@ app.post('/chat', async (req, res) => {
     // 'can you ensure the quantities are correct' is a basket check). Everything else
     // falls through to the existing path unchanged; regex remains the fallback.
     if (isQA) { state.qa = true; state.eventParams = Object.assign({}, state.eventParams || {}, { qa: true }); }
+    // Proposal modifiers said WITH the request ('generate the proposal without the subtotals',
+    // 'just the total', 'tax exempt') are captured here and injected into the generate call
+    // deterministically — the proposal flow asks client/date first, and by the time the
+    // tool call is built the LLM had lost the modifier (real bug: subtotals still shown).
+    if (/\b(proposal|pdf|quote)\b/i.test(message)) {
+      const po = Object.assign({}, state.proposalOpts || {});
+      if (/\b(without|no|drop|hide|skip|remove)\b[^.]{0,30}\bsub-?totals?\b/i.test(message) || /\bsub-?totals?\b[^.]{0,20}\b(off|out|removed|hidden)\b/i.test(message)) po.hide_subtotals = true;
+      if (/\b(just|only)\s+(the\s+)?(grand\s+)?total\b|\btotals?\s+only\b|\bno\s+(fee\s+)?breakdown\b|\bwithout\s+(the\s+)?(fee\s+)?breakdown\b|\b(don'?t|do not)\s+show\s+(the\s+)?(tax|tip|service|fees)\b/i.test(message)) po.totals_only = true;
+      if (/\btax[- ]?exempt\b|\bno\s+(sales\s+)?tax\b|\bset\s+tax\s+to\s+(0|zero)\b/i.test(message)) po.tax_exempt = true;
+      if (Object.keys(po).length) { state.proposalOpts = po; state.eventParams = Object.assign({}, state.eventParams || {}, { proposalOpts: po }); saveFlowState(); console.log('[proposal] options captured:', JSON.stringify(po)); }
+    }
     let clsIntent = null, clsRef = '';
     // clear stale classifier label: eventParams persists across turns (guests/budget for
     // rebuilds), so last turn's 'recommend' must not rewrite this turn's product query.

@@ -152,6 +152,10 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
 
       case 'ShoppingAgent': {
         if (eventParams && eventParams.qa) toolInput.dry_run = true;   // QA: no real placement
+        if (toolInput.intent === 'generate_proposal' && eventParams && eventParams.proposalOpts) {
+          for (const k of ['hide_subtotals', 'totals_only', 'tax_exempt']) if (eventParams.proposalOpts[k] && toolInput[k] === undefined) toolInput[k] = true;
+          console.log('[proposal] options injected into generate_proposal:', JSON.stringify(eventParams.proposalOpts));
+        }
         const saInput = Object.assign({}, toolInput, { channel: channelFormat || toolInput.channel || 'slack' });
         if (requesterEmail) {
           if (saInput.email && saInput.email !== requesterEmail) {
