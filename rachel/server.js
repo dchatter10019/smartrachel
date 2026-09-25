@@ -428,7 +428,10 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
             label: replacementName, name: newName, qty: qtyToUse, quantity: qtyToUse,
             price: rp, size: resolved ? (resolved.sizeStr || resolved.size || replacementSize || '') : (replacementSize || ''),
             url: resolved ? (resolved.url || '') : '', product_id: newPid,
-            upc: resolved ? (resolved.upc || '') : '', establishmentId: resolved ? (resolved.establishmentId || '') : '', category: categoryToUse
+            upc: resolved ? (resolved.upc || '') : '', establishmentId: resolved ? (resolved.establishmentId || '') : '',
+            // Bevvi's category rides along (real bug: Patron Silver and Mount Gay landed under
+            // OTHER on the PDF because add paths wrote items with no category).
+            category: categoryToUse || (resolved ? (resolved.category || resolved.subCategory || resolved.subcategory || '') : '')
           });
         }
         const newLineItems = JSON.stringify(items);

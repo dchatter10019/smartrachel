@@ -25,7 +25,9 @@ const CATEGORY_KEYWORDS = {
   mixer: ['juice', 'tonic', 'club soda', 'ginger ale', 'ginger beer', 'syrup', 'bitters', 'grenadine', 'sour mix', 'simple syrup'],
   beer: ['beer', 'lager', 'ale', 'ipa', 'stout', 'pilsner', 'porter', 'cider'],
   wine: ['wine', 'cabernet', 'merlot', 'chardonnay', 'pinot', 'sauvignon', 'riesling', 'malbec', 'prosecco', 'champagne', 'moscato', 'rose', 'zinfandel', 'syrah', 'shiraz'],
-  spirits: ['vodka', 'gin', 'rum', 'whiskey', 'whisky', 'bourbon', 'scotch', 'rye', 'tequila', 'cognac', 'brandy', 'liqueur', 'triple sec', 'vermouth', 'amaretto', 'schnapps']
+  spirits: ['vodka', 'gin', 'rum', 'whiskey', 'whisky', 'bourbon', 'scotch', 'rye', 'tequila', 'mezcal', 'cognac', 'brandy', 'liqueur', 'triple sec', 'vermouth', 'amaretto', 'schnapps', 'aperitivo', 'bitters',
+    // brands whose names carry no spirit word (Patron Silver, Mount Gay Black Barrel landed in OTHER)
+    'patron', 'don julio', 'casamigos', 'clase azul', 'espolon', 'herradura', 'jose cuervo', 'mount gay', 'bacardi', 'captain morgan', 'malibu', 'kraken', 'grey goose', 'ketel one', 'belvedere', "tito's", 'titos', 'absolut', 'ciroc', 'stolichnaya', 'hendrick', 'tanqueray', 'bombay', 'beefeater', 'aviation', 'macallan', 'glenlivet', 'glenfiddich', 'lagavulin', 'laphroaig', 'johnnie walker', 'jameson', 'bushmills', "maker's mark", 'makers mark', 'buffalo trace', 'woodford', 'bulleit', 'knob creek', 'jack daniel', 'jim beam', 'wild turkey', 'four roses', 'crown royal', 'hennessy', 'remy martin', 'courvoisier', 'cointreau', 'grand marnier', 'st germain', 'st-germain', 'kahlua', 'baileys', 'aperol', 'campari', 'jagermeister', 'fernet', 'chartreuse', 'disaronno', 'frangelico', 'sambuca', 'limoncello', 'mi campo', 'barrell craft', 'monkey 47']
 };
 function classifyByName(name) {
   const nameLower = (name || '').toLowerCase();
@@ -76,7 +78,7 @@ function groupByCategory(lineItems) {
 }
 
 function generateHTML(proposal) {
-  const { client_name, event_date, line_items, notes, tax_exempt, tax_rate, totals_only } = proposal;
+  const { client_name, event_date, line_items, notes, tax_exempt, tax_rate, totals_only, hide_subtotals } = proposal;
   const items = typeof line_items === 'string' ? JSON.parse(line_items) : line_items;
   const groups = groupByCategory(items);
   
@@ -117,10 +119,10 @@ function generateHTML(proposal) {
         <td style="text-align:right">UNIT PRICE</td><td style="text-align:right">TOTAL</td>
       </tr>
       ${rows}
-      <tr class="cat-total">
+      ${hide_subtotals ? '' : `<tr class="cat-total">
         <td colspan="4"><strong>${cat} Total</strong></td>
         <td style="text-align:right"><strong>$${catTotal.toFixed(2)}</strong></td>
-      </tr>
+      </tr>`}
       </tbody>
       </table>
       </div>`;

@@ -921,6 +921,7 @@ async function executeTool(name, input) {
       notes: input.notes || '',
       tax_exempt: input.tax_exempt || false,
       totals_only: input.totals_only || false,
+      hide_subtotals: input.hide_subtotals || false,
       tax_rate: typeof input.tax_rate === 'number' ? input.tax_rate : undefined
     }, outputPath);
     return {
