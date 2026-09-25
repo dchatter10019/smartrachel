@@ -1,0 +1,17 @@
+name: search-pick-quantity
+tags: [smoke]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+    expect: {matches: "1[.)] .*Kim Crawford.*\\$"}
+  - send: "1"
+    expect: {contains: ["How many"]}
+  - send: "2"
+    expect: {contains: ["2x"]}
+  - send: "add a Macallan 18"
+    expect: {contains: ["Macallan"], not_contains: ["Would you like to add this"]}
+  - send: "1"
+  - send: "show my basket"
+    expect: {contains: ["Kim Crawford", "Macallan", "Estimated grand total"]}

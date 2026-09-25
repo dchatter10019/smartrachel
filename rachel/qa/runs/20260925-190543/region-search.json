@@ -1,0 +1,37 @@
+{
+ "name": "region-search",
+ "format": "slack",
+ "replies": [
+  {
+   "turn": 1,
+   "send": "reset",
+   "reply": "Before we get started \u2014 are you 21 or older?",
+   "secs": 0.0
+  },
+  {
+   "turn": 2,
+   "send": "yes",
+   "reply": "What is your delivery address? (Please include street, city, state, and zip code)",
+   "secs": 0.7
+  },
+  {
+   "turn": 3,
+   "send": "425 W 53rd St, New York, NY 10019",
+   "reply": "Got it \u2014 delivering to 425 W 53rd St, New York, NY 10019. How can I help you today?",
+   "secs": 2.5
+  },
+  {
+   "turn": 4,
+   "send": "add a french burgundy",
+   "reply": "I found a few options for french burgundy:\n\n1. Louis Jadot Bourgogne Pinot Noir 750 ML \u2014 $24.19\n2. Louis Jadot Bourgogne Blanc - 750 ML \u2014 $21.99\n3. Jadot Bourgogne Chardonnay - 750 ML \u2014 $19.79\n\nWhich one would you like to add?",
+   "secs": 9.0
+  },
+  {
+   "turn": 5,
+   "send": "add a napa cabernet",
+   "reply": "I found a few options for napa cabernet:\n\n1. Duckhorn Cabernet Napa - 750 ML \u2014 $71.49\n2. Stags' Leap Cabernet Napa - 750 ML \u2014 $65.99\n3. Mondavi Napa Cabernet - 750 ML \u2014 $54.99\n\nWhich one would you like to add?",
+   "secs": 6.1
+  }
+ ],
+ "failures": []
+}

@@ -1,0 +1,25 @@
+{
+ "name": "returning-customer-address",
+ "format": "slack",
+ "replies": [
+  {
+   "turn": 1,
+   "send": "reset",
+   "reply": "Before we get started \u2014 are you 21 or older?",
+   "secs": 0.1
+  },
+  {
+   "turn": 2,
+   "send": "yes",
+   "reply": "What is your delivery address? (Please include street, city, state, and zip code)",
+   "secs": 0.7
+  },
+  {
+   "turn": 3,
+   "send": "no, use 11 Broadway, New York, NY",
+   "reply": "Got it \u2014 delivering to no, 11 Broadway, New York, NY 10004. How can I help you today?",
+   "secs": 2.4
+  }
+ ],
+ "failures": []
+}

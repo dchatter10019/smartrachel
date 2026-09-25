@@ -909,6 +909,10 @@ app.post('/chat', async (req, res) => {
   // Photos / scans of an order (from WhatsApp media or Slack file uploads): transcribe
   // with vision, show the customer what was read, and run the list through the normal
   // pipeline (age/address gating and the custom_list build all apply unchanged).
+  // QA DRY-RUN: a session id starting with 'qa-' (or qa:true) never places real orders
+  // or sends real email — place_order and SendEmail simulate success. Everything else
+  // (search, builds, proposals) runs for real so tests exercise the actual catalog.
+  const isQA = !!(req.body.qa) || /^qa-/i.test(String(session_id || ''));
   let imagePrefix = '';
   if (Array.isArray(images) && images.length) {
     const caption = String(message || '').trim();
@@ -1170,7 +1174,7 @@ app.post('/chat', async (req, res) => {
     // confirm). A zip-less address gets its zip; a sloppy one ('425 west 53rd st, NY, NY
     // 10019') becomes a clean one. The parser below then sees a complete address.
     if ((['addr', 'addr_new'].includes(state.step) || (state.orderStep === 'confirm' && /\b(address|deliver to|delivery location)\b/i.test(message)))
-        && /\b\d{1,6}\s+[A-Za-z]/.test(message) && !/^\s*(yes|yeah|yep|no|nope|same)\b/i.test(message)) {
+        && /\b\d{1,6}\s+[A-Za-z]/.test(message) && !/^\s*(yes|yeah|yep|no|nope|same)\b[\s.!]*$/i.test(message)) {   // only a BARE yes/no is skipped; 'no, use 11 Broadway...' is geocoded
       const addrText = message.replace(/^.*?\b(address|deliver to|delivery location|ship to)\b\s*(to|is|:)?\s*/i, '').replace(/^(no|nope|use|instead)[,.\s]+/i, '').trim();
       const geo = await geocodeAddress(addrText);
       if (geo) {
@@ -1208,6 +1212,19 @@ app.post('/chat', async (req, res) => {
             const d2c = await getD2CSession(email) || {};
             await saveD2CSession(email, Object.assign({}, d2c, { delivery_address: message, delivery_zip: state.zip }));
           } catch(e) {}
+        }
+        // Always ECHO the accepted address (QA caught the reply falling through to the LLM's
+        // generic greeting with no address shown). If the customer had typed a request
+        // before giving the address, replay it with the confirmation on top.
+        saveFlowState();
+        const addrOk = 'Got it — delivering to ' + state.address + '.';
+        if (state.pendingIntent) {
+          const pend = state.pendingIntent; state.pendingIntent = null; saveFlowState();
+          message = pend;
+          { const _jA = res.json.bind(res); res.json = (payload) => { try { if (payload && typeof payload.text === 'string') { payload.text = addrOk + '\n\n' + payload.text; payload.response = addrOk + '\n\n' + (payload.response || ''); } } catch (e) {} return _jA(payload); }; }
+        } else {
+          const rOk = addrOk + ' How can I help you today?';
+          return res.json({ text: rOk, response: rOk });
         }
       } else {
         const ask = 'What is your delivery address? (Please include street, city, state, and zip code)';
@@ -1436,12 +1453,13 @@ app.post('/chat', async (req, res) => {
     // none of the fixed phrases, so the deterministic order flow never engaged and the
     // LLM improvised its own — different wording, different question order, none of
     // the pre-fill/skip/validation safeguards. Natural forms now all route here.
-    const orderIntentRe = /^\s*(?:ok(?:ay)?[,!]?\s*)?(?:(?:let'?s|lets)\s+(?:order|do it|go|place|buy|proceed|finalize|check ?out)|(?:i(?:'m| am)\s+)?ready\s+to\s+(?:order|buy|check ?out|place)|place\s+(?:the|this|my|an?)?\s*order|order\s+(?:it|this|now|that|these)|go\s+ahead(?:\s+and\s+(?:order|place|buy))?|proceed(?:\s+with\s+(?:the\s+)?order)?|finali[sz]e(?:\s+(?:the|my)\s+order)?|check ?out|buy\s+(?:it|this|these|now)|i(?:'ll| will)\s+take\s+(?:it|them|these|that)|submit(?:\s+(?:the|my)\s+order)?|confirm\s+(?:the|my)\s+order|complete\s+(?:the|my)\s+order|make\s+(?:the|it\s+an?)\s+order|purchase(?:\s+(?:it|this|these))?)\b/i;
+    const orderIntentRe = /^\s*(?:ok(?:ay)?[,!]?\s*)?(?:(?:let'?s|lets)\s+(?:order|do it|go(?!\s+with\b)|place|buy|proceed|finalize|check ?out)|(?:i(?:'m| am)\s+)?ready\s+to\s+(?:order|buy|check ?out|place)|place\s+(?:the|this|my|an?)?\s*order|order\s+(?:it|this|now|that|these)|go\s+ahead(?:\s+and\s+(?:order|place|buy))?|proceed(?:\s+with\s+(?:the\s+)?order)?|finali[sz]e(?:\s+(?:the|my)\s+order)?|check ?out|buy\s+(?:it|this|these|now)|i(?:'ll| will)\s+take\s+(?:it|them|these|that)|submit(?:\s+(?:the|my)\s+order)?|confirm\s+(?:the|my)\s+order|complete\s+(?:the|my)\s+order|make\s+(?:the|it\s+an?)\s+order|purchase(?:\s+(?:it|this|these))?)\b/i;
     // CLASSIFIER ROUTING (safe subset). Awaited here — only for messages not already
     // inside a deterministic step — and only high-confidence labels for intents where
     // the classifier is clearly better than regex ('lets order' missed the phrase list;
     // 'can you ensure the quantities are correct' is a basket check). Everything else
     // falls through to the existing path unchanged; regex remains the fallback.
+    if (isQA) { state.qa = true; state.eventParams = Object.assign({}, state.eventParams || {}, { qa: true }); }
     let clsIntent = null, clsRef = '';
     // clear stale classifier label: eventParams persists across turns (guests/budget for
     // rebuilds), so last turn's 'recommend' must not rewrite this turn's product query.
@@ -1573,7 +1591,9 @@ app.post('/chat', async (req, res) => {
             const rresS = rdS ? JSON.parse(rdS.result.content[0].text) : null;
             for (const q of ((rresS && rresS.results) || [])) for (const pr of (q.products || [])) { const k = pr.product_id || pr.id || pr.name; if (!seen.has(k)) { seen.add(k); prods.push(pr); } }
           } catch (e) { console.log('[add-item] synonym search error:', e.message); }
-          const relevant = prods.filter(pr => syns.some(sy => nzr(pr.name).indexOf(nzr(sy)) >= 0));
+          // ALL region/varietal terms must appear ('napa cabernet' must not pass a Napa Merlot or a
+          // Bonterra Cabernet); cap the list so 13 options never happen.
+          const relevant = prods.filter(pr => regionTerms.every(t => WINE_SYN[t].some(sy => nzr(pr.name).indexOf(nzr(sy)) >= 0))).slice(0, 6);
           if (relevant.length) prods = relevant;
           else {
             const closest = prods.slice(0, 4).map((pr, i) => (i + 1) + '. ' + pr.name + ' — $' + (parseFloat(pr.salePrice || pr.price) || 0).toFixed(2)).join('\n');
@@ -1878,7 +1898,8 @@ app.post('/chat', async (req, res) => {
     // "What is your full name?", "Show me the basket" was stored as the customer's name
     // and the flow moved on to email. Recognize it, exit the order flow (details kept),
     // and let the command run normally; the customer says 'place the order' to resume.
-    const isOrderStepNonAnswer = /^\s*(show|what|where|how|can you|could you|do you|is there|list|display|view|cancel|stop|never ?mind|forget it|go back|help|reset)\b/i.test(message) || /\?\s*$/.test(message);
+    const isOrderStepNonAnswer = /^\s*(show|what|where|how|can you|could you|do you|is there|list|display|view|cancel|stop|never ?mind|forget it|go back|help|reset)\b/i.test(message) || /\?\s*$/.test(message)
+      || /\b(estimated?|price|pricing|basket|cart|total|cost|quote|proposal|recommend|add|remove|swap|change)\b/i.test(message);   // 'estimated price' at the name step is not a name
     if ((state.orderStep === 'name' || state.orderStep === 'recipient_email' || state.orderStep === 'phone') && isOrderStepNonAnswer) {
       const od0 = state.orderData || {};
       if (od0.name || od0.phone) state.savedCustomer = { name: od0.name || (state.savedCustomer || {}).name || '', phone: od0.phone || (state.savedCustomer || {}).phone || '', email: od0.email || (state.savedCustomer || {}).email || '' };
@@ -2670,13 +2691,17 @@ app.post('/chat', async (req, res) => {
       // the basket REPLACES that item (a re-price), keeping its quantity.
       try {
         const normP = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-        const lineRe2 = /^\s*(?:[-•*]\s*|(\d{1,2})[.)]\s*)?(.+?)\s*(?:—|–|-)\s*(?:(\d+(?:\.\d+)?\s*(?:ml|l|oz)\b[^$\n]*?)\s*(?:—|–|-)\s*)?\$\s*([\d.,]+)\s*(?:ea\b.*)?$/i;
+        const lineRe2 = /^\s*(?:[-•*]\s*|(\d{1,2})[.)]\s*)?(.+?)\s*(?:—|–|-)\s*(?:(\d+(?:\.\d+)?\s*(?:ml|l|oz)\b[^$\n]*?)\s*(?:—|–|-)\s*)?\$\s*([\d.,]+)(?:\s.*)?$/i;   // text may follow the price
         const groups = []; let cur = null;
         for (const raw of String(lastAssistantTextGate || '').split('\n')) {
           const line = raw.replace(/\*/g, '').trim(); if (!line) continue;
           const lm = line.match(lineRe2);
           if (lm) { if (!cur) { cur = { heading: '', options: [] }; groups.push(cur); } cur.options.push({ n: lm[1] ? parseInt(lm[1]) : cur.options.length + 1, name: lm[2].trim(), size: (lm[3] || '').trim(), price: parseFloat(lm[4].replace(/,/g, '')) }); }
-          else if (line.length <= 60 && !/\$/.test(line) && !/\?$/.test(line) && (/[:]$/.test(line) || line.split(/\s+/).length <= 4)) { cur = { heading: line.replace(/[:]$/, '').trim(), options: [] }; groups.push(cur); }
+          else if (!/\$/.test(line) && !/^\d{1,2}[.)]/.test(line) && !/^[-•]/.test(line) && !/\?$/.test(line) && line.length <= 140 && /^[A-Za-zÀ-ÿ]/.test(line)) {
+            // A heading may be a whole sentence ('Sauvignon Blanc alternatives — none found ... The closest white is:');
+            // keep the part before any dash/colon as the category name.
+            cur = { heading: line.split(/\s+(?:—|–)\s+|:/)[0].trim(), options: [] }; groups.push(cur);
+          }
         }
         const realGroups = groups.filter(g => g.options.length);
         const allOpts = realGroups.flatMap(g => g.options.map(o => Object.assign({ heading: g.heading }, o)));
@@ -2686,14 +2711,20 @@ app.post('/chat', async (req, res) => {
           const picks = []; const bareNums = [];
           const wordsOf = x => normP(x).split(/[^a-z0-9]+/).filter(w => w.length >= 3);
           const headMatch = (cat) => { const cw = wordsOf(cat); return realGroups.find(g => { const hw = wordsOf(g.heading); return cw.length && cw.every(c => hw.some(h => h.startsWith(c) || c.startsWith(h))); }); };
+          const resolvedParts = new Set();
           for (const part of partsRaw) {
             const cm = part.match(/^(.*?[a-z].*?)\s*#?\s*(\d{1,2})\s*$/i);
-            if (cm) { const g = headMatch(cm[1]); const n = parseInt(cm[2]); const o = g && (g.options.find(x => x.n === n) || g.options[n - 1]); if (o) { picks.push(Object.assign({ heading: g.heading }, o)); continue; } }
-            if (/^\d{1,2}$/.test(part)) { bareNums.push(parseInt(part)); continue; }
+            if (cm) {
+              const g = headMatch(cm[1]); const n = parseInt(cm[2]);
+              let o = g && (g.options.find(x => x.n === n) || g.options[n - 1]);
+              if (!o) { const glob = allOpts.find(x => x.n === n); if (glob) o = glob; }   // continuous numbering: 'Pinot Noir 2' = global #2
+              if (o) { picks.push(Object.assign({ heading: (g && g.heading) || o.heading }, o)); resolvedParts.add(part); continue; }
+            }
+            if (/^\d{1,2}$/.test(part)) { bareNums.push(parseInt(part)); resolvedParts.add(part); continue; }
             const pw = wordsOf(part.replace(/^the\s+/i, '')); if (!pw.length) continue;
             let best = null, bestScore = 0;
             for (const o of allOpts) { const ow = wordsOf(o.name + ' ' + o.heading); const hit = pw.filter(w => ow.some(x => x === w || (w.length >= 4 && x.startsWith(w)) || (x.length >= 4 && w.startsWith(x)))).length; const sc = hit / pw.length; if (sc > bestScore) { bestScore = sc; best = o; } }
-            if (best && bestScore >= 0.5) picks.push(best);
+            if (best && bestScore >= 0.5) { picks.push(best); resolvedParts.add(part); }
           }
           if (bareNums.length) { if (realGroups.length === 1) bareNums.forEach(n => { const o = realGroups[0].options.find(x => x.n === n) || realGroups[0].options[n - 1]; if (o) picks.push(Object.assign({ heading: realGroups[0].heading }, o)); }); else if (bareNums.length === realGroups.length) bareNums.forEach((n, i) => { const g = realGroups[i]; const o = g.options.find(x => x.n === n) || g.options[n - 1]; if (o) picks.push(Object.assign({ heading: g.heading }, o)); }); }
           if (picks.length && (partsRaw.length >= 2 || picks.length >= 2 || isGrouped)) {
@@ -2704,13 +2735,19 @@ app.post('/chat', async (req, res) => {
             for (const pk of picks) {
               const pv = varOf(pk.heading + ' ' + pk.name);
               const target = pv.size ? items.find(it => { const iv = varOf(it.name); return [...pv].some(v => iv.has(v)) && normP(it.name) !== normP(pk.name); }) : null;
-              const repl = pk.name + (pk.size && pk.name.indexOf(pk.size) < 0 ? ' - ' + pk.size : '');
+              // Catalog lookup needs a clean name: drop emoji/markers ('⭐', '✓') and fold
+              // accents ('Rosé' -> 'Rose'; Bevvi's search doesn't fold diacritics).
+              const cleanName = pk.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7E]/g, '').replace(/\s+/g, ' ').trim();
+              const repl = cleanName + (pk.size && cleanName.indexOf(pk.size) < 0 ? ' - ' + pk.size : '');
               const r = await applyBasketSubstitute(sessionKey, email, target ? target.name : '', repl, pk.price, pk.size);
               if (r && r.success === false) { done.push('could not resolve ' + pk.name); continue; }
               retirePendingFor(state, pk.name);
               done.push((target ? (target.qty || target.quantity || 1) + 'x ' + pk.name + ' (replacing ' + target.name + ')' : '1x ' + pk.name) + ' — $' + pk.price.toFixed(2));
               try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
             }
+            // Never silently drop a pick: say which names didn't match anything listed.
+            const unmatched = partsRaw.filter(part => !resolvedParts.has(part));
+            if (unmatched.length) done.push('couldn\'t match ' + unmatched.join(', ') + ' to anything I listed — tell me the exact name or number and I\'ll add it');
             console.log('[multi-pick]', JSON.stringify(partsRaw), '->', JSON.stringify(done));
             const lines2 = items.map(li => (li.qty || li.quantity || 1) + 'x ' + li.name + ' — $' + (parseFloat(li.price) || 0).toFixed(2) + ' ea = $' + ((li.qty || li.quantity || 1) * (parseFloat(li.price) || 0)).toFixed(2));
             const tot2 = items.reduce((a, li) => a + (li.qty || li.quantity || 1) * (parseFloat(li.price) || 0), 0);

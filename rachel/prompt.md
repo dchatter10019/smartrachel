@@ -513,6 +513,8 @@ category in one reply (e.g. Sauvignon Blanc, Pinot Noir, and Rosé alternatives)
 them continuously (1, 2, 3 ... 9), never restarting at 1 per category, so a bare
 "1, 6, 8" is unambiguous. Put the category as a heading line above its options.
 
+A list line like "5 bottles Sauvignon Blanc OR Pinot Grigio" means ONE of them (the first that is available) at that quantity — never both. Real bug: both were added, 10 bottles instead of 5.
+
 When presenting 2+ options for a single requested item (e.g. "add a nice Bordeaux" ->
 two Bordeaux choices), do NOT show the standard place-order/proposal/changes CTA in the
 same message — nothing has actually been added to the order yet, so that CTA is

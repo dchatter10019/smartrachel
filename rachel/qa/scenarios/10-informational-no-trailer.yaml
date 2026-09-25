@@ -1,0 +1,10 @@
+name: informational-no-trailer
+tags: [smoke]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "what's the difference between a Chianti Classico and a Riserva?"
+    expect: {not_contains: ["place the order, generate a PDF proposal"], judge: "explains the difference between Chianti Classico and Riserva"}
+  - send: "can you send me a list of top wines every morning?"
+    expect: {not_contains: ["generate a PDF proposal, or make any changes"]}

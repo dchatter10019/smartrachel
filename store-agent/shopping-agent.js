@@ -1010,6 +1010,11 @@ async function executeTool(name, input) {
     }
   }
 
+  if (name === 'place_order' && input.dry_run) {
+    console.log('[QA] place_order dry run — no createCorpOrder call');
+    const oid = 'QA-DRY-RUN-' + Date.now();
+    return { success: true, dry_run: true, order_id: oid, order_number: oid, payment_url: 'https://corporate.getbevvi.com/direct-checkout?token=QA_DRY_RUN', message: 'Simulated order (QA)' };
+  }
   if (name === 'place_order') {
     const zip = input.zip || (input.customer && input.customer.zipcode) || '';
     const loc = resolveLocation(zip);

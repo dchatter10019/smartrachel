@@ -1,0 +1,52 @@
+{
+ "name": "session-basics",
+ "format": "slack",
+ "replies": [
+  {
+   "turn": 1,
+   "send": "reset",
+   "reply": "Before we get started \u2014 are you 21 or older?",
+   "secs": 0.2
+  },
+  {
+   "turn": 2,
+   "send": "yes",
+   "reply": "What is your delivery address? (Please include street, city, state, and zip code)",
+   "secs": 1.1
+  },
+  {
+   "turn": 3,
+   "send": "425 west 53rd st, NY, NY",
+   "reply": "How can I help you today? Looking to build a beverage package, find a specific product, or something else?",
+   "secs": 6.2
+  },
+  {
+   "turn": 4,
+   "send": "do you have Tito's",
+   "reply": "Yes! *Tito's Handmade Vodka* is available in several sizes:\n\n1. *Tito's Handmade Vodka* \u2014 50 mL \u2014 $4.39\n2. *Tito's Handmade Vodka* \u2014 200 mL \u2014 $5.49\n3. *Tito's Handmade Vodka* \u2014 750 mL \u2014 $24.19\n4. *Tito's Handmade Vodka* \u2014 1 L \u2014 $31.89\n5. *Tito's Handmade Vodka* \u2014 1.75 L \u2014 $43.99\n\nWhich size works for you?",
+   "secs": 14.5
+  },
+  {
+   "turn": 5,
+   "send": "3",
+   "reply": "Got it \u2014 Tito's Handmade Vodka \u2014 750 mL \u2014 $24.19. How many bottles would you like?",
+   "secs": 3.2
+  },
+  {
+   "turn": 6,
+   "send": "2",
+   "reply": "Got it \u2014 2x Tito's Handmade Vodka in your order. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?",
+   "secs": 0.1
+  }
+ ],
+ "failures": [
+  {
+   "turn": 3,
+   "send": "425 west 53rd st, NY, NY",
+   "fails": [
+    "missing '10019'"
+   ],
+   "reply": "How can I help you today? Looking to build a beverage package, find a specific product, or something else?"
+  }
+ ]
+}

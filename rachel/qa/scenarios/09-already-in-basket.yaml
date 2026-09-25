@@ -1,0 +1,10 @@
+name: already-in-basket
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "3 bottles Tito's vodka 750ml"
+  - send: "let's go with Tito's 750 ml for vodka"
+    expect: {contains: ["already in your order"], not_contains: ["How many bottles"]}
+  - send: "estimated price"
+    expect: {contains: ["3x", "Tito", "grand total"]}

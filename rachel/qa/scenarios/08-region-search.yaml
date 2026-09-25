@@ -1,0 +1,9 @@
+name: region-search
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "add a french burgundy"
+    expect: {judge: "either offers only wines named Bourgogne/Burgundy, or says honestly that no Burgundy is in the catalog — it does NOT present Chianti, Merlot or Champagne as Burgundy"}
+  - send: "add a napa cabernet"
+    expect: {judge: "offers or adds a cabernet whose name includes Napa"}

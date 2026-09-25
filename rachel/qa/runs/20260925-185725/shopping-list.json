@@ -1,0 +1,58 @@
+{
+ "name": "shopping-list",
+ "format": "slack",
+ "replies": [
+  {
+   "turn": 1,
+   "send": "reset",
+   "reply": "<<ERROR [Errno 111] Connection refused>>",
+   "secs": 0
+  },
+  {
+   "turn": 2,
+   "send": "yes",
+   "reply": "<<ERROR [Errno 111] Connection refused>>",
+   "secs": 0
+  },
+  {
+   "turn": 3,
+   "send": "425 W 53rd St, New York, NY 10019",
+   "reply": "<<ERROR [Errno 111] Connection refused>>",
+   "secs": 0
+  },
+  {
+   "turn": 4,
+   "send": "3 bottles vodka, 750 ml\n1 bottle St-Germain Elderflower Liqueur, 750 ml\n5 bottles Sauvignon Blanc or Pinot Grigio\n3 bottles Pinot Noir\n2 bottles dry ros\u00e9\n",
+   "reply": "<<ERROR [Errno 111] Connection refused>>",
+   "secs": 0
+  },
+  {
+   "turn": 5,
+   "send": "estimated price",
+   "reply": "Before we get started \u2014 are you 21 or older?",
+   "secs": 0.2
+  }
+ ],
+ "failures": [
+  {
+   "turn": 4,
+   "send": "3 bottles vodka, 750 ml\n1 bottle St-Germain Elderflower Liqueur, 750 ml\n5 bottles Sauvignon Blanc or Pinot Grigio\n3 bottles Pinot Noir\n2 bottles dry ros\u00e9\n",
+   "fails": [
+    "judge NO: presents a built list covering vodka, St-Germain, a white wine, a pinot noir and a ros\u00e9 (or flags one as unavailable), with the requested quantities on the items it found (an unavailable item may have no line)"
+   ],
+   "reply": "<<ERROR [Errno 111] Connection refused>>"
+  },
+  {
+   "turn": 5,
+   "send": "estimated price",
+   "fails": [
+    "missing 'Estimated tax'",
+    "missing 'Service charge'",
+    "missing 'Tip'",
+    "missing 'Estimated delivery'",
+    "missing 'grand total'"
+   ],
+   "reply": "Before we get started \u2014 are you 21 or older?"
+  }
+ ]
+}

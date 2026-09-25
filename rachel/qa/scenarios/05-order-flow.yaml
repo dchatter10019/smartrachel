@@ -1,0 +1,29 @@
+name: order-flow
+tags: [smoke]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+  - send: "ok lets go with this and order"
+    expect: {contains: ["full name"], not_contains: ["say 'place the order'"]}
+  - send: "QA Tester"
+    expect: {contains: ["email"]}
+  - send: "same"
+    expect: {contains: ["phone"]}
+  - send: "9175550100"
+    expect: {contains: ["date", "time"]}
+  - send: "tomorrow at 5 pm"
+    expect: {contains: ["instructions"]}
+  - send: "none"
+    expect: {contains: ["Order Summary", "QA Tester", "9175550100", "05:00 PM", "Shall I go ahead"]}
+  - send: "change the delivery time to 3 pm tomorrow"
+    expect: {contains: ["03:00 PM", "Shall I go ahead"], not_contains: ["05:00 PM - 06:00 PM"]}
+  - send: "use the phone number at 646-555-0123"
+    expect: {contains: ["6465550123", "Shall I go ahead"]}
+  - send: "change the delivery instructions to leave with the doorman"
+    expect: {contains: ["leave with the doorman", "Shall I go ahead"]}
+  - send: "yes"
+    expect: {contains: ["placed"], judge: "says the order has been placed and gives a checkout or payment link"}

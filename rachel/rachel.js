@@ -134,6 +134,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         return await addToCart(toolInput);
 
       case 'SendEmail': {
+        if (eventParams && eventParams.qa) { console.log('[QA] SendEmail simulated:', JSON.stringify(toolInput.to), toolInput.subject); return { success: true, simulated: true, message: 'Email sent to ' + [].concat(toolInput.to).join(', ') + ' (QA simulated)' }; }
         if (!sendEmailFn) return { success: false, error: 'Email sending is not configured.' };
         const to = Array.isArray(toolInput.to) ? toolInput.to : [toolInput.to].filter(Boolean);
         if (to.length === 0) return { success: false, error: 'No recipient email address provided.' };
@@ -149,6 +150,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
       }
 
       case 'ShoppingAgent': {
+        if (eventParams && eventParams.qa) toolInput.dry_run = true;   // QA: no real placement
         const saInput = Object.assign({}, toolInput, { channel: channelFormat || toolInput.channel || 'slack' });
         if (requesterEmail) {
           if (saInput.email && saInput.email !== requesterEmail) {

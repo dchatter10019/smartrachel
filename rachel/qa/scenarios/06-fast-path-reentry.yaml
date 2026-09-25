@@ -1,0 +1,21 @@
+name: fast-path-reentry
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "1"
+  - send: "place the order"
+  - send: "QA Tester"
+  - send: "same"
+  - send: "9175550100"
+  - send: "tomorrow at 6 pm"
+  - send: "none"
+    expect: {contains: ["Shall I go ahead"]}
+  - send: "add a red wine"
+    expect: {judge: "offers red wine options or asks which red wine, rather than placing the order"}
+  - send: "1"
+  - send: "1"
+  - send: "place the order"
+    expect: {contains: ["Shall I go ahead", "QA Tester"], not_contains: ["full name", "What delivery date"]}

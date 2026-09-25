@@ -1,0 +1,9 @@
+name: returning-customer-address
+tags: [smoke]
+turns:
+  - send: reset
+    expect: {contains: ["21 or older"]}
+  - send: "yes"
+    expect: {judge: "either asks for the delivery address, or says it has an address on file and asks whether to use it"}
+  - send: "no, use 11 Broadway, New York, NY"
+    expect: {contains: ["10004", "Broadway"], not_contains: ["What is your delivery address"]}

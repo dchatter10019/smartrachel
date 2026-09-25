@@ -1,0 +1,52 @@
+{
+ "name": "reprice-multipick",
+ "format": "slack",
+ "replies": [
+  {
+   "turn": 1,
+   "send": "reset",
+   "reply": "Before we get started \u2014 are you 21 or older?",
+   "secs": 0.3
+  },
+  {
+   "turn": 2,
+   "send": "yes",
+   "reply": "What is your delivery address? (Please include street, city, state, and zip code)",
+   "secs": 1.4
+  },
+  {
+   "turn": 3,
+   "send": "425 W 53rd St, New York, NY 10019",
+   "reply": "Got it \u2014 delivering to 425 W 53rd St, New York, NY 10019. How can I help you today?",
+   "secs": 3.4
+  },
+  {
+   "turn": 4,
+   "send": "5 bottles Sauvignon Blanc, 3 bottles Pinot Noir, 2 bottles ros\u00e9",
+   "reply": "Here's what I found for your 10 bottles:\n\n*White (5 bottles)*\n5x *Cloudy Bay Sauvignon Blanc* \u2014 750 mL \u2014 $37.39 ea = $186.95\n\n*Red (3 bottles)*\n3x *Joseph Phelps Freestone Pinot Noir* \u2014 750 mL \u2014 $71.49 ea = $214.47\n\n*Ros\u00e9 (2 bottles)*\n2x *Chandon Ros\u00e9 California Sparkling Wine* \u2014 750 mL \u2014 $24.19 ea = $48.38\n\nProduct total: $449.80\nEstimated Tax (10%): $44.98\nEstimated Delivery: $25.00\nService Charge (10%): $44.98\nTip (5%): $22.49\n*Estimated grand total: $587.25*\n\nWould you also like to add mixers, water, soda, ice, or cups?",
+   "secs": 15.1
+  },
+  {
+   "turn": 5,
+   "send": "find alternative wines around $20 a bottle, same quantities",
+   "reply": "Here are the ~$20 alternatives at the same quantities:\n\n*Sauvignon Blanc (5 bottles)*\n1. *Justin Sauvignon Blanc* \u2014 750 mL \u2014 $18.69 ea = $93.45\n\n*Pinot Noir (3 bottles)*\n2. *Kendall-Jackson Vintner's Reserve Pinot Noir* \u2b50 \u2014 750 mL \u2014 $20.89 ea = $62.67\n\n*Ros\u00e9 (2 bottles)*\n3. *The Beach Ros\u00e9* \u2014 750 mL \u2014 $20.89 ea = $41.78\n\nWould you like to swap any or all of these in? You can mix and match \u2014 just let me know which ones you'd like!",
+   "secs": 22.5
+  },
+  {
+   "turn": 6,
+   "send": "Sauvignon Blanc 1, Pinot Noir 1, ros\u00e9 1",
+   "reply": "Got it:\n\u2022 5x Justin Sauvignon Blanc (replacing Cloudy Bay Sauvignon Blanc White Wine - 750 ML) \u2014 $18.69\n\u2022 could not resolve Kendall-Jackson Vintner's Reserve Pinot Noir \u2b50\n\u2022 could not resolve The Beach Ros\u00e9\n\nUpdated basket:\n3x Joseph Phelps Freestone Pinot Noir - 750 ML \u2014 $71.49 ea = $214.47\n2x Chandon Ros\u00e9 California Sparkling Wine - 750 ML \u2014 $24.19 ea = $48.38\n5x Justin Sauvignon Blanc - 750 ML \u2014 $18.69 ea = $93.45\n\nProduct total: $356.30\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?",
+   "secs": 18.2
+  }
+ ],
+ "failures": [
+  {
+   "turn": 6,
+   "send": "Sauvignon Blanc 1, Pinot Noir 1, ros\u00e9 1",
+   "fails": [
+    "judge NO: confirms swaps and shows an updated basket in which the wines keep quantities 5, 3 and 2"
+   ],
+   "reply": "Got it:\n\u2022 5x Justin Sauvignon Blanc (replacing Cloudy Bay Sauvignon Blanc White Wine - 750 ML) \u2014 $18.69\n\u2022 could not resolve Kendall-Jackson Vintner's Reserve Pinot Noir \u2b50\n\u2022 could not resolve The Beach Ros\u00e9\n\nUpdated basket:\n3x Joseph Phelps Freestone Pinot Noir - 750 ML \u2014 $71.49 ea = $214.47\n2x Chandon Ros\u00e9 California Sparkling Wine - 750 ML \u2014 $24.19 ea = $48.38\n5x Justin Sauvignon Blanc - 750 ML \u2014 $18.69 ea = $93.45\n\nProduct total: $356.30\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?"
+  }
+ ]
+}

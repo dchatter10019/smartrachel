@@ -1,0 +1,10 @@
+name: reprice-multipick
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "5 bottles Sauvignon Blanc, 3 bottles Pinot Noir, 2 bottles rosé"
+  - send: "find alternative wines around $20 a bottle, same quantities"
+    expect: {judge: "lists alternative wine options with prices, grouped by category or numbered"}
+  - send: "Sauvignon Blanc 1, Pinot Noir 1, rosé 1"
+    expect: {contains: ["replacing"], judge: "confirms swaps and shows an updated basket in which the wines keep quantities 5, 3 and 2"}

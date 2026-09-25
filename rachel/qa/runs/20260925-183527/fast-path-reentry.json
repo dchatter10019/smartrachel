@@ -1,0 +1,103 @@
+{
+ "name": "fast-path-reentry",
+ "format": "slack",
+ "replies": [
+  {
+   "turn": 1,
+   "send": "reset",
+   "reply": "Before we get started \u2014 are you 21 or older?",
+   "secs": 0.1
+  },
+  {
+   "turn": 2,
+   "send": "yes",
+   "reply": "What is your delivery address? (Please include street, city, state, and zip code)",
+   "secs": 1.0
+  },
+  {
+   "turn": 3,
+   "send": "425 W 53rd St, New York, NY 10019",
+   "reply": "Got it \u2014 delivering to 425 W 53rd St, New York, NY 10019. How can I help you today?",
+   "secs": 2.6
+  },
+  {
+   "turn": 4,
+   "send": "need a kim crawford",
+   "reply": "I found a few options for Kim Crawford:\n\n1. Kim Crawford Illuminate Sauv Blanc - 750 ML \u2014 $18.69\n2. Kim Crawford Prosecco - 750 ML \u2014 $17.59\n3. Kim Crawford Sauvignon Blanc - 750 ML \u2014 $16.42\n4. Kim Crawford Sauvignon Blanc - 375 ML \u2014 $10.99\n\nWhich one would you like to add?",
+   "secs": 3.4
+  },
+  {
+   "turn": 5,
+   "send": "1",
+   "reply": "Got it \u2014 Kim Crawford Illuminate Sauv Blanc - 750 ML \u2014 $18.69. How many bottles would you like?",
+   "secs": 2.9
+  },
+  {
+   "turn": 6,
+   "send": "1",
+   "reply": "Got it \u2014 1x Kim Crawford Illuminate Sauv Blanc - 750 ML in your order. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?",
+   "secs": 0.0
+  },
+  {
+   "turn": 7,
+   "send": "place the order",
+   "reply": "What is your full name \u2014 the person placing the order? (first and last). If someone else will receive the delivery, you can give their contact in the delivery instructions later.",
+   "secs": 1.2
+  },
+  {
+   "turn": 8,
+   "send": "QA Tester",
+   "reply": "What email should we use for the delivery recipient? (Reply \"same\" to use qa-rachel@getbevvi.com.)",
+   "secs": 0.0
+  },
+  {
+   "turn": 9,
+   "send": "same",
+   "reply": "And your phone number (for the person placing the order)?",
+   "secs": 0.0
+  },
+  {
+   "turn": 10,
+   "send": "9175550100",
+   "reply": "Thanks! What delivery date and time would you like?",
+   "secs": 0.0
+  },
+  {
+   "turn": 11,
+   "send": "tomorrow at 6 pm",
+   "reply": "Any delivery instructions for the driver? (e.g. buzzer or door code, loading dock, floor/suite, or an on-site contact) \u2014 or say \"none\".",
+   "secs": 0.2
+  },
+  {
+   "turn": 12,
+   "send": "none",
+   "reply": "*Order Summary*\n\nKim Crawford Illuminate Sauv Blanc - 750 ML x1 \u2014 $18.69 ea = $18.69\nFor: QA Tester | 9175550100\nRecipient email: qa-rachel@getbevvi.com\nDelivery to: 425 W 53rd St, New York, NY 10019\nDelivery: Sat, Sep 26, 06:00 PM - 07:00 PM EST\n\nProduct total: $18.69\nEstimated tax (10%): $1.87\nService charge (10%): $1.87\nTip (5%): $0.93\nEstimated delivery: $25.00\n*Estimated grand total: $48.36*\n\nShall I go ahead and place this order?",
+   "secs": 0.0
+  },
+  {
+   "turn": 13,
+   "send": "add a red wine",
+   "reply": "Here are some red wine options:\n\n1. *Kendall-Jackson Vintner's Reserve Cabernet Sauvignon* \u2014 750 ML \u2014 $21.77 \u2b50\n2. *Kendall Jackson Pinot Noir Vint Rs* \u2014 750 ML \u2014 $20.89 \u2b50\n3. *J. Lohr Merlot Los Osos* \u2014 750 ML \u2014 $18.69\n4. *Louis Jadot Bourgogne Pinot Noir* \u2014 750 ML \u2014 $24.19\n5. *Ruffino Chianti Ris Ducale Tan* \u2014 750 ML \u2014 $27.45 \u2b50\n6. *Stag's Leap Merlot* \u2014 750 ML \u2014 $37.94\n7. *Ruffino Chianti Ris Ducale Gold* \u2014 750 ML \u2014 $40.69 \u2b50\n8. *Castello Di Monsanto Chianti Classico Riserva* \u2014 750 ML \u2014 $37.39\n\nWhich one would you like to add?",
+   "secs": 15.4
+  },
+  {
+   "turn": 14,
+   "send": "1",
+   "reply": "Got it \u2014 Kendall-Jackson Vintner's Reserve Cabernet Sauvignon \u2014 750 ML \u2014 $21.77. How many bottles would you like?",
+   "secs": 2.9
+  },
+  {
+   "turn": 15,
+   "send": "1",
+   "reply": "Got it \u2014 1x Kendall-Jackson Vintner's Reserve Cabernet Sauvignon in your order. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?",
+   "secs": 0.0
+  },
+  {
+   "turn": 16,
+   "send": "place the order",
+   "reply": "*Order Summary*\n\n1x Kim Crawford Illuminate Sauv Blanc - 750 ML \u2014 $18.69 ea = $18.69\n1x Kendall-Jackson Vintner's Reserve Cabernet Sauvignon - 750 ML \u2014 $21.77 ea = $21.77\nFor: QA Tester | 9175550100\nRecipient email: qa-rachel@getbevvi.com\nDelivery to: 425 W 53rd St, New York, NY 10019\nDelivery: Sat, Sep 26, 06:00 PM - 07:00 PM EST\n\nProduct total: $40.46\nEstimated tax (10%): $4.05\nService charge (10%): $4.05\nTip (5%): $2.02\nEstimated delivery: $25.00\n*Estimated grand total: $75.58*\n\nShall I go ahead and place this order?",
+   "secs": 1.2
+  }
+ ],
+ "failures": []
+}

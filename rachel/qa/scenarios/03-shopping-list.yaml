@@ -1,0 +1,15 @@
+name: shopping-list
+tags: [smoke]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: |
+      3 bottles vodka, 750 ml
+      1 bottle St-Germain Elderflower Liqueur, 750 ml
+      5 bottles Sauvignon Blanc or Pinot Grigio
+      3 bottles Pinot Noir
+      2 bottles dry rosé
+    expect: {not_contains: ["Which one would you like to add"], judge: "presents a built list covering vodka, St-Germain, a white wine, a pinot noir and a rosé (or flags one as unavailable), with the requested quantities on the items it found (an unavailable item may have no line)"}
+  - send: "estimated price"
+    expect: {contains: ["Estimated tax", "Service charge", "Tip", "Estimated delivery", "grand total"]}

@@ -1,0 +1,55 @@
+{
+ "name": "contact-step-nonanswer",
+ "format": "slack",
+ "replies": [
+  {
+   "turn": 1,
+   "send": "reset",
+   "reply": "Before we get started \u2014 are you 21 or older?",
+   "secs": 0.0
+  },
+  {
+   "turn": 2,
+   "send": "yes",
+   "reply": "What is your delivery address? (Please include street, city, state, and zip code)",
+   "secs": 0.7
+  },
+  {
+   "turn": 3,
+   "send": "425 W 53rd St, New York, NY 10019",
+   "reply": "Got it \u2014 delivering to 425 W 53rd St, New York, NY 10019. How can I help you today?",
+   "secs": 3.0
+  },
+  {
+   "turn": 4,
+   "send": "need a kim crawford",
+   "reply": "I found a few options for Kim Crawford:\n\n1. Kim Crawford Illuminate Sauv Blanc - 750 ML \u2014 $18.69\n2. Kim Crawford Prosecco - 750 ML \u2014 $17.59\n3. Kim Crawford Sauvignon Blanc - 750 ML \u2014 $16.42\n4. Kim Crawford Sauvignon Blanc - 375 ML \u2014 $10.99\n\nWhich one would you like to add?",
+   "secs": 5.2
+  },
+  {
+   "turn": 5,
+   "send": "1",
+   "reply": "Got it \u2014 Kim Crawford Illuminate Sauv Blanc - 750 ML \u2014 $18.69. How many bottles would you like?",
+   "secs": 3.3
+  },
+  {
+   "turn": 6,
+   "send": "1",
+   "reply": "Got it \u2014 1x Kim Crawford Illuminate Sauv Blanc - 750 ML in your order. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?",
+   "secs": 0.1
+  },
+  {
+   "turn": 7,
+   "send": "place the order",
+   "reply": "What is your full name \u2014 the person placing the order? (first and last). If someone else will receive the delivery, you can give their contact in the delivery instructions later.",
+   "secs": 1.2
+  },
+  {
+   "turn": 8,
+   "send": "show me the basket",
+   "reply": "Here's your current basket:\n\n1x *Kim Crawford Illuminate Sauv Blanc* \u2014 750 mL \u2014 $18.69\n\nWould you like to place the order, generate a PDF proposal, or make any changes?",
+   "secs": 5.3
+  }
+ ],
+ "failures": []
+}

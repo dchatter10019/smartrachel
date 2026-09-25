@@ -1,0 +1,16 @@
+name: session-basics
+tags: [smoke]
+fresh: true
+turns:
+  - send: reset
+    expect: {contains: ["21 or older"]}
+  - send: "yes"
+    expect: {contains: ["delivery address"], not_contains: ["on file"]}
+  - send: "425 west 53rd st, NY, NY"
+    expect: {contains: ["10019"], not_contains: ["What is your delivery address"]}
+  - send: "do you have Tito's"
+    expect: {matches: "^\\s*1[.)] .*\\$\\d", not_contains: ["Would you like to see the estimated full price"]}
+  - send: "3"
+    expect: {contains: ["How many"]}
+  - send: "2"
+    expect: {contains: ["2x", "Tito"]}

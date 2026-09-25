@@ -1,0 +1,37 @@
+{
+ "name": "shopping-list",
+ "format": "slack",
+ "replies": [
+  {
+   "turn": 1,
+   "send": "reset",
+   "reply": "Before we get started \u2014 are you 21 or older?",
+   "secs": 0.1
+  },
+  {
+   "turn": 2,
+   "send": "yes",
+   "reply": "What is your delivery address? (Please include street, city, state, and zip code)",
+   "secs": 1.2
+  },
+  {
+   "turn": 3,
+   "send": "425 W 53rd St, New York, NY 10019",
+   "reply": "Got it \u2014 delivering to 425 W 53rd St, New York, NY 10019. How can I help you today?",
+   "secs": 2.8
+  },
+  {
+   "turn": 4,
+   "send": "3 bottles vodka, 750 ml\n1 bottle St-Germain Elderflower Liqueur, 750 ml\n5 bottles Sauvignon Blanc or Pinot Grigio\n3 bottles Pinot Noir\n2 bottles dry ros\u00e9\n",
+   "reply": "Here's what I found for your list:\n\n*SPIRITS*\n3x *Belvedere Organic Vodka* \u2014 750 mL \u2014 $36.29 ea = $108.87\n1x *St Germain Elderflower Liqueur* \u2014 750 mL \u2014 $38.49 ea = $38.49\n\n*WINE*\n5x *Cloudy Bay Sauvignon Blanc* \u2014 750 mL \u2014 $37.39 ea = $186.95\n3x *Joseph Phelps Freestone Pinot Noir* \u2014 750 mL \u2014 $71.49 ea = $214.47\n\n\u26a0\ufe0f *Dry Ros\u00e9* (750 mL) is not currently available at this location. Would you like me to search for an alternative?\n\n---\n\nProduct total: $548.78\nEstimated Tax (10%): $54.88\nEstimated Delivery: $25.00\nService Charge (10%): $54.88\nTip (5%): $27.44\n*Estimated Grand Total: $710.98*\n\nWould you also like to add mixers, water, soda, ice, or cups?",
+   "secs": 21.2
+  },
+  {
+   "turn": 5,
+   "send": "estimated price",
+   "reply": "Here's your current basket:\n\n3x Belvedere Organic Vodka - 750 ML \u2014 $36.29 ea = $108.87\n1x St Germain Elderflower Liqueur 750ml (40 proof) \u2014 $38.49 ea = $38.49\n5x Cloudy Bay Sauvignon Blanc White Wine - 750 ML \u2014 $37.39 ea = $186.95\n3x Joseph Phelps Freestone Pinot Noir - 750 ML \u2014 $71.49 ea = $214.47\n\nProduct total: $548.78\nEstimated tax (10%): $54.88\nService charge (10%): $54.88\nTip (5%): $27.44\nEstimated delivery: $25.00\n*Estimated grand total: $710.98*\n\nEstimates \u2014 actual totals may vary.\n\nWould you like to place the order, generate a PDF proposal, or make any changes?",
+   "secs": 1.4
+  }
+ ],
+ "failures": []
+}

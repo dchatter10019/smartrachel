@@ -1,0 +1,37 @@
+{
+ "name": "informational-no-trailer",
+ "format": "slack",
+ "replies": [
+  {
+   "turn": 1,
+   "send": "reset",
+   "reply": "Before we get started \u2014 are you 21 or older?",
+   "secs": 0.0
+  },
+  {
+   "turn": 2,
+   "send": "yes",
+   "reply": "What is your delivery address? (Please include street, city, state, and zip code)",
+   "secs": 0.7
+  },
+  {
+   "turn": 3,
+   "send": "425 W 53rd St, New York, NY 10019",
+   "reply": "Got it \u2014 delivering to 425 W 53rd St, New York, NY 10019. How can I help you today?",
+   "secs": 2.6
+  },
+  {
+   "turn": 4,
+   "send": "what's the difference between a Chianti Classico and a Riserva?",
+   "reply": "Great question! Here's the breakdown:\n\n*Chianti Classico* is the base designation for wines from the historic Chianti Classico zone (between Florence and Siena in Tuscany). To qualify, the wine must be:\n- At least 80% Sangiovese\n- Aged a minimum of **12 months** (including 3 in bottle)\n- Released no earlier than October 1 of the year following harvest\n\n*Chianti Classico Riserva* is a step up \u2014 same zone, same grape requirements, but with stricter aging:\n- Minimum **24 months** of aging (including 3 in bottle)\n- Higher minimum alcohol (12.5% vs 12%)\n- Generally made from better vineyard selections or superior vintages\n\n*The practical difference:*\n- Riserva tends to be more structured, complex, and age-worthy \u2014 more tannin, deeper fruit, often some oak influence\n- Regular Classico is typically more approachable, fruit-forward, and ready to drink sooner\n- Price reflects this \u2014 Riserva usually runs $5\u2013$15 more per bottle\n\nThere's also a *Gran Selezione* tier above Riserva (single vineyard or best barrels, 30 months aging), if you ever want to go all the way up the ladder.\n\nAnything else I can help with, or would you like me to find some Chianti Classico options?",
+   "secs": 10.1
+  },
+  {
+   "turn": 5,
+   "send": "can you send me a list of top wines every morning?",
+   "reply": "That's a great idea, but unfortunately I'm not able to schedule automated daily messages or recurring emails \u2014 I can only respond in real time during our conversations here.\n\nWhat I *can* do anytime you ask:\n- Pull top wine recommendations by style, region, or budget\n- Search for specific bottles\n- Build a full event package with wine selections\n\nJust drop in whenever and I'll find you something great! Anything else I can help with?",
+   "secs": 5.2
+  }
+ ],
+ "failures": []
+}
