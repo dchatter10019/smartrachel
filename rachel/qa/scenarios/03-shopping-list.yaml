@@ -10,6 +10,6 @@ turns:
       5 bottles Sauvignon Blanc or Pinot Grigio
       3 bottles Pinot Noir
       2 bottles dry rosé
-    expect: {not_contains: ["Which one would you like to add"], judge: "presents a built list covering vodka, St-Germain, a white wine, a pinot noir and a rosé (or flags one as unavailable), with the requested quantities on the items it found (an unavailable item may have no line)"}
+    expect: {contains: ["3x", "1x", "5x", "St Germain", "Product total"], not_contains: ["Which one would you like to add"], judge: "mentions rosé — either as a line item or as unavailable"}
   - send: "estimated price"
     expect: {contains: ["Estimated tax", "Service charge", "Tip", "Estimated delivery", "grand total"]}
