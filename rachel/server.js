@@ -253,6 +253,41 @@ function clearCache(email, channel) {
   console.log('[cache] cleared for:', email);
 }
 
+// ── Age answer (COMPLIANCE) ────────────────────────────────────────────────
+// Real bug: the gate treated a message as "yes" if it CONTAINED any of 'yes','ok','sure',
+// 'i am','over 21' — checked before "no". "I am 17", "I'm not sure", "no I'm not over 21" and
+// "nope, 19. is that ok?" all passed, while "I'm 25" and "21" were re-asked forever.
+// Order matters: a stated age decides; then doubt; then negation; only then an affirmative
+// at the START of the message (or an explicit "I'm over 21" anywhere).
+function parseAgeAnswer(raw) {
+  const m = String(raw || '').toLowerCase().replace(/[’`]/g, "'").replace(/\s+/g, ' ').trim();
+  const bare = m.replace(/[^a-z0-9' ]/g, ' ').replace(/\s+/g, ' ').trim();
+  // A stated age: the whole message is a number, or a number with an age cue around it.
+  // (Never a bare leading number — "3 bottles of Tito's" is not an age.)
+  const ageM = bare.match(/^(\d{1,3})(?: years?(?: old)?| yrs?| yo)?$/) ||
+               m.match(/\b(?:i'?m|im|i am|age(?: is)?|aged|turned|just turned)\s+(?:only\s+|just\s+)?(\d{1,3})\b/) ||
+               m.match(/\b(\d{1,3})\s*(?:years? old|yrs? old|y\/o|yo)\b/) ||
+               m.match(/^(?:no|nope|nah|yes|yeah|yep)[,.!\s]+(\d{1,3})\b/);
+  if (ageM) { const n = Number(ageM[1]); if (n >= 21 && n <= 120) return { answer: 'yes', why: 'stated age ' + n }; if (n > 0 && n < 21) return { answer: 'no', why: 'stated age ' + n }; }
+  if (/\b(not sure|unsure|don'?t know|dunno|idk|no idea|maybe|not certain)\b/.test(m)) return { answer: 'unclear', why: 'unsure' };
+  if (/\b(under|younger than|less than|below)\s*21\b|\bnot\s+(?:yet\s+)?(?:21|over 21|old enough|of age)\b|\bminor\b|\bnot yet\b|\bunderage\b/.test(m)) return { answer: 'no', why: 'negated' };
+  if (/^(no|nope|nah|negative|i'?m not|im not|i am not)\b/.test(bare)) return { answer: 'no', why: 'starts with no' };
+  if (/^(yes|yeah|yep|yup|yea|ya|y|sure|ok|okay|correct|absolutely|definitely|of course|certainly|confirmed|affirmative|i am|i'?m over|im over|over 21|21 ?\+|i'?m 21|i am 21)\b/.test(bare)) return { answer: 'yes', why: 'affirmative' };
+  if (/\b(i'?m|im|i am)\s+(over|above|older than)\s+21\b|\b21\s*\+|\b(i'?m|i am) of (legal )?(drinking )?age\b/.test(m)) return { answer: 'yes', why: 'states over 21' };
+  return { answer: 'unclear', why: 'no age answer' };
+}
+// Strip the age answer off a message that also carries a request ("yes I'm over 21, deliver
+// to ..., I need 2 Tito's") so the request can be replayed after the gate.
+function stripAgeAnswer(raw) {
+  return String(raw || '')
+    .replace(/^\s*(yes|yeah|yep|yup|sure|ok|okay|correct|absolutely|actually)\b[,.!\s]*/i, '')
+    .replace(/\b(actually\s+)?(i'?m|im|i am)\s+(over|above|older than)\s+21\b/ig, '')
+    .replace(/\b(actually\s+)?(i'?m|im|i am)\s+\d{1,3}(\s*(years?|yrs?)(\s+old)?)?\b/ig, '')
+    .replace(/\b(over|above)\s+21\b|\b21\s*\+|\b\d{1,3}\s*(years?|yrs?)\s+old\b|\byears?\s+old\b/ig, '')
+    .replace(/^\s*(i am|i'?m)\b\.?\s*$/i, '').replace(/^\s*\d{1,3}\s*$/, '')
+    .replace(/^[,.!\s]+|[,\s]+$/g, '').replace(/^and\s+/i, '').trim();
+}
+
 // ── Flow state helpers ─────────────────────────────────────────────────────
 function getState(sessionKey) {
   if (!flowState[sessionKey]) {
@@ -269,7 +304,11 @@ function setState(sessionKey, updates) {
 }
 
 function resetState(sessionKey, email) {
+  // COMPLIANCE: a stated under-21 refusal survives "reset" (and idle expiry) for 24h — a minor
+  // could otherwise type reset and answer "yes".
+  const prevRefused = flowState[sessionKey] && flowState[sessionKey].ageRefusedAt;
   flowState[sessionKey] = { step: 'age', ageVerified: false, addrConfirmed: false, zip: '', address: '', pendingIntent: null, lastFingerprint: '', lastZip: '', mixerAsked: false, mixerAnswered: false, packageShown: false, proposalStep: null, proposalData: null, orderStep: null, orderData: null };
+  if (prevRefused && Date.now() - prevRefused < 24 * 3600 * 1000) flowState[sessionKey].ageRefusedAt = prevRefused;
   sessions[sessionKey] = [];
   // Clear L1 cache for this user
   if (email) Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; });
@@ -616,6 +655,17 @@ async function validateDeliveryTime(state, message, email, format, res) {
   // Use the parsed calendar fields directly (the date the customer stated), not
   // toISOString() — which is UTC and shifts evening times to the next day.
   const dateStr = parsedDate.getFullYear() + '-' + String(parsedDate.getMonth() + 1).padStart(2, '0') + '-' + String(parsedDate.getDate()).padStart(2, '0');
+  // A time in the past is not a delivery request. Real bug: "yesterday at 5pm" was checked
+  // against yesterday's windows and the customer was offered "06:00 PM - 07:00 PM" on a
+  // date that had already gone.
+  try {
+    const whenUtc = new Date(zonedToUtcIso(dateStr, parsedDate.getHours(), parsedDate.getMinutes(), fromZone)).getTime();
+    if (whenUtc < Date.now()) {
+      console.log('[delivery] requested time is in the past (' + dateStr + ' ' + parsedDate.getHours() + ':' + String(parsedDate.getMinutes()).padStart(2, '0') + ' ' + fromZone + ') — re-asking');
+      const askP = 'That time has already passed — what upcoming date and time would you like? (e.g. "tomorrow at 5pm")';
+      return res.json({ text: askP, response: askP });
+    }
+  } catch (e) { console.error('[delivery] past-time check failed:', e.message); }
 
   let establishmentId = '';
   try {
@@ -1182,13 +1232,21 @@ app.post('/chat', async (req, res) => {
     }
 
     // ── STATE: age ─────────────────────────────────────────────────────────
+    const AGE_BYE = 'I\'m sorry, I can only assist customers who are 21 or older. Have a great day!';
+    if (state.ageRefusedAt && Date.now() - state.ageRefusedAt < 24 * 3600 * 1000 && getCapabilities(format).requires_age_verification) {
+      // COMPLIANCE: a refusal sticks — "no" then "yes" (or "actually I'm 22") never passes.
+      console.log('[age] refused earlier in this session — still refusing: ' + JSON.stringify(message).slice(0, 60));
+      return res.json({ text: AGE_BYE, response: AGE_BYE });
+    }
     if (state.step === 'age') {
       const capsAge = getCapabilities(format);
+      const age = parseAgeAnswer(message);
       if (!capsAge.requires_age_verification) {
         state.step = state.address ? 'ready' : 'addr_new';
       } else if (state.ageVerified) {
         state.step = state.address ? 'ready' : 'addr_new';
-      } else if (yesWords.some(w => msgLower.includes(w))) {
+      } else if (age.answer === 'yes') {
+        console.log('[age] verified (' + age.why + '): ' + JSON.stringify(message).slice(0, 60));
         state.ageVerified = true;
         state.step = state.address ? 'ready' : 'addr_new';
         // Save to GBrain
@@ -1198,16 +1256,47 @@ app.post('/chat', async (req, res) => {
             await saveD2CSession(email, Object.assign({}, d2c, { age_verified: true, onboarded: true }));
           } catch(e) {}
         }
-      } else if (noWords.some(w => msgLower === w || msgLower.startsWith(w + ' '))) {
-        const bye = 'I\'m sorry, I can only assist customers who are 21 or older. Have a great day!';
-        return res.json({ text: bye, response: bye });
+        // The yes may carry the whole request ("yes I'm over 21, deliver to 425 W 53rd St, NY
+        // 10019, I need 2 Tito's"). Real bug: the entire sentence was stored as the ADDRESS and
+        // the items were dropped. Keep the rest as the pending request; the address extraction
+        // below pulls an address out of it, and the rest replays once the address is in.
+        const rest = stripAgeAnswer(message);
+        if (rest.replace(/[^a-z0-9]/gi, '').length > 8) {
+          state.pendingIntent = [rest, state.pendingIntent].filter(Boolean).join('. ');
+          console.log('[age] request carried with the yes, held for after the address: ' + JSON.stringify(rest).slice(0, 80));
+          if (state.step === 'addr_new' && !/\b(\d{1,6}\s+[A-Za-z0-9.'#\- ]{3,60}?(?:,\s*[A-Za-z. ]{2,40}){1,3},?\s+\d{5})\b/.test(state.pendingIntent)) {
+            saveFlowState();
+            const askA = 'Thanks! What\'s your delivery address? (street, city, state and zip) — I\'ll pick up your request right after.';
+            return res.json({ text: askA, response: askA });
+          }
+        } else if (state.step === 'addr_new' && !(state.pendingIntent && /\b(\d{1,6}\s+[A-Za-z0-9.'#\- ]{3,60}?(?:,\s*[A-Za-z. ]{2,40}){1,3},?\s+\d{5})\b/.test(state.pendingIntent))) {
+          saveFlowState();
+          const askA = 'What is your delivery address? (Please include street, city, state, and zip code)';
+          return res.json({ text: askA, response: askA });
+        }
+        saveFlowState();
+      } else if (age.answer === 'no') {
+        console.log('[age] REFUSED (' + age.why + '): ' + JSON.stringify(message).slice(0, 60));
+        state.ageRefusedAt = Date.now(); state.pendingIntent = null; saveFlowState();
+        return res.json({ text: AGE_BYE, response: AGE_BYE });
       } else {
+        console.log('[age] no clear answer (' + age.why + ') — asking again: ' + JSON.stringify(message).slice(0, 60));
+        // A question about the gate itself gets a real answer, not the canned line.
+        if (/\b(why|what for|how come|do you need|is (this|that) (necessary|required))\b/i.test(message) && /\b(age|old|21|birthday|id)\b/i.test(message)) {
+          const why = 'It\'s the law — Bevvi can only sell alcohol to adults, so I\'m required to confirm you\'re 21 or older before we continue. Are you 21 or older?';
+          return res.json({ text: why, response: why });
+        }
+        if (age.why === 'unsure') {
+          const u = 'No problem — I just need a yes or no: are you 21 or older?';
+          return res.json({ text: u, response: u });
+        }
         const ask = 'Before we get started — are you 21 or older?';
         // A substantive first message (an order, a question) is kept and replayed after the
         // gate instead of being discarded — real gap on email/WhatsApp, where the first
-        // message usually IS the order.
+        // message usually IS the order. Only the FIRST one: a later off-script reply at the
+        // gate must not overwrite the customer's actual request.
         const greetingOnly = msgLower.length < 12 || /^(hi|hello|hey|yo|hola|good (morning|afternoon|evening)|reset)[\s!.,]*$/i.test(msgLower);
-        if (!greetingOnly) {
+        if (!greetingOnly && !state.pendingIntent) {
           state.pendingIntent = message; saveFlowState();
           const ack = 'Thanks — I have your request and will pick it up right after one quick check. Are you 21 or older?';
           return res.json({ text: ack, response: ack });
@@ -1263,6 +1352,13 @@ app.post('/chat', async (req, res) => {
           const noStoreMsg = `Sorry, it looks like we don't currently have a store serving the ${candidateZip} zip code, so I'm unable to fulfill orders there yet. I'd recommend reaching out to our support team at bevvi-support@getbevvi.com — they can look into delivery options for your area. Would you like to try a different delivery address?`;
           return res.json({ text: noStoreMsg, response: noStoreMsg });
         }
+        // A zip alone is not a delivery address. Real bug: "90210" was accepted ("Got it —
+        // delivering to 90210") and the order would have gone out with no street.
+        if (!/\b\d{1,6}\s+[A-Za-z]/.test(message.replace(/\b\d{5}(-\d{4})?\b/g, ''))) {
+          console.log('[addr] zip only, no street — asking for the street address: ' + JSON.stringify(message).slice(0, 60));
+          const askS = 'Thanks — I need the full street address for delivery. What\'s the street address in ' + candidateZip + '? (e.g. "425 W 53rd St, New York, NY ' + candidateZip + '")';
+          return res.json({ text: askS, response: askS });
+        }
         state.zip = candidateZip;
         state.address = message;
         state.addrConfirmed = true;
@@ -1288,7 +1384,17 @@ app.post('/chat', async (req, res) => {
           return res.json({ text: rOk, response: rOk });
         }
       } else {
-        const ask = 'What is your delivery address? (Please include street, city, state, and zip code)';
+        // Not an address. A request ("I want some beer") is held and replayed after the
+        // address, as at the age gate; anything else gets a concrete example, not the same line.
+        const looksLikeRequest = !/\d/.test(message) && message.split(/\s+/).length >= 2 && /\b(want|need|order|looking|do you|have|show|price|how much|bottle|wine|beer|vodka|tequila|whiskey|champagne|spirits|party|event|recommend)\b/i.test(message);
+        if (looksLikeRequest && !state.pendingIntent) {
+          state.pendingIntent = message; saveFlowState();
+          console.log('[addr] request at the address step — held for after the address: ' + JSON.stringify(message).slice(0, 70));
+          const askR = 'Happy to help with that — first, what\'s your delivery address? (street, city, state and zip, e.g. "425 W 53rd St, New York, NY 10019")';
+          return res.json({ text: askR, response: askR });
+        }
+        console.log('[addr] no address in reply — asking with an example: ' + JSON.stringify(message).slice(0, 60));
+        const ask = 'To deliver, I need a street address — street, city, state and zip (e.g. "425 W 53rd St, New York, NY 10019"). Where should we deliver?';
         return res.json({ text: ask, response: ask });
       }
     }
@@ -1449,6 +1555,44 @@ app.post('/chat', async (req, res) => {
       state.pendingIntent = message;
       const addrQ = `I have your delivery address on file as ${state.address} — shall I use this for your order?`;
       return res.json({ text: addrQ, response: addrQ });
+    }
+
+    // ── Tip change requests ─────────────────────────────────────────────────
+    // Real bug: "make the tip 0" got "Noted! Tip will be set to $0" — but the tip is a fixed
+    // 5% in the order summary and placement, so the promise was false. Until custom tips are
+    // a supported (business-approved) option, say plainly what happens.
+    if (state.step === 'ready' && /\btip\b/i.test(message) && (/\b(make|set|change|remove|no|zero|without|waive|skip|lower|reduce|increase|raise|bump|drop|less|more)\b[^.?!]*\btip\b|\btip\b[^.?!]*\b(to|at|of)\s*\$?\d|\btip\b\s*(?:=|:)?\s*\$?\d|\bno tip\b/i.test(message))) {
+      console.log('[tip] change requested — not supported, told the customer: ' + JSON.stringify(message).slice(0, 60));
+      const rT = 'Orders I place include a standard 5% tip for the delivery driver, and I\'m not able to change it from here. If you\'d like a different tip, bevvi-support@getbevvi.com can help. Anything else on your order?';
+      return res.json({ text: rT, response: rT });
+    }
+
+    // ── STATE: ready — a new delivery address ──────────────────────────────
+    // Real bug: after one address was set, a new full address went to the LLM, which said
+    // "I'm not able to change the delivery address mid-conversation". Changing it is allowed:
+    // check coverage, and if a different store serves it, the basket (built for the old
+    // store's catalog) has to be rebuilt — say so.
+    if (state.step === 'ready' && !state.orderStep && !state.proposalStep) {
+      const am = message.match(/\b(\d{1,6}\s+[A-Za-z0-9.'#\- ]{3,60}?(?:,\s*[A-Za-z. ]{2,40}){1,3},?\s+(\d{5}))\b/);
+      const rest = am ? message.replace(am[0], '').replace(/\b(please|change|update|use|switch|new|my|the|delivery|address|deliver|ship|send|it|to|is|at|instead|actually|now)\b|[^a-z]/gi, '') : 'x';
+      if (am && rest.length <= 3) {
+        const newZip = am[2];
+        const cov = await checkStoreCoverage(newZip);
+        if (cov && cov.store_count === 0) {
+          const rNo = 'I can\'t deliver to ' + newZip + ' yet — no store serves that zip. I\'ll keep delivering to ' + state.address + ', or give me a different address.';
+          return res.json({ text: rNo, response: rNo });
+        }
+        const prevCov = state.zip ? await checkStoreCoverage(state.zip) : null;
+        let items = []; try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+        const storeChanged = !!(prevCov && cov && prevCov.client && cov.client && prevCov.client !== cov.client);
+        console.log('[addr] address changed at ready: ' + JSON.stringify(state.address) + ' -> ' + JSON.stringify(am[1]) + ' | store changed: ' + storeChanged + ' | basket items: ' + items.length);
+        state.address = am[1]; state.zip = newZip; state.addrConfirmed = true; state.geocoded = null;
+        if (storeChanged && items.length) { state.lastLineItems = '[]'; Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; }); }
+        saveFlowState();
+        if (email) { try { const d2c = await getD2CSession(email) || {}; await saveD2CSession(email, Object.assign({}, d2c, { delivery_address: state.address, delivery_zip: newZip })); } catch (e) {} }
+        const rA = 'Updated — delivering to ' + state.address + '.' + (storeChanged && items.length ? ' That address is served by a different store, so your basket needs to be rebuilt — tell me what you\'d like and I\'ll put it together again.' : ' What can I get you?');
+        return res.json({ text: rA, response: rA });
+      }
     }
 
     // ── STATE: ready — pass to Rachel ──────────────────────────────────────
@@ -2016,6 +2160,25 @@ app.post('/chat', async (req, res) => {
       }
       state.orderStep = 'details';
       saveFlowState();
+    }
+    // A question ABOUT the step being asked ("why do you need my name?", "I'd rather not give
+    // my phone") is answered in place and the same question re-asked — the order flow stays.
+    // Real bug: it was treated as a command, the flow was dropped, the LLM said "I don't need
+    // your name at all!", and every later answer (name, "same", phone) was misread.
+    if (['name', 'recipient_email', 'phone'].includes(state.orderStep)) {
+      const FIELD = { name: /\b(name|who)\b/i, recipient_email: /\b(e-?mail|address)\b/i, phone: /\b(phone|number|cell|mobile|call|text)\b/i }[state.orderStep];
+      const aboutStep = /\b(why|what for|what'?s (it|that|this) for|how come|do you (really )?need|do i (have|need) to|necessary|required|mandatory|rather not|prefer not|don'?t want|do not want|won'?t give|skip|privacy|private)\b/i.test(message);
+      if (aboutStep && (FIELD.test(message) || /\b(rather not|prefer not|skip|don'?t want|do not want)\b/i.test(message))) {
+        const refusing = /\b(rather not|prefer not|don'?t want|do not want|won'?t give|skip|no thanks)\b/i.test(message);
+        const who = email || 'your account email';
+        const A = {
+          name: 'The store needs the name of the person placing the order — it goes on the order and your receipt, and it\'s how the driver checks the delivery. ' + (refusing ? 'I can\'t place the order without it. ' : '') + 'What\'s your full name (first and last)?',
+          recipient_email: 'That\'s where the order confirmation and delivery updates go. Reply "same" to use ' + who + ', or give me another email.',
+          phone: 'The driver uses it to reach the recipient when they arrive — Bevvi requires a phone number to place a delivery order. ' + (refusing ? 'Without one I can\'t place the order, but I can still make you a PDF proposal of this basket. ' : '') + 'What\'s the best number?'
+        }[state.orderStep];
+        console.log('[order] question about the ' + state.orderStep + ' step — answered, staying in the order flow: ' + JSON.stringify(message).slice(0, 70));
+        return res.json({ text: A, response: A });
+      }
     }
     // A command or question at a contact-detail step is NOT the answer. Real bug: at
     // "What is your full name?", "Show me the basket" was stored as the customer's name
@@ -2798,8 +2961,33 @@ app.post('/chat', async (req, res) => {
       }
       // any other message: the offer lapses and the message is handled normally
     }
+    // Off-script quantity answers at "How many bottles?". Real bug: "enough for 20 people"
+    // was taken as an EVENT (asked hours and budget) and "make it a dozen" re-showed the pick
+    // list. Number words are a quantity; a head count gets a suggested quantity with the
+    // arithmetic shown, which the customer confirms (or replaces with a number).
+    if (state.pendingQtyFor && !state.orderStep && !state.proposalStep) {
+      const QW = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, dozen: 12, 'a dozen': 12, 'half a dozen': 6, 'half dozen': 6, 'two dozen': 24, 'a case': 12, 'one case': 12 };
+      const mw = msgLower.replace(/[.!]+$/, '').match(/^(?:ok(?:ay)?,?\s+)?(?:make it |just |i'?ll take |give me |i want |let'?s do |lets do |how about )?(half a dozen|half dozen|two dozen|a dozen|a case|one case|dozen|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|\d{1,3})(?:\s+(?:bottles?|of them|please))?$/);
+      const mp = msgLower.match(/\b(\d{1,4})\s*(people|guests|persons|ppl|folks|attendees)\b/);
+      if (state.qtySuggest && /^(yes|yeah|yep|sure|ok|okay|sounds good|perfect|that works|do it|go with that)\b/.test(msgLower)) {
+        message = String(state.qtySuggest); msgLower = message; console.log('[qty] suggested quantity accepted: ' + state.qtySuggest);
+      } else if (mw) {
+        message = String(QW[mw[1]] || parseInt(mw[1])); msgLower = message;
+        console.log('[qty] quantity from wording ' + JSON.stringify(mw[0]) + ' -> ' + message);
+      } else if (mp) {
+        const n = parseInt(mp[1]); let cat = '';
+        try { const it = JSON.parse(state.lastLineItems || '[]'); const nk = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, ''); const row = it.find(x => nk(x.name).indexOf(nk(state.pendingQtyFor).slice(0, 12)) >= 0); cat = String((row && row.category) || '').toLowerCase(); } catch (e) {}
+        const spirits = /liquor|spirit|vodka|tequila|whisk|gin|rum|bourbon|scotch/.test(cat + ' ' + state.pendingQtyFor.toLowerCase());
+        const q = Math.max(1, spirits ? Math.ceil(n * 2 / 16) : Math.ceil(n * 2 / 5));
+        state.qtySuggest = q; saveFlowState();
+        console.log('[qty] head count ' + n + ' -> suggested ' + q + ' (' + (spirits ? 'spirits: 2 drinks each, 16 per bottle' : 'wine: 2 glasses each, 5 per bottle') + ')');
+        const rS = 'For ' + n + ' people I\'d suggest *' + q + ' bottle' + (q > 1 ? 's' : '') + '* of ' + state.pendingQtyFor + ' — ' + (spirits ? 'about 2 drinks each, ~16 per 750 mL bottle' : 'about 2 glasses each, 5 per 750 mL bottle') + '. Want ' + q + ', or a different number?';
+        return res.json({ text: rS, response: rS });
+      }
+    }
     // Quantity answer for the item just picked (see pendingQtyFor below).
     if (state.pendingQtyFor && /^\s*(\d{1,3})\s*(?:x|bottles?|cases?|packs?)?\s*\.?\s*$/i.test(message) && !state.orderStep && !state.proposalStep) {
+      state.qtySuggest = null;
       const q = parseInt(message.match(/\d{1,3}/)[0]);
       const nm = state.pendingQtyFor; state.pendingQtyFor = null;
       try { const it = JSON.parse(state.lastLineItems || '[]'); const nk = s => String(s||'').toLowerCase().replace(/[^a-z0-9]/g,''); const row = it.find(x => nk(x.name).indexOf(nk(nm).slice(0,12)) >= 0); if (row) { row.qty = q; row.quantity = q; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); } } catch (e) {}

@@ -43,7 +43,7 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
    A silent drop is a bug.
 
 ## QA harness (rachel/qa/)
-- `./qa/run.py` all 17 scenarios; `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
+- `./qa/run.py` all 31 scenarios; `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
 - Scenarios are YAML in qa/scenarios/. Assertions: contains / not_contains / matches / log_contains /
   pdf_contains / pdf_not_contains, plus a Haiku `judge` — prefer structural checks; the judge is
   unreliable on nuanced criteria. `transport: slack` (real DM as rachel_qa) and `transport: email`
@@ -52,6 +52,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   qa-whatsapp@getbevvi.com in logs/whatsapp-identities.json → dry-run) and reads Rachel's real Twilio
   sends back from the Twilio API. Handset delivery is reported, not asserted (needs the phone on
   WhatsApp and a message from it to Rachel within 24h, else Twilio 63024/63016).
+- `ux`-tagged scenarios (50-59) send off-script input (questions instead of answers, refusals,
+  several requests in one message, vague replies). Assertions state the CORRECT behavior.
 - Nightly: rachel-qa.timer 08:00 UTC → qa/nightly.sh → summary posted to Slack #rachel_ai_qa.
   Each run snapshots replies in qa/runs/<stamp>/ and diffs vs the previous run.
 - When a scenario fails: read qa/runs/<stamp>/<scenario>.json first, then the logs. Decide whether
@@ -63,6 +65,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - A customer-named product is never dropped for price caps; a stated size sorts first.
 - Multi-pick resolver only fires on a real numbered options list + a selection-shaped message.
 - A substantive first message (an order) is kept through the age gate (pendingIntent) and replayed.
+- Age answers are parsed by parseAgeAnswer (server.js): stated age decides, then doubt, then
+  negation, then an affirmative at the start. A refusal sticks 24h, even across reset.
 - A conversation expires after RACHEL_IDLE_HOURS (4) idle, except email threads; age is re-asked.
 - A placed order (API success only) leaves the cart → state.placedOrder; touching it asks reopen/new.
   Bevvi has no cancel API: a re-placed reopened order leaves the earlier one unpaid (logged).

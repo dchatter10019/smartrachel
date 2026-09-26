@@ -1,0 +1,18 @@
+name: ux-address-offscript
+# Off-script answers at the address step. Found: a request at the address step was dropped,
+# a bare zip was accepted ("delivering to 90210"), and a real address given later was refused
+# ("I'm not able to change the delivery address mid-conversation").
+tags: [ux]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "I want some beer"
+    expect: {contains: ["delivery address"], log_contains: ["held for after the address"]}
+  - send: "idk, somewhere in manhattan"
+    expect: {matches: "street"}
+  - send: "90210"
+    expect: {contains: ["street address"], not_contains: ["delivering to 90210"]}
+  - send: "425 W 53rd St, New York, NY 10019"
+    expect: {contains: ["10019"], matches: "beer|lager|ipa|corona|stella|heineken"}
+  - send: "actually deliver to 1 Federal St, Boston, MA 02110"
+    expect: {contains: ["Updated", "02110"], not_contains: ["not able to change"]}

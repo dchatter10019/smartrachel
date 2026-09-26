@@ -1,0 +1,15 @@
+name: ux-age-offscript
+# Off-script answers at the age gate: a question is answered, a stated adult age is a yes,
+# and the first request survives the gate. Found: "I'm 25" and "21" were re-asked forever,
+# and "why do you need my age?" got the same canned line.
+tags: [ux]
+turns:
+  - send: reset
+  - send: "how much is a bottle of Tito's?"
+    expect: {contains: ["21 or older"]}
+  - send: "why do you need to know my age?"
+    expect: {contains: ["21"], matches: "law|legal|required|verify"}
+  - send: "I'm 25"
+    expect: {contains: ["delivery address"]}
+  - send: "425 W 53rd St, New York, NY 10019"
+    expect: {contains: ["10019", "Tito"]}

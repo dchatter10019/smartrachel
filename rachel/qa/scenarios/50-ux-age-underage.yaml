@@ -1,0 +1,12 @@
+name: ux-age-underage
+# COMPLIANCE. Stating an age under 21 is a refusal, and a refusal sticks for the session.
+# Found: "I am 17" passed the gate (substring "i am"), and "no" then "yes" passed.
+tags: [ux]
+turns:
+  - send: reset
+  - send: "I am 17"
+    expect: {contains: ["only assist customers who are 21"], not_contains: ["delivery address"]}
+  - send: "yes"
+    expect: {contains: ["21"], not_contains: ["delivery address"]}
+  - send: "actually I'm 22"
+    expect: {not_contains: ["delivery address"]}

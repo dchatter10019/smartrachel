@@ -1,0 +1,8 @@
+name: ux-age-negation
+# COMPLIANCE. A negated or unsure answer is never a yes.
+# Found: "no I'm not over 21" passed (substring "over 21").
+tags: [ux]
+turns:
+  - send: reset
+  - send: "no I'm not over 21"
+    expect: {contains: ["only assist customers who are 21"], not_contains: ["delivery address"]}

@@ -1,0 +1,8 @@
+name: ux-multi-intent
+# Everything in one first message. Found: the whole sentence was stored as the address
+# ("delivering to yes I'm over 21, deliver to ...") and the order was dropped.
+tags: [ux]
+turns:
+  - send: reset
+  - send: "yes I'm over 21, deliver to 425 W 53rd St, New York, NY 10019, I need 2 bottles of Tito's 750ml and a Whispering Angel"
+    expect: {not_contains: ["delivering to yes"], contains: ["Tito", "Whispering"]}

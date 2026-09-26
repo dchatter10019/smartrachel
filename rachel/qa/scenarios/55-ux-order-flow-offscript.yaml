@@ -1,0 +1,33 @@
+name: ux-order-flow-offscript
+# Off-script answers inside checkout. Found: "why do you need my name?" dropped out of the
+# order flow ("I don't need your name at all!") and every later answer was misread; "3am
+# tomorrow" was accepted without a window check.
+tags: [ux]
+stop_on_fail: true
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+  - send: "place the order"
+    expect: {contains: ["full name"]}
+  - send: "why do you need my name?"
+    expect: {contains: ["name"], not_contains: ["don't need your name"]}
+  - send: "QA Tester"
+    expect: {contains: ["email"]}
+  - send: "same"
+    expect: {contains: ["phone"]}
+  - send: "I'd rather not give my phone"
+    expect: {contains: ["phone"], not_contains: ["anything else I can help"]}
+  - send: "9175550100"
+    expect: {matches: "date|time"}
+  - send: "yesterday at 5pm"
+    expect: {matches: "past|already|upcoming|future"}
+  - send: "3am tomorrow"
+    expect: {not_contains: ["instructions", "Shall I go ahead"]}
+  - send: "tomorrow at 5 pm"
+    expect: {contains: ["instructions"]}
+  - send: "none"
+    expect: {contains: ["Shall I go ahead"]}

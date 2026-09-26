@@ -336,7 +336,14 @@ function stripDiacritics(term) {
 // direct testing that "Sam Adams" (how most people naturally refer to the brand) returns
 // nothing, while "Samuel Adams" (the catalog's formal name) matches.
 var BRAND_NICKNAMES = [
-  [/\bsam\s+adams\b/i, 'Samuel Adams']
+  [/\bsam\s+adams\b/i, 'Samuel Adams'],
+  // Spanish drink words -> the catalog's English names. Real bug: "hola, quiero vino tinto"
+  // searched "vino tinto" (no match), and the one-word fallback "vino" offered a Vino Nobile
+  // and a Moscato as red wine.
+  [/\bvinos?\s+tintos?\b/i, 'red wine'], [/\bvinos?\s+blancos?\b/i, 'white wine'],
+  // (Not "ron"/"cava": they are parts of real product names — Ron Zacapa, Freixenet Cava.)
+  [/\bvinos?\s+rosados?\b/i, 'rose wine'], [/\bvinos?\s+espumosos?\b/i, 'sparkling wine'],
+  [/\bcervezas?\b/i, 'beer'], [/\bginebra\b/i, 'gin']
 ];
 function expandBrandNicknames(term) {
   var result = String(term || '');

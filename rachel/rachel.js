@@ -292,6 +292,26 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             return out;
           };
           saInput.named_products = splitMergedNamedProducts(saInput.named_products);
+          // A quantity the customer SAID in words is theirs, not the calculator's. Real bug:
+          // "2 bottles of Tito's 750ml and a Whispering Angel" — the LLM omitted qty for the
+          // rosé and the system sized it to 3. Only for non-event lists (no guests), and only
+          // when the number word sits right before a distinctive word of that product's name.
+          if (!saInput.guests && customerMessage) {
+            const WORDS = { a: 1, an: 1, one: 1, single: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, dozen: 12, 'a dozen': 12, 'half a dozen': 6, 'half dozen': 6 };
+            const GENERIC_W = /^(wine|vodka|tequila|gin|rum|whiskey|whisky|bourbon|scotch|beer|rose|rosé|red|white|brut|champagne|bottle|bottles|the|and|of|750ml|ml)$/i;
+            const msgQ = String(customerMessage).toLowerCase().replace(/[’']/g, '');
+            for (const np of saInput.named_products) {
+              if (!np || np.qty) continue;
+              const key = String(np.name || '').toLowerCase().replace(/[’']/g, '').split(/[^a-z0-9éè]+/).filter(w => w.length >= 4 && !GENERIC_W.test(w))[0];
+              if (!key) continue;
+              const re = new RegExp('\\b(half a dozen|half dozen|a dozen|a|an|one|single|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozen)\\s+(?:bottles?\\s+of\\s+|btls?\\s+of\\s+|cases?\\s+of\\s+)?(?:the\\s+)?(?:[a-z0-9éè]+\\s+){0,2}?' + key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b');
+              const mq = msgQ.match(re);
+              if (mq && WORDS[mq[1]]) {
+                np.qty = WORDS[mq[1]]; np.qty_from_customer = true;
+                console.log('[ShoppingAgent] qty from customer wording: ' + JSON.stringify(mq[0]) + ' -> ' + np.qty + 'x ' + np.name);
+              }
+            }
+          }
         }
         if ((saInput.intent === 'place_order' || saInput.intent === 'generate_proposal') && currentLineItems) {
           if (saInput.line_items && saInput.line_items !== currentLineItems) {

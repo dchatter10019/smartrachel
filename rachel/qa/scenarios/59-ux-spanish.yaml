@@ -1,0 +1,9 @@
+name: ux-spanish
+# Found: "hola, quiero vino tinto" searched the literal words and offered a Moscato as red wine.
+tags: [ux]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "hola, quiero vino tinto"
+    expect: {not_contains: ["Moscato"], matches: "cabernet|pinot noir|chianti|merlot|malbec|zinfandel|rioja|red"}

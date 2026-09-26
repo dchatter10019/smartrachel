@@ -1,0 +1,9 @@
+name: ux-age-unsure
+# COMPLIANCE. "I'm not sure" (substring "sure") and "is that ok?" (substring "ok") passed.
+tags: [ux]
+turns:
+  - send: reset
+  - send: "I'm not sure"
+    expect: {contains: ["21 or older"], not_contains: ["delivery address"]}
+  - send: "nope, 19. is that ok?"
+    expect: {contains: ["only assist customers who are 21"], not_contains: ["delivery address"]}
