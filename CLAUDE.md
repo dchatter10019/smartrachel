@@ -43,11 +43,15 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
    A silent drop is a bug.
 
 ## QA harness (rachel/qa/)
-- `./qa/run.py` all 16 scenarios; `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
+- `./qa/run.py` all 17 scenarios; `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
 - Scenarios are YAML in qa/scenarios/. Assertions: contains / not_contains / matches / log_contains /
   pdf_contains / pdf_not_contains, plus a Haiku `judge` — prefer structural checks; the judge is
   unreliable on nuanced criteria. `transport: slack` (real DM as rachel_qa) and `transport: email`
   (real mail as rachel_qa@) scenarios are tagged `channel` and run nightly only.
+  `transport: whatsapp` posts a Twilio-signed webhook as QA phone +19173024521 (pinned to
+  qa-whatsapp@getbevvi.com in logs/whatsapp-identities.json → dry-run) and reads Rachel's real Twilio
+  sends back from the Twilio API. Handset delivery is reported, not asserted (needs the phone on
+  WhatsApp and a message from it to Rachel within 24h, else Twilio 63024/63016).
 - Nightly: rachel-qa.timer 08:00 UTC → qa/nightly.sh → summary posted to Slack #rachel_ai_qa.
   Each run snapshots replies in qa/runs/<stamp>/ and diffs vs the previous run.
 - When a scenario fails: read qa/runs/<stamp>/<scenario>.json first, then the logs. Decide whether
@@ -61,7 +65,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - A substantive first message (an order) is kept through the age gate (pendingIntent) and replayed.
 
 ## Open items
-- WhatsApp Layer-2 QA needs a QA phone number (prepaid eSIM); then switch WhatsApp to Meta Cloud API.
+- WhatsApp QA phone +19173024521: replies come back 63024 (not a valid WhatsApp recipient) until
+  WhatsApp is active on it. Then switch WhatsApp to Meta Cloud API.
 - Stripe payment: backend needs stripeCustomerId param on createCorpPayByLinkOrder (spec shared).
 - Rotate: Slack bot + app tokens, Anthropic key, Google Maps key (exposed in chat on Sep 25).
 - Installable Slack app; SMS on the 518 number (10DLC pending); Apple Messages for Business.

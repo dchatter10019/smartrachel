@@ -100,6 +100,64 @@ class EmailTransport:
                 return self._body(msg) or "<<empty body>>", round(time.time() - t0, 1)
         return "<<NO REPLY within %ds>>" % timeout, round(time.time() - t0, 1)
 
+class WhatsAppTransport:
+    """WhatsApp as the QA phone: post a Twilio-signed webhook to the bot exactly as Twilio would
+    (signature check, invite gate, identity, per-phone lock, Rachel, formatting, chunking), and
+    read the bot's real Twilio sends back from the Twilio API. Only the Meta->Twilio inbound hop
+    is simulated. The QA phone's identity is pinned to a qa- email, so server.js isQA makes the
+    whole conversation dry-run. Delivery to the handset is reported, not asserted: WhatsApp only
+    delivers free-form replies within 24h of the phone itself messaging Rachel (Twilio 63016)."""
+    PHONE = os.environ.get("QA_WHATSAPP_PHONE", "+19173024521")
+    EMAIL = os.environ.get("QA_WHATSAPP_EMAIL", "qa-whatsapp@getbevvi.com")
+    IDS = "/home/ubuntu/logs/whatsapp-identities.json"
+    NOTES = ("One moment — putting that together", "Reading your photo")   # bot's slow-reply notes, not the answer
+    def __init__(self):
+        for line in open("/etc/rachel-whatsapp.env"):
+            if "=" in line and not line.startswith("#"):
+                k, v = line.strip().split("=", 1); os.environ.setdefault(k, v)
+        from twilio.rest import Client
+        from twilio.request_validator import RequestValidator
+        self.twilio = Client(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"])
+        self.validator = RequestValidator(os.environ["TWILIO_AUTH_TOKEN"])
+        self.url = os.environ.get("PUBLIC_WEBHOOK_URL", "https://mcp.getbevvi.com/whatsapp/webhook")
+        self.rachel = os.environ.get("TWILIO_WHATSAPP_FROM", "whatsapp:+15187223598")
+        self.me = "whatsapp:" + self.PHONE
+        self._pin_identity()
+        self.seen = {m.sid for m in self.twilio.messages.list(from_=self.rachel, to=self.me, limit=50)}
+    def _pin_identity(self):
+        """Verified + qa- email, so the invite gate passes and Rachel treats it as QA. Refuse to run otherwise."""
+        try: d = json.load(open(self.IDS))
+        except FileNotFoundError: d = {}
+        cur = d.get(self.PHONE, {})
+        if cur.get("email") != self.EMAIL or not cur.get("verified"):
+            d[self.PHONE] = dict(cur, email=self.EMAIL, verified=True, name="Rachel QA", first_seen=cur.get("first_seen") or time.time())
+            tmp = self.IDS + ".tmp"; json.dump(d, open(tmp, "w"), indent=1); os.replace(tmp, self.IDS)
+            print(f"   [whatsapp] pinned {self.PHONE} -> {self.EMAIL} (verified)")
+        if not re.match(r"^(qa-[^@]*|rachel_qa)@getbevvi\.com$", json.load(open(self.IDS))[self.PHONE]["email"], re.I):
+            raise RuntimeError(f"{self.PHONE} is not mapped to a QA email; refusing to run (orders would be real)")
+    def send(self, text, images=None, timeout=240):
+        if images: raise RuntimeError("whatsapp transport: images need a Twilio-hosted MediaUrl; not supported")
+        import uuid
+        params = {"MessageSid": "SMqa" + uuid.uuid4().hex[:28], "AccountSid": os.environ["TWILIO_ACCOUNT_SID"], "From": self.me, "To": self.rachel,
+                  "Body": text, "NumMedia": "0", "ProfileName": "Rachel QA", "WaId": self.PHONE.lstrip("+")}
+        sig = self.validator.compute_signature(self.url, params)
+        r = httpx.post(self.url, data=params, headers={"X-Twilio-Signature": sig}, timeout=20)
+        if r.status_code != 200: return f"<<WEBHOOK {r.status_code}>>", 0
+        t0 = time.time(); got = []; last_new = None
+        while time.time() - t0 < timeout:
+            time.sleep(3)
+            new = [m for m in self.twilio.messages.list(from_=self.rachel, to=self.me, limit=20) if m.sid not in self.seen]
+            if new:
+                new.sort(key=lambda m: m.date_created); got += new; self.seen.update(m.sid for m in new); last_new = time.time()
+            answered = any(not (m.body or "").startswith(self.NOTES) for m in got)
+            if answered and time.time() - last_new > 8: break   # an answer arrived, then 8s quiet: all chunks are in
+        if not got: return "<<NO REPLY within %ds>>" % timeout, round(time.time() - t0, 1)
+        secs = round(time.time() - t0, 1)
+        self.delivery = [(m.sid, self.twilio.messages(m.sid).fetch()) for m in got]
+        bad = [f"{f.status}{' ' + str(f.error_code) if f.error_code else ''}" for _, f in self.delivery if f.status in ("failed", "undelivered")]
+        if bad: print(f"       [whatsapp] handset delivery: {', '.join(sorted(set(bad)))}" + (" (63016 = outside 24h window: message Rachel from the phone to reopen it)" if any("63016" in b for b in bad) else ""))
+        return "\n".join(m.body or "" for m in got if not (m.body or "").startswith(self.NOTES)), secs
+
 def send(session, text, fmt, email, images=None):
     payload = {"message": text, "session_id": session, "format": fmt, "gbrain_context": "", "qa": True,
                "context": {"kitchen_location": "", "client_id": "airculinaire", "user_email": email, "account_id": ""}}
@@ -149,7 +207,7 @@ def load_image(path):
 
 def run_scenario(sc, verbose):
     name = sc["name"]; fmt = sc.get("format", "slack"); transport = sc.get("transport", "http")
-    slack = SlackTransport() if transport == "slack" else (EmailTransport(name) if transport == "email" else None)
+    slack = {"slack": SlackTransport, "email": lambda: EmailTransport(name), "whatsapp": WhatsAppTransport}.get(transport, lambda: None)()
     email = sc.get("email") or (f"qa-{name}-{int(time.time())}@getbevvi.com" if sc.get("fresh") else QA_EMAIL)
     session = f"qa-{name}-{int(time.time())}"
     print(f"\n▶ {name}  [{transport if transport != 'http' else fmt}]")
