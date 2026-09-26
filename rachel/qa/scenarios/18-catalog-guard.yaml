@@ -1,0 +1,15 @@
+name: catalog-guard
+# Listings whose price/name/size look wrong are never shown (store-agent/catalog-guard.js).
+# Known-bad rows in NYC 10019: "Tito'S - 750 ML" $8.79 and Veuve Yellow Label 3 L $71.49.
+# not_contains only (on prices: not_contains is case-insensitive, so "Tito'S" would match "Tito's"),
+# so this keeps passing after the catalog is fixed.
+tags: [smoke]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+    expect: {contains: ["10019"]}
+  - send: "do you have Tito's"
+    expect: {contains: ["Tito"], not_contains: ["8.79"]}
+  - send: "what Veuve Clicquot do you have?"
+    expect: {contains: ["Veuve"], not_contains: ["71.49"]}

@@ -9,6 +9,7 @@ const PORT = 8300;
 const GBRAIN_URL = 'http://127.0.0.1:7700';
 const GBRAIN_TOKEN = 'gbrain_71d7392edf8a722d8816739407f1455d13fff00a0c7b12e3afa208b4d081ebf4';
 const BEVVI_API = 'https://api-client.getbevvi.com';
+const { guard: guardCatalog } = require('./catalog-guard.js');
 const packageModel = require('/home/ubuntu/rachel/package-model.js');
 const { classifyProduct } = require('/home/ubuntu/rachel/brand-lists.js');
 
@@ -300,7 +301,9 @@ async function searchProducts(location, client, query, limit, minPrice, maxPrice
     if (!res.ok) { console.log('[searchProducts] HTTP error:', res.status); return []; }
     const data = await res.json();
     console.log('[searchProducts] results:', Array.isArray(data) ? data.length : 'not array');
-    return Array.isArray(data) ? data : [];
+    // Every search path (query, recommendation, custom list, menu build) comes through here:
+    // rows whose price/name/size look wrong are dropped (logged) and reported to QA Slack.
+    return Array.isArray(data) ? guardCatalog(data, query, location && location.indexOf('zip:') === 0 ? location.slice(4) : location) : [];
   } catch(e) { console.error('[searchProducts] error:', e.message); return []; }
 }
 
