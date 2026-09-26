@@ -1,0 +1,24 @@
+name: order-new-after-placed
+# After an order is placed, "add X" asks first; "new" starts a separate order: the placed
+# items do not come back and the held request runs on an empty basket.
+stop_on_fail: true
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+  - send: "ok lets go with this and order"
+  - send: "QA Tester"
+  - send: "same"
+  - send: "9175550100"
+  - send: "tomorrow at 5 pm"
+  - send: "none"
+    expect: {contains: ["Shall I go ahead"]}
+  - send: "yes"
+    expect: {matches: "placed|confirmed|submitted", log_contains: ["basket cleared"]}
+  - send: "add a bottle of Veuve Clicquot"
+    expect: {contains: ["already placed", "new"]}
+  - send: "new"
+    expect: {contains: ["Veuve"], not_contains: ["Kim Crawford", "already placed"], log_contains: ["customer chose a new order"]}

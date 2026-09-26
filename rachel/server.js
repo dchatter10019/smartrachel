@@ -33,7 +33,7 @@ async function checkStoreCoverage(zip) {
 
 const express = require('express');
 const { rachelChat } = require('./rachel.js');
-const { getCustomerContext, getD2CSession, saveD2CSession, saveBasket, getPackage } = require('./gbrain.js');
+const { getCustomerContext, getD2CSession, saveD2CSession, saveBasket, getPackage, clearBasket } = require('./gbrain.js');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -681,6 +681,22 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
     alreadyConfirmed: alreadyConfirmed || false,
     sendEmailFn: sendEmail,
     lastProposalUrl: stateForEmail.lastProposalUrl || '',
+    // A placed order leaves the active cart. Real bug: after "Your order has been placed",
+    // the basket stayed live — "what's in my cart?" showed the ordered items and "place the
+    // order" started checkout for them again (a duplicate order). Fired only on a real
+    // place_order success (rachel.js); the items are kept on placedOrder so the customer
+    // can reopen the order (see PLACED ORDER below) — they may not have paid yet.
+    onOrderPlaced: (result, lineItems) => {
+      const st = getState(sessionKey);
+      const prev = st.placedOrder;
+      if (prev && prev.reopened) console.log('[order] ' + (result.order_id || '?') + ' replaces reopened order ' + prev.order_id + ' — no cancel API; the earlier order stays in Bevvi unpaid');
+      st.placedOrder = { order_id: result.order_id || '', payment_url: result.payment_url || '', line_items: typeof lineItems === 'string' ? lineItems : JSON.stringify(lineItems || []), placedAt: Date.now(), dry_run: !!result.dry_run, replaces: prev && prev.reopened ? prev.order_id : null };
+      st.lastLineItems = '[]';   // '[]', not '': an empty string triggers the getPackage() rehydrate
+      st.pendingSubstitutes = []; st.pendingAddOffer = null; st.pendingQtyFor = null;
+      if (email) { Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; }); clearBasket(email, format || 'slack'); }
+      saveFlowState();
+      console.log('[order] placed ' + (result.order_id || '?') + (result.dry_run ? ' (QA dry run)' : '') + ' — basket cleared, kept on placedOrder for reopen');
+    },
     onPackageBuilt: (em, lineItems, fmt, saInput) => {
       // A successful build supersedes any prior "unavailable" state. Real bug: two
       // beers were falsely flagged unavailable on one rebuild (stale pendingSubstitutes
@@ -1457,6 +1473,50 @@ app.post('/chat', async (req, res) => {
       const ask = 'What is your delivery address? (Include street, city, state, and zip)';
       state.step = 'addr_new';
       return res.json({ text: ask, response: ask });
+    }
+
+    // ── PLACED ORDER: reopen only with the customer's permission ───────────
+    // After an order is placed the cart is empty (onOrderPlaced). The customer may not have
+    // paid yet and may want to change it. When they refer to the basket/order with nothing
+    // new in the cart, say the order is already placed and ASK: reopen it (items go back in
+    // the basket, their request then runs on it) or start a new, separate order. Decided
+    // here, in code — the LLM never re-populates a placed order on its own.
+    if (state.placedOrder && !state.placedOrder.resolved && !state.orderStep && !state.proposalStep && !isInternalMsg) {
+      const po = state.placedOrder;
+      let cartN = 0; try { cartN = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
+      const heldRequest = () => { const h = po.heldMessage; message = h; msgLower = h.toLowerCase().trim().replace(/\*/g, '').replace(/_/g, ''); };
+      if (po.awaitingReopen) {
+        const wantsNew = /^(no|nope|nah|2|new|separate|fresh)\b/.test(msgLower) || /\b(new|separate|another|different) order\b|\bstart (a )?(new|fresh|over)\b/.test(msgLower);
+        const wantsReopen = !wantsNew && (/^(yes|yeah|yep|yup|sure|ok|okay|please|1|reopen|re-open|go ahead)\b/.test(msgLower) || /\b(re-?open|change (it|that|the order)|modify|edit (it|the order)|update (it|the order))\b/.test(msgLower));
+        if (wantsReopen) {
+          state.lastLineItems = po.line_items; po.reopened = true; po.resolved = true; po.awaitingReopen = false;
+          console.log('[order] reopened ' + po.order_id + ' at customer request — basket restored; replaying: ' + JSON.stringify(po.heldMessage).slice(0, 80));
+          heldRequest(); saveFlowState();
+          context.order_change_note = 'The customer\'s order #' + po.order_id + ' was already placed and they just asked to REOPEN it: its items are back in the basket. Handle their request on that basket. When they place it again, a NEW order and payment link are created — tell them to pay only the new link, not the earlier one.';
+        } else if (wantsNew) {
+          po.resolved = true; po.awaitingReopen = false;
+          console.log('[order] customer chose a new order; ' + po.order_id + ' left as placed — replaying: ' + JSON.stringify(po.heldMessage).slice(0, 80));
+          heldRequest(); saveFlowState();
+        } else if (!po.reasked) {
+          po.reasked = true; saveFlowState();
+          console.log('[order] reopen answer unclear — asking once more: ' + JSON.stringify(message).slice(0, 60));
+          const rq = 'Just to check — should I *reopen* order #' + po.order_id + ' so you can change it, or start a *new* separate order?';
+          return res.json({ text: rq, response: rq });
+        } else {
+          po.resolved = true; po.awaitingReopen = false; saveFlowState();
+          console.log('[order] reopen still unclear after re-ask — leaving ' + po.order_id + ' as placed, handling message as new');
+        }
+      } else if (cartN === 0 && /\b(add|also|remove|drop|take out|swap|replace|change|instead|more|less|fewer|update|edit|increase|decrease|cart|basket|my order|the order|this order|that order|place (the |an |my )?order|order it|check ?out|re-?order)\b/i.test(message)) {
+        po.awaitingReopen = true; po.heldMessage = message; saveFlowState();
+        let items = []; try { items = JSON.parse(po.line_items || '[]'); } catch (e) {}
+        const summary = items.slice(0, 3).map(i => (i.qty || i.quantity || 1) + 'x ' + i.name).join(', ') + (items.length > 3 ? ' and ' + (items.length - 3) + ' more' : '');
+        const link = po.payment_url ? (format === 'slack' ? '<' + po.payment_url + '|payment link>' : po.payment_url) : '';
+        console.log('[order] request touches placed order ' + po.order_id + ' with an empty cart — asking before reopening: ' + JSON.stringify(message).slice(0, 80));
+        const rq = 'Heads up — I already placed your order #' + po.order_id + (summary ? ' (' + summary + ')' : '') + '.' + (link ? ' Payment is still open: ' + link + '.' : '') +
+          '\n\nWould you like me to *reopen* it? I\'ll put those items back in your basket so you can make changes and place an updated order (you\'d then pay the new link instead). Or I can start a *new*, separate order.' +
+          '\n\nIf you\'ve already paid, reply *new* and contact bevvi-support@getbevvi.com to change the paid order.';
+        return res.json({ text: rq, response: rq });
+      }
     }
 
     // ── Email support request ───────────────────────────────────────────────
@@ -2323,6 +2383,14 @@ app.post('/chat', async (req, res) => {
         state.orderStep = null;
         state.orderData = null;
         saveFlowState();
+        // A reopened order was placed again: the earlier one can't be cancelled via the API,
+        // so say plainly which payment link to use (in code — not left to the LLM).
+        const poR = state.placedOrder;
+        if (poR && poR.replaces && Date.now() - poR.placedAt < 5 * 60 * 1000 && !poR.replaceNoted) {
+          poR.replaceNoted = true; saveFlowState();
+          const note = '\n\nThis updated order replaces your earlier order #' + poR.replaces + ' — please pay only the new link above, not the earlier one.';
+          return res.json({ text: orderOutput + note, response: orderOutput + note });
+        }
         return res.json({ text: orderOutput, response: orderOutput });
       } else if (noWords.some(w => msgLower.includes(w))) {
         state.orderStep = null;

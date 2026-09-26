@@ -247,6 +247,24 @@ async function savePackage(userEmail, lineItems, summary) {
 
 
 
+// Drop the saved last basket once it has been ordered. getPackage() rehydrates an empty
+// session basket from this file, so without this a placed order came back as the "current"
+// basket after a reset or idle restart. (saveBasket(email, null) returns early — no-op.)
+async function clearBasket(userEmail, channel) {
+  if (!userEmail) return;
+  try {
+    const fs = require('fs');
+    const basketFile = '/home/ubuntu/logs/baskets.json';
+    let baskets = {};
+    try { baskets = JSON.parse(fs.readFileSync(basketFile, 'utf8')); } catch(e) { return; }
+    const key = userEmail + ':' + (channel || 'slack');
+    if (!baskets[key]) return;
+    delete baskets[key];
+    fs.writeFileSync(basketFile, JSON.stringify(baskets));
+    console.log('[gbrain] saved basket cleared for:', userEmail, 'channel:', channel || 'slack');
+  } catch(e) { console.error('[gbrain] clearBasket error:', e.message); }
+}
+
 async function getPackage(userEmail, channel) {
   if (!userEmail) return null;
   try {
@@ -267,5 +285,6 @@ module.exports = {
   saveD2CSession,
   saveBasket,
   saveSearch,
-  getPackage
+  getPackage,
+  clearBasket
 };

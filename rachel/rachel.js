@@ -127,7 +127,7 @@ const ALL_TOOLS = [
 
 const ORDER_CONFIRMATION_WORDS = ['yes', 'yeah', 'yep', 'yup', 'confirm', 'confirmed', 'go ahead', 'place it', 'place the order', 'sounds good', 'that works', 'correct', 'do it', 'please place', 'looks good', 'lgtm', 'proceed', 'ok place', 'okay place'];
 
-async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, onProposalGenerated, customerMessage, alreadyConfirmed, requesterEmail, sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems, onShowBasket, eventParams, onUpdateQuantity) {
+async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, onProposalGenerated, customerMessage, alreadyConfirmed, requesterEmail, sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems, onShowBasket, eventParams, onUpdateQuantity, onOrderPlaced) {
   console.log(`[tool] ${toolName}`, JSON.stringify(toolInput).slice(0, 500));
   try {
     switch (toolName) {
@@ -393,6 +393,12 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         if (result.success && result.download_url && saInput.intent === 'generate_proposal' && onProposalGenerated) {
           onProposalGenerated(result.download_url);
         }
+        // The order outcome is decided HERE from the API result — never from the LLM's
+        // wording. Only a real success (Bevvi created the order / issued a payment link)
+        // moves the basket out of the active cart; a failure leaves it for a retry.
+        if (result.success && saInput.intent === 'place_order' && onOrderPlaced) {
+          onOrderPlaced(result, saInput.line_items || currentLineItems || '[]');
+        }
         return result;
       }
 
@@ -450,7 +456,7 @@ const path = require('path');
 
 const MAX_ITERATIONS = 10;
 
-async function rachelChat({ messages, context, rachelPrompt, gbrain_context = '', channel_format = 'voiceflow', address_rule = '', onPackageBuilt = null, onProposalGenerated = null, sendEmailFn = null, lastProposalUrl = '', customerMessage = '', alreadyConfirmed = false, onUnavailableItems = null, onProductDiscussed = null, onSubstituteConfirmed = null, currentLineItems = '', onShowBasket = null, eventParams = null, onUpdateQuantity = null }) {
+async function rachelChat({ messages, context, rachelPrompt, gbrain_context = '', channel_format = 'voiceflow', address_rule = '', onPackageBuilt = null, onProposalGenerated = null, sendEmailFn = null, lastProposalUrl = '', customerMessage = '', alreadyConfirmed = false, onUnavailableItems = null, onProductDiscussed = null, onSubstituteConfirmed = null, currentLineItems = '', onShowBasket = null, eventParams = null, onUpdateQuantity = null, onOrderPlaced = null }) {
   const channelNotes = {
     html: `
 
@@ -499,9 +505,12 @@ RULES:
   const channelNote = channelNotes[channel_format] || channelNotes.plain;
 
   const systemPrompt = rachalPromptToSystem(rachelPrompt, context);
+  // context.order_change_note (set by server.js for this turn) was never injected anywhere —
+  // the "changed at confirm" instruction was silently dropped. It now reaches the model.
+  const orderNote = context && context.order_change_note ? '\n\n## THIS TURN\n' + context.order_change_note : '';
   const fullSystem = address_rule + (gbrain_context
     ? systemPrompt + '\n\n## CUSTOMER CONTEXT FROM MEMORY\n' + gbrain_context + channelNote
-    : systemPrompt + channelNote);
+    : systemPrompt + channelNote) + orderNote;
 
   let claudeMessages = [...messages];
   let finalResponse = '';
@@ -533,7 +542,7 @@ RULES:
       const toolResults = [];
       for (const block of response.content) {
         if (block.type === 'tool_use') {
-          const result = await executeTool(block.name, block.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems, onShowBasket, eventParams, onUpdateQuantity);
+          const result = await executeTool(block.name, block.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems, onShowBasket, eventParams, onUpdateQuantity, onOrderPlaced);
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,

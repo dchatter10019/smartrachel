@@ -1,0 +1,32 @@
+name: order-reopen
+# After an order is placed the cart is empty. Touching the order asks before reopening;
+# "reopen" restores the items and runs the held request on them. Never a silent re-order.
+tags: [smoke]
+stop_on_fail: true
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+  - send: "ok lets go with this and order"
+  - send: "QA Tester"
+  - send: "same"
+  - send: "9175550100"
+  - send: "tomorrow at 5 pm"
+  - send: "none"
+    expect: {contains: ["Shall I go ahead"]}
+  - send: "yes"
+    expect: {matches: "placed|confirmed|submitted", log_contains: ["basket cleared"]}
+  - send: "what's in my cart?"
+    expect: {contains: ["already placed", "reopen"], log_contains: ["asking before reopening"]}
+  - send: "reopen"
+    expect: {contains: ["Kim Crawford"], not_contains: ["already placed"], log_contains: ["[order] reopened"]}
+  - send: "place the order"
+    expect: {not_contains: ["already placed"], matches: "delivery|date|time|Shall I go ahead"}
+  - send: "tomorrow at 6 pm"
+  - send: "none"
+    expect: {contains: ["Shall I go ahead"]}
+  - send: "yes"
+    expect: {matches: "placed|confirmed|submitted", contains: ["replaces your earlier order", "pay only the new link"]}
