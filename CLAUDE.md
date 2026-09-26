@@ -65,8 +65,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - A substantive first message (an order) is kept through the age gate (pendingIntent) and replayed.
 
 ## Open items
-- WhatsApp QA phone +19173024521: replies come back 63024 (not a valid WhatsApp recipient) until
-  WhatsApp is active on it. Then switch WhatsApp to Meta Cloud API.
+- WhatsApp QA phone +19173024521 has no handset and is not a Twilio number: replies come back 63024
+  (expected; content is still asserted). Deferred by DC (Sep 26): register it (or a new Twilio number)
+  as a WhatsApp sender for true end-to-end — needs one OTP to the number + an approved utility template
+  for each run's first message. Switch WhatsApp to Meta Cloud API.
 - Stripe payment: backend needs stripeCustomerId param on createCorpPayByLinkOrder (spec shared).
 - Rotate: Slack bot + app tokens, Anthropic key, Google Maps key (exposed in chat on Sep 25).
 - Installable Slack app; SMS on the 518 number (10DLC pending); Apple Messages for Business.
