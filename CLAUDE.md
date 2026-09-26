@@ -63,6 +63,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - A customer-named product is never dropped for price caps; a stated size sorts first.
 - Multi-pick resolver only fires on a real numbered options list + a selection-shaped message.
 - A substantive first message (an order) is kept through the age gate (pendingIntent) and replayed.
+- A conversation expires after RACHEL_IDLE_HOURS (4) idle, except email threads; age is re-asked.
+- A placed order (API success only) leaves the cart → state.placedOrder; touching it asks reopen/new.
+  Bevvi has no cancel API: a re-placed reopened order leaves the earlier one unpaid (logged).
 
 ## Open items
 - WhatsApp QA phone +19173024521 has no handset and is not a Twilio number: replies come back 63024
