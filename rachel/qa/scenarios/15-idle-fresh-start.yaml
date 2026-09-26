@@ -1,0 +1,21 @@
+name: idle-fresh-start
+# Coming back after RACHEL_IDLE_HOURS starts a fresh conversation on its own — no "reset".
+# The old context is gone, age is asked again (compliance), and the new request is kept
+# through the gate and replayed once the address is in.
+tags: [smoke]
+turns:
+  - send: reset
+    expect: {contains: ["21 or older"]}
+  - send: "yes"
+    expect: {contains: ["delivery address"]}
+  - send: "425 W 53rd St, New York, NY 10019"
+    expect: {contains: ["10019"]}
+  - send: "I'd like 3 bottles of Tito's 750ml"
+    expect: {contains: ["Tito"]}
+  - send: "show me a nice champagne"
+    idle: true
+    expect: {contains: ["21 or older"], not_contains: ["Tito"], log_contains: ["[session] idle (simulated)"]}
+  - send: "yes"
+    expect: {contains: ["delivery address"], not_contains: ["Tito"]}
+  - send: "425 W 53rd St, New York, NY 10019"
+    expect: {matches: "champagne|brut|mo[eë]t|veuve|dom p", not_contains: ["Tito"]}

@@ -205,6 +205,7 @@ const packageCache = {};   // cacheKey -> line_items (L1)
 
 // flowState persisted to disk
 const FLOW_STATE_PATH = '/home/ubuntu/logs/flow-state.json';
+const IDLE_HOURS = Number(process.env.RACHEL_IDLE_HOURS) || 4;   // silence after which the next message starts a fresh conversation
 let flowState = {};
 try {
   flowState = JSON.parse(fs.readFileSync(FLOW_STATE_PATH, 'utf8'));
@@ -957,6 +958,24 @@ app.post('/chat', async (req, res) => {
 
   const email = context?.user_email || '';
   const isD2C = !context?.kitchen_location;
+
+  // IDLE EXPIRY: a conversation ends after IDLE_HOURS of silence and the next message starts
+  // fresh, exactly as if the customer had typed "reset". Real complaint: flowState lives on
+  // disk and never expired, so a customer coming back hours or days later landed in an old
+  // basket / half-finished order and had to type "reset" before every use. The age gate is
+  // asked again on the new conversation (compliance: per session), and a substantive first
+  // message is kept through it (pendingIntent). Email is exempt: the thread IS the
+  // conversation, and a reply days later continues it on purpose.
+  {
+    const st0 = flowState[sessionKey];
+    const idleH = st0 && st0.lastActive ? (Date.now() - st0.lastActive) / 3600000 : 0;
+    const forced = isQA && req.body.simulate_idle && st0;   // QA: test the expiry without waiting
+    if (st0 && message !== '__greeting__' && !/^email-/.test(sessionKey) && (idleH > IDLE_HOURS || forced)) {
+      console.log(`[session] idle ${forced ? '(simulated)' : idleH.toFixed(1) + 'h'} > ${IDLE_HOURS}h — fresh conversation for ${sessionKey} (was step=${st0.step}${st0.orderStep ? ' orderStep=' + st0.orderStep : ''}${st0.proposalStep ? ' proposalStep=' + st0.proposalStep : ''})`);
+      resetState(sessionKey, email);
+    }
+    getState(sessionKey).lastActive = Date.now(); saveFlowState();
+  }
 
   console.log(`[rachel] chat — session: ${sessionKey} messages: ${sessions[sessionKey].length} — "${message}"`);
 

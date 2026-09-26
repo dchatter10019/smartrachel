@@ -158,10 +158,11 @@ class WhatsAppTransport:
         if bad: print(f"       [whatsapp] handset delivery: {', '.join(sorted(set(bad)))}" + (" (63016 = outside 24h window: message Rachel from the phone to reopen it)" if any("63016" in b for b in bad) else ""))
         return "\n".join(m.body or "" for m in got if not (m.body or "").startswith(self.NOTES)), secs
 
-def send(session, text, fmt, email, images=None):
+def send(session, text, fmt, email, images=None, idle=False):
     payload = {"message": text, "session_id": session, "format": fmt, "gbrain_context": "", "qa": True,
                "context": {"kitchen_location": "", "client_id": "airculinaire", "user_email": email, "account_id": ""}}
     if images: payload["images"] = images
+    if idle: payload["simulate_idle"] = True   # server treats the session as idle past RACHEL_IDLE_HOURS
     t0 = time.time()
     r = httpx.post(RACHEL, json=payload, timeout=240)
     return r.json().get("text", ""), round(time.time() - t0, 1)
@@ -216,7 +217,7 @@ def run_scenario(sc, verbose):
         text = turn.get("send", ""); images = load_image(turn["image"]) if turn.get("image") else None
         pos = _log_size()
         try:
-            reply, secs = slack.send(text, images) if slack else send(session, text, fmt, email, images)
+            reply, secs = slack.send(text, images) if slack else send(session, text, fmt, email, images, turn.get("idle", False))
         except Exception as e:
             reply, secs = f"<<ERROR {e}>>", 0
         replies.append({"turn": i, "send": text, "reply": reply, "secs": secs})
