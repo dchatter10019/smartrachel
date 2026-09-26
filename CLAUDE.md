@@ -25,8 +25,11 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - Gmail service account: /home/ubuntu/config/gmail-service-account.json (domain-wide delegation).
 
 ## Rules — follow every time
-1. Before ANY restart of rachel/shopping-agent: `/home/ubuntu/precheck.sh --smoke` must pass. Never
-   `systemctl restart` on a failed smoke. Full deploy: `precheck.sh --smoke && sudo systemctl restart rachel`.
+1. Deploy rachel/shopping-agent ONLY via `/home/ubuntu/precheck.sh --deploy`: lint → restart the
+   services whose files changed → smoke set against the new code. If the service doesn't come up or
+   smoke fails, it stashes the uncommitted rachel/ + store-agent/ changes (`git stash pop` restores),
+   restarts on HEAD and re-smokes. Never a bare `systemctl restart`. Deploy BEFORE committing — a clean
+   tree has nothing to roll back. Plain `precheck.sh` = lint only; `--smoke` tests the live service.
 2. Ask DC before running anything that places a real order, sends a real email/message, or changes
    systemd units, nginx, or secrets.
 3. Commit with a message that names the real bug and the fix; `git push` after. Commit scope: rachel/,
