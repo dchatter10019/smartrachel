@@ -1122,6 +1122,20 @@ async function executeTool(name, input) {
     }
   }
 
+  // Never send the same product twice (backstop for every caller — Slack/email/WhatsApp via
+  // server.js, which already merged the approved summary, and rachel-mcp). Runs before the QA
+  // dry run so QA exercises it too.
+  if (name === 'place_order') {
+    try {
+      const { mergeOrderLines } = require('./order-lines.js');
+      const li = typeof input.line_items === 'string' ? JSON.parse(input.line_items || '[]') : (input.line_items || []);
+      const mr = mergeOrderLines(li);
+      if (mr.merged.length) {
+        mr.merged.forEach(m => console.log('[place_order] merged duplicate line: "' + m.dropped + '" into "' + m.kept + '" -> qty ' + m.qty + ' (' + m.reason + ')'));
+        input.line_items = JSON.stringify(mr.items);
+      }
+    } catch (e) { console.error('[place_order] line merge failed — sending lines as given:', e.message); }
+  }
   if (name === 'place_order' && input.dry_run) {
     console.log('[QA] place_order dry run — no createCorpOrder call');
     const oid = 'QA-DRY-RUN-' + Date.now();

@@ -689,6 +689,18 @@ const tipText = c => c.pct != null ? (c.pct === 0 ? 'no tip' : c.pct + '%') : '$
 
 function renderOrderSummary(state, email, format, res) {
   state.orderStep = 'confirm';
+  // One line per product in what the customer approves (and what place_order sends — it uses
+  // this same basket). DC, Sep 27: an order must never carry the same product twice.
+  try {
+    const { mergeOrderLines } = require('/home/ubuntu/store-agent/order-lines.js');
+    const cur = typeof state.lastLineItems === 'string' ? JSON.parse(state.lastLineItems || '[]') : (state.lastLineItems || []);
+    const mr = mergeOrderLines(cur);
+    if (mr.merged.length) {
+      mr.merged.forEach(m => console.log('[order] merged duplicate line before the summary: "' + m.dropped + '" into "' + m.kept + '" -> qty ' + m.qty + ' (' + m.reason + ')'));
+      state.lastLineItems = JSON.stringify(mr.items);
+      if (mr.items.length === 1 && state.orderData) state.orderData.qty = mr.items[0].qty || mr.items[0].quantity || state.orderData.qty;
+    }
+  } catch (e) { console.error('[order] line merge failed:', e.message); }
   saveFlowState();
     // Build order summary
     let productName = 'Product';

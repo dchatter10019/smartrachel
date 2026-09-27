@@ -624,6 +624,14 @@ async function buildPackage(iv) {
     if (!res.ok) return [];
     var data=await res.json();
     if (!Array.isArray(data)) return [];
+    // Catalog guard on the package builder's searches too (bad rows, duplicate listings decided on
+    // the market price, size conflicts). DC, Sep 27: only shopping-agent searches were guarded, so
+    // event packages could pick a row the guard hides elsewhere ("Belvedere Vodka - 1 L" listed as
+    // 750 ML reached a cocktail package).
+    try {
+      var zipG=isZipSentinel?kitchenLocation.slice(4):"";
+      data=await require('/home/ubuntu/store-agent/catalog-guard.js').guardAsync(data, term, zipG);
+    } catch(eG) { console.error('[buildPackage] catalog guard failed — unscreened results used for', JSON.stringify(term)+':', eG.message); }
     return data.map(function(p) {
       var price=p.salePrice||p.price||0;
       var sizeStr=p.size&&p.units?String(p.size)+String(p.units):"";
