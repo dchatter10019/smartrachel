@@ -43,7 +43,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
    A silent drop is a bug.
 
 ## QA harness (rachel/qa/)
-- `./qa/run.py` all 31 scenarios; `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
+- `qa/unit/*.test.js`: pure-logic unit tests on saved real replies (multi-pick resolver), run by every
+  `precheck.sh` lint/deploy. Lint also enforces eslint no-use-before-define (runtime TDZ errors).
+- `./qa/run.py` all 34 scenarios; `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
 - Scenarios are YAML in qa/scenarios/. Assertions: contains / not_contains / matches / log_contains / log_not_contains /
   pdf_contains / pdf_not_contains, plus a Haiku `judge` — prefer structural checks; the judge is
   unreliable on nuanced criteria. `transport: slack` (real DM as rachel_qa) and `transport: email`

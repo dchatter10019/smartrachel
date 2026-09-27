@@ -13,7 +13,7 @@
 # (a runtime TypeError). That bit us twice in one day, hence the eslint rules below.
 set -uo pipefail
 cd /home/ubuntu
-FILES="rachel/server.js rachel/rachel.js rachel/functions.js rachel/generate-proposal.js store-agent/shopping-agent.js"
+FILES="rachel/server.js rachel/rachel.js rachel/functions.js rachel/generate-proposal.js rachel/multipick.js store-agent/shopping-agent.js store-agent/catalog-guard.js"
 SCOPE="rachel store-agent"   # what a rollback stashes; precheck.sh itself is never stashed
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 
@@ -23,12 +23,21 @@ lint() {
     node --check "$f" 2>/dev/null || { echo "SYNTAX ERROR: $f"; fail=1; }
   done
   out=$(npx --yes eslint@8 --no-eslintrc --parser-options=ecmaVersion:2022 --env node,es2022 \
-    --rule '{"no-const-assign":"error","no-undef":"error"}' $FILES 2>&1 | grep -E "no-const-assign|no-undef")
+    --rule '{"no-const-assign":"error","no-undef":"error","no-use-before-define":["error",{"functions":false,"classes":false,"variables":false}]}' $FILES 2>&1 | grep -E "no-const-assign|no-undef|no-use-before-define")
+  # no-use-before-define: a const/let read before its declaration throws at RUNTIME only
+  # (TDZ) — node --check passes. Real: the serving-mix gate read isInternalMsg too early and
+  # every turn errored until the deploy rolled back.
   if [ -n "$out" ]; then echo "$out"; fail=1; fi
   # Un-awaited async calls: node --check and eslint both miss these (a Promise silently
   # stands in for the value). Flag assignments from known async functions with no await.
   ua=$(grep -nE "=\s*(inferPriceRange|searchProducts|searchWithFallbacks|buildPackage|getCustomerProfile|applyBasketSubstitute|checkStoreCoverage|checkDeliveryAvailability)\(" $FILES | grep -v "await " || true)
   if [ -n "$ua" ]; then echo "UN-AWAITED ASYNC CALL:"; echo "$ua"; fail=1; fi
+  # Unit tests (pure logic, seconds): qa/unit/*.test.js — e.g. the multi-pick resolver on real replies.
+  for f in rachel/qa/unit/*.test.js; do
+    [ -f "$f" ] || continue
+    node "$f" > /tmp/unit-$$.out 2>&1 || { echo "UNIT TEST FAILED: $f"; grep -E "✗|got:|want:|Error" /tmp/unit-$$.out | head -12; fail=1; }
+  done
+  rm -f /tmp/unit-$$.out
   [ $fail -eq 0 ] && echo "LINT OK" || echo "LINT FAILED"
   return $fail
 }

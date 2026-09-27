@@ -1579,6 +1579,15 @@ async function buildPackage(iv) {
           // the CHEAPEST same-type product, not the next-cheapest: a $55->$50 step is a
           // useless downgrade that just falls through to a quantity trim anyway.
           var term=li.label||li.name;
+          // This item's fair per-unit price ceiling (its share of the product budget). Computed
+          // BEFORE the prior-pick check, which compares against it. Real bug (found by eslint
+          // no-use-before-define): it was assigned further down, so the check read undefined on
+          // the first item and the PREVIOUS item's ceiling on every later one.
+          var grandTot=0;
+          for (var oi=0;oi<lineItems.length;oi++) grandTot+=lineItems[oi].qty*lineItems[oi].price;
+          var mySub=li.qty*li.price;
+          var myBudget=grandTot>0?productBudget*(mySub/grandTot):0;
+          var maxUnit=li.qty>0?myBudget/li.qty:0;
           // Prefer the previously-selected product for this slot if it fits the ceiling.
           var priorPick=priorByLabel[String(li.label||'').toLowerCase()];
           // Don't restore a prior pick that violates the 750 mL preference (wine/spirits,
@@ -1606,11 +1615,7 @@ async function buildPackage(iv) {
           // current prices" goes negative when the whole basket is over budget (nothing
           // qualifies, so it silently fell through to quantity trims). Proportional
           // allocation gives every item an achievable price tier in a single pass.
-          var grandTot=0;
-          for (var oi=0;oi<lineItems.length;oi++) grandTot+=lineItems[oi].qty*lineItems[oi].price;
-          var mySub=li.qty*li.price;
-          var myBudget=grandTot>0?productBudget*(mySub/grandTot):0;
-          var maxUnit=li.qty>0?myBudget/li.qty:0;
+          // (ceiling computed above, before the prior-pick check)
           // Wine color guard: "Red Wine" must not resolve to a rosé/white and vice versa.
           var lbl=String(li.label||'').toLowerCase();
           var wantRed=lbl.indexOf('red')>=0, wantWhite=lbl.indexOf('white')>=0;

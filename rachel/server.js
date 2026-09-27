@@ -3186,23 +3186,16 @@ app.post('/chat', async (req, res) => {
       // what Rachel just listed — never re-searched. A pick whose varietal is already in
       // the basket REPLACES that item (a re-price), keeping its quantity.
       try {
-        const normP = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-        const lineRe2 = /^\s*(?:[-•*]\s*|(\d{1,2})[.)]\s*)?(.+?)\s*(?:—|–|-)\s*(?:(\d+(?:\.\d+)?\s*(?:ml|l|oz)\b[^$\n]*?)\s*(?:—|–|-)\s*)?\$\s*([\d.,]+)(?:\s.*)?$/i;   // text may follow the price
-        const groups = []; let cur = null;
-        for (const raw of String(lastAssistantTextGate || '').split('\n')) {
-          const line = raw.replace(/\*/g, '').trim(); if (!line) continue;
-          if (/^\s*\d{1,3}x\s/i.test(line) || /\bea\s*=\s*\$/.test(line)) continue;   // basket line, not an option
-          const lm = line.match(lineRe2);
-          if (lm) { if (!cur) { cur = { heading: '', options: [] }; groups.push(cur); } cur.options.push({ n: lm[1] ? parseInt(lm[1]) : cur.options.length + 1, name: lm[2].trim(), size: (lm[3] || '').trim(), price: parseFloat(lm[4].replace(/,/g, '')) }); }
-          else if (!/\$/.test(line) && !/^\d{1,2}[.)]/.test(line) && !/^[-•]/.test(line) && !/\?$/.test(line) && line.length <= 140 && /^[A-Za-zÀ-ÿ]/.test(line)) {
-            // A heading may be a whole sentence ('Sauvignon Blanc alternatives — none found ... The closest white is:');
-            // keep the part before any dash/colon as the category name.
-            cur = { heading: line.split(/\s+(?:—|–)\s+|:/)[0].trim(), options: [] }; groups.push(cur);
-          }
-        }
+        // Parsing + pick resolution live in multipick.js (pure, unit-tested on real replies:
+        // qa/unit/multipick.test.js). Real bug fixed there: headings that carried a price
+        // ("Sauvignon Blanc alternatives (~$20):") were not recognised, so grouped picks all
+        // took global option #1 and a replacement was added as a new line.
+        const MP = require('./multipick.js');
+        const normP = MP.normP;
+        const groups = MP.parseOptionGroups(lastAssistantTextGate);
         const realGroups = groups.filter(g => g.options.length);
         const allOpts = realGroups.flatMap(g => g.options.map(o => Object.assign({ heading: g.heading }, o)));
-        const partsRaw = message.replace(/^\s*(ok(ay)?[,.!\s]*)?(please\s+)?(give me|i'?ll (take|have|go with)|let'?s (go with|do)|go with|add|i want|i'd like|the)\s+/i, '').split(/\s*(?:,|;|\n|\band\b|\bplus\b|&)\s*/i).map(x => x.trim()).filter(Boolean);
+        const partsRaw = MP.splitSelection(message);
         const isGrouped = realGroups.length >= 2;
         // GUARDS (real failure: 'is it possible to have two brands of vodka, tequila, and rum?'
         // was split on commas and matched against the BASKET listing in the previous reply).
@@ -3212,39 +3205,16 @@ app.post('/chat', async (req, res) => {
           && !/\b(is it possible|can (we|you)|could (we|you)|sounds like|prefer|would like|i think|maybe|instead of|what about|how about|let'?s have|two brands|more of|less of)\b/i.test(message)
           && !(clsIntent && !['select_option', 'add_item'].includes(clsIntent));
         if (allOpts.length && looksLikeOptionList && looksLikeSelection && (partsRaw.length >= 2 || isGrouped) && !state.orderStep && !state.proposalStep) {
-          const picks = []; const bareNums = []; const done = [];
-          const wordsOf = x => normP(x).split(/[^a-z0-9]+/).filter(w => w.length >= 3);
-          const headMatch = (cat) => { const cw = wordsOf(cat); return realGroups.find(g => { const hw = wordsOf(g.heading); return cw.length && cw.every(c => hw.some(h => h.startsWith(c) || c.startsWith(h))); }); };
-          const resolvedParts = new Set();
-          for (const part of partsRaw) {
-            const cm = part.match(/^(.*?[a-z].*?)\s*#?\s*(\d{1,2})\s*$/i);
-            if (cm) {
-              const n = parseInt(cm[2]);
-              const gAny = (() => { const cw = wordsOf(cm[1]); return groups.find(gg => { const hw = wordsOf(gg.heading); return cw.length && cw.every(c => hw.some(h => h.startsWith(c) || c.startsWith(h))); }); })();
-              const g = gAny && gAny.options.length ? gAny : null;
-              let o = g && (g.options.find(x => x.n === n) || g.options[n - 1]);
-              // A heading that EXISTS but offered nothing ('Sauvignon Blanc — no alternative found')
-              // must not fall through to the global option N (real bug: 'Sauvignon Blanc 1' and
-              // 'rosé 1' both grabbed global #1, Louis Jadot Pinot Noir, three times over).
-              if (!o && gAny && !gAny.options.length) { done.push('no alternatives were listed for ' + gAny.heading + ' — nothing changed there'); resolvedParts.add(part); continue; }
-              if (!o && !gAny) { const glob = allOpts.find(x => x.n === n); if (glob) o = glob; }   // unknown category word: continuous numbering
-              if (o) { picks.push(Object.assign({ heading: (g && g.heading) || o.heading }, o)); resolvedParts.add(part); continue; }
-            }
-            if (/^\d{1,2}$/.test(part)) { bareNums.push(parseInt(part)); resolvedParts.add(part); continue; }
-            const pw = wordsOf(part.replace(/^the\s+/i, '')); if (!pw.length) continue;
-            let best = null, bestScore = 0;
-            for (const o of allOpts) { const ow = wordsOf(o.name + ' ' + o.heading); const hit = pw.filter(w => ow.some(x => x === w || (w.length >= 4 && x.startsWith(w)) || (x.length >= 4 && w.startsWith(x)))).length; const sc = hit / pw.length; if (sc > bestScore) { bestScore = sc; best = o; } }
-            if (best && bestScore >= 0.5) { picks.push(best); resolvedParts.add(part); }
-          }
-          if (bareNums.length) { if (realGroups.length === 1) bareNums.forEach(n => { const o = realGroups[0].options.find(x => x.n === n) || realGroups[0].options[n - 1]; if (o) picks.push(Object.assign({ heading: realGroups[0].heading }, o)); }); else if (bareNums.length === realGroups.length) bareNums.forEach((n, i) => { const g = realGroups[i]; const o = g.options.find(x => x.n === n) || g.options[n - 1]; if (o) picks.push(Object.assign({ heading: g.heading }, o)); }); }
+          const rp = MP.resolvePicks(message, groups);
+          const picks = rp.picks; const done = rp.notes.slice();
+          const resolvedParts = new Set(partsRaw.filter(p => !rp.unmatched.includes(p)));
+          if (rp.notes.length) console.log('[multi-pick] notes:', JSON.stringify(rp.notes));
           if (picks.length && (partsRaw.length >= 2 || picks.length >= 2 || isGrouped)) {
-            const VAR = ['sauvignon','blanc','pinot','noir','grigio','gris','chardonnay','cabernet','merlot','rose','riesling','malbec','syrah','shiraz','zinfandel','champagne','prosecco','cava','tequila','vodka','gin','rum','bourbon','whiskey','whisky','scotch','mezcal','beer','ipa','lager','cider','sparkling','red','white'];
-            const varOf = x => new Set(wordsOf(x).filter(w => VAR.includes(w)));
             let items = []; try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
-            const seenPick = new Set(); const uniqPicks = picks.filter(pk => { const k = normP(pk.name); if (seenPick.has(k)) return false; seenPick.add(k); return true; });
-            for (const pk of uniqPicks) {
-              const pv = varOf(pk.heading + ' ' + pk.name);
-              const target = pv.size ? items.find(it => { const iv = varOf(it.name); return [...pv].some(v => iv.has(v)) && normP(it.name) !== normP(pk.name); }) : null;
+            for (const pk of picks) {
+              // The group heading names what is replaced ("Sauvignon Blanc alternatives" -> the
+              // Sauvignon Blanc line), even when the pick is another varietal.
+              const target = MP.replacementTarget(pk, items);
               // Catalog lookup needs a clean name: drop emoji/markers ('⭐', '✓') and fold
               // accents ('Rosé' -> 'Rose'; Bevvi's search doesn't fold diacritics).
               const cleanName = pk.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\x20-\x7E]/g, '').replace(/\s+/g, ' ').trim();
