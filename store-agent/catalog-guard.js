@@ -30,7 +30,7 @@ const price = p => Number(p.salePrice || p.price || 0);
 const MARKET_FILE = '/home/ubuntu/logs/market-prices.json';
 const MARKET_TTL_MS = 7 * 24 * 3600 * 1000;
 let MARKET = {}; try { MARKET = JSON.parse(fs.readFileSync(MARKET_FILE, 'utf8')); } catch (e) {}
-const inFlight = new Set();
+const inFlight = new Map();   // key -> promise of the running lookup, shared by concurrent searches
 const ZIP_LOC = { '10019': { city: 'New York', region: 'New York', timezone: 'America/New_York' }, '02110': { city: 'Boston', region: 'Massachusetts', timezone: 'America/New_York' }, '94104': { city: 'San Francisco', region: 'California', timezone: 'America/Los_Angeles' } };
 let _anthropic = null;
 function anthropic() {
@@ -74,10 +74,9 @@ const marketKey = (p, zip) => identity(p.name) + '|' + Math.round(volumeMl(p)) +
 function cachedMarket(p, zip) { const e = MARKET[marketKey(p, zip)]; return e ? Object.assign({ stale: Date.now() - e.at >= MARKET_TTL_MS }, e) : null; }
 function lookupMarket(p, zip) {
   const key = marketKey(p, zip);
-  if (inFlight.has(key)) return Promise.resolve(null);
-  inFlight.add(key);
+  if (inFlight.has(key)) return inFlight.get(key);
   const t0 = Date.now();
-  return webMarketPrice(p.name, volumeMl(p), zip).then(m => {
+  const pr = webMarketPrice(p.name, volumeMl(p), zip).then(m => {
     if (m) {
       MARKET[key] = Object.assign({ at: Date.now() }, m);
       try { fs.writeFileSync(MARKET_FILE, JSON.stringify(MARKET)); } catch (e) {}
@@ -86,6 +85,8 @@ function lookupMarket(p, zip) {
     return m;
   }).catch(e => { console.error('[market] lookup failed for "' + p.name + '":', e.message); return null; })
     .finally(() => inFlight.delete(key));
+  inFlight.set(key, pr);
+  return pr;
 }
 
 // Volume in ml from a size string: "750 ML", "1.5 L", "12x12 Oz", "24 x12 Oz bottle".
@@ -244,4 +245,26 @@ function guard(products, query, zip) {
   return kept;
 }
 
-module.exports = { guard, screen, parseMl, tokens, identity, webMarketPrice, lookupMarket };
+// DC: "for the first call it's ok to wait, accurate price is more important". A duplicate with
+// no market price yet waits for the web lookup (up to FIRST_LOOKUP_WAIT_MS, lookups in
+// parallel) and is then decided on the market price, in this same search. Past the cap the
+// search goes ahead with the interim row and the lookup completes in the background.
+const FIRST_LOOKUP_WAIT_MS = 35000;
+async function guardAsync(products, query, zip) {
+  if (!Array.isArray(products) || !products.length) return products;
+  const { pending } = screen(products, zip);
+  if (pending.length) {
+    const t0 = Date.now();
+    console.log('[catalog-guard] ' + pending.length + ' unpriced duplicate(s) in search ' + JSON.stringify(query) + ' — waiting for the market price (max ' + FIRST_LOOKUP_WAIT_MS / 1000 + 's): ' + pending.map(g => g.probe.name).join(', '));
+    let timer;
+    const done = await Promise.race([
+      Promise.all(pending.map(g => lookupMarket(g.probe, zip))).then(() => true),
+      new Promise(r => { timer = setTimeout(() => r(false), FIRST_LOOKUP_WAIT_MS); })
+    ]);
+    clearTimeout(timer);
+    console.log('[catalog-guard] market wait ' + (done ? 'finished' : 'hit the ' + FIRST_LOOKUP_WAIT_MS / 1000 + 's cap — interim row shown, lookup continues in the background') + ' after ' + Math.round((Date.now() - t0) / 1000) + 's');
+  }
+  return guard(products, query, zip);   // re-screens with whatever market prices are now cached
+}
+
+module.exports = { guard, guardAsync, screen, parseMl, tokens, identity, webMarketPrice, lookupMarket };
