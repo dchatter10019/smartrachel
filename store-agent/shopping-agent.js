@@ -1056,7 +1056,8 @@ async function executeTool(name, input) {
       const productTotal = products.reduce((s, p) => s + (parseFloat(p.price) || 0) * (p.qty || p.quantity || 1), 0);
       const serviceChargePct = 10;
       const serviceChargeAmt = Math.round(productTotal * (serviceChargePct / 100) * 100) / 100;
-      const tipAmt = input.tip_amount || Math.round(productTotal * 0.05 * 100) / 100;
+      // tip_amount 0 is the customer's "no tip", not a missing value (|| turned it into 5%).
+      const tipAmt = (typeof input.tip_amount === 'number' && input.tip_amount >= 0) ? input.tip_amount : Math.round(productTotal * 0.05 * 100) / 100;
       const tipPct = productTotal > 0 ? Math.round((tipAmt / productTotal) * 100) : 5;
       const parseAddr = (addr) => {
         const a = String(addr || '').replace(/\s+/g, ' ').trim();

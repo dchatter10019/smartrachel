@@ -18,7 +18,9 @@ turns:
   - send: "tomorrow at 5 pm"
     expect: {contains: ["instructions"]}
   - send: "none"
-    expect: {contains: ["Order Summary", "QA Tester", "9175550100", "05:00 PM", "Shall I go ahead"]}
+    expect: {contains: ["tip for your driver", "10%", "no tip"], not_contains: ["Shall I go ahead"]}
+  - send: "15%"
+    expect: {contains: ["Tip (15%): $", "Order Summary", "QA Tester", "9175550100", "05:00 PM", "Shall I go ahead"]}
   - send: "change the delivery time to 3 pm tomorrow"
     expect: {contains: ["03:00 PM", "Shall I go ahead"], not_contains: ["05:00 PM - 06:00 PM"]}
   - send: "use the phone number at 646-555-0123"

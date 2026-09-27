@@ -30,4 +30,6 @@ turns:
   - send: "tomorrow at 5 pm"
     expect: {contains: ["instructions"]}
   - send: "none"
-    expect: {contains: ["Shall I go ahead"]}
+    expect: {contains: ["tip for your driver", "10%", "no tip"], not_contains: ["Shall I go ahead"]}
+  - send: "15%"
+    expect: {contains: ["Tip (15%): $", "Shall I go ahead"]}

@@ -15,7 +15,9 @@ turns:
   - send: "9175550100"
   - send: "tomorrow at 5 pm"
   - send: "none"
-    expect: {contains: ["Shall I go ahead"]}
+    expect: {contains: ["tip for your driver", "10%", "no tip"], not_contains: ["Shall I go ahead"]}
+  - send: "10%"
+    expect: {contains: ["Tip (10%)", "Shall I go ahead"]}
   - send: "yes"
     expect: {matches: "placed|confirmed|submitted", log_contains: ["basket cleared"]}
   - send: "add a bottle of Veuve Clicquot"

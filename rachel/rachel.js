@@ -318,6 +318,11 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             console.log('[ShoppingAgent] overriding LLM-supplied line_items with authoritative current basket for', saInput.intent);
           }
           saInput.line_items = currentLineItems;
+          // The customer-chosen tip rides in the server's place_order instruction; the LLM
+          // may drop or change it (it used to be told never to show $0). Enforce it here.
+          if (saInput.intent === 'place_order') {
+            try { const sys = JSON.parse(customerMessage); if (sys && sys._system === 'place_order' && typeof sys.tip_amount === 'number') { console.log('[ShoppingAgent] place_order tip_amount ' + sys.tip_amount + ' from the approved summary' + (saInput.tip_amount !== sys.tip_amount ? ' (LLM passed ' + saInput.tip_amount + ')' : '')); saInput.tip_amount = sys.tip_amount; } } catch (e) {}
+          }
         }
         // confirm_substitute is handled entirely in-process, not via the shopping-agent
         // HTTP service — it needs access to this session's pendingSubstitutes/

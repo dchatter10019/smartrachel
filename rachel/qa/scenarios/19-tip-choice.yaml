@@ -1,0 +1,29 @@
+name: tip-choice
+# The customer chooses the driver tip: asked once before the order summary, changeable any
+# time, and sent with the order (rachel.js enforces the approved tip_amount on place_order).
+tags: [smoke]
+stop_on_fail: true
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+  - send: "place the order"
+  - send: "QA Tester"
+  - send: "same"
+  - send: "9175550100"
+  - send: "tomorrow at 5 pm"
+  - send: "none"
+    expect: {contains: ["tip for your driver", "15% ($5.61)"], log_contains: ["[tip] asking before the summary"]}
+  - send: "what do people usually tip?"
+    expect: {contains: ["up to you", "How much would you like to tip"], not_contains: ["Shall I go ahead"]}
+  - send: "7"
+    expect: {contains: ["7% or $7"]}
+  - send: "dollars"
+    expect: {contains: ["Tip: $7.00", "Shall I go ahead"], log_contains: ["[tip] customer chose $7.00"]}
+  - send: "actually make the tip 15%"
+    expect: {contains: ["Tip (15%): $5.61", "Shall I go ahead"], not_contains: ["$7.00"]}
+  - send: "yes"
+    expect: {matches: "placed|confirmed|submitted", log_contains: ["place_order tip_amount 5.61 from the approved summary"]}

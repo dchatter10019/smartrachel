@@ -555,6 +555,30 @@ function nyToUtcIso(dateStr, hour, minute) {
 // render the IDENTICAL summary. Previously the builder was inline in the details block;
 // callers later in the file (fast-path via a message sentinel, reconfirm) could never
 // reach it in-turn, so the fast-path never rendered and reconfirm showed '$0.00'.
+// ── Tip ────────────────────────────────────────────────────────────────────
+// The customer chooses the driver tip (asked once per order, before the summary; changeable
+// any time). Before this the tip was a fixed 5% and Rachel falsely promised "tip set to $0".
+// choice: { pct } or { amount }. No choice yet = the 5% estimate shown on basket totals.
+function parseTip(raw) {
+  const m = String(raw || '').toLowerCase().replace(/,/g, '').trim();
+  if (/^(no|none|nope|no tip|zero|0|0%|\$0|skip|nothing|no thanks|no thank you)\b/.test(m) || /\b(no tip|without (a )?tip|skip the tip|tip of (0|zero)|0 tip|zero tip)\b/.test(m)) return { pct: 0 };
+  const pc = m.match(/(\d{1,3}(?:\.\d+)?)\s*(?:%|percent|pct)/);
+  if (pc) return Number(pc[1]) <= 100 ? { pct: Number(pc[1]) } : null;
+  const am = m.match(/\$\s*(\d{1,4}(?:\.\d{1,2})?)/) || m.match(/\b(\d{1,4}(?:\.\d{1,2})?)\s*(?:dollars?|bucks|usd)\b/);
+  if (am) return { amount: Math.round(Number(am[1]) * 100) / 100 };
+  if (/\b(standard|default|usual)\b/.test(m)) return { pct: 5 };
+  const bare = m.replace(/[.!]+$/, '').match(/^(?:(?:ok(?:ay)?|sure|yes)[, ]+)?(?:make it |let'?s do |lets do |i'?ll do |go with |do |add |tip )?(\d{1,3}(?:\.\d{1,2})?)(?: please)?$/);
+  if (bare) { const n = Number(bare[1]); return [5, 10, 15, 18, 20, 25].includes(n) ? { pct: n } : { ambiguous: n }; }
+  return null;
+}
+function tipFor(state, base) {
+  const c = (state.orderData && state.orderData.tipChoice) || state.savedTipChoice || null;
+  if (!c) return { tip: Math.round(base * 5) / 100, label: 'Tip (5%)', choice: null };
+  if (c.pct != null) return { tip: Math.round(base * c.pct) / 100, label: c.pct === 0 ? 'Tip (none)' : 'Tip (' + c.pct + '%)', choice: c };
+  return { tip: c.amount, label: 'Tip', choice: c };
+}
+const tipText = c => c.pct != null ? (c.pct === 0 ? 'no tip' : c.pct + '%') : '$' + c.amount.toFixed(2);
+
 function renderOrderSummary(state, email, format, res) {
   state.orderStep = 'confirm';
   saveFlowState();
@@ -588,9 +612,19 @@ function renderOrderSummary(state, email, format, res) {
       }
     } catch(e) {}
     const productTotal = multiLines ? multiTotal : Math.round(unitPrice * qty * 100) / 100;
+    // Every path to the summary comes through here (details, fast-path re-entry, time or
+    // instruction changes), so this is the one place the tip question is asked.
+    if (!state.orderData.tipChoice && !state.savedTipChoice) {
+      state.orderStep = 'tip'; state.orderData.tipBase = productTotal; saveFlowState();
+      const a = p => '$' + (Math.round(productTotal * p) / 100).toFixed(2);
+      console.log('[tip] asking before the summary (product total $' + productTotal.toFixed(2) + ')');
+      const askT = 'Would you like to add a tip for your driver? 10% (' + a(10) + '), 15% (' + a(15) + '), 20% (' + a(20) + '), a custom amount (e.g. "$8"), or "no tip".';
+      return res.json({ text: askT, response: askT });
+    }
+    if (!state.orderData.tipChoice) state.orderData.tipChoice = state.savedTipChoice;
     const tax = Math.round(productTotal * 0.10 * 100) / 100;
     const service = Math.round(productTotal * 0.10 * 100) / 100;
-    const tip = Math.round(productTotal * 0.05 * 100) / 100;
+    const { tip, label: tipLabel } = tipFor(state, productTotal);
     const delivery = 25.00; // Quoted as an ESTIMATE only; not sent on the order (Bevvi backend to apply delivery)
     const grandTotal = Math.round((productTotal + tax + service + tip + delivery) * 100) / 100;
     state.orderData.grandTotal = grandTotal;
@@ -612,7 +646,7 @@ function renderOrderSummary(state, email, format, res) {
         'Product total: $' + productTotal.toFixed(2) + '\n' +
         'Estimated tax (10%): $' + tax.toFixed(2) + '\n' +
         'Service charge (10%): $' + service.toFixed(2) + '\n' +
-        'Tip (5%): $' + tip.toFixed(2) + '\n' +
+        tipLabel + ': $' + tip.toFixed(2) + '\n' +
         'Estimated delivery: $' + delivery.toFixed(2) + '\n' +
         '*Estimated grand total: $' + grandTotal.toFixed(2) + '*\n\n' +
         'Shall I go ahead and place this order?'
@@ -742,7 +776,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       if (prev && prev.reopened) console.log('[order] ' + (result.order_id || '?') + ' replaces reopened order ' + prev.order_id + ' — no cancel API; the earlier order stays in Bevvi unpaid');
       st.placedOrder = { order_id: result.order_id || '', payment_url: result.payment_url || '', line_items: typeof lineItems === 'string' ? lineItems : JSON.stringify(lineItems || []), placedAt: Date.now(), dry_run: !!result.dry_run, replaces: prev && prev.reopened ? prev.order_id : null };
       st.lastLineItems = '[]';   // '[]', not '': an empty string triggers the getPackage() rehydrate
-      st.pendingSubstitutes = []; st.pendingAddOffer = null; st.pendingQtyFor = null;
+      st.pendingSubstitutes = []; st.pendingAddOffer = null; st.pendingQtyFor = null; st.savedTipChoice = null; st.tipAsk = false;   // the next order asks for its own tip
       if (email) { Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; }); clearBasket(email, format || 'slack'); }
       saveFlowState();
       console.log('[order] placed ' + (result.order_id || '?') + (result.dry_run ? ' (QA dry run)' : '') + ' — basket cleared, kept on placedOrder for reopen');
@@ -1557,14 +1591,27 @@ app.post('/chat', async (req, res) => {
       return res.json({ text: addrQ, response: addrQ });
     }
 
-    // ── Tip change requests ─────────────────────────────────────────────────
-    // Real bug: "make the tip 0" got "Noted! Tip will be set to $0" — but the tip is a fixed
-    // 5% in the order summary and placement, so the promise was false. Until custom tips are
-    // a supported (business-approved) option, say plainly what happens.
-    if (state.step === 'ready' && /\btip\b/i.test(message) && (/\b(make|set|change|remove|no|zero|without|waive|skip|lower|reduce|increase|raise|bump|drop|less|more)\b[^.?!]*\btip\b|\btip\b[^.?!]*\b(to|at|of)\s*\$?\d|\btip\b\s*(?:=|:)?\s*\$?\d|\bno tip\b/i.test(message))) {
-      console.log('[tip] change requested — not supported, told the customer: ' + JSON.stringify(message).slice(0, 60));
-      const rT = 'Orders I place include a standard 5% tip for the delivery driver, and I\'m not able to change it from here. If you\'d like a different tip, bevvi-support@getbevvi.com can help. Anything else on your order?';
-      return res.json({ text: rT, response: rT });
+    // ── Tip: set or change it any time ──────────────────────────────────────
+    // "make the tip 15%", "no tip", "tip $8". At the tip step or the summary, re-render the
+    // summary with the new tip; earlier, remember it for the order. Decided in code.
+    if (state.step === 'ready' && state.orderStep !== 'tip' && (state.tipAsk || (/\btip\b/i.test(message) && /\b(make|set|change|add|leave|give|remove|no|zero|without|waive|skip|lower|reduce|increase|raise|bump|drop|less|more)\b[^.?!]*\btip\b|\btip\b[^.?!]*\b(to|at|of|is)\s*\$?\d|\btip\b\s*(?:=|:)?\s*\$?\d|\bno tip\b/i.test(message)))) {
+      const tc = parseTip(message);
+      if (tc && tc.ambiguous == null) {
+        state.savedTipChoice = tc; state.tipAsk = false;
+        if (state.orderData) state.orderData.tipChoice = tc;
+        saveFlowState();
+        console.log('[tip] set to ' + tipText(tc) + ' (' + JSON.stringify(message).slice(0, 50) + ')' + (state.orderStep ? ' during orderStep=' + state.orderStep : ''));
+        if (state.orderStep === 'confirm') return renderOrderSummary(state, email, format, res);
+        const rT = 'Done — ' + (tc.pct === 0 ? 'no tip on this order' : 'the driver tip is set to ' + tipText(tc)) + '. It\'ll show on your order summary. Anything else?';
+        return res.json({ text: rT, response: rT });
+      }
+      if (!state.tipAsk) {
+        state.tipAsk = true; saveFlowState();
+        const rQ = tc && tc.ambiguous != null ? 'Is that ' + tc.ambiguous + '% or $' + tc.ambiguous + '?' : 'Sure — what tip would you like for the driver? (e.g. 15%, $8, or "no tip")';
+        return res.json({ text: rQ, response: rQ });
+      }
+      state.tipAsk = false; saveFlowState();   // second unclear reply: drop it and carry on normally
+      console.log('[tip] still no tip amount after asking — handling the message normally');
     }
 
     // ── STATE: ready — a new delivery address ──────────────────────────────
@@ -1775,11 +1822,11 @@ app.post('/chat', async (req, res) => {
           const isList = /^\s*1[\.\)]\s/m.test(lastR);
           if (one && !isList && !items.some(it => nk(it.name).indexOf(nk(one[1]).slice(0, 12)) >= 0)) {
             const pp = parseFloat(one[3].replace(/,/g, '')) || 0;
-            const tax1 = Math.round(pp * 10) / 100, svc1 = Math.round(pp * 10) / 100, tip1 = Math.round(pp * 5) / 100, del1 = 25.00;
+            const tax1 = Math.round(pp * 10) / 100, svc1 = Math.round(pp * 10) / 100, { tip: tip1, label: tipL1 } = tipFor(state, pp), del1 = 25.00;
             const g1 = Math.round((pp + tax1 + svc1 + tip1 + del1) * 100) / 100;
             const r1 = 'Estimated all-in for 1x ' + one[1].trim() + (one[2] ? ' — ' + one[2].trim() : '') + ':\n\n' +
               'Product: $' + pp.toFixed(2) + '\nEstimated tax (10%): $' + tax1.toFixed(2) + '\nService charge (10%): $' + svc1.toFixed(2) +
-              '\nTip (5%): $' + tip1.toFixed(2) + '\nEstimated delivery: $' + del1.toFixed(2) + '\n*Estimated total: $' + g1.toFixed(2) + '*' +
+              '\n' + tipL1 + ': $' + tip1.toFixed(2) + '\nEstimated delivery: $' + del1.toFixed(2) + '\n*Estimated total: $' + g1.toFixed(2) + '*' +
               '\n\nEstimates — actual totals may vary.' +
               (items.length ? '\n\n(Your basket has ' + items.length + ' other item' + (items.length === 1 ? '' : 's') + ' — say "show my basket" for that total.)' : '') +
               '\n\nWant me to add it to your order?';
@@ -1793,13 +1840,13 @@ app.post('/chat', async (req, res) => {
           // Full estimate, same math as the order summary. Real regression: 'estimated
           // price' routed here (show_basket 0.90) and got only the product total — no tax,
           // service, tip, or delivery.
-          const tax = Math.round(tot * 10) / 100, svc = Math.round(tot * 10) / 100, tip = Math.round(tot * 5) / 100, del = 25.00;
+          const tax = Math.round(tot * 10) / 100, svc = Math.round(tot * 10) / 100, { tip, label: tipL } = tipFor(state, tot), del = 25.00;
           const grand = Math.round((tot + tax + svc + tip + del) * 100) / 100;
           const reply = 'Here\'s your current basket:\n\n' + lines.join('\n') +
             '\n\nProduct total: $' + tot.toFixed(2) +
             '\nEstimated tax (10%): $' + tax.toFixed(2) +
             '\nService charge (10%): $' + svc.toFixed(2) +
-            '\nTip (5%): $' + tip.toFixed(2) +
+            '\n' + tipL + ': $' + tip.toFixed(2) +
             '\nEstimated delivery: $' + del.toFixed(2) +
             '\n*Estimated grand total: $' + grand.toFixed(2) + '*' +
             '\n\nEstimates — actual totals may vary.\n\nWould you like to place the order, generate a PDF proposal, or make any changes?';
@@ -2161,6 +2208,31 @@ app.post('/chat', async (req, res) => {
       state.orderStep = 'details';
       saveFlowState();
     }
+    // ── ORDER STEP: tip ─────────────────────────────────────────────────────
+    if (state.orderStep === 'tip') {
+      let tc = parseTip(message);
+      const amb = state.orderData.tipAmbiguous;
+      if (!tc && amb != null && /\b(percent|%|pct)\b/i.test(message)) tc = { pct: amb };
+      if (!tc && amb != null && /\b(dollars?|bucks|\$)/i.test(message)) tc = { amount: amb };
+      if (tc && tc.ambiguous != null) {
+        state.orderData.tipAmbiguous = tc.ambiguous; saveFlowState();
+        const rA = 'Is that ' + tc.ambiguous + '% or $' + tc.ambiguous + '?';
+        return res.json({ text: rA, response: rA });
+      }
+      if (tc) {
+        state.orderData.tipChoice = tc; state.savedTipChoice = tc; state.orderData.tipAmbiguous = null; saveFlowState();
+        console.log('[tip] customer chose ' + tipText(tc) + ': ' + JSON.stringify(message).slice(0, 50));
+        return renderOrderSummary(state, email, format, res);
+      }
+      const isCmd = /\b(add|remove|swap|replace|change|cancel|stop|basket|cart|show|proposal)\b/i.test(message) && !/\btip\b/i.test(message);
+      if (!isCmd) {
+        const base = state.orderData.tipBase || 0; const a = p => '$' + (Math.round(base * p) / 100).toFixed(2);
+        console.log('[tip] no tip amount in reply — asking again: ' + JSON.stringify(message).slice(0, 50));
+        const rR = (/\?\s*$/.test(message) ? 'The tip goes to your delivery driver, and it\'s up to you. ' : '') + 'How much would you like to tip? 10% (' + a(10) + '), 15% (' + a(15) + '), 20% (' + a(20) + '), a custom amount like "$8", or "no tip".';
+        return res.json({ text: rR, response: rR });
+      }
+      // a real command (add/remove/cancel...) falls through to the non-answer exit below
+    }
     // A question ABOUT the step being asked ("why do you need my name?", "I'd rather not give
     // my phone") is answered in place and the same question re-asked — the order flow stays.
     // Real bug: it was treated as a command, the flow was dropped, the LLM said "I don't need
@@ -2186,7 +2258,7 @@ app.post('/chat', async (req, res) => {
     // and let the command run normally; the customer says 'place the order' to resume.
     const isOrderStepNonAnswer = /^\s*(show|what|where|how|can you|could you|do you|is there|list|display|view|cancel|stop|never ?mind|forget it|go back|help|reset)\b/i.test(message) || /\?\s*$/.test(message)
       || /\b(estimated?|price|pricing|basket|cart|total|cost|quote|proposal|recommend|add|remove|swap|change)\b/i.test(message);   // 'estimated price' at the name step is not a name
-    if ((state.orderStep === 'name' || state.orderStep === 'recipient_email' || state.orderStep === 'phone') && isOrderStepNonAnswer) {
+    if ((state.orderStep === 'name' || state.orderStep === 'recipient_email' || state.orderStep === 'phone' || state.orderStep === 'tip') && isOrderStepNonAnswer) {
       const od0 = state.orderData || {};
       if (od0.name || od0.phone) state.savedCustomer = { name: od0.name || (state.savedCustomer || {}).name || '', phone: od0.phone || (state.savedCustomer || {}).phone || '', email: od0.email || (state.savedCustomer || {}).email || '' };
       state.orderStep = null; state.orderData = null;
@@ -2513,6 +2585,7 @@ app.post('/chat', async (req, res) => {
           line_items: updatedLineItems || '[]',
           customer: customerObj,
           account_email: od.account_email || email || '',   // top-level createCorpOrder email = the logged-in user
+          tip_amount: typeof od.tip === 'number' ? od.tip : undefined,   // the customer's chosen tip (enforced in rachel.js)
           delivery_datetime: od.delivery_datetime_iso || od.delivery_datetime,
           delivery_window: od.delivery_datetime,
           delivery_instructions: od.delivery_instructions || '',
@@ -2535,7 +2608,7 @@ app.post('/chat', async (req, res) => {
         state.lastFingerprint = fp2;
         const gbrainCtx = email ? await getCustomerContext('', '', context?.client_id || 'airculinaire', email).catch(() => '') : '';
         context.saved_zip = state.zip;
-        const addrRule2 = '\n\n## DELIVERY\nZip: ' + state.zip + '. Address: ' + state.address + '. Age and address verified.\n\n## ORDER INSTRUCTION\nThe user message contains a JSON system instruction. Parse it and immediately call ShoppingAgent with intent=place_order using the line_items, customer, delivery_datetime, delivery_instructions and zip from the JSON (pass delivery_instructions through verbatim, even if empty). Do not ask for any more information. In your confirmation reply, quote the amounts from approved_totals EXACTLY (product total, tax, service charge, tip, grand total) — never recompute them and never show a tip of $0.00. Label the delivery line "Estimated delivery: $25.00" (it is an estimate; the final delivery charge is confirmed at checkout); the API response does not include these figures and the customer already approved them.';
+        const addrRule2 = '\n\n## DELIVERY\nZip: ' + state.zip + '. Address: ' + state.address + '. Age and address verified.\n\n## ORDER INSTRUCTION\nThe user message contains a JSON system instruction. Parse it and immediately call ShoppingAgent with intent=place_order using the line_items, customer, delivery_datetime, delivery_instructions and zip from the JSON (pass delivery_instructions through verbatim, even if empty). Do not ask for any more information. In your confirmation reply, quote the amounts from approved_totals EXACTLY (product total, tax, service charge, tip, grand total) — never recompute them; the tip is the customer\'s choice and may be $0.00. Label the delivery line "Estimated delivery: $25.00" (it is an estimate; the final delivery charge is confirmed at checkout); the API response does not include these figures and the customer already approved them.';
         const orderOutput = await callRachel({ sessionKey, message: placeMsg, context, format, gbrainContext: gbrainCtx, addressRule: addrRule2, email, alreadyConfirmed: true });
         // Persist the customer's contact details for repeat orders. GBrain stores no
         // name/phone, so the previous successful order is the only source — without

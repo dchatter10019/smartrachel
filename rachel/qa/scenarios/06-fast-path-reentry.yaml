@@ -12,7 +12,9 @@ turns:
   - send: "9175550100"
   - send: "tomorrow at 6 pm"
   - send: "none"
-    expect: {contains: ["Shall I go ahead"]}
+    expect: {contains: ["tip for your driver", "10%", "no tip"], not_contains: ["Shall I go ahead"]}
+  - send: "$8"
+    expect: {contains: ["Tip: $8.00", "Shall I go ahead"]}
   - send: "add a red wine"
     expect: {judge: "offers red wine options or asks which red wine, rather than placing the order"}
   - send: "1"
