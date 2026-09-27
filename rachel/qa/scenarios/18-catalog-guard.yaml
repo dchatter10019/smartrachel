@@ -13,3 +13,6 @@ turns:
     expect: {contains: ["Tito"], not_contains: ["8.79"]}
   - send: "what Veuve Clicquot do you have?"
     expect: {contains: ["Veuve"], not_contains: ["71.49"]}
+  - send: "do you have Grey Goose 750ml?"
+    # two 750 ML rows ($35.20, $41.24): only the one closest to the web market price (~$36) shows
+    expect: {contains: ["Grey Goose", "35.20"], not_contains: ["41.24"]}

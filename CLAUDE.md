@@ -67,6 +67,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - A substantive first message (an order) is kept through the age gate (pendingIntent) and replayed.
 - Age answers are parsed by parseAgeAnswer (server.js): stated age decides, then doubt, then
   negation, then an affirmative at the start. A refusal sticks 24h, even across reset.
+- Catalog guard (store-agent/catalog-guard.js) hides bad rows + alerts QA Slack. Same product+size listed
+  twice: keeps the row closest to the web MARKET price near the zip (Claude + web_search, cached 7d in
+  logs/market-prices.json, stale-while-revalidate; lookups run in the background, ~10-30s each).
 - A conversation expires after RACHEL_IDLE_HOURS (4) idle, except email threads; age is re-asked.
 - A placed order (API success only) leaves the cart → state.placedOrder; touching it asks reopen/new.
   Bevvi has no cancel API: a re-placed reopened order leaves the earlier one unpaid (logged).

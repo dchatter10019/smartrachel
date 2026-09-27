@@ -21,6 +21,73 @@ const SLACK_CHANNEL = process.env.QA_SLACK_CHANNEL || env.QA_SLACK_CHANNEL || ''
 
 const price = p => Number(p.salePrice || p.price || 0);
 
+// ── Market price (web) ──────────────────────────────────────────────────────
+// When the catalog lists the same product and size twice at different prices, the one to
+// show is the one closest to the MARKET price: what retailers near the customer's zip charge
+// for that exact bottle. Found by Claude with the server-side web search tool; the median of
+// the prices found is cached per product+size+zip for a week. Never in the request path: a
+// miss is looked up in the background and applies from the next search.
+const MARKET_FILE = '/home/ubuntu/logs/market-prices.json';
+const MARKET_TTL_MS = 7 * 24 * 3600 * 1000;
+let MARKET = {}; try { MARKET = JSON.parse(fs.readFileSync(MARKET_FILE, 'utf8')); } catch (e) {}
+const inFlight = new Set();
+const ZIP_LOC = { '10019': { city: 'New York', region: 'New York', timezone: 'America/New_York' }, '02110': { city: 'Boston', region: 'Massachusetts', timezone: 'America/New_York' }, '94104': { city: 'San Francisco', region: 'California', timezone: 'America/Los_Angeles' } };
+let _anthropic = null;
+function anthropic() {
+  if (!_anthropic) {
+    const sdk = require('/home/ubuntu/rachel/node_modules/@anthropic-ai/sdk');
+    _anthropic = new (sdk.Anthropic || sdk)({ apiKey: process.env.ANTHROPIC_API_KEY || env.ANTHROPIC_API_KEY, timeout: 120000, maxRetries: 1 });
+  }
+  return _anthropic;
+}
+const sizeLabel = ml => ml >= 1000 ? (Math.round(ml / 10) / 100) + ' L' : Math.round(ml) + ' mL';
+async function webMarketPrice(name, ml, zip) {
+  const prompt = 'Find current retail shelf prices in USD (before tax and delivery) for exactly this product: "' + name + '", ' + sizeLabel(ml) + ' bottle' +
+    (zip ? ', at liquor stores or retailers that serve ZIP code ' + zip + ' (or the nearest city)' : ', at US retailers') + '. Use the same product and the same bottle size only — no other sizes, gift sets or multipacks. ' +
+    'Find up to 5 prices from different retailers. Answer with ONLY a JSON object, no other text: {"prices":[{"price":<number>,"store":"<retailer>","url":"<page url>"}]}. If you find none, answer {"prices":[]}.';
+  const loc = ZIP_LOC[zip] || {};
+  const base = {
+    model: 'claude-opus-5', max_tokens: 4000, output_config: { effort: 'low' },
+    betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
+    tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5, user_location: Object.assign({ type: 'approximate', country: 'US' }, loc) }]
+  };
+  const first = { role: 'user', content: prompt };
+  let messages = [first], resp = null;
+  for (let k = 0; k < 3; k++) {   // a long server-tool turn can pause; resume by sending the paused turn back
+    resp = await anthropic().beta.messages.create(Object.assign({}, base, { messages }));
+    if (resp.stop_reason !== 'pause_turn') break;
+    messages = [first, { role: 'assistant', content: resp.content }];
+  }
+  if (!resp || resp.stop_reason === 'refusal') { console.log('[market] no answer (' + (resp && resp.stop_reason) + ') for "' + name + '"'); return null; }
+  const text = resp.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
+  const jm = text.match(/\{[\s\S]*"prices"[\s\S]*\}/);
+  if (!jm) { console.log('[market] unparseable answer for "' + name + '": ' + text.slice(0, 120)); return null; }
+  let prices = [];
+  try { prices = (JSON.parse(jm[0]).prices || []).filter(x => x && Number(x.price) > 0 && Number(x.price) < 20000).map(x => ({ price: Number(x.price), store: String(x.store || ''), url: String(x.url || '') })); } catch (e) { return null; }
+  if (!prices.length) return { median: null, prices: [] };
+  const sorted = prices.map(x => x.price).sort((a, b) => a - b);
+  const median = sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2;
+  return { median: Math.round(median * 100) / 100, prices };
+}
+const marketKey = (p, zip) => identity(p.name) + '|' + Math.round(volumeMl(p)) + '|' + (zip || '');
+// Stale-while-revalidate: an entry older than the TTL is still used, and refreshed in the background.
+function cachedMarket(p, zip) { const e = MARKET[marketKey(p, zip)]; return e ? Object.assign({ stale: Date.now() - e.at >= MARKET_TTL_MS }, e) : null; }
+function lookupMarket(p, zip) {
+  const key = marketKey(p, zip);
+  if (inFlight.has(key)) return Promise.resolve(null);
+  inFlight.add(key);
+  const t0 = Date.now();
+  return webMarketPrice(p.name, volumeMl(p), zip).then(m => {
+    if (m) {
+      MARKET[key] = Object.assign({ at: Date.now() }, m);
+      try { fs.writeFileSync(MARKET_FILE, JSON.stringify(MARKET)); } catch (e) {}
+      console.log('[market] "' + p.name + '" ' + sizeLabel(volumeMl(p)) + ' near ' + (zip || 'US') + ': ' + (m.median ? '$' + m.median.toFixed(2) + ' median of ' + m.prices.length + ' web price(s)' : 'no prices found') + ' (' + Math.round((Date.now() - t0) / 1000) + 's)');
+    }
+    return m;
+  }).catch(e => { console.error('[market] lookup failed for "' + p.name + '":', e.message); return null; })
+    .finally(() => inFlight.delete(key));
+}
+
 // Volume in ml from a size string: "750 ML", "1.5 L", "12x12 Oz", "24 x12 Oz bottle".
 function parseMl(s) {
   s = String(s || '').toLowerCase();
@@ -37,6 +104,7 @@ const FILLER = new Set(['champagne', 'wine', 'the', 'bottle', 'bottles', 'can', 
 function tokens(name) {
   return String(name || '').toLowerCase()
     .replace(/\d+\s*x\s*\d+(\.\d+)?\s*(ml|l|oz)\b/g, ' ').replace(/\d+(\.\d+)?\s*(ml|l|oz|cl)\b/g, ' ')
+    .replace(/\(?\s*\d+(\.\d+)?\s*proof\s*\)?/g, ' ').replace(/\d+(\.\d+)?\s*%\s*(abv|alc\.?(\s*\/\s*vol)?)?/g, ' ').replace(/\babv\b/g, ' ')
     .replace(/[’']/g, '').replace(/[^a-z0-9]+/g, ' ').split(' ').filter(t => t && !FILLER.has(t));
 }
 // Same product = identical names once size and generic words are gone ("Tito'S" == "Tito's
@@ -50,8 +118,9 @@ const sameProduct = (a, b) => { const ia = identity(a.name); return ia.length > 
 // ("Fever Tree 5 OZ" is a 4-pack priced as one row) break the arithmetic.
 const sizeComparable = p => /^(wine|liquor|spirits)$/i.test(String(p.category || '')) && !/\d\s*x\s*\d|\b\d+\s*(pk|pack)\b/i.test(p.name || '') && volumeMl(p) >= 187;
 
-function screen(products) {
+function screen(products, zip) {
   const flagged = new Map();   // index -> reason
+  const quiet = new Set();     // hidden but not worth a Slack alert (identical-price duplicates)
   const flag = (i, reason) => { if (!flagged.has(i)) flagged.set(i, reason); };
   products.forEach((p, i) => {
     const n = String(p.name || '').trim(), pr = price(p);
@@ -82,10 +151,8 @@ function screen(products) {
     if (!va || !vb || !(pa > 0) || !(pb > 0) || !sameProduct(a, b)) continue;
     const med = median(a, b);
     const pick = (fallback) => med ? (off(a, med) >= off(b, med) ? i : j) : fallback;
-    if (Math.abs(va - vb) / Math.max(va, vb) < 0.02 && Math.min(pa, pb) < Math.max(pa, pb) * 0.5) {
-      // Same product, same size, one under half the other's price.
-      const bad = pick(pa < pb ? i : j), other = products[bad === i ? j : i];
-      flag(bad, 'same product and size as "' + other.name + '" but $' + price(products[bad]).toFixed(2) + ' vs $' + price(other).toFixed(2) + (med ? ' (usual ~$' + med.toFixed(0) + '/L)' : ''));
+    if (Math.abs(va - vb) / Math.max(va, vb) < 0.02) {
+      continue;   // same product AND size: a duplicate listing, decided against the market price below
     } else if (sizeComparable(a) && sizeComparable(b) && Math.abs(va - vb) / Math.max(va, vb) > 0.2) {
       // A bigger bottle of the same product that costs less than a smaller one.
       const [big, small] = va > vb ? [i, j] : [j, i];
@@ -95,15 +162,52 @@ function screen(products) {
       }
     }
   }
+  // Duplicates: the same product in the same size listed more than once (user report: two
+  // "Grey Goose 750 ML" rows at $41.24 and $35.20 with slightly different names). Show ONE:
+  // the row closest to the MARKET price (web prices near the customer's zip, cached). On a
+  // cache miss the first row with brand data is shown for now and the market lookup runs in
+  // the background (alert sent when it finishes). Prices within 2% = plain duplicate: hidden
+  // and logged, no alert.
+  const pending = [], refresh = [];
+  const done = new Set();
+  for (let i = 0; i < products.length; i++) {
+    if (flagged.has(i) || done.has(i) || !volumeMl(products[i]) || !(price(products[i]) > 0)) continue;
+    const grp = [i];
+    for (let j = i + 1; j < products.length; j++) {
+      if (flagged.has(j) || done.has(j) || !volumeMl(products[j]) || !(price(products[j]) > 0)) continue;
+      if (sameProduct(products[i], products[j]) && Math.abs(volumeMl(products[i]) - volumeMl(products[j])) / volumeMl(products[i]) < 0.02) grp.push(j);
+    }
+    grp.forEach(k => done.add(k));
+    if (grp.length < 2) continue;
+    const spread = (Math.max(...grp.map(k => price(products[k]))) - Math.min(...grp.map(k => price(products[k])))) / Math.max(...grp.map(k => price(products[k])));
+    const mk = spread > 0.02 ? cachedMarket(products[i], zip) : null;
+    if (mk && mk.stale) refresh.push(products[i]);
+    let keep, basis;
+    if (mk && mk.median) {
+      keep = grp.reduce((b, k) => Math.abs(price(products[k]) - mk.median) < Math.abs(price(products[b]) - mk.median) ? k : b, grp[0]);
+      basis = 'market ~$' + mk.median.toFixed(2) + ' (median of ' + mk.prices.length + ' web price' + (mk.prices.length > 1 ? 's' : '') + ' near ' + (zip || 'US') + ': ' + mk.prices.slice(0, 3).map(x => x.store + ' $' + x.price.toFixed(2)).join(', ') + ')';
+    } else {
+      keep = grp.find(k => products[k].brandinfo) ?? grp[0];
+      basis = spread <= 0.02 ? 'same price' : (mk ? 'no market price found on the web — kept the first-listed row; please check both' : 'market price lookup started — showing the first-listed row until it finishes');
+      if (spread > 0.02 && !mk) pending.push({ rows: grp.map(k => products[k]), probe: products[i] });
+    }
+    const kp = products[keep];
+    for (const k of grp) {
+      if (k === keep) continue;
+      const d = Math.abs(price(products[k]) - price(kp)) / Math.max(price(products[k]), price(kp));
+      flagged.set(k, (d <= 0.02 ? 'duplicate listing' : 'DUPLICATE, different price') + ' of "' + kp.name + '" — showing $' + price(kp).toFixed(2) + ', hid $' + price(products[k]).toFixed(2) + ' — ' + basis);
+      if (d <= 0.02 || (spread > 0.02 && !mk)) quiet.add(k);   // pending groups alert when the lookup finishes
+    }
+  }
   const kept = [], hidden = [];
-  products.forEach((p, i) => (flagged.has(i) ? hidden.push({ product: p, reason: flagged.get(i) }) : kept.push(p)));
-  return { kept, hidden };
+  products.forEach((p, i) => (flagged.has(i) ? hidden.push({ product: p, reason: flagged.get(i), quiet: quiet.has(i) }) : kept.push(p)));
+  return { kept, hidden, pending, refresh };
 }
 
 function alertSlack(hidden, query, zip) {
   let seen = {}; try { seen = JSON.parse(fs.readFileSync(ALERT_FILE, 'utf8')); } catch (e) {}
   const now = Date.now();
-  const fresh = hidden.filter(h => {
+  const fresh = hidden.filter(h => !h.quiet).filter(h => {
     const k = (h.product.id || h.product.upc || h.product.name) + '|' + h.reason.replace(/"[^"]*"|\$[\d.]+|\d+%/g, '');
     if (seen[k] && now - seen[k] < ALERT_EVERY_MS) return false;
     seen[k] = now; return true;
@@ -113,7 +217,7 @@ function alertSlack(hidden, query, zip) {
   if (!SLACK_TOKEN || !SLACK_CHANNEL) { console.log('[catalog-guard] Slack not configured — alert logged only'); return; }
   const lines = fresh.map(h => '• *' + h.product.name + '* — $' + price(h.product).toFixed(2) + ' — ' + h.reason +
     '\n   id `' + (h.product.id || '?') + '` · UPC `' + (h.product.upc || '?') + '` · store `' + (h.product.establishmentId || '?') + '`');
-  const text = ':warning: *Catalog listing looks wrong — Rachel is hiding it from customers*\nSearch "' + query + '"' + (zip ? ' in ' + zip : '') + ':\n' + lines.join('\n') +
+  const text = ':warning: *Catalog listings need checking — Rachel is hiding these from customers*\nSearch "' + query + '"' + (zip ? ' in ' + zip : '') + ':\n' + lines.join('\n') +
     '\n_Hidden until the listing is fixed. Rules: store-agent/catalog-guard.js_';
   fetch('https://slack.com/api/chat.postMessage', { method: 'POST', headers: { 'Authorization': 'Bearer ' + SLACK_TOKEN, 'Content-Type': 'application/json' }, body: JSON.stringify({ channel: SLACK_CHANNEL, text }) })
     .then(r => r.json()).then(j => { if (!j.ok) console.error('[catalog-guard] Slack post failed:', j.error); else console.log('[catalog-guard] Slack alert posted:', fresh.length, 'row(s)'); })
@@ -123,10 +227,21 @@ function alertSlack(hidden, query, zip) {
 // Screen a search result: log + alert every hidden row, return only the rows safe to show.
 function guard(products, query, zip) {
   if (!Array.isArray(products) || !products.length) return products;
-  const { kept, hidden } = screen(products);
+  const { kept, hidden, pending, refresh } = screen(products, zip);
+  for (const r of refresh) lookupMarket(r, zip);   // quiet background refresh of a stale market price
   for (const h of hidden) console.log('[catalog-guard] HIDDEN "' + h.product.name + '" $' + price(h.product).toFixed(2) + ' — ' + h.reason + ' (search ' + JSON.stringify(query) + (zip ? ' zip ' + zip : '') + ')');
-  if (hidden.length) alertSlack(hidden, query, zip);
+  if (hidden.some(h => !h.quiet)) alertSlack(hidden, query, zip);
+  for (const g of pending) {
+    lookupMarket(g.probe, zip).then(m => {
+      if (!m) return;
+      const best = m.median ? g.rows.reduce((b, r) => Math.abs(price(r) - m.median) < Math.abs(price(b) - m.median) ? r : b, g.rows[0]) : null;
+      const note = best
+        ? 'showing "' + best.name + '" $' + price(best).toFixed(2) + ' from now on — market ~$' + m.median.toFixed(2) + ' (median of ' + m.prices.length + ' web price' + (m.prices.length > 1 ? 's' : '') + ' near ' + (zip || 'US') + ': ' + m.prices.slice(0, 3).map(x => x.store + ' $' + x.price.toFixed(2)).join(', ') + ')'
+        : 'no market price found on the web — please check which price is right';
+      alertSlack(g.rows.filter(r => r !== best).map(r => ({ product: r, reason: 'DUPLICATE, different price: ' + g.rows.map(x => '$' + price(x).toFixed(2)).join(' vs ') + ' — ' + note })), query, zip);
+    });
+  }
   return kept;
 }
 
-module.exports = { guard, screen, parseMl, tokens };
+module.exports = { guard, screen, parseMl, tokens, identity, webMarketPrice, lookupMarket };
