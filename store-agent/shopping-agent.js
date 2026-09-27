@@ -754,10 +754,21 @@ async function executeTool(name, input) {
           if (targetPrice > item.price * 1.3) {
             const searchTerm = (item.label || item.name).split(' ').slice(0,2).join(' ');
             const candidates = await searchWithFallbacks(loc.kitchen, loc.client, searchTerm, 20);
+            const rejectedStyle = [];
             const better = candidates
               .map(function(p) { return { name: p.name, price: p.salePrice||p.price||0, upc: p.upc||'', url: p.url||'', product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'', establishmentId: p.establishmentId||'' }; })
-              .filter(function(p) { return p.price > item.price && p.price <= targetPrice * 1.2; })
+              .filter(function(p) {
+                if (!(p.price > item.price && p.price <= targetPrice * 1.2)) return false;
+                // Same style as the line it upgrades (menu_build has the same guard). Real bug
+                // (event-serving-mix, Sep 27): custom_list upgraded the "Red Wine" line from The
+                // Prisoner Red Blend to Taylor Fladgate 20 Year Tawny Port — a dessert wine.
+                const n = (p.name || '').toLowerCase(), was = (item.name || '').toLowerCase();
+                const FORT = /\b(port|tawny|sherry|sake|madeira|marsala|vermouth)\b/;
+                if (FORT.test(n) && !FORT.test(was)) { rejectedStyle.push(p.name); return false; }
+                return true;
+              })
               .sort(function(a,b) { return b.price - a.price; });
+            if (rejectedStyle.length) console.log('[shopping-agent] upgrade REJECTED for', item.name, '(different style — fortified/dessert):', rejectedStyle.slice(0, 5).join(', '));
             if (better.length > 0) {
               const best = better[0];
               // Enforce the cap: only apply if the new total still fits the product budget.

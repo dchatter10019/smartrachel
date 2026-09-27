@@ -724,6 +724,15 @@ async function buildPackage(iv) {
     var broadResults = await rawSearch(words[0]);
     if (broadResults.length > 0) {
       var scored = scoreCandidates(cleanedTerm, broadResults, null);
+      // A mixer never falls back to an alcoholic product. Real bug (event-serving-mix, Sep 27):
+      // "Lime Juice" matched White Claw Natural Lime / Bud Light Lime on the word "lime" alone.
+      if (String(category || '').toLowerCase() === 'mixer') {
+        var ALC_RE = /\b(hard seltzer|seltzer|beer|lager|ale|ipa|stout|pilsner|cider|wine|vodka|gin|rum|tequila|mezcal|whiske?y|bourbon|scotch|cognac|brandy|liqueur|white claw|truly|high noon|bud|corona|michelob|modelo|margarita|cocktail|rtd|alcoholic|hard)\b/i;
+        var isAlc = function(nm) { return ALC_RE.test(String(nm || '').replace(/\b(ginger|root|birch)\s+(beer|ale)\b/gi, ' ')); };   // ginger beer / ginger ale are mixers
+        var dropped = scored.filter(function(sc) { return isAlc(sc.product.name); });
+        if (dropped.length) console.log('[doSearch] fuzzy fallback REJECTED for mixer ' + JSON.stringify(cleanedTerm) + ' (alcoholic product): ' + dropped.map(function(sc){ return sc.product.name; }).join(', '));
+        scored = scored.filter(function(sc) { return !isAlc(sc.product.name); });
+      }
       if (scored.length > 0) {
         console.log('[doSearch] fuzzy fallback (brand-word broad search) matched:', JSON.stringify(cleanedTerm), '->', scored.map(function(s){return s.product.name + ' (' + s.score.toFixed(2) + ')';}).join(', '));
         return scored.map(function(s) { return s.product; });
@@ -816,6 +825,15 @@ async function buildPackage(iv) {
     var broadResults = await rawSearch(words[0]);
     if (broadResults.length > 0) {
       var scored = scoreCandidates(cleanedTerm, broadResults, null);
+      // A mixer never falls back to an alcoholic product. Real bug (event-serving-mix, Sep 27):
+      // "Lime Juice" matched White Claw Natural Lime / Bud Light Lime on the word "lime" alone.
+      if (String(category || '').toLowerCase() === 'mixer') {
+        var ALC_RE = /\b(hard seltzer|seltzer|beer|lager|ale|ipa|stout|pilsner|cider|wine|vodka|gin|rum|tequila|mezcal|whiske?y|bourbon|scotch|cognac|brandy|liqueur|white claw|truly|high noon|bud|corona|michelob|modelo|margarita|cocktail|rtd|alcoholic|hard)\b/i;
+        var isAlc = function(nm) { return ALC_RE.test(String(nm || '').replace(/\b(ginger|root|birch)\s+(beer|ale)\b/gi, ' ')); };   // ginger beer / ginger ale are mixers
+        var dropped = scored.filter(function(sc) { return isAlc(sc.product.name); });
+        if (dropped.length) console.log('[doSearch] fuzzy fallback REJECTED for mixer ' + JSON.stringify(cleanedTerm) + ' (alcoholic product): ' + dropped.map(function(sc){ return sc.product.name; }).join(', '));
+        scored = scored.filter(function(sc) { return !isAlc(sc.product.name); });
+      }
       if (scored.length > 0) {
         console.log('[doSearch] fuzzy fallback (brand-word broad search) matched:', JSON.stringify(cleanedTerm), '->', scored.map(function(s){return s.product.name + ' (' + s.score.toFixed(2) + ')';}).join(', '));
         return scored.map(function(s) { return s.product; });

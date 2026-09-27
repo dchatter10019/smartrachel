@@ -47,6 +47,15 @@ console.log('reprice: price AFTER a dash in the heading ("PINOT NOIR — ~$20", 
   eq('Sauvignon Blanc and rosé reported, not dropped', r.notes, ['no alternatives were listed for Sauvignon Blanc alternatives — nothing changed there', 'no alternatives were listed for ROSÉ — nothing changed there']);
 }
 
+console.log('reprice: prose with a price range under a heading ("No rosé found in the $15–$25 range") — the Sep 27 failure');
+{
+  const { g, r, targets } = run(fx('reprice-price-range-prose.txt'), 'Sauvignon Blanc 1, Pinot Noir 1, rosé 1');
+  eq('the prose line is not an option', g.filter(x => x.options.length).map(x => x.heading), ['Sauvignon Blanc alternatives', 'Pinot Noir alternatives']);
+  eq('picks', r.picks.map(p => p.name), ['Jadot Macon Villages (Chardonnay)', 'Louis Jadot Bourgogne Pinot Noir']);
+  eq('targets', targets, ['Jadot Macon Villages (Chardonnay) -> Cloudy Bay Sauvignon Blanc White Wine - 750 ML', 'Louis Jadot Bourgogne Pinot Noir -> Joseph Phelps Freestone Pinot Noir - 750 ML']);
+  eq('rosé reported', r.notes, ['no alternatives were listed for Rosé alternatives — nothing changed there']);
+}
+
 console.log('reprice: options shown with a line total ("$18.69 ea = $93.45")');
 {
   const { r, targets } = run(fx('reprice-options-with-line-totals.txt'), 'Sauvignon Blanc 1, Pinot Noir 1, rosé 1');

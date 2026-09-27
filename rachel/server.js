@@ -855,6 +855,8 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       // Full-bar note (DC: keep one bottle of each spirit type, but tell the customer when that's
       // more than they need). Appended to this turn's reply in code — not left to the LLM.
       try { if (saResult && saResult.full_bar_note) { getState(sessionKey).replyNote = saResult.full_bar_note; } } catch (e) {}
+      // The totals of the latest build this turn, so the reply always shows them (see [reply] totals below).
+      try { if (saResult && saResult.product_total) { getState(sessionKey).builtTotals = { pt: saResult.product_total, tax: saResult.estimated_tax, svc: saResult.estimated_service, tip: saResult.estimated_tip, del: saResult.delivery_fee, grand: saResult.estimated_grand_total, budget: saInput && saInput.budget }; } } catch (e) {}
       // A successful build supersedes any prior "unavailable" state. Real bug: two
       // beers were falsely flagged unavailable on one rebuild (stale pendingSubstitutes
       // entries), then restored fine on the NEXT rebuild — but the pending list was
@@ -3747,7 +3749,26 @@ app.post('/chat', async (req, res) => {
 
 
     // Call Rachel
-    const output = await callRachel({ sessionKey, message, context, format, gbrainContext, addressRule: fullAddrRule, email });
+    try { getState(sessionKey).builtTotals = null; } catch (e) {}
+    let output = await callRachel({ sessionKey, message, context, format, gbrainContext, addressRule: fullAddrRule, email });
+    // A package built this turn is always shown with its totals — in code, not left to the LLM.
+    // Real bug (event-serving-mix, Sep 27 nightly): the custom_list build succeeded but ginger
+    // beer and lime juice were unavailable; the LLM narrated the gap, listed the items and
+    // dropped the Product total / grand total block entirely.
+    try {
+      const bt = getState(sessionKey).builtTotals;
+      // Only when the reply presents the package ("8x Name — $x" lines, also "Red: 8x ..."); an options list after a
+      // build (reprice: "1. Name — $24.19") is not a package and gets no totals.
+      const pkgLines = (output.match(/(?:^|[\s:])[*_]?\d{1,3}x\s[^\n]*\$\d/gm) || []).length;
+      if (bt && pkgLines >= 2 && !/product total/i.test(output)) {
+        const b = format === 'slack' ? '*' : '';
+        const block = 'Product total: $' + bt.pt + '\nEstimated Tax (10%): $' + bt.tax + '\nEstimated Delivery: $' + bt.del + '\nService Charge (10%): $' + bt.svc + '\nTip (5%): $' + bt.tip + '\n' + b + 'Estimated grand total: $' + bt.grand + (bt.budget ? ' of your $' + bt.budget + ' budget' : '') + b;
+        const paras = output.trimEnd().split(/\n\s*\n/);
+        if (paras.length > 1 && /\?\s*\**\s*$/.test(paras[paras.length - 1])) paras.splice(paras.length - 1, 0, block); else paras.push(block);
+        output = paras.join('\n\n');
+        console.log('[reply] totals added in code — the LLM omitted them for this turn\'s build (product total $' + bt.pt + ')');
+      }
+    } catch (e) { console.error('[reply] totals insert failed:', e.message); }
 
     // ── Post-process: mixer/CTA using explicit state ─────────────────────
     const noKw = ['no', 'nope', 'no thanks', 'no worries', "that's all", 'thats all', "i'm good", 'im good', 'nothing else'];

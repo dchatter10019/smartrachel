@@ -13,8 +13,11 @@ const normP = x => String(x || '').toLowerCase().normalize('NFD').replace(/[̀-�
 const wordsOf = x => normP(x).split(/[^a-z0-9]+/).filter(w => w.length >= 3);
 const VAR = ['sauvignon', 'blanc', 'pinot', 'noir', 'grigio', 'gris', 'chardonnay', 'cabernet', 'merlot', 'rose', 'riesling', 'malbec', 'syrah', 'shiraz', 'zinfandel', 'champagne', 'prosecco', 'cava', 'tequila', 'vodka', 'gin', 'rum', 'bourbon', 'whiskey', 'whisky', 'scotch', 'mezcal', 'beer', 'ipa', 'lager', 'cider', 'sparkling', 'red', 'white'];
 const varOf = x => new Set(wordsOf(x).filter(w => VAR.includes(w)));
-// An option line: "1. Name — 750 mL — $17.59" (number optional for bullets; text may follow the price)
-const OPTION_RE = /^\s*(?:[-•*]\s*|(\d{1,2})[.)]\s*)?(.+?)\s*(?:—|–|-)\s*(?:(\d+(?:\.\d+)?\s*(?:ml|l|oz)\b[^$\n]*?)\s*(?:—|–|-)\s*)?\$\s*([\d.,]+)(?:\s.*)?$/i;
+// An option line: "1. Name — 750 mL — $17.59" (number optional for bullets; text may follow the price).
+// The name has no "$": real bug (reprice-multipick, Sep 27 nightly) — "No rosé found in the
+// $15–$25 range" split on the en dash of the price range and became rosé option "No rosé found
+// in the $15" at $25, so "rosé 1" added nothing and replied "could not resolve".
+const OPTION_RE = /^\s*(?:[-•*]\s*|(\d{1,2})[.)]\s*)?([^$\n]+?)\s*(?:—|–|-)\s*(?:(\d+(?:\.\d+)?\s*(?:ml|l|oz)\b[^$\n]*?)\s*(?:—|–|-)\s*)?\$\s*([\d.,]+)(?:\s.*)?$/i;
 
 // Group headings + their options, in order. A heading is a short line that isn't an option,
 // a question or a bullet; a price inside parentheses ("(~$20)") no longer disqualifies it.
