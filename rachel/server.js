@@ -216,6 +216,44 @@ function saveFlowState() {
   try { fs.writeFileSync(FLOW_STATE_PATH, JSON.stringify(flowState)); } catch(e) {}
 }
 
+// Conversation history persisted to disk. Real bug (DC, Sep 27): sessions[] and the recent-reply
+// buffer lived only in memory, so every deploy/restart wiped live conversations mid-flow — the
+// next Slack message arrived with "messages: 0", Rachel no longer knew which wines "those" were,
+// and multi-pick / substitute matching lost the list it resolves against. The basket and flow
+// state already survived (flow-state.json); now the conversation does too. Written atomically,
+// debounced after each reply, flushed on SIGTERM; pruned by the idle rule.
+const CHAT_SESSIONS_PATH = '/home/ubuntu/logs/chat-sessions.json';
+try {
+  const saved = JSON.parse(fs.readFileSync(CHAT_SESSIONS_PATH, 'utf8'));
+  Object.assign(sessions, saved.messages || {});
+  Object.assign(lastRepliesBySession, saved.replies || {});
+  console.log('[sessions] loaded', Object.keys(saved.messages || {}).length, 'conversation(s) from disk');
+} catch (e) { if (e.code !== 'ENOENT') console.error('[sessions] load failed:', e.message); }
+function pruneChatSessions() {
+  const now = Date.now();
+  for (const k of new Set([...Object.keys(sessions), ...Object.keys(lastRepliesBySession)])) {
+    const last = (flowState[k] && flowState[k].lastActive) || 0;
+    const keepMs = /^email-/.test(k) ? 14 * 24 * 3600e3 : /^qa-/.test(k) ? 3600e3 : IDLE_HOURS * 3600e3;
+    if (!last || now - last > keepMs) { delete sessions[k]; delete lastRepliesBySession[k]; }
+  }
+}
+function saveChatSessionsNow() {
+  try {
+    pruneChatSessions();
+    const tmp = CHAT_SESSIONS_PATH + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify({ at: new Date().toISOString(), messages: sessions, replies: lastRepliesBySession }));
+    fs.renameSync(tmp, CHAT_SESSIONS_PATH);
+  } catch (e) { console.error('[sessions] save failed:', e.message); }
+}
+let chatSaveTimer = null;
+function scheduleChatSessionsSave() {
+  if (chatSaveTimer) return;
+  chatSaveTimer = setTimeout(() => { chatSaveTimer = null; saveChatSessionsNow(); }, 500);
+}
+for (const sig of ['SIGTERM', 'SIGINT']) {
+  process.on(sig, () => { try { if (chatSaveTimer) clearTimeout(chatSaveTimer); saveChatSessionsNow(); saveFlowState(); console.log('[sessions] saved on ' + sig); } catch (e) {} process.exit(0); });
+}
+
 // ── Prompt ─────────────────────────────────────────────────────────────────
 const RACHEL_PROMPT_PATH = path.join(__dirname, 'prompt.md');
 let RACHEL_PROMPT = '';
@@ -831,6 +869,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
     onProposalGenerated: onProposalGenerated || null,
     currentLineItems: stateForEmail.lastLineItems || '',
     eventParams: stateForEmail.eventParams || null,
+    sessionState: stateForEmail,
     customerMessage: message,
     alreadyConfirmed: alreadyConfirmed || false,
     sendEmailFn: sendEmail,
@@ -1138,6 +1177,7 @@ app.post('/chat', async (req, res) => {
         lastRepliesBySession[sessionKey].push(outText);
         if (lastRepliesBySession[sessionKey].length > 6) lastRepliesBySession[sessionKey].shift();
       }
+      scheduleChatSessionsSave();   // the history is complete by now (recordTurn wraps outside this)
     } catch (e) {}
     return _originalJson(body);
   };

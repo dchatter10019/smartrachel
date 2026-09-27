@@ -11,6 +11,6 @@ turns:
   - send: "find alternative wines around $20 a bottle, same quantities"
     # Sep 27: three varietal queries were rerouted to one generic "recommendation" — Rachel said no
     # Sauvignon Blanc or rosé existed near $20 (the NYC store has dozens). They must stay product_query.
-    expect: {judge: "lists alternative wine options with prices, grouped by category or numbered", log_not_contains: ["RECOMMENDATION ROUTING: product_query"]}
+    expect: {judge: "lists alternative wine options with prices, grouped by category or numbered", log_not_contains: ["RECOMMENDATION ROUTING: product_query", "[alternatives] \""]}
   - send: "Sauvignon Blanc 1, Pinot Noir 1, rosé 1"
     expect: {contains: ["Updated basket", "5x", "3x", "2x"], not_contains: ["could not resolve"], matches: "replacing|no alternatives were listed"}

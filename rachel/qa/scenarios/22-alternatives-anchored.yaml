@@ -1,0 +1,16 @@
+name: alternatives-anchored
+# DC, Sep 27 (real Slack conversation): Paul Hobbs Richard Dinner (~$85, Sonoma Mountain) and Ramey
+# Russian River (~$45) Chardonnay aren't carried at 10010. The search fell back to an unrelated wine
+# (Dom Paul Buisse Touraine SB, captured as the basket), and "show some alternatives" went to the
+# recommendation intent with no price anchor: La Crema $21 was offered as "a solid stand-in for the
+# Ramey" while Far Niente $79, Flowers Sonoma Coast $55, Rombauer $47 and Frank Family $42 were in
+# stock. Alternatives are now anchored to the originals' market price and region, per original.
+tags: [smoke]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "11 Madison Ave, New York, NY 10010"
+  - send: "do you have the following?\n\nPRODUCTS REQUESTED:\n1. Paul Hobbs Chardonnay - Richard Dinner Vineyard, Sonoma Mountain\n  Quantity: 1 bottle\n\n2. Ramey Chardonnay - Russian River Valley, Sonoma Coast\n  Quantity: 1 bottle"
+    expect: {log_contains: ["[not-found] \"Paul Hobbs"], not_contains: ["Dom Paul Buisse"]}
+  - send: "yes show some altenatives"
+    expect: {log_contains: ["[alternatives] \"Paul Hobbs", "[alternatives] \"Ramey"], log_not_contains: ["intent: recommendation"], contains: ["Far Niente"], not_contains: ["stand-in", "La Crema"], matches: "Flowers|Rombauer|Frank Family"}

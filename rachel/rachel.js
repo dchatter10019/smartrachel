@@ -44,14 +44,15 @@ const ALL_TOOLS = [
   },
   {
     name: "ShoppingAgent",
-    description: "THE single interface for ALL product and order operations. Use for: product search (do you have X), menu building (event packages), custom lists (named products with qty), recommendations (suggest something), placing orders, and generating proposals. Pass intent + customer context. Never use BuildPackage or CreateOrder directly.\n\nintents:\nintent=\"product_query\" → search for specific products (do you have X, show me X)\nintent=\"recommendation\" → use when customer asks for suggestions (show me some nice tequila, recommend a wine) — uses purchase history\nintent=\"menu_build\" → build standard event package when customer says generic categories\nintent=\"custom_list\" → USE THIS when customer names specific products OR specific spirits (bourbon not just spirits)\nintent=\"place_order\" → place order after customer confirms\nintent=\"order_history\" → use when customer asks what they bought before, their past orders, order history, or wants to reorder something from a previous order. Returns itemized past orders with dates, products, and totals.\nintent=\"confirm_substitute\" → MANDATORY for ANY replacement of an existing basket item — BOTH (a) confirming a substitute for a previously-flagged unavailable item, AND (b) a voluntary swap between available products ('use X instead of Y', 'swap Y for X', 'replace Y with X', 'switch to X', 'I'd rather have X'). This is the ONLY way to actually change the basket; narrating a swap in text does NOT change it (a real customer asked to swap Angostura Bitters Cocoa for plain Angostura Bitters three times and Rachel just re-displayed the product each time because this tool was never called). Applies IN ANY PHRASING WHATSOEVER (a bare yes, restating the product name, looks good, sounds good, that works, anything at all indicating they want that specific option). PICK-LIST SELECTION: when you have shown the customer several options (sizes, variants, brands) and they choose one or more — e.g. '2. KJ Chardonnay 375 mL and Corona Extra 12x12' — call this ONCE PER CHOSEN ITEM with NO original_item (the basket is empty or the item is new), passing replacement_name/price/size from the option they picked. This ADDS the chosen items to the basket. Real bug: a customer picked 2 of 5 options, Rachel narrated the 2 but never called this, and the order went out with all 5. Selections are never just narrated. Call this IMMEDIATELY in the SAME turn, alongside or instead of narrating the change in text — never just describe the substitution without also calling this tool. Pass original_item (the exact unavailable item being replaced), replacement_name, replacement_price, and replacement_size if known.\nintent=\"update_quantity\" → MANDATORY whenever the customer changes the QUANTITY of an existing basket item ('reduce the beers to 6 cases', 'make it 3 cases each', 'double the wine', 'only 2 bottles of tequila', 'remove the bitters'). Pass quantity_updates with EVERY affected item in ONE call. Once the customer has stated the change clearly, CALL THIS — do not ask for confirmation again (a real customer said 'reduce to 6 cases total, 3 each', confirmed 'yes' THREE times, and Rachel kept re-asking because she never called a tool). This is the ONLY way to change a quantity; narrating it does nothing. Then present the updated basket.\nintent=\"show_basket\" → MANDATORY whenever the customer asks to see their current basket/order/items/package (show me the basket, what's in my order, show me all the items, what do I have so far, recap). Returns the AUTHORITATIVE current basket as line_items_display — present it verbatim. NEVER say you can't see the basket, NEVER fall back to order_history, and NEVER reconstruct the basket from memory (your memory goes stale after swaps).\nintent=\"generate_proposal\" → generate PDF proposal — call when customer asks for a proposal/PDF/quote. If the customer states the order is tax-exempt (e.g. \"no tax on alcohol in this state\", \"set tax to 0\", \"no sales tax\") pass tax_exempt=true on the ShoppingAgent call — this actually zeroes the tax on the generated PDF. Do NOT just say $0 tax in your reply without also passing tax_exempt=true; the PDF is built by a separate template and won't reflect a change you only mention in text. If the customer wants a proposal with JUST the grand total and no fee breakdown ('just the total', 'no breakdown', 'don't show tax/tip/service', 'totals only'), pass totals_only=true — again, the PDF template decides this, so saying it in text does nothing. If the customer says 'without the subtotals' / 'no subtotals' / 'no category totals', pass hide_subtotals=true (that removes the Wine Total / Spirits Total rows; it is different from totals_only).",
+    description: "THE single interface for ALL product and order operations. Use for: product search (do you have X), menu building (event packages), custom lists (named products with qty), recommendations (suggest something), placing orders, and generating proposals. Pass intent + customer context. Never use BuildPackage or CreateOrder directly.\n\nintents:\nintent=\"product_query\" → search for specific products (do you have X, show me X)\nintent=\"recommendation\" → use when customer asks for suggestions (show me some nice tequila, recommend a wine) — uses purchase history\nintent=\"alternatives\" → USE THIS for alternatives/similar/substitutes to SPECIFIC products the store does not carry (\"not available — show me alternatives\"). Pass originals=[{name, category}] with the ORIGINAL product names exactly as the customer gave them. Results are ranked by price tier (anchored to the original's market price) and region, each tagged with the original it replaces — present them grouped per original, in the given order, with honest tier labels.\nintent=\"menu_build\" → build standard event package when customer says generic categories\nintent=\"custom_list\" → USE THIS when customer names specific products OR specific spirits (bourbon not just spirits)\nintent=\"place_order\" → place order after customer confirms\nintent=\"order_history\" → use when customer asks what they bought before, their past orders, order history, or wants to reorder something from a previous order. Returns itemized past orders with dates, products, and totals.\nintent=\"confirm_substitute\" → MANDATORY for ANY replacement of an existing basket item — BOTH (a) confirming a substitute for a previously-flagged unavailable item, AND (b) a voluntary swap between available products ('use X instead of Y', 'swap Y for X', 'replace Y with X', 'switch to X', 'I'd rather have X'). This is the ONLY way to actually change the basket; narrating a swap in text does NOT change it (a real customer asked to swap Angostura Bitters Cocoa for plain Angostura Bitters three times and Rachel just re-displayed the product each time because this tool was never called). Applies IN ANY PHRASING WHATSOEVER (a bare yes, restating the product name, looks good, sounds good, that works, anything at all indicating they want that specific option). PICK-LIST SELECTION: when you have shown the customer several options (sizes, variants, brands) and they choose one or more — e.g. '2. KJ Chardonnay 375 mL and Corona Extra 12x12' — call this ONCE PER CHOSEN ITEM with NO original_item (the basket is empty or the item is new), passing replacement_name/price/size from the option they picked. This ADDS the chosen items to the basket. Real bug: a customer picked 2 of 5 options, Rachel narrated the 2 but never called this, and the order went out with all 5. Selections are never just narrated. Call this IMMEDIATELY in the SAME turn, alongside or instead of narrating the change in text — never just describe the substitution without also calling this tool. Pass original_item (the exact unavailable item being replaced), replacement_name, replacement_price, and replacement_size if known.\nintent=\"update_quantity\" → MANDATORY whenever the customer changes the QUANTITY of an existing basket item ('reduce the beers to 6 cases', 'make it 3 cases each', 'double the wine', 'only 2 bottles of tequila', 'remove the bitters'). Pass quantity_updates with EVERY affected item in ONE call. Once the customer has stated the change clearly, CALL THIS — do not ask for confirmation again (a real customer said 'reduce to 6 cases total, 3 each', confirmed 'yes' THREE times, and Rachel kept re-asking because she never called a tool). This is the ONLY way to change a quantity; narrating it does nothing. Then present the updated basket.\nintent=\"show_basket\" → MANDATORY whenever the customer asks to see their current basket/order/items/package (show me the basket, what's in my order, show me all the items, what do I have so far, recap). Returns the AUTHORITATIVE current basket as line_items_display — present it verbatim. NEVER say you can't see the basket, NEVER fall back to order_history, and NEVER reconstruct the basket from memory (your memory goes stale after swaps).\nintent=\"generate_proposal\" → generate PDF proposal — call when customer asks for a proposal/PDF/quote. If the customer states the order is tax-exempt (e.g. \"no tax on alcohol in this state\", \"set tax to 0\", \"no sales tax\") pass tax_exempt=true on the ShoppingAgent call — this actually zeroes the tax on the generated PDF. Do NOT just say $0 tax in your reply without also passing tax_exempt=true; the PDF is built by a separate template and won't reflect a change you only mention in text. If the customer wants a proposal with JUST the grand total and no fee breakdown ('just the total', 'no breakdown', 'don't show tax/tip/service', 'totals only'), pass totals_only=true — again, the PDF template decides this, so saying it in text does nothing. If the customer says 'without the subtotals' / 'no subtotals' / 'no category totals', pass hide_subtotals=true (that removes the Wine Total / Spirits Total rows; it is different from totals_only).",
     input_schema: {
       type: "object",
       properties: {
-        intent:    { type: "string", enum: ["product_query","menu_build","custom_list","recommendation","place_order","generate_proposal","order_history","confirm_substitute","show_basket","update_quantity"] },
+        intent:    { type: "string", enum: ["product_query","menu_build","custom_list","recommendation","alternatives","place_order","generate_proposal","order_history","confirm_substitute","show_basket","update_quantity"] },
         zip:       { type: "string", description: "Delivery zip code" },
         email:     { type: "string", description: "Customer email" },
         queries:   { type: "array",  description: "For product_query: [{name, category, limit}]" },
+        originals: { type: "array",  description: "For alternatives: the products the customer asked for that this store does not carry — [{name, category}], names exactly as the customer gave them" },
         guests:    { type: "number", description: "For menu_build/custom_list" },
         hours:     { type: "number", description: "For menu_build/custom_list — event duration in hours. Use this OR drinks_per_person, not both; if the customer gives drinks-per-person directly, omit hours entirely." },
         drinks_per_person: { type: "number", description: "For menu_build/custom_list — alternative to hours: use when the customer specifies how many drinks each person will have directly (e.g. 'each person will have about 2 drinks') instead of the event duration. Takes priority over hours if both are somehow present." },
@@ -127,7 +128,7 @@ const ALL_TOOLS = [
 
 const ORDER_CONFIRMATION_WORDS = ['yes', 'yeah', 'yep', 'yup', 'confirm', 'confirmed', 'go ahead', 'place it', 'place the order', 'sounds good', 'that works', 'correct', 'do it', 'please place', 'looks good', 'lgtm', 'proceed', 'ok place', 'okay place'];
 
-async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, onProposalGenerated, customerMessage, alreadyConfirmed, requesterEmail, sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems, onShowBasket, eventParams, onUpdateQuantity, onOrderPlaced) {
+async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, onProposalGenerated, customerMessage, alreadyConfirmed, requesterEmail, sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems, onShowBasket, eventParams, onUpdateQuantity, onOrderPlaced, sessionState) {
   console.log(`[tool] ${toolName}`, JSON.stringify(toolInput).slice(0, 500));
   try {
     switch (toolName) {
@@ -193,6 +194,45 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         // guests and sized everything at 1 unit. A prompt rule asks the LLM to reuse
         // them; this guarantees it. Only fills what's missing — never overrides a value
         // the LLM did supply (the customer may genuinely be changing it).
+        // ALTERNATIVES ROUTING (deterministic). After a search found that named products aren't
+        // carried here (sessionState.lastNotFound), "show me alternatives / something similar" goes
+        // to the alternatives intent with those originals — anchored to their price and region.
+        // Real complaint (DC, Sep 27): the LLM sent "yes show some altenatives" to recommendation
+        // with occasion "Sonoma California Chardonnay premium" and no price; it led with La Crema
+        // $21 for a ~$85 Paul Hobbs single-vineyard while Far Niente / Flowers were in stock.
+        {
+          const nf = sessionState && sessionState.lastNotFound;
+          const fresh = nf && Array.isArray(nf.items) && nf.items.length && (Date.now() - (nf.at || 0)) < 60 * 60 * 1000;
+          const ALT_RE = /\balt\w{0,3}nativ|\bsimilar\b|\bsubstitut|\bcomparable\b|\bequivalent|\bsomething (?:else )?like\b|\bclose to\b|\binstead\b|\blike (?:those|these|them|that|it)\b|\bnot even close\b|\bcloser\b/i;
+          // A reprice of wines already in the basket ("find alternative wines around $20") is not an
+          // alternatives search: those products ARE carried. Real bug (smoke, Sep 27): the LLM sent the
+          // 3 basket wines to alternatives; Domaines Ott had no market price and got Dom Perignon Rosé
+          // at $659. Every original in the basket -> a varietal product_query in the stated price range.
+          let basketNow = [];
+          try { basketNow = JSON.parse(currentLineItems || '[]') || []; } catch (e) {}
+          const inBasket = o => basketNow.find(li => { const a = String(li.name || '').toLowerCase(), b = String((o && o.name) || '').toLowerCase().replace(/\s*[-—]?\s*\d+(\.\d+)?\s*(ml|l)\b.*$/i, '').trim(); return b.length > 3 && (a.includes(b) || b.includes(a.replace(/\s*[-—]?\s*\d+(\.\d+)?\s*(ml|l)\b.*$/i, '').trim())); });
+          if (saInput.intent === 'alternatives' && Array.isArray(saInput.originals) && saInput.originals.length && basketNow.length && saInput.originals.every(inBasket) && !(fresh && saInput.originals.some(o => nf.items.some(x => x.name === o.name)))) {
+            const { varietalOf } = (() => { try { return require('/home/ubuntu/store-agent/alternatives.js'); } catch (e) { return { varietalOf: () => '' }; } })();
+            const m = String(customerMessage || '').match(/\$\s*(\d+(?:\.\d+)?)/);
+            const target = m ? parseFloat(m[1]) : 0;
+            saInput.queries = saInput.originals.map(o => ({ name: varietalOf(o.name) || o.name, category: o.category || 'wine', limit: 3 }));
+            if (target && !saInput.min_price && !saInput.max_price) { saInput.min_price = Math.round(target * 0.75); saInput.max_price = Math.round(target * 1.25); }
+            console.log('[ShoppingAgent] alternatives -> product_query: every original is in the basket (a reprice) — queries ' + saInput.queries.map(q => q.name).join(', ') + (target ? ' $' + saInput.min_price + '-' + saInput.max_price : ''));
+            saInput.intent = 'product_query'; delete saInput.originals;
+          } else if (saInput.intent === 'alternatives' && Array.isArray(saInput.originals)) {
+            // Carry the basket price as a fallback anchor when the web has no market price.
+            saInput.originals = saInput.originals.map(o => { const li = inBasket(o); return li ? Object.assign({}, o, { basket_price: parseFloat(li.price) || 0 }) : o; });
+          }
+          if (saInput.intent === 'alternatives' && !(Array.isArray(saInput.originals) && saInput.originals.length) && fresh) {
+            saInput.originals = nf.items;
+            console.log('[ShoppingAgent] alternatives: originals filled from the last not-found search: ' + nf.items.map(x => x.name).join(' | '));
+          } else if (fresh && ['product_query', 'recommendation'].includes(saInput.intent) && ALT_RE.test(String(customerMessage || ''))) {
+            console.log('[ShoppingAgent] ALTERNATIVES ROUTING: ' + saInput.intent + ' -> alternatives for ' + nf.items.map(x => x.name).join(' | '));
+            ['queries', 'occasion', 'category', 'budget_per_bottle', 'min_price', 'max_price'].forEach(k => delete saInput[k]);
+            saInput.intent = 'alternatives';
+            saInput.originals = nf.items;
+          }
+        }
         // RECOMMENDATION ROUTING (deterministic). The LLM routed "recommend a white wine"
         // to product_query, so only the customer's price tier was applied — their actual
         // top_products (the history that surfaces "Kendall Jackson", which they've bought
@@ -383,6 +423,33 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         const saData = JSON.parse(saLine.replace('data:', '').trim());
         const result = JSON.parse(saData.result.content[0].text);
         console.log('[ShoppingAgent] intent:', saInput.intent, 'channel:', saInput.channel, 'success:', result.success);
+        // NOT-FOUND detection for named products. The search falls back to broad terms and returns
+        // SOMETHING, so found:true can mean "unrelated products". A query naming a producer counts as
+        // found only if a result carries that producer's first two distinctive words; otherwise the
+        // unrelated results are dropped (never presented as the product) and the original is kept on
+        // the session, so "show me alternatives" can anchor to it (ALTERNATIVES ROUTING above).
+        if (result.success && saInput.intent === 'product_query' && Array.isArray(result.results)) {
+          const GENERICW = /^(the|and|of|de|du|la|le|wine|wines|red|white|rose|rosé|sparkling|vineyard|vineyards|valley|estate|reserve|bottle|bottles|ml|l|oz|pack|case|chardonnay|cabernet|sauvignon|blanc|pinot|noir|grigio|gris|merlot|malbec|zinfandel|syrah|shiraz|riesling|champagne|prosecco|brut|vodka|gin|rum|tequila|whiskey|whisky|bourbon|scotch|beer|lager|ipa|seltzer|blanco|reposado|anejo|añejo)$/i;
+          const normW = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9' ]+/g, ' ');
+          const notFound = [], checked = [];
+          for (const r of result.results) {
+            const qname = (r && (r.query || r.name)) || '';
+            const words = normW(qname).split(/\s+/).filter(w => w.length >= 3 && !/^\d/.test(w) && !GENERICW.test(w));
+            if (!words.length) continue;   // generic query ("Chardonnay", "red wine") — nothing to verify
+            checked.push(qname);
+            const key = words.slice(0, 2);
+            const hit = (r.products || []).some(p => { const pn = ' ' + normW(p.name) + ' '; return key.every(k => pn.includes(' ' + k + ' ') || pn.includes(' ' + k.replace(/'/g, '') + ' ')); });
+            if (!hit) {
+              console.log('[not-found] ' + JSON.stringify(qname) + ' — no result carries "' + key.join(' ') + '"; dropped ' + (r.products || []).length + ' unrelated result(s): ' + (r.products || []).map(p => p.name).join(' | '));
+              r.found = false; r.products = [];
+              r.note = 'NOT carried at this store (the search only returned unrelated products). Tell the customer it is not available here; offer alternatives (intent=alternatives) or to alert our team to source it.';
+              notFound.push({ name: qname, category: (Array.isArray(saInput.queries) && (saInput.queries.find(q => q && (q.name === qname || q.term === qname)) || {}).category) || 'wine' });
+            }
+          }
+          if (sessionState && checked.length) {
+            sessionState.lastNotFound = notFound.length ? { items: notFound, at: Date.now() } : null;
+          }
+        }
         if (result.success && result.line_items && ['menu_build','custom_list'].includes(saInput.intent) && onPackageBuilt) {
           onPackageBuilt(saInput.email || '', result.line_items, saInput.channel, saInput, result);
         }
@@ -407,7 +474,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         // onProductDiscussed lets server.js decide whether it's safe to treat this as the
         // active order (no substantial existing basket) or should be kept separate (an existing
         // multi-item order is in progress, so a narrow options search must never replace it).
-        if (result.success && onProductDiscussed && ['product_query','recommendation'].includes(saInput.intent)) {
+        if (result.success && onProductDiscussed && ['product_query','recommendation','alternatives'].includes(saInput.intent)) {
           let flatProducts = [];
           if (Array.isArray(result.products)) {
             flatProducts = result.products;
@@ -498,7 +565,7 @@ const path = require('path');
 
 const MAX_ITERATIONS = 10;
 
-async function rachelChat({ messages, context, rachelPrompt, gbrain_context = '', channel_format = 'voiceflow', address_rule = '', onPackageBuilt = null, onProposalGenerated = null, sendEmailFn = null, lastProposalUrl = '', customerMessage = '', alreadyConfirmed = false, onUnavailableItems = null, onProductDiscussed = null, onSubstituteConfirmed = null, currentLineItems = '', onShowBasket = null, eventParams = null, onUpdateQuantity = null, onOrderPlaced = null }) {
+async function rachelChat({ messages, context, rachelPrompt, gbrain_context = '', channel_format = 'voiceflow', address_rule = '', onPackageBuilt = null, onProposalGenerated = null, sendEmailFn = null, lastProposalUrl = '', customerMessage = '', alreadyConfirmed = false, onUnavailableItems = null, onProductDiscussed = null, onSubstituteConfirmed = null, currentLineItems = '', onShowBasket = null, eventParams = null, onUpdateQuantity = null, onOrderPlaced = null, sessionState = null }) {
   const channelNotes = {
     html: `
 
@@ -584,7 +651,7 @@ RULES:
       const toolResults = [];
       for (const block of response.content) {
         if (block.type === 'tool_use') {
-          const result = await executeTool(block.name, block.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems, onShowBasket, eventParams, onUpdateQuantity, onOrderPlaced);
+          const result = await executeTool(block.name, block.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems, onShowBasket, eventParams, onUpdateQuantity, onOrderPlaced, sessionState);
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,

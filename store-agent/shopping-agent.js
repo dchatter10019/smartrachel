@@ -865,6 +865,47 @@ async function executeTool(name, input) {
     };
   }
 
+  // Alternatives for products this store doesn't carry. The original's web market price is the
+  // anchor; candidates of the same varietal/style are ranked in-tier (±30%) first, then by region,
+  // then by price closeness (store-agent/alternatives.js). Each one names the original it replaces
+  // and its honest tier. Real complaint (DC, Sep 27): Paul Hobbs (~$85) / Ramey (~$45) got La
+  // Crema at $21 as a "stand-in" while Far Niente, Flowers Sonoma Coast and Rombauer were in stock.
+  if (name === 'alternatives') {
+    const loc = resolveLocation(input.zip || '');
+    if (!loc.kitchen) return { success: false, error: 'No store for zip ' + input.zip };
+    const { rankAlternatives, varietalOf, regionOf } = require('./alternatives.js');
+    const { lookupMarket, cachedMarket } = require('./catalog-guard.js');
+    const originals = (Array.isArray(input.originals) ? input.originals : []).filter(o => o && o.name).slice(0, 6);
+    if (!originals.length) return { success: false, error: 'originals required: [{name, category}]' };
+    const results = await Promise.all(originals.map(async (o) => {
+      const v = varietalOf(o.name), reg = regionOf(o.name);
+      let ref = parseFloat(o.ref_price) || 0, refSource = ref ? 'given' : '';
+      if (!ref) {
+        const probe = { name: o.name, size: '750', units: 'ML' };
+        const c = cachedMarket(probe, input.zip);
+        if (c && c.median) { ref = c.median; refSource = 'web market median (cached)'; if (c.stale) lookupMarket(probe, input.zip); }
+        else {
+          // An accurate anchor beats a fast reply (DC): wait up to 35s for the web price.
+          const m = await Promise.race([lookupMarket(probe, input.zip), new Promise(r => setTimeout(() => r(null), 35000))]).catch(() => null);
+          if (m && m.median) { ref = m.median; refSource = 'web market median of ' + m.prices.length + ' price(s)'; }
+        }
+      }
+      if (!ref && parseFloat(o.basket_price) > 0) { ref = parseFloat(o.basket_price); refSource = 'basket price'; }
+      if (!ref) console.log('[alternatives] no market price for', JSON.stringify(o.name), '— ranking by region, then nearest the middle price; tier unknown');
+      const terms = [v || String(o.category || 'wine')];
+      if (reg && v) terms.push(reg.name + ' ' + v);
+      let cands = [];
+      for (const t of terms) { try { cands = cands.concat(await searchWithFallbacks(loc.kitchen, loc.client, t, 100) || []); } catch (e) { console.error('[alternatives] search failed for', t, e.message); } }
+      const r = rankAlternatives({ name: o.name }, cands.map(formatProduct), ref || null);
+      console.log('[alternatives] ' + JSON.stringify(o.name) + ' | varietal ' + (r.varietal || '?') + ' | region ' + (r.region || '?') + ' | ref ' + (ref ? '$' + ref.toFixed(2) + ' (' + refSource + ')' : 'none') +
+        ' | considered ' + r.considered + ', rejected ' + r.rejected.length + ' | picks: ' + r.alternatives.map(a => a.name + ' $' + a.price + ' [' + a.tier + ', ' + a.region_match + ']').join('; ') + (r.no_tier_match ? ' | NO TIER MATCH' : ''));
+      return { query: o.name, found: r.alternatives.length > 0, original_price_estimate: ref ? Math.round(ref) : null, price_source: refSource || null,
+        no_tier_match: r.no_tier_match, varietal: r.varietal, region: r.region, products: r.alternatives };
+    }));
+    return { success: true, results, store: friendlyStore(loc.kitchen),
+      instruction: 'Present alternatives GROUPED BY the original they replace, in the order given (it is ranked: tier, then region, then price). For each original, say its estimated price if known. Label each alternative with its tier and region_match honestly. Never call a "lower tier" wine a stand-in or equivalent. If no_tier_match is true, say plainly that nothing at that level is in stock here and offer to alert our team to source the original. Number the options continuously across groups.' };
+  }
+
   if (name === 'recommendation') {
     const loc = resolveLocation(input.zip || '');
     if (!loc.kitchen) return { success: false, error: 'No store for zip ' + input.zip };
@@ -1211,6 +1252,7 @@ const TOOLS = [
   { name: 'product_query', description: 'Search for specific products. Use for do-you-have or show-me queries.', inputSchema: { type: 'object', properties: { queries: { type: 'array' }, zip: { type: 'string' }, email: { type: 'string' }, min_price: { type: 'number' }, max_price: { type: 'number' } }, required: ['queries', 'zip'] } },
   { name: 'menu_build', description: 'Build event beverage package with guest count and budget.', inputSchema: { type: 'object', properties: { guests: { type: 'number' }, hours: { type: 'number' }, budget: { type: 'number' }, categories: { type: 'array' }, zip: { type: 'string' }, email: { type: 'string' }, package_type: { type: 'string' } }, required: ['guests', 'hours', 'zip'] } },
   { name: 'custom_list', description: 'Build package from named product list with quantities.', inputSchema: { type: 'object', properties: { named_products: { type: 'array' }, zip: { type: 'string' }, email: { type: 'string' }, budget: { type: 'number' } }, required: ['named_products', 'zip'] } },
+  { name: 'alternatives', description: 'Alternatives for specific products this store does not carry, anchored to the original\'s market price and region.', inputSchema: { type: 'object', properties: { originals: { type: 'array', description: '[{name, category, ref_price?}]' }, zip: { type: 'string' }, email: { type: 'string' } }, required: ['originals', 'zip'] } },
   { name: 'recommendation', description: 'Get personalized recommendations based on occasion and customer history.', inputSchema: { type: 'object', properties: { occasion: { type: 'string' }, category: { type: 'string' }, zip: { type: 'string' }, email: { type: 'string' }, budget_per_bottle: { type: 'number' } }, required: ['zip'] } },
   { name: 'generate_proposal', description: 'Generate a PDF proposal from the active basket. Returns download URL.', inputSchema: { type: 'object', properties: { email: { type: 'string' }, client_name: { type: 'string' }, event_date: { type: 'string' }, notes: { type: 'string' } }, required: ['email', 'client_name'] } },
   { name: 'place_order', description: 'Place order after customer confirms. Pass line_items from previous result.', inputSchema: { type: 'object', properties: { line_items: { type: 'string' }, customer: { type: 'object' }, tip_amount: { type: 'number' }, delivery_datetime: { type: 'string' }, delivery_instructions: { type: 'string' }, zip: { type: 'string' } }, required: ['line_items', 'customer'] } },

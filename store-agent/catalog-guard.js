@@ -147,6 +147,7 @@ function screen(products, zip) {
     return fam.length ? fam[Math.floor(fam.length / 2)] : null;
   };
   const off = (x, med) => Math.abs(Math.log(perL(x) / med));
+  const sizePending = [];   // bottles whose market price decides a two-row size conflict (guardAsync waits)
   for (let i = 0; i < products.length; i++) for (let j = i + 1; j < products.length; j++) {
     const a = products[i], b = products[j], va = volumeMl(a), vb = volumeMl(b), pa = price(a), pb = price(b);
     if (!va || !vb || !(pa > 0) || !(pb > 0) || !sameProduct(a, b)) continue;
@@ -158,8 +159,30 @@ function screen(products, zip) {
       // A bigger bottle of the same product that costs less than a smaller one.
       const [big, small] = va > vb ? [i, j] : [j, i];
       if (price(products[big]) < price(products[small]) * 0.9) {
-        const bad = pick(small), other = products[bad === big ? small : big];
-        flag(bad, Math.round(volumeMl(products[bad])) + ' ml at $' + price(products[bad]).toFixed(2) + ' is out of line with "' + other.name + '" at $' + price(other).toFixed(2) + (med ? ' (usual ~$' + med.toFixed(0) + '/L)' : ''));
+        // No third row of the product: decide on each bottle's web market price. Real bug (Sep 27
+        // nightly/smoke): Bevvi added Veuve Yellow Label 1.5 L $175.99 beside the bogus 3 L $71.49;
+        // with only those two rows the old fallback blamed the SMALLER bottle, hid the real 1.5 L
+        // and showed the $71.49 3 L. Until the market prices are known, the under-priced bigger
+        // bottle (the usual mis-listed size) is the one hidden.
+        let bad, why = '';
+        if (med) bad = pick(small);
+        else {
+          const mb = cachedMarket(products[big], zip), ms = cachedMarket(products[small], zip);
+          const offM = (k, m) => (m && m.median) ? Math.abs(Math.log(price(products[k]) / m.median)) : null;
+          const ob = offM(big, mb), os = offM(small, ms);
+          if (ob !== null || os !== null) {
+            bad = (ob === null ? 0 : ob) >= (os === null ? 0 : os) ? big : small;
+            const m = bad === big ? mb : ms;
+            if (m && m.median) why = ' (market ~$' + m.median.toFixed(2) + ' for this bottle)';
+          } else {
+            bad = big;
+            why = ' (bigger bottle priced below the smaller one; market price lookup pending)';
+            if (!mb) sizePending.push(products[big]);
+            if (!ms) sizePending.push(products[small]);
+          }
+        }
+        const other = products[bad === big ? small : big];
+        flag(bad, Math.round(volumeMl(products[bad])) + ' ml at $' + price(products[bad]).toFixed(2) + ' is out of line with "' + other.name + '" at $' + price(other).toFixed(2) + (med ? ' (usual ~$' + med.toFixed(0) + '/L)' : why));
       }
     }
   }
@@ -202,7 +225,7 @@ function screen(products, zip) {
   }
   const kept = [], hidden = [];
   products.forEach((p, i) => (flagged.has(i) ? hidden.push({ product: p, reason: flagged.get(i), quiet: quiet.has(i) }) : kept.push(p)));
-  return { kept, hidden, pending, refresh };
+  return { kept, hidden, pending, refresh, sizePending };
 }
 
 function alertSlack(hidden, query, zip) {
@@ -252,13 +275,14 @@ function guard(products, query, zip) {
 const FIRST_LOOKUP_WAIT_MS = 35000;
 async function guardAsync(products, query, zip) {
   if (!Array.isArray(products) || !products.length) return products;
-  const { pending } = screen(products, zip);
-  if (pending.length) {
+  const { pending, sizePending } = screen(products, zip);
+  const probes = pending.map(g => g.probe).concat(sizePending || []);
+  if (probes.length) {
     const t0 = Date.now();
-    console.log('[catalog-guard] ' + pending.length + ' unpriced duplicate(s) in search ' + JSON.stringify(query) + ' — waiting for the market price (max ' + FIRST_LOOKUP_WAIT_MS / 1000 + 's): ' + pending.map(g => g.probe.name).join(', '));
+    console.log('[catalog-guard] ' + probes.length + ' unpriced row(s) (duplicates / size conflicts) in search ' + JSON.stringify(query) + ' — waiting for the market price (max ' + FIRST_LOOKUP_WAIT_MS / 1000 + 's): ' + probes.map(p => p.name).join(', '));
     let timer;
     const done = await Promise.race([
-      Promise.all(pending.map(g => lookupMarket(g.probe, zip))).then(() => true),
+      Promise.all(probes.map(p => lookupMarket(p, zip))).then(() => true),
       new Promise(r => { timer = setTimeout(() => r(false), FIRST_LOOKUP_WAIT_MS); })
     ]);
     clearTimeout(timer);
@@ -267,4 +291,4 @@ async function guardAsync(products, query, zip) {
   return guard(products, query, zip);   // re-screens with whatever market prices are now cached
 }
 
-module.exports = { guard, guardAsync, screen, parseMl, tokens, identity, webMarketPrice, lookupMarket };
+module.exports = { guard, guardAsync, screen, parseMl, tokens, identity, webMarketPrice, lookupMarket, cachedMarket };
