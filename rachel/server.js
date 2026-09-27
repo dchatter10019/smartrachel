@@ -2768,8 +2768,7 @@ app.post('/chat', async (req, res) => {
           // field, and the LLM was narrating "Tip: $0.00" against an approved $113.91.
           approved_totals: {
             product_total: od.productTotal, tax: od.tax, service: od.service, tip: od.tip,
-            delivery: 25.00,
-            delivery: 0,
+            delivery: 25.00,   // estimate; Bevvi applies the real fee at checkout. Real bug: a second `delivery: 0` key overrode this, so the LLM got delivery $0 beside a grand total that includes $25
             grand_total: Math.round(((od.productTotal || 0) + (od.tax || 0) + (od.service || 0) + (od.tip || 0) + 25) * 100) / 100
           }
         });

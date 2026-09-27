@@ -23,7 +23,7 @@ lint() {
     node --check "$f" 2>/dev/null || { echo "SYNTAX ERROR: $f"; fail=1; }
   done
   out=$(npx --yes eslint@8 --no-eslintrc --parser-options=ecmaVersion:2022 --env node,es2022 \
-    --rule '{"no-const-assign":"error","no-undef":"error","no-use-before-define":["error",{"functions":false,"classes":false,"variables":false}]}' $FILES 2>&1 | grep -E "no-const-assign|no-undef|no-use-before-define")
+    --rule '{"no-const-assign":"error","no-dupe-keys":"error","no-undef":"error","no-use-before-define":["error",{"functions":false,"classes":false,"variables":false}]}' $FILES 2>&1 | grep -E "no-const-assign|no-dupe-keys|no-undef|no-use-before-define")
   # no-use-before-define: a const/let read before its declaration throws at RUNTIME only
   # (TDZ) — node --check passes. Real: the serving-mix gate read isInternalMsg too early and
   # every turn errored until the deploy rolled back.
