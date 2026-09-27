@@ -525,6 +525,7 @@ async function executeTool(name, input) {
       kitchen_location: loc.kitchen,
       client_name: loc.client,
       category_splits: input.category_splits || '',
+      serving_mix: input.serving_mix || '',   // customer's "what will they drink most" answer
       category_brands: input.category_brands || '',
       wine_price_target: input.wine_price_target || 0,
       beer_max_price: input.beer_max_price || input.max_price || 0,
@@ -649,6 +650,14 @@ async function executeTool(name, input) {
     }
 
     // Check budget utilization
+    // Supply check on the final package — after the budget upgrades above, which can swap a
+    // product for a different bottle size at the same quantity.
+    let supply = { ok: true, text: 'supply check skipped' };
+    try {
+      const { supplyCheck } = require('/home/ubuntu/rachel/functions.js');
+      supply = supplyCheck(JSON.parse(result.line_items || '[]'), result.category_needs ? JSON.parse(result.category_needs) : null);
+      console.log('[buildPackage] ' + supply.text + ' (' + input.guests + ' guests, ' + (input.hours || '?') + 'h, total drinks ' + result.total_drinks + ')');
+    } catch (e) { console.error('[buildPackage] supply check error:', e.message); }
     const finalTotal = parseFloat(result.product_total || 0);
     const productBudgetFinal = input.budget ? Math.round((input.budget - 25) / 1.25 * 100) / 100 : 0;
     const utilizationPct = productBudgetFinal > 0 ? Math.round(finalTotal / productBudgetFinal * 100) : 100;
@@ -677,6 +686,9 @@ async function executeTool(name, input) {
       brand_substitutions: result.brand_substitutions,
       swaps: swaps,
       total_drinks: result.total_drinks,
+      drinks_per_person: result.drinks_per_person,
+      full_bar_note: result.full_bar_note || '',
+      supply_check: supply.text,
       tier_warning: result.tier_warning || ''
     };
   }
@@ -705,6 +717,7 @@ async function executeTool(name, input) {
       drinks_per_person: input.drinks_per_person || 0,
       total_budget: input.budget || 999999,
       package_type: 'CUSTOM',
+      serving_mix: input.serving_mix || '',   // cocktail events are built here
       kitchen_location: loc.kitchen,
       client_name: loc.client,
       named_products: JSON.stringify(input.named_products || [])

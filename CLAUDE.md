@@ -44,7 +44,7 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 
 ## QA harness (rachel/qa/)
 - `./qa/run.py` all 31 scenarios; `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
-- Scenarios are YAML in qa/scenarios/. Assertions: contains / not_contains / matches / log_contains /
+- Scenarios are YAML in qa/scenarios/. Assertions: contains / not_contains / matches / log_contains / log_not_contains /
   pdf_contains / pdf_not_contains, plus a Haiku `judge` — prefer structural checks; the judge is
   unreliable on nuanced criteria. `transport: slack` (real DM as rachel_qa) and `transport: email`
   (real mail as rachel_qa@) scenarios are tagged `channel` and run nightly only.
@@ -71,6 +71,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   twice: keeps the row closest to the web MARKET price near the zip (Claude + web_search, cached 7d in
   logs/market-prices.json, stale-while-revalidate). The FIRST search for an unpriced duplicate waits for
   the web lookup (~10-30s, capped at 35s) — DC: an accurate price beats a fast reply.
+- Events: a request mixing drink types asks "what will your guests drink most?" (server.js parseServingMix)
+  -> eventParams.serving_mix -> buildPackage serving_mix (menu_build and cocktail custom_list). Drinks per
+  guest = rule of thumb (2 first hour + 1/hour). Quantities use real bottle sizes; a full bar (1 bottle per
+  spirit type) is kept and called out when it exceeds need. Every menu_build logs a supply check (OK/FAILED).
 - A conversation expires after RACHEL_IDLE_HOURS (4) idle, except email threads; age is re-asked.
 - A placed order (API success only) leaves the cart → state.placedOrder; touching it asks reopen/new.
   Bevvi has no cancel API: a re-placed reopened order leaves the earlier one unpaid (logged).

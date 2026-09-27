@@ -1,0 +1,19 @@
+name: event-serving-mix
+# DC: an event that mixes drink types (wine + beer + cocktails) asks what the customer wants
+# to serve more of; the package is built on that mix. Cocktail events go through the cocktail
+# names gate and are built as custom_list, which must apply the mix too. The mix survives a
+# rebuild (budget change).
+tags: [smoke]
+stop_on_fail: true
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "planning a party for 40 guests, 3 hours, budget $2500 — we want wine, beer and cocktails"
+    expect: {contains: ["drink most", "wine", "beer", "cocktails"], not_contains: ["Product total"], log_contains: ["[menu] mixed event"]}
+  - send: "mostly wine"
+    expect: {matches: "cocktail|Product total", log_contains: ["[menu] serving mix (most: wine)"]}
+  - send: "Margarita and Moscow Mule"
+    expect: {contains: ["Product total"], log_contains: ["serving_mix=", "[buildPackage] serving mix from customer (custom_list)"]}
+  - send: "change the budget to $3000"
+    expect: {contains: ["Product total"], log_contains: ["serving_mix="]}

@@ -100,7 +100,9 @@ deploy() {
   local svcs=()
   DIRTY=$(git status --porcelain -- $SCOPE)
   echo "$DIRTY" | grep -q " rachel/" && svcs+=(rachel)
-  echo "$DIRTY" | grep -q " store-agent/" && svcs+=(shopping-agent)
+  # shopping-agent also loads rachel/functions.js, package-model.js and brand-lists.js — a change
+  # to only those left it running the old code.
+  echo "$DIRTY" | grep -qE " store-agent/| rachel/(functions|package-model|brand-lists)\.js" && svcs+=(shopping-agent)
   [ ${#svcs[@]} -eq 0 ] && svcs=(rachel)
   echo "Deploy $STAMP: HEAD $(git rev-parse --short HEAD), services: ${svcs[*]}"
   if [ -n "$DIRTY" ]; then echo "Uncommitted changes being deployed:"; echo "$DIRTY"; else echo "Working tree clean under $SCOPE (deploying HEAD)."; fi

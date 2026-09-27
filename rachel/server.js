@@ -571,6 +571,61 @@ function parseTip(raw) {
   if (bare) { const n = Number(bare[1]); return [5, 10, 15, 18, 20, 25].includes(n) ? { pct: n } : { ambiguous: n }; }
   return null;
 }
+// ── Event serving mix ──────────────────────────────────────────────────────
+// DC: when an event mixes drink types (wine + beer + liquor, wine + beer + cocktails),
+// ask what the customer wants to serve more of, and build the package on that mix.
+// Keys are the package builder's categories: wine, beer (seltzer/cider count as beer),
+// spirits (liquor, cocktails, mixed drinks).
+const MIX_SYN = {
+  wine: /\b(wines?|vino|reds?|whites?|ros[eé]|champagne|prosecco|bubbly|sparkling)\b/i,
+  beer: /\b(beers?|brews?|lagers?|ipas?|seltzers?|hard seltzers?|ciders?)\b/i,
+  spirits: /\b(cocktails?|mixed drinks?|liquor|spirits|hard liquor|booze|vodka|tequila|whiske?y|bourbon|rum|gin|shots?|full bar)\b/i
+};
+function eventDrinkCats(msg) {
+  const m = String(msg || '');
+  if (!/\b(\d+\s*(people|guests|persons|ppl|attendees|folks|pax)|party|event|wedding|reception|happy hour|gathering|celebration|offsite|off-site|mixer|bar package|open bar)\b/i.test(m)) return null;
+  const cats = Object.keys(MIX_SYN).filter(k => MIX_SYN[k].test(m));
+  if (/\bfull bar\b/i.test(m)) { for (const k of ['wine', 'beer', 'spirits']) if (!cats.includes(k)) cats.push(k); }
+  return cats.length >= 2 ? cats : null;
+}
+// requireCue: in the ORIGINAL request the categories are just listed, so only a preference
+// word ("mostly wine") counts; in the ANSWER to our question, naming a category is enough.
+function parseServingMix(msg, cats, requireCue) {
+  const m = String(msg || '').toLowerCase();
+  const out = {}; cats.forEach(k => { out[k] = 0; });
+  // explicit percentages: "50% wine", "wine 50%"
+  let pctFound = 0;
+  for (const k of cats) {
+    const src = MIX_SYN[k].source.replace(/^\\b|\\b$/g, '');
+    const a = m.match(new RegExp('(\\d{1,3})\\s*%\\s*(?:of\\s+)?(?:\\w+\\s+)?' + src)) || m.match(new RegExp(src + '\\s*(?:at\\s+|:)?\\s*(\\d{1,3})\\s*%'));
+    if (a) { out[k] = Number(a[1] || a[a.length - 1]); pctFound++; }
+  }
+  if (pctFound >= 1) { const sum = Object.values(out).reduce((x, y) => x + y, 0); const rest = cats.filter(k => !out[k]); const left = Math.max(0, 100 - sum); rest.forEach(k => { out[k] = left / rest.length; }); const tot = Object.values(out).reduce((x, y) => x + y, 0) || 1; cats.forEach(k => { out[k] = out[k] / tot; }); return { mix: out, why: 'percentages' }; }
+  const cue = /\b(most|mostly|mainly|primarily|majority|more|heavier|heavy on|lean(?:ing)?|bigger preference|prefer|preference|favorite|love|big on)\b/.test(m);
+  if (/\b(even|evenly|equal|equally|balanced|no preference|doesn'?t matter|don'?t care|all the same|a bit of everything|mix of everything|split it)\b/.test(m)) { cats.forEach(k => { out[k] = 1 / cats.length; }); return { mix: out, why: 'even' }; }
+  if (requireCue && !cue) return null;
+  // "less beer", "not much beer", "no beer" pull a category down
+  const low = cats.filter(k => new RegExp('\\b(no|not much|not a lot of|less|light on|little|hardly any|few|minimal)\\s+(?:\\w+\\s+)?' + MIX_SYN[k].source.replace(/^\\b|\\b$/g, '')).test(m));
+  // With a preference word, the category right after it ranks first ("some wine, but mostly
+  // beer" -> beer > wine); otherwise the order they were named in.
+  const cueIdx = cue ? m.search(/\b(most|mostly|mainly|primarily|majority|more|heavier|heavy on|lean(?:ing)?|bigger preference|prefer|preference|favorite|love|big on)\b/) : -1;
+  const rank = k => { const i = m.search(MIX_SYN[k]); return cueIdx >= 0 ? (i >= cueIdx ? i - cueIdx : 10000 + i) : i; };
+  const named = cats.filter(k => !low.includes(k) && MIX_SYN[k].test(m)).sort((a, b) => rank(a) - rank(b));
+  if (!named.length && !low.length) return null;
+  if (!named.length) { const others = cats.filter(k => !low.includes(k)); low.forEach(k => { out[k] = 0.1; }); others.forEach(k => { out[k] = (1 - 0.1 * low.length) / others.length; }); return { mix: out, why: 'less ' + low.join('/') }; }
+  const ranked = cue || /\b(then|followed by|than|after that|next)\b|>/.test(m);
+  const W3 = { 1: [0.5], 2: ranked ? [0.5, 0.3] : [0.4, 0.4], 3: ranked ? [0.5, 0.3, 0.2] : null };
+  const W2 = { 1: [0.65], 2: ranked ? [0.65, 0.35] : null };
+  const w = (cats.length >= 3 ? W3 : W2)[Math.min(named.length, cats.length)];
+  if (!w) { cats.forEach(k => { out[k] = 1 / cats.length; }); return { mix: out, why: 'all named, no order: even' }; }
+  named.forEach((k, i) => { out[k] = w[i]; });
+  const restK = cats.filter(k => !named.includes(k)); const left = 1 - w.reduce((x, y) => x + y, 0);
+  restK.forEach(k => { out[k] = low.includes(k) ? Math.min(0.1, left) : left / restK.length; });
+  const tot = Object.values(out).reduce((x, y) => x + y, 0) || 1; cats.forEach(k => { out[k] = out[k] / tot; });
+  return { mix: out, why: 'most: ' + named.join(' > ') };
+}
+const mixText = mx => Object.entries(mx).map(([k, v]) => (k === 'spirits' ? 'liquor/cocktails' : k) + ' ' + Math.round(v * 100) + '%').join(' / ');
+
 function tipFor(state, base) {
   const c = (state.orderData && state.orderData.tipChoice) || state.savedTipChoice || null;
   if (!c) return { tip: Math.round(base * 5) / 100, label: 'Tip (5%)', choice: null };
@@ -781,7 +836,10 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       saveFlowState();
       console.log('[order] placed ' + (result.order_id || '?') + (result.dry_run ? ' (QA dry run)' : '') + ' — basket cleared, kept on placedOrder for reopen');
     },
-    onPackageBuilt: (em, lineItems, fmt, saInput) => {
+    onPackageBuilt: (em, lineItems, fmt, saInput, saResult) => {
+      // Full-bar note (DC: keep one bottle of each spirit type, but tell the customer when that's
+      // more than they need). Appended to this turn's reply in code — not left to the LLM.
+      try { if (saResult && saResult.full_bar_note) { getState(sessionKey).replyNote = saResult.full_bar_note; } } catch (e) {}
       // A successful build supersedes any prior "unavailable" state. Real bug: two
       // beers were falsely flagged unavailable on one rebuild (stale pendingSubstitutes
       // entries), then restored fine on the NEXT rebuild — but the pending list was
@@ -1076,6 +1134,8 @@ app.post('/chat', async (req, res) => {
     }
     getState(sessionKey).lastActive = Date.now(); saveFlowState();
   }
+  // A note produced while building this turn (e.g. the full-bar note) is appended to the reply.
+  { const _jN = res.json.bind(res); res.json = (payload) => { try { const stN = flowState[sessionKey]; if (stN && stN.replyNote && payload && typeof payload.text === 'string') { console.log('[reply] appended note: ' + stN.replyNote.slice(0, 80)); payload.text += '\n\n' + stN.replyNote; payload.response = (payload.response || '') + '\n\n' + stN.replyNote; stN.replyNote = null; saveFlowState(); } } catch (e) {} return _jN(payload); }; }
 
   console.log(`[rachel] chat — session: ${sessionKey} messages: ${sessions[sessionKey].length} — "${message}"`);
 
@@ -1589,6 +1649,50 @@ app.post('/chat', async (req, res) => {
       state.pendingIntent = message;
       const addrQ = `I have your delivery address on file as ${state.address} — shall I use this for your order?`;
       return res.json({ text: addrQ, response: addrQ });
+    }
+
+    // ── Event menu: ask what the guests will drink most ─────────────────────
+    // (not isInternalMsg: that const is declared further down — referencing it here threw a TDZ ReferenceError on every turn)
+    if (state.step === 'ready' && !state.orderStep && !state.proposalStep && !state.pendingQtyFor && !/^__/.test(message)) {
+      if (state.pendingMenu) {
+        const pm = state.pendingMenu;
+        const got = parseServingMix(message, pm.cats, false);
+        if (got) {
+          state.eventParams = Object.assign({}, state.eventParams || {}, { serving_mix: JSON.stringify(got.mix) });
+          state.pendingMenu = null; saveFlowState();
+          console.log('[menu] serving mix (' + got.why + '): ' + mixText(got.mix) + ' — building the held request: ' + JSON.stringify(pm.message).slice(0, 80));
+          message = pm.message; msgLower = message.toLowerCase().trim();
+          // No percentages in this note: given numbers, the LLM put them in category_splits and
+          // switched the builder into SPLIT mode (spirits dropped, reviewer blocked the build).
+          context.order_change_note = 'The customer answered which drinks their guests will have most (' + JSON.stringify(message).slice(0, 80) + '). That preference is applied automatically by the system. Build the event package now with intent=menu_build exactly as you normally would — do NOT set category_splits. In one short line, mention the package leans toward what they said.';
+        } else if (!pm.reasked) {
+          pm.reasked = true; saveFlowState();
+          console.log('[menu] no serving preference in reply — asking once more: ' + JSON.stringify(message).slice(0, 60));
+          const rQ = 'Just so I get the quantities right — which will your guests drink most: ' + pm.labels.join(', ') + '? You can say "mostly ' + pm.labels[0] + '", name two, or "about even".';
+          return res.json({ text: rQ, response: rQ });
+        } else {
+          state.pendingMenu = null; saveFlowState();
+          console.log('[menu] still no serving preference — building with the standard mix');
+          message = pm.message; msgLower = message.toLowerCase().trim();
+        }
+      } else {
+        const cats = eventDrinkCats(message);
+        if (cats) {
+          const stated = parseServingMix(message, cats, true);
+          state.eventParams = Object.assign({}, state.eventParams || {}, { serving_mix: stated ? JSON.stringify(stated.mix) : null });   // a new event never inherits an old mix
+          if (stated) {
+            saveFlowState();
+            console.log('[menu] serving mix stated in the request (' + stated.why + '): ' + mixText(stated.mix));
+          } else {
+            const said = k => { const mm = message.match(MIX_SYN[k]); return mm ? mm[0].toLowerCase() : k; };
+            const labels = cats.map(k => k === 'spirits' ? (/\bcocktails?|mixed drinks?\b/i.test(message) ? 'cocktails' : said('spirits')) : said(k));
+            state.pendingMenu = { message, cats, labels }; saveFlowState();
+            console.log('[menu] mixed event (' + cats.join(' + ') + ') with no serving preference — asking what they\'ll drink most');
+            const ask = 'Happy to put that together! To get the mix right — what will your guests drink most: ' + labels.slice(0, -1).join(', ') + ' or ' + labels[labels.length - 1] + '? (e.g. "mostly ' + labels[0] + '", "' + labels[0] + ' and ' + labels[1] + '", or "about even")';
+            return res.json({ text: ask, response: ask });
+          }
+        }
+      }
     }
 
     // ── Tip: set or change it any time ──────────────────────────────────────

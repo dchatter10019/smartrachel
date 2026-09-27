@@ -249,6 +249,13 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         if ((saInput.intent === 'custom_list' || saInput.intent === 'menu_build') && eventParams) {
           const filled = [];
           if (!saInput.guests && eventParams.guests) { saInput.guests = eventParams.guests; filled.push('guests=' + eventParams.guests); }
+          // The customer's answer to "what will your guests drink most?" (server.js) — applied in
+          // code on every menu_build for this event, rebuilds included; the LLM never sets it.
+          // menu_build, and custom_list for EVENTS (guests set) — cocktail events are built as custom_list.
+          if ((saInput.intent === 'menu_build' || (saInput.intent === 'custom_list' && saInput.guests)) && eventParams.serving_mix && !saInput.serving_mix) { saInput.serving_mix = eventParams.serving_mix; filled.push('serving_mix=' + eventParams.serving_mix); }
+          // The mix is applied inside the standard package builder. An LLM-set category_splits
+          // would switch to SPLIT mode instead (real: spirits dropped, far too few bottles).
+          if (saInput.intent === 'menu_build' && saInput.serving_mix && saInput.category_splits) { console.log('[ShoppingAgent] dropped LLM category_splits ' + saInput.category_splits + ' — the customer\'s serving mix is applied instead'); delete saInput.category_splits; }
           if (!saInput.hours && !saInput.drinks_per_person) {
             if (eventParams.hours) { saInput.hours = eventParams.hours; filled.push('hours=' + eventParams.hours); }
             else if (eventParams.drinks_per_person) { saInput.drinks_per_person = eventParams.drinks_per_person; filled.push('dpp=' + eventParams.drinks_per_person); }
@@ -367,7 +374,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         const result = JSON.parse(saData.result.content[0].text);
         console.log('[ShoppingAgent] intent:', saInput.intent, 'channel:', saInput.channel, 'success:', result.success);
         if (result.success && result.line_items && ['menu_build','custom_list'].includes(saInput.intent) && onPackageBuilt) {
-          onPackageBuilt(saInput.email || '', result.line_items, saInput.channel, saInput);
+          onPackageBuilt(saInput.email || '', result.line_items, saInput.channel, saInput, result);
         }
         // Track unavailable items via the tool's own structured field, not by
         // trying to parse the LLM's eventual free-text reply — this is what lets

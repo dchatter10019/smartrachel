@@ -523,18 +523,16 @@ async function buildPackage(iv) {
     // calculations everywhere downstream (totalDrinks, category splits, custom
     // mode caps), so no other logic needs to change once this is set correctly.
     baseDpp = drinksPerPersonInput;
-  } else if (hours <= 1) baseDpp = 1.5;
-  else if (hours <= 2) baseDpp = 2.25;
-  else if (hours <= 3) baseDpp = 2.90;
-  else if (hours <= 4) baseDpp = 3.45;
-  else if (hours <= 5) baseDpp = 3.90;
-  else baseDpp = Math.min(4.5, 3.90 + (hours - 5) * 0.30);
-
-  var mult = 1.0;
-  if (!isCustom) {
-    if (packageType === 3) mult = 0.80;
-    else if (packageType === 6) mult = 0.90;
+  } else {
+    // Rule of thumb (DC, Sep 27): 2 drinks per guest in the first hour, then 1 per hour —
+    // 1h=2, 2h=3, 3h=4, 4h=5. Was a lower table (3h=2.9) with 0.8/0.9 cuts for wine-only
+    // and wine+liquor events; those cuts are gone too.
+    baseDpp = hours <= 1 ? 2 : 2 + (hours - 1);
   }
+  var mult = 1.0;
+  // Customer's "what will your guests drink most?" answer — {"wine":..,"beer":..,"spirits":..}.
+  var servingMix=null;
+  try { servingMix=typeof iv.serving_mix==="string"?(iv.serving_mix?JSON.parse(iv.serving_mix):null):(iv.serving_mix||null); } catch(e){ servingMix=null; }
 
   var productBudget = isQuoteMode ? 0 : Math.round(((totalBudget - 25) / 1.25) * 100) / 100;
 
@@ -1025,7 +1023,7 @@ async function buildPackage(iv) {
     return out;
   }
 
-  var lineItems=[];var unavailable=[];var summaryBits=[];var totalDrinks=0;
+  var lineItems=[];var unavailable=[];var summaryBits=[];var totalDrinks=0;var fullBarNote="";var categoryNeeds=null;
 
   function addLines(picks,label,category) {
     if (picks.length===0){unavailable.push(label);return;}
@@ -1037,6 +1035,18 @@ async function buildPackage(iv) {
       // don't rescale, a product that's actually packaged in 24s gets the same
       // "qty" that was meant for 12s, silently doubling the real can/bottle
       // count delivered vs. what totalDrinks/beerDrinks actually called for.
+      // Wine/spirits quantities are counted in 750 mL bottles (5 glasses / 16 drinks). Real bug:
+      // a 1.75 L vodka (~39 drinks) or a 375 mL wine (2.5 glasses) counted as one 750 mL, so
+      // packages over- or under-supplied. Rescale to the chosen product's real size.
+      if (category === 'wine' || category === 'spirits') {
+        var unitMlOf = function(t){ var m=String(t||'').toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l|cl)\b/); return m ? (m[2]==='l' ? +m[1]*1000 : m[2]==='cl' ? +m[1]*10 : +m[1]) : 0; };
+        var mlU = unitMlOf(picks[i].product.sizeStr) || unitMlOf(picks[i].product.name);
+        if (mlU > 0 && Math.abs(mlU - 750) > 10 && !/\d\s*x\s*\d/i.test(picks[i].product.name || '')) {
+          var stdQ = picks[i].qty;
+          finalQty = Math.max(1, Math.ceil(stdQ * 750 / mlU - 0.05));
+          if (finalQty !== stdQ) console.log('[buildPackage] size-aware qty: ' + picks[i].product.name + ' — ' + stdQ + ' x 750 mL-equivalent -> ' + finalQty + ' x ' + mlU + ' mL');
+        }
+      }
       if (category === 'beer' || category === 'seltzer') {
         var sizeStr = picks[i].product.sizeStr || '';
         var packMatch = sizeStr.match(/^(\d+)\s*x/i);
@@ -1072,9 +1082,7 @@ async function buildPackage(iv) {
       if (byCat[cat]) byCat[cat].push(namedProducts[i]);
       else return fail("Unknown category: "+namedProducts[i].name);
     }
-    var cmult=1.0;
-    if (byCat.wine.length>0&&byCat.beer.length===0&&byCat.spirits.length===0) cmult=0.80;
-    else if (byCat.wine.length>0&&byCat.spirits.length>0&&byCat.beer.length===0) cmult=0.90;
+    var cmult=1.0;   // rule of thumb applies to every event; the old wine-only/wine+liquor cuts are gone
     totalDrinks=Math.round(guests*baseDpp*cmult);
     // Allocation fix (real bug from a live 150-guest event): this path used to split
     // drinks EVENLY across represented categories (1/3 each), while menu_build uses the
@@ -1097,6 +1105,13 @@ async function buildPackage(iv) {
     });
     if(shareSum>0){ Object.keys(catShare).forEach(function(c){ catShare[c]=catShare[c]/shareSum; }); }
     console.log('[buildPackage] custom_list category shares (learned split + '+(CATEGORY_FLOOR*100)+'% floor):', JSON.stringify(catShare));
+    // Cocktail events are built here (named ingredients), so the customer's serving mix must
+    // apply on this path too — it replaces the learned split for the categories in the list.
+    if (servingMix) {
+      var cmx={}, cmxSum=0;
+      Object.keys(catShare).forEach(function(c){ var v=parseFloat(servingMix[c])||0; cmx[c]=v; cmxSum+=v; });
+      if (cmxSum>0) { Object.keys(cmx).forEach(function(c){ catShare[c]=cmx[c]/cmxSum; }); console.log('[buildPackage] serving mix from customer (custom_list) -> '+JSON.stringify(catShare)); }
+    }
     var repCats=(byCat.wine.length?1:0)+(byCat.beer.length?1:0)+(byCat.spirits.length?1:0);
     var drinksPerCat=repCats?totalDrinks/repCats:0; // legacy fallback, superseded below per-category
     // Build search terms with variations for each product
@@ -1424,6 +1439,19 @@ async function buildPackage(iv) {
       5:{spirits:0.40,wine:0.30,beer:0.30},6:{spirits:0.40,wine:0.60,beer:0.00},
       7:{spirits:0.40,wine:0.00,beer:0.60}};
     var split=splits[packageType]||splits[5];
+    // The customer's answer to "what will your guests drink most?" (serving_mix, e.g.
+    // {"wine":0.5,"beer":0.25,"spirits":0.25}) replaces the fixed row for this package's
+    // categories — drinks, bottles and budget follow it. Categories the package doesn't
+    // include stay at 0; the rest is renormalized. Before, a mixed event was always
+    // spirits 40 / wine 30 / beer 30 whatever the crowd drinks.
+    if (servingMix) {
+      var mx={spirits:split.spirits>0?(parseFloat(servingMix.spirits)||0):0,wine:split.wine>0?(parseFloat(servingMix.wine)||0):0,beer:split.beer>0?(parseFloat(servingMix.beer)||0):0};
+      var mxSum=mx.spirits+mx.wine+mx.beer;
+      if (mxSum>0) {
+        split={spirits:mx.spirits/mxSum,wine:mx.wine/mxSum,beer:mx.beer/mxSum};
+        console.log("[buildPackage] serving mix from customer -> spirits "+Math.round(split.spirits*100)+"% / wine "+Math.round(split.wine*100)+"% / beer "+Math.round(split.beer*100)+"% (package "+packageType+")");
+      } else console.log("[buildPackage] serving mix ignored (no overlap with package "+packageType+" categories): "+JSON.stringify(servingMix));
+    }
     var spiritTypes2=["vodka","rum","bourbon","gin","tequila"];
     var spiritDrinks=Math.round(totalDrinks*split.spirits);
     var wineDrinks=Math.round(totalDrinks*split.wine);
@@ -1446,12 +1474,12 @@ async function buildPackage(iv) {
     var surplus=Math.max(0,beerBudget-beerEst);
     if (surplus>50) {
       if (packageType===4) wineBudget+=surplus;
-      else if (packageType===5){wineBudget+=surplus*0.6;spiritBudget+=surplus*0.4;}
+      else if (packageType===5){var wsh=servingMix&&(split.wine+split.spirits)>0?split.wine/(split.wine+split.spirits):0.6;wineBudget+=surplus*wsh;spiritBudget+=surplus*(1-wsh);}
       else if (packageType===7) spiritBudget+=surplus;
       beerBudget=beerEst;
     }
     var wineTarget=wineBottles?wineBudget/wineBottles:0;
-    var spiritTarget2=spiritBottles?spiritBudget/(bottlesPerType*5):0;
+    var spiritTarget2=spiritBottles?spiritBudget/spiritBottles:0;   // was /(ceil(bottles/5)*5): priced for bottles never bought
     var beerTarget=beerCases?beerBudget/beerCases:0;
     var wMin=capWineMin||wineTarget*0.6,wMax=capWineMax||wineTarget*1.4;
     var sMin=capSpiritMin||spiritTarget2*0.6,sMax=capSpiritMax||spiritTarget2*1.4;
@@ -1474,10 +1502,21 @@ async function buildPackage(iv) {
       if (hardSeltzer) plan.push({term:"Hard Seltzer",slot:"seltzer",qty:Math.max(1,Math.round(beerCases/2)),target:beerTarget,min:0,max:999999,label:"Hard Seltzer",cat:"beer",uniq:2});
       if (naBeer) plan.push({term:"Non Alcoholic Beer",slot:"nabeer",qty:Math.max(1,Math.round(beerCases/2)),target:beerTarget,min:0,max:999999,label:"Non-Alcoholic Beer",cat:"beer",uniq:2});
     }
+    // Servings each category must supply — checked against the FINAL package (after the
+    // shopping agent's budget upgrades) by supplyCheck(). Cocktail spirits are not checked.
+    categoryNeeds={wine:wineDrinks,beer:beerDrinks,spirits:hasCocktails?0:spiritDrinks,full_bar:spiritBottles>rawSB,beer_pack:beerPackSize};
     if (spiritBottles>0&&!hasCocktails) {
+      if (rawSB < spiritBottles) {
+        fullBarNote = 'This includes a full bar — one bottle each of vodka, rum, bourbon, gin and tequila — which is more than the ~' + spiritDrinks + ' spirit drinks your guests will likely have. Want me to trim it to fewer spirits?';
+        console.log('[buildPackage] full-bar minimum: ' + spiritBottles + ' spirit bottles for ~' + spiritDrinks + ' spirit drinks (needs ' + rawSB + ') — customer will be told');
+      }
+      // Spread the exact bottle count across the types (13 -> 3,3,3,2,2). Real bug (found by the
+      // supply check): every type got ceil(bottles/5), so 13 needed became 15 bought.
+      var perTypeBase=Math.floor(spiritBottles/spiritTypes2.length), perTypeExtra=spiritBottles%spiritTypes2.length;
       for (var st=0;st<spiritTypes2.length;st++) {
         var nm=spiritTypes2[st];
-        plan.push({term:nm.charAt(0).toUpperCase()+nm.slice(1),slot:nm,qty:bottlesPerType,target:spiritTarget2,min:sMin,max:sMax,label:nm.charAt(0).toUpperCase()+nm.slice(1),cat:"spirits",uniq:1});
+        var qtyType=Math.max(1,perTypeBase+(st<perTypeExtra?1:0));
+        plan.push({term:nm.charAt(0).toUpperCase()+nm.slice(1),slot:nm,qty:qtyType,target:spiritTarget2,min:sMin,max:sMax,label:nm.charAt(0).toUpperCase()+nm.slice(1),cat:"spirits",uniq:1});
       }
     }
     if (hasCocktails) {
@@ -1634,6 +1673,28 @@ async function buildPackage(iv) {
     }
   }
 
+  // Trim whole units nobody needs. Rounding a large bottle up (a 1.75 L vodka covers ~37 drinks)
+  // already covers part of the category, but the other lines kept their full counts — the
+  // supply check caught 245 spirit servings for 200 needed. Drop a unit from the line with the
+  // most servings per unit while the category stays >= 100% of its need. Lines at qty 1 are
+  // never touched (one bottle per spirit type is the full bar DC chose to keep).
+  if (categoryNeeds) {
+    var mlT = function(t){ var m=String(t||'').toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l|cl)\b/); return m ? (m[2]==='l' ? +m[1]*1000 : m[2]==='cl' ? +m[1]*10 : +m[1]) : 750; };
+    ['wine','spirits'].forEach(function(cat){
+      var need=+categoryNeeds[cat]||0; if (need<=0) return;
+      var per=cat==='wine'?150:46.875;
+      var lines=lineItems.filter(function(li){ return li.category===cat; });
+      var sup=function(){ return lines.reduce(function(a,li){ return a+li.qty*mlT(li.size||li.name)/per; },0); };
+      for (var guard=0; guard<200; guard++) {
+        var cands=lines.filter(function(li){ return li.qty>1 && sup()-mlT(li.size||li.name)/per >= need; })
+          .sort(function(a,b){ return mlT(b.size||b.name)-mlT(a.size||a.name) || b.price-a.price; });
+        if (!cands.length) break;
+        console.log('[buildPackage] trim unneeded unit: '+cands[0].name+' '+cands[0].qty+' -> '+(cands[0].qty-1)+' ('+cat+' supply '+Math.round(sup())+' for '+Math.round(need)+' needed)');
+        cands[0].qty-=1;
+      }
+    });
+  }
+
   var pt=productTotal();
   var tax=Math.round(pt*0.10*100)/100;
   var svc=Math.round(pt*0.10*100)/100;
@@ -1676,11 +1737,42 @@ async function buildPackage(iv) {
     product_budget:String(productBudget), budget_used_pct:String(usedPct),
     preferred_brands:prefList.join(", "), unavailable:unavailable.join(", "),
     brand_substitutions:(typeof brandSubstitutions!=='undefined'?brandSubstitutions:[]).join("; "),
-    total_drinks:String(totalDrinks), summary:summary };
+    total_drinks:String(totalDrinks), drinks_per_person:String(baseDpp), full_bar_note:fullBarNote,
+    category_needs:categoryNeeds?JSON.stringify(categoryNeeds):"", summary:summary };
+}
+
+// Supply check: do the package's real products (real bottle sizes, real pack counts) supply
+// what each category needs? UNDERSUPPLY = under 95% of the need. OVERSUPPLY = some line could
+// lose one unit and the category would still have >= 110% — a whole unit bought for nothing.
+// Rounding up to whole bottles/cases is fine, and so are designed minimums: a line at qty 1
+// (one bottle per spirit type for the full bar, one case per beer brand) is never "extra".
+function supplyCheck(items, needs) {
+  if (!needs) return { ok: true, skipped: true, text: 'supply check skipped (no category needs — named products / cocktails)' };
+  var mlOf = function(t){ var m=String(t||'').toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l|cl)\b/); return m ? (m[2]==='l' ? +m[1]*1000 : m[2]==='cl' ? +m[1]*10 : +m[1]) : 0; };
+  var packOf = function(t){ var m=String(t||'').toLowerCase().match(/(\d+)\s*x\s*\d/) || String(t||'').toLowerCase().match(/(\d+)\s*(?:pk|pack)\b/); return m ? +m[1] : 0; };
+  var spu = function(it, cat){
+    if (cat==='wine') { var w = mlOf(it.size) || mlOf(it.name) || 750; return w / 150; }
+    if (cat==='spirits') { var sM = mlOf(it.size) || mlOf(it.name) || 750; return sM / 46.875; }   // 16 drinks per 750 mL
+    if (cat==='beer') { return packOf(it.size) || packOf(it.name) || needs.beer_pack || 12; }
+    return 0;
+  };
+  var parts=[], problems=[];
+  ['wine','beer','spirits'].forEach(function(cat){
+    var need=+needs[cat]||0; if (need<=0) return;
+    var lines=items.filter(function(it){ return String(it.category||'').toLowerCase()===cat; });
+    var sup=lines.reduce(function(a,it){ return a+(it.qty||it.quantity||1)*spu(it,cat); },0);
+    parts.push(cat+' '+Math.round(need)+'/'+Math.round(sup)+(cat==='spirits'&&needs.full_bar?' (full bar)':''));
+    if (sup < need*0.95) problems.push('UNDERSUPPLY '+cat+': '+Math.round(sup)+' servings for '+Math.round(need)+' needed');
+    for (var i=0;i<lines.length;i++) {
+      var q=lines[i].qty||lines[i].quantity||1, u=spu(lines[i],cat);
+      if (q>1 && sup-u >= need*1.10) { problems.push('OVERSUPPLY '+cat+': '+q+'x '+lines[i].name+' ('+(q-1)+' would still cover '+Math.round(need)+' needed; supplied '+Math.round(sup)+')'); break; }
+    }
+  });
+  return { ok: problems.length===0, text: 'supply check '+(problems.length?'FAILED — '+problems.join('; ')+' | ':'OK — ')+'need/supplied: '+parts.join(', ') };
 }
 
 
-module.exports = { getProductURL, getProductURLByZip, searchProducts, buildPackage, shoppingAgent, addToCart, calculateBasket, createOrder };
+module.exports = { supplyCheck, getProductURL, getProductURLByZip, searchProducts, buildPackage, shoppingAgent, addToCart, calculateBasket, createOrder };
 
 // --- SEARCH PRODUCTS (B2B by kitchen location) ---
 async function searchProducts({ queries, kitchen_location, client_name, top_n }) {

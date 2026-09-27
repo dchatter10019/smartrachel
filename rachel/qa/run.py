@@ -167,18 +167,26 @@ def send(session, text, fmt, email, images=None, idle=False):
     r = httpx.post(RACHEL, json=payload, timeout=240)
     return r.json().get("text", ""), round(time.time() - t0, 1)
 
-LOG = "/home/ubuntu/logs/rachel.log"
+LOGS = ["/home/ubuntu/logs/rachel.log", "/home/ubuntu/logs/shopping-agent.log"]   # log_contains searches both (the package builder runs in shopping-agent)
 def _log_size():
-    try: return os.path.getsize(LOG)
-    except Exception: return 0
+    out = {}
+    for L in LOGS:
+        try: out[L] = os.path.getsize(L)
+        except Exception: out[L] = 0
+    return out
 def _log_since(pos):
-    try:
-        with open(LOG, "rb") as f: f.seek(pos); return f.read().decode("utf-8", "ignore")
-    except Exception: return ""
+    txt = ""
+    for L in LOGS:
+        try:
+            with open(L, "rb") as f: f.seek(pos.get(L, 0)); txt += f.read().decode("utf-8", "ignore") + "\n"
+        except Exception: pass
+    return txt
 def check(reply, expect, log_text=""):
     fails = []; low = reply.lower()
     for s in expect.get("log_contains", []):
         if s not in log_text: fails.append(f"log missing {s!r}")
+    for s in expect.get("log_not_contains", []):
+        if s in log_text: fails.append(f"log should not contain {s!r}: " + next((l for l in log_text.splitlines() if s in l), "")[:200])
     for s in expect.get("contains", []):
         if s.lower() not in low: fails.append(f"missing {s!r}")
     for s in expect.get("not_contains", []):

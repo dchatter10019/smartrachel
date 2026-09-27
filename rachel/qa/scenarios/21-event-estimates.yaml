@@ -1,0 +1,15 @@
+name: event-estimates
+# Estimations (DC, Sep 27): drinks per guest follow the rule of thumb (2 in the first hour,
+# 1 per hour after: 3h = 4), quantities use each bottle's real size, and a full bar (one
+# bottle of each spirit type) that exceeds what the guests need is called out in the reply.
+# 20 guests x 4 drinks = 80; "mostly wine" on a two-category event (wine+liquor) = 65/35 -> ~28 spirit drinks.
+tags: [smoke]
+stop_on_fail: true
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "party for 20 people, 3 hours, budget $800, wine and liquor"
+    expect: {contains: ["drink most"]}
+  - send: "mostly wine"
+    expect: {contains: ["Product total", "full bar", "fewer spirits"], log_not_contains: ["supply check FAILED"], log_contains: ["supply check OK", "for ~28 spirit drinks", "[reply] appended note"]}
