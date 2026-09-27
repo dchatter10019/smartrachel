@@ -399,7 +399,22 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
         // Look the product up by name so a swapped item is always orderable; use the
         // LLM-supplied size/price only to pick the right variant among matches.
         let resolved = null;
+        // First: the products Rachel just showed. Same price (to the cent) + a shared distinctive
+        // word is the product the customer picked, whatever name the LLM displayed.
         try {
+          const shown = JSON.parse(state.lastShownProducts || '[]');
+          const GENERICW = /^(wine|wines|vodka|tequila|gin|rum|whiskey|whisky|bourbon|scotch|beer|reserve|estate|vintner|vintners|the|and|bottle|750ml|red|white|blend)$/;
+          const wordsR = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[’']/g, '').split(/[^a-z0-9]+/).filter(w => w.length >= 4 && !GENERICW.test(w));
+          const want = new Set(wordsR(replacementName));
+          const cands = shown.filter(x => replacementPrice && Math.abs((parseFloat(x.price) || 0) - replacementPrice) < 0.01)
+            .map(x => ({ x, hit: wordsR(x.name).filter(w => want.has(w)).length })).filter(c => c.hit > 0).sort((a, b) => b.hit - a.hit);
+          if (cands.length && (cands.length === 1 || cands[0].hit > cands[1].hit)) {
+            const x = cands[0].x;
+            resolved = { name: x.name, price: parseFloat(x.price) || 0, salePrice: parseFloat(x.price) || 0, size: x.size || '', sizeStr: x.size || '', url: x.url || '', product_id: x.product_id || '', id: x.product_id || '', upc: x.upc || '', establishmentId: x.establishmentId || '', category: x.category || '' };
+            console.log('[confirm-substitute] resolved from the products just shown:', JSON.stringify(replacementName), '->', x.name, '$' + x.price);
+          }
+        } catch (e) {}
+        if (!resolved) try {
           const rr = await fetch('http://127.0.0.1:8300/mcp', {
             method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
             body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: replacementName, limit: 8 }], zip: state.zip || '', email: email } } })
@@ -931,6 +946,18 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       }
     },
     onProductDiscussed: (em, lineItems, fmt) => {
+      // Remember the products just SHOWN (real catalog names, ids, prices), separately from the
+      // basket, so a pick from Rachel's list resolves to the product actually offered even when
+      // the LLM displayed a tidied name ("Kendall-Jackson Vintner's Reserve Pinot Noir" for the
+      // catalog's "Kendall Jackson Pinot Noir Vint Rs"). Searches in the same turn accumulate.
+      try {
+        const stS = getState(sessionKey); const now = Date.now();
+        const prev = (stS.lastShownAt && now - stS.lastShownAt < 120000) ? JSON.parse(stS.lastShownProducts || '[]') : [];
+        const add = JSON.parse(lineItems || '[]');
+        const seenS = new Set(prev.map(x => x.product_id || x.name));
+        stS.lastShownProducts = JSON.stringify(prev.concat(add.filter(x => !seenS.has(x.product_id || x.name))).slice(-60));
+        stS.lastShownAt = now;
+      } catch (e) {}
       // Separate from onPackageBuilt on purpose — a real, severe bug found tonight:
       // treating EVERY product_query/recommendation result as "the new active order"
       // (the old behavior) meant a narrow "here are 2 gin options to pick from" search
