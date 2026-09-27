@@ -1,4 +1,8 @@
 name: reprice-multipick
+# "Find cheaper alternatives, same quantities" then a grouped pick ("Sauvignon Blanc 1, Pinot Noir 1,
+# rosé 1"): each pick REPLACES its line keeping the quantity; a type with no alternative is
+# reported. In smoke (DC, Sep 27) — it caught the grouped-heading and displayed-name bugs.
+tags: [smoke]
 turns:
   - send: reset
   - send: "yes"
