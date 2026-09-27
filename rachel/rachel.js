@@ -204,8 +204,18 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           // Classifier label first ('show me a nice white wine' is a recommend ask with no
           // keyword); the regex remains the fallback when the classifier didn't run.
           const clsRec = eventParams && eventParams.classified_intent === 'recommend';
-          if (clsRec || wantsRec) {
-            const q = (Array.isArray(saInput.queries) && saInput.queries[0]) || {};
+          // Only a GENERIC ask ("recommend a white wine") becomes a recommendation. Several
+          // queries, or a query naming a varietal/brand, stay product_query. Real bug
+          // (reprice-multipick, Sep 27): "find alternative wines around $20" sent Sauvignon Blanc,
+          // Pinot Noir and Rosé queries with a $15-25 range; routing kept only "Sauvignon Blanc"
+          // as a loose occasion and returned one generic wine list, so Rachel told the customer
+          // no Sauvignon Blanc or rosé existed near $20 — the store has dozens.
+          const qs = Array.isArray(saInput.queries) ? saInput.queries : [];
+          const GENERIC_Q = /^\s*(?:(?:a|an|some|nice|good)\s+)*(?:(?:red|white|ros[eé]|sparkling|dry|sweet)\s+)?(?:wine|wines|beer|beers|spirits?|liquor|vodka|gin|rum|tequila|whiske?y|bourbon|scotch|seltzer|hard seltzer|champagne|prosecco|lager|ipa)\s*$/i;
+          const specific = qs.length > 1 || qs.some(q => q && q.name && !GENERIC_Q.test(String(q.name)));
+          if ((clsRec || wantsRec) && specific) console.log('[ShoppingAgent] RECOMMENDATION ROUTING skipped — specific product_query kept (' + qs.map(q => q && q.name).join(', ') + ')');
+          if ((clsRec || wantsRec) && !specific) {
+            const q = qs[0] || {};
             const cat = q.category || (/\bwine\b/.test(m) ? 'wine' : /\b(vodka|gin|rum|tequila|whisk|bourbon|scotch|spirit)/.test(m) ? 'spirits' : /\b(beer|lager|ipa|seltzer)\b/.test(m) ? 'beer' : '');
             const occ = q.name || '';
             console.log('[ShoppingAgent] RECOMMENDATION ROUTING: product_query ->', 'recommendation', '| category:', cat, '| occasion:', occ);

@@ -1093,6 +1093,24 @@ async function buildPackage(iv) {
     // shipped incomplete (Margarita with no lime, Old Fashioned with no bitters).
     // Mixers are deliberately kept OUT of the drink-share allocation (they aren't
     // drinks) and sized on their own rule at push time.
+    // A bare "Wine" line becomes Red Wine + White Wine (the wine share split between them). Real bug
+    // (event-serving-mix, Sep 27): the LLM sent one generic "Wine" line and a 40-guest party
+    // got 16 bottles of a single Chardonnay and no red.
+    namedProducts = namedProducts.reduce(function(acc, np){
+      if (/^\s*wines?\s*$/i.test(String(np.name||'')) && String(np.category||'').toLowerCase()==='wine') {
+        var q=parseInt(np.qty)||0, rq=q?Math.round(q*0.6):0;
+        console.log('[buildPackage] custom_list: generic "Wine" split into Red Wine + White Wine');
+        acc.push(Object.assign({}, np, {name:'Red Wine', qty:rq||np.qty}));
+        acc.push(Object.assign({}, np, {name:'White Wine', qty:q?q-rq:np.qty}));
+      } else acc.push(np);
+      return acc;
+    }, []);
+    // Generic lines ("Red Wine", "Beer", "Tequila Blanco") carry no brand: they are priced to a
+    // budget target like menu_build's slots. Modifiers (triple sec, vermouth...) flavour a
+    // cocktail; they do not supply its servings.
+    var GENERIC_LINE=/^\s*(?:(?:red|white|ros[eé]|sparkling|dry)\s+)?wines?\s*$|^\s*(?:light\s+)?(?:beer|lager|ipa|hard seltzer|seltzer)s?\s*$|^\s*(?:vodka|gin|rum|tequila|bourbon|whiske?y|scotch|mezcal|brandy|cognac)(?:\s+(?:blanco|silver|plata|reposado|anejo|añejo|white|dark|spiced|london dry))?\s*$/i;
+    var MODIFIER_LINE=/\b(triple sec|cointreau|grand marnier|curacao|curaçao|orange liqueur|vermouth|campari|aperol|kahl[uú]a|coffee liqueur|amaretto|chambord|st[- ]germain|liqueur|bitters)\b/i;
+    function isModifier(np){ return String(np.category||'').toLowerCase()==='spirits' && MODIFIER_LINE.test(String(np.name||'')); }
     var byCat={wine:[],beer:[],spirits:[],mixer:[]};
     for (var i=0;i<namedProducts.length;i++) {
       var cat=(namedProducts[i].category||"").toLowerCase();
@@ -1190,6 +1208,61 @@ async function buildPackage(iv) {
       var hit = req.filter(function(w){ return cand.has(w); }).length;
       return hit / req.length;
     }
+    var spiritBaseCount=byCat.spirits.filter(function(x){return !isModifier(x);}).length||byCat.spirits.length;
+    // Quantity for a line — independent of which product is picked, so it is planned before
+    // the search (the budget target per unit needs the category's unit count).
+    function planQty(np) {
+      var catN=(np.category||"").toLowerCase();
+      var dpu=catN==="wine"?5:catN==="spirits"?16:(parseInt(np.pack_size)||beerPackSize);
+      // Use the blended per-category share (learned split + floor) instead of the
+      // legacy even split, so this path agrees with menu_build.
+      var catDrinks=(catShare[catN]!==undefined)?totalDrinks*catShare[catN]:drinksPerCat;
+      var mod=isModifier(np);
+      // Spirit servings come from the BASE spirits only. Real bug (event-serving-mix, Sep 27):
+      // tequila, triple sec and vodka each took a third of 40 cocktail servings -> 1 bottle each
+      // (32 pours for 40 cocktails) and the triple sec counted as a pour.
+      var perProd=catN==="spirits"&&!mod?catDrinks/spiritBaseCount:catDrinks/Math.max(1,byCat[catN]?byCat[catN].length:1);
+      // Option C fix (real bug from a live 150-guest event): the LLM was passing
+      // INVENTED qty values the customer never stated (8, 6, 13...), and any supplied
+      // qty bypassed the calculator entirely — so a package the calculator would size
+      // at ~54 wine bottles shipped with 14. A customer-stated qty ("3 bottles of Grey
+      // Goose") must still be honored, so the fix distinguishes the two: only honor
+      // np.qty when qty_from_customer is explicitly true. The flag defaults to false,
+      // so if the LLM forgets it (the common failure) the calculator runs — the safe
+      // outcome. Log every override so invented quantities are visible in the logs.
+      var qtyFromCustomer = np.qty_from_customer === true || np.qty_from_customer === 'true';
+      var hasExplicitQty = qtyFromCustomer && np.qty && parseInt(np.qty) > 0;
+      var computedQty = Math.max(1,Math.ceil(perProd/dpu));
+      if (mod) computedQty = Math.max(1, Math.ceil((catDrinks/spiritBaseCount)/25));   // ~1 oz per cocktail, 25 oz per 750 mL
+      if (catN==="mixer") {
+        // Mixer sizing: tied to the cocktail spirit volume, not the drink share.
+        // Bitters: ~1 bottle per 60 cocktails (dashes). Juice/soda/tonic: ~1 bottle
+        // per 15 cocktails (~750ml serves ~15). Cocktail count ≈ the spirits' share.
+        var cocktailDrinksM=Math.round(totalDrinks*(catShare.spirits||0.28));
+        var nm=String(np.name||'').toLowerCase();
+        var isBitters=/bitter|amaro|vermouth/.test(nm);
+        computedQty=Math.max(1,Math.ceil(cocktailDrinksM/(isBitters?60:15)));
+      }
+      var qty=hasExplicitQty ? parseInt(np.qty) : computedQty;
+      var n2=Math.max(1,catN==="spirits"&&!mod?spiritBaseCount:(byCat[catN]?byCat[catN].length:1));
+      var cap2=catN==="wine"?Math.max(1,Math.ceil((guests*baseDpp*0.6)/n2)):catN==="beer"?Math.max(1,Math.ceil((guests*baseDpp*0.5)/n2)):Math.max(1,Math.ceil((guests/10+1)/n2));
+      if(!hasExplicitQty && catN!=="mixer" && !mod && qty>cap2) qty=cap2;
+      return { qty:qty, computedQty:computedQty, hasExplicitQty:hasExplicitQty, qtyFromCustomer:qtyFromCustomer, mod:mod, servings:perProd, cap:cap2 };
+    }
+    var plannedQty=namedProducts.map(planQty);
+    // Budget target per unit for generic lines — the category's share of the product budget over
+    // the units planned for it (modifiers excluded), with menu_build's beer-surplus hand-off.
+    // Real bug: generic lines took the MOST EXPENSIVE match ("Wine" -> $98.99 Stag's Leap Artemis)
+    // and the budget fit only trimmed it to a $79 Chardonnay.
+    var genTarget={};
+    if (!isQuoteMode && productBudget>0) {
+      var catBud={}, catUnits={wine:0,beer:0,spirits:0};
+      Object.keys(catShare).forEach(function(c){ catBud[c]=productBudget*catShare[c]; });
+      namedProducts.forEach(function(np,ix){ var c=(np.category||'').toLowerCase(); if (catUnits[c]!==undefined && !plannedQty[ix].mod) catUnits[c]+=plannedQty[ix].qty; });
+      if (catBud.beer && catUnits.beer) { var bEst=catUnits.beer*63, sur=catBud.beer-bEst; if (sur>50) { var ws=(catShare.wine||0), ss=(catShare.spirits||0); if (ws+ss>0) { catBud.wine=(catBud.wine||0)+sur*ws/(ws+ss); catBud.spirits=(catBud.spirits||0)+sur*ss/(ws+ss); catBud.beer=bEst; } } }
+      ['wine','beer','spirits'].forEach(function(c){ if (catBud[c] && catUnits[c]) genTarget[c]=catBud[c]/catUnits[c]; });
+      console.log('[buildPackage] custom_list generic-line price targets per unit: '+JSON.stringify(Object.keys(genTarget).reduce(function(o,c){o[c]=Math.round(genTarget[c]*100)/100;return o;},{})));
+    }
     var results=await Promise.all(namedProducts.map(function(np){return doSearchWithFallbacks(np.name, np.category);}));
     for (var n=0;n<namedProducts.length;n++) {
       var np=namedProducts[n];
@@ -1207,6 +1280,16 @@ async function buildPackage(iv) {
         // files them under Liquor / Beer / Cocktails & Spirits. A beer/RTD slot accepts
         // Bevvi's Beer, Ready to Drink, and any canned/packed Liquor or Cocktail.
         var bc=String(p.category||'').toLowerCase(), bsc=String(p.subCategory||p.subcategory||'').toLowerCase();
+        if(cat==="mixer"){
+          // A mixer is never an alcoholic product. Real bug (event-serving-mix, Sep 27): the
+          // brand-word retry searched "Lime" and filled "Lime Juice" with White Claw Lime cases.
+          var nmM=nm.replace(/\b(ginger|root|birch)\s+(beer|ale)\b/g,' ');
+          // Bevvi's category decides first: never Wine / Beer / Ready to Drink ("Lime" also found
+          // Prescription Chardonnay); Liquor only for bitters, syrups and juices.
+          if (/wine|beer|ready to drink/.test(bc)) return false;
+          if (/liquor|spirit/.test(bc) && !/bitter|mixer|syrup|juice|tonic|soda/.test(bsc+' '+nm)) return false;
+          return !/\b(hard seltzer|seltzer|beer|lager|ale|ipa|stout|cider|wine|vodka|gin|rum|tequila|mezcal|whiske?y|bourbon|scotch|white claw|truly|high noon|bud|corona|michelob|modelo|alcoholic|hard)\b/.test(nmM);
+        }
         var isPacked=/\d+\s*x\s*\d+\s*oz|\d+\s*-?\s*pack\b|\(\d+\s*pack\)|\bcan\b|\bcans\b/.test(nm);
         if (bc) {
           if (cat==="beer")    return /beer|seltzer|cider|ready to drink|rtd/.test(bc+' '+bsc) || (isPacked && /liquor|cocktail|spirit/.test(bc+' '+bsc));
@@ -1224,7 +1307,7 @@ async function buildPackage(iv) {
         if(cat==="beer")    return !spiritW.test(nm) && !wineW.test(nm) && beerW.test(nm);
         if(cat==="wine")    return !spiritW.test(nm) && !beerOnlyW.test(nm);
         if(cat==="spirits") return !wineW.test(nm) && !/\b(lager|ipa|pilsner|stout|porter|beer)\b/.test(nm);
-        return true; // mixers: don't over-constrain
+        return true;
       }
       var found=results[n].filter(function(p){return !isMini(p)&&categorySane(p,catN);});
       // Size preference: for wine and spirits, prefer 750 mL when the customer did NOT
@@ -1249,6 +1332,27 @@ async function buildPackage(iv) {
         // had drifted upward). The customer named it; they get it.
         if (inRange.length>0) found=inRange;
         else console.log('[buildPackage] caps', capMin, '-', capMax, 'exclude every match for', JSON.stringify(np.name), '— keeping matches (named product)');
+      }
+      if (catN==='wine' && GENERIC_LINE.test(String(np.name||''))) {
+        // A generic still-wine slot takes a full bottle of still wine. Real bug: "White Wine"
+        // picked Veuve Clicquot 375 mL half bottles (60 servings for 80 needed).
+        var wantSpark=/sparkling|champagne|prosecco|cava/i.test(np.name||'');
+        var gw=found.filter(function(p){ var t=String(p.name||'')+' '+String(p.sizeStr||''); return (wantSpark || !/\b(champagne|brut|prosecco|cava|sparkling|spumante|cr[eé]mant)\b/i.test(t)) && !/\b(187|375|500)\s*ml\b/i.test(t); });
+        if (gw.length) { if (gw.length<found.length) console.log('[buildPackage] generic '+JSON.stringify(np.name)+': dropped '+(found.length-gw.length)+' sparkling/half-bottle match(es)'); found=gw; }
+      }
+      if (catN==='spirits' && GENERIC_LINE.test(String(np.name||''))) {
+        // A generic spirit ("Vodka", "Tequila Blanco") is the classic, not a flavour. Real bug
+        // (event-serving-mix): "Vodka" for Moscow Mules picked Cîroc Coconut.
+        var FLAV=/\b(coconut|vanilla|citrus|citron|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i;
+        var plain=found.filter(function(p){ return !FLAV.test(String(p.name||'')) || FLAV.test(String(np.name||'')); });
+        if (plain.length) { if (plain.length<found.length) console.log('[buildPackage] generic '+JSON.stringify(np.name)+': dropped '+(found.length-plain.length)+' flavoured match(es)'); found=plain; }
+      }
+      var tgtP=0;
+      if (GENERIC_LINE.test(String(np.name||'')) && !plannedQty[n].mod && genTarget[catN] && !capMin && !capMax) {
+        tgtP=genTarget[catN];
+        var band=found.filter(function(p){return p.price>=tgtP*0.6&&p.price<=tgtP*1.4;});
+        if (band.length) found=band;
+        else console.log('[buildPackage] no match for', JSON.stringify(np.name), 'within 60-140% of target $'+tgtP.toFixed(2), '— closest price wins');
       }
       var terms=np.name.toLowerCase().split(/\s+/);
       // Exact-name preference: a candidate whose size-stripped name equals the request
@@ -1281,6 +1385,7 @@ async function buildPackage(iv) {
           var b750=/\b750\s*ml\b/i.test(String(b.sizeStr||b.name||''))?0:1;
           if(a750!==b750) return a750-b750;
         }
+        if(tgtP) return Math.abs(a.price-tgtP)-Math.abs(b.price-tgtP);   // generic line: closest to its budget target
         return b.price-a.price;
       });
       var best=found[0];
@@ -1317,39 +1422,27 @@ async function buildPackage(iv) {
           continue;
         }
       }
-      var dpu=catN==="wine"?5:catN==="spirits"?16:(parseInt(np.pack_size)||beerPackSize);
-      // Use the blended per-category share (learned split + floor) instead of the
-      // legacy even split, so this path agrees with menu_build.
-      var catDrinks=(catShare[catN]!==undefined)?totalDrinks*catShare[catN]:drinksPerCat;
-      var perProd=catDrinks/byCat[catN].length;
-      // Option C fix (real bug from a live 150-guest event): the LLM was passing
-      // INVENTED qty values the customer never stated (8, 6, 13...), and any supplied
-      // qty bypassed the calculator entirely — so a package the calculator would size
-      // at ~54 wine bottles shipped with 14. A customer-stated qty ("3 bottles of Grey
-      // Goose") must still be honored, so the fix distinguishes the two: only honor
-      // np.qty when qty_from_customer is explicitly true. The flag defaults to false,
-      // so if the LLM forgets it (the common failure) the calculator runs — the safe
-      // outcome. Log every override so invented quantities are visible in the logs.
-      var qtyFromCustomer = np.qty_from_customer === true || np.qty_from_customer === 'true';
-      var hasExplicitQty = qtyFromCustomer && np.qty && parseInt(np.qty) > 0;
-      var computedQty = Math.max(1,Math.ceil(perProd/dpu));
-      if (catN==="mixer") {
-        // Mixer sizing: tied to the cocktail spirit volume, not the drink share.
-        // Bitters: ~1 bottle per 60 cocktails (dashes). Juice/soda/tonic: ~1 bottle
-        // per 15 cocktails (~750ml serves ~15). Cocktail count ≈ the spirits' share.
-        var cocktailDrinksM=Math.round(totalDrinks*(catShare.spirits||0.28));
-        var nm=String(np.name||'').toLowerCase();
-        var isBitters=/bitter|amaro|vermouth/.test(nm);
-        computedQty=Math.max(1,Math.ceil(cocktailDrinksM/(isBitters?60:15)));
+      var pq=plannedQty[n], qty=pq.qty;
+      // Size the line on the product actually picked (a 1 L bottle, a 24-pack) — the plan assumed
+      // 750 mL and the default pack. Real bug: 40 beer servings bought 4x 24-packs (96).
+      if (!pq.hasExplicitQty && !pq.mod && (catN==='wine'||catN==='beer'||catN==='spirits') && pq.servings>0) {
+        var bTxt=String(best.name||'')+' '+String(best.sizeStr||'');   // name first: catalog size fields can be wrong
+        var mlB=(function(t){ var m=t.toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l|cl)\b/); return m ? (m[2]==='l' ? +m[1]*1000 : m[2]==='cl' ? +m[1]*10 : +m[1]) : 750; })(bTxt);
+        var packB=(bTxt.toLowerCase().match(/(\d+)\s*x\s*\d/)||bTxt.toLowerCase().match(/(\d+)\s*(?:pk|pack)\b/)||[])[1];
+        var spuB=catN==='wine'?mlB/150:catN==='spirits'?mlB/46.875:(+packB||beerPackSize);
+        var q2=Math.min(Math.max(1,Math.ceil(pq.servings/spuB)), catN==='beer'?Math.max(pq.cap,1):Math.max(pq.cap,Math.ceil(pq.servings/spuB)));
+        if (q2!==qty) console.log('[buildPackage] qty from real size: '+best.name+' '+qty+' -> '+q2+' ('+Math.round(pq.servings)+' servings, '+Math.round(spuB*10)/10+' per unit)');
+        qty=q2;
       }
-      if (np.qty && parseInt(np.qty) > 0 && !qtyFromCustomer) {
-        console.log('[buildPackage] qty override: LLM supplied qty', np.qty, 'for', JSON.stringify(np.name), 'without qty_from_customer — using calculator value', computedQty);
+      if (np.qty && parseInt(np.qty) > 0 && !pq.qtyFromCustomer) {
+        console.log('[buildPackage] qty override: LLM supplied qty', np.qty, 'for', JSON.stringify(np.name), 'without qty_from_customer — using calculator value', pq.computedQty);
       }
-      var qty=hasExplicitQty ? parseInt(np.qty) : computedQty;
-      var n2=Math.max(1,byCat[catN].length);
-      var cap2=catN==="wine"?Math.max(1,Math.ceil((guests*baseDpp*0.6)/n2)):catN==="beer"?Math.max(1,Math.ceil((guests*baseDpp*0.5)/n2)):Math.max(1,Math.ceil((guests/10+1)/n2));
-      if(!hasExplicitQty && catN!=="mixer" && qty>cap2) qty=cap2;
-      lineItems.push({label:np.name,name:best.name,qty:qty,price:best.price,size:best.sizeStr,url:best.url,product_id:best.product_id,upc:best.upc||"",establishmentId:best.establishmentId||"",category:catN});
+      lineItems.push({label:np.name,name:best.name,qty:qty,price:best.price,size:best.sizeStr,url:best.url,product_id:best.product_id,upc:best.upc||"",establishmentId:best.establishmentId||"",category:catN,role:pq.mod?"modifier":undefined});
+    }
+    // Supply check for an event built from generic lines (no customer-stated quantities), as
+    // menu_build does — the custom_list path logged nothing, so under-supply went unseen.
+    if (guests>0 && !namedProducts.some(function(x,ix){return plannedQty[ix].hasExplicitQty;})) {
+      categoryNeeds={wine:totalDrinks*(catShare.wine||0),beer:totalDrinks*(catShare.beer||0),spirits:totalDrinks*(catShare.spirits||0),full_bar:false,beer_pack:beerPackSize};
     }
     var durationLabel = hours > 0 ? (hours+"h") : (baseDpp+" drinks/person");
     summaryBits.push("CUSTOM | "+guests+" guests | "+durationLabel+" | "+(isQuoteMode?"QUOTE":"$"+totalBudget));
@@ -1706,11 +1799,11 @@ async function buildPackage(iv) {
     ['wine','spirits'].forEach(function(cat){
       var need=+categoryNeeds[cat]||0; if (need<=0) return;
       var per=cat==='wine'?150:46.875;
-      var lines=lineItems.filter(function(li){ return li.category===cat; });
-      var sup=function(){ return lines.reduce(function(a,li){ return a+li.qty*mlT(li.size||li.name)/per; },0); };
+      var lines=lineItems.filter(function(li){ return li.category===cat && li.role!=='modifier'; });
+      var sup=function(){ return lines.reduce(function(a,li){ return a+li.qty*mlT(li.name+' '+(li.size||''))/per; },0); };
       for (var guard=0; guard<200; guard++) {
-        var cands=lines.filter(function(li){ return li.qty>1 && sup()-mlT(li.size||li.name)/per >= need; })
-          .sort(function(a,b){ return mlT(b.size||b.name)-mlT(a.size||a.name) || b.price-a.price; });
+        var cands=lines.filter(function(li){ return li.qty>1 && sup()-mlT(li.name+' '+(li.size||''))/per >= need; })
+          .sort(function(a,b){ return mlT(b.name+' '+(b.size||''))-mlT(a.name+' '+(a.size||'')) || b.price-a.price; });
         if (!cands.length) break;
         console.log('[buildPackage] trim unneeded unit: '+cands[0].name+' '+cands[0].qty+' -> '+(cands[0].qty-1)+' ('+cat+' supply '+Math.round(sup())+' for '+Math.round(need)+' needed)');
         cands[0].qty-=1;
@@ -1774,15 +1867,15 @@ function supplyCheck(items, needs) {
   var mlOf = function(t){ var m=String(t||'').toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l|cl)\b/); return m ? (m[2]==='l' ? +m[1]*1000 : m[2]==='cl' ? +m[1]*10 : +m[1]) : 0; };
   var packOf = function(t){ var m=String(t||'').toLowerCase().match(/(\d+)\s*x\s*\d/) || String(t||'').toLowerCase().match(/(\d+)\s*(?:pk|pack)\b/); return m ? +m[1] : 0; };
   var spu = function(it, cat){
-    if (cat==='wine') { var w = mlOf(it.size) || mlOf(it.name) || 750; return w / 150; }
-    if (cat==='spirits') { var sM = mlOf(it.size) || mlOf(it.name) || 750; return sM / 46.875; }   // 16 drinks per 750 mL
+    if (cat==='wine') { var w = mlOf(it.name) || mlOf(it.size) || 750; return w / 150; }   // name first: size fields can be wrong
+    if (cat==='spirits') { var sM = mlOf(it.name) || mlOf(it.size) || 750; return sM / 46.875; }   // 16 drinks per 750 mL
     if (cat==='beer') { return packOf(it.size) || packOf(it.name) || needs.beer_pack || 12; }
     return 0;
   };
   var parts=[], problems=[];
   ['wine','beer','spirits'].forEach(function(cat){
     var need=+needs[cat]||0; if (need<=0) return;
-    var lines=items.filter(function(it){ return String(it.category||'').toLowerCase()===cat; });
+    var lines=items.filter(function(it){ return String(it.category||'').toLowerCase()===cat && it.role!=='modifier'; });   // triple sec etc. flavour, not serve
     var sup=lines.reduce(function(a,it){ return a+(it.qty||it.quantity||1)*spu(it,cat); },0);
     parts.push(cat+' '+Math.round(need)+'/'+Math.round(sup)+(cat==='spirits'&&needs.full_bar?' (full bar)':''));
     if (sup < need*0.95) problems.push('UNDERSUPPLY '+cat+': '+Math.round(sup)+' servings for '+Math.round(need)+' needed');

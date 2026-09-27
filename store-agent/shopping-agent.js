@@ -111,6 +111,15 @@ function resolveLocation(zip) {
   return { kitchen: 'zip:' + zip, client, zip, unmapped: true };
 }
 
+// Bottle/pack size of a product or line, for like-for-like upgrades: "750 ML" -> "750ml",
+// "1.75 L" -> "1750ml", "24x12 Oz" -> "24x12oz". '' when unknown.
+function sizeKey(t) {
+  const x = String(t || '').toLowerCase();
+  const pk = x.match(/(\d+)\s*x\s*(\d+(?:\.\d+)?)\s*(oz|ml)/); if (pk) return pk[1] + 'x' + pk[2] + pk[3];
+  const m = x.match(/(\d+(?:\.\d+)?)\s*(ml|l|cl)\b/); if (!m) return '';
+  return Math.round(m[2] === 'l' ? +m[1] * 1000 : m[2] === 'cl' ? +m[1] * 10 : +m[1]) + 'ml';
+}
+
 const STORE_DISPLAY_MAP = {
   'Celonis - NYC': 'New York City',
   'Teterboro - NJ': 'New Jersey',
@@ -571,11 +580,17 @@ async function executeTool(name, input) {
               (item.label || item.name).split(' ').slice(0,2).join(' ');
             const candidates = await searchWithFallbacks(loc.kitchen, loc.client, searchTerm, 20);
             const better = candidates
-              .map(function(p) { return { name: p.name, price: p.salePrice||p.price||0, upc: p.upc||'', url: p.url||'', product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'', establishmentId: p.establishmentId||'', subcategory: p.subCategory||p.subcategory||item.subcategory||'' }; })
+              .map(function(p) { return { name: p.name, price: p.salePrice||p.price||0, upc: p.upc||'', url: p.url||'', product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'', establishmentId: p.establishmentId||'', subcategory: p.subCategory||p.subcategory||item.subcategory||'', size: (p.size&&p.units?p.size+p.units:(p.sizeStr||'')) }; })
               .filter(function(p) {
                 const n=(p.name||'').toLowerCase();
                 const sub=(p.subCategory||p.subcategory||'').toLowerCase();
                 if (p.price <= item.price || p.price > targetPrice || usedNamesPass1.has(p.name)) return false;
+                // Same bottle/pack size only — an upgrade is a better product, not a bigger bottle at the
+                // same qty. Real bug (event-serving-mix): 2x Mi Campo 750 mL became 2x Cazadores 1.75 L and
+                // the line kept size '750 ML', so the supply check counted 48 spirit servings for ~95.
+                { const was = sizeKey(item.name) || sizeKey(item.size), now = sizeKey(p.name) || sizeKey(p.size); if (was && now !== was) return false; }   // name first: catalog size fields can be wrong ('Belvedere Vodka - 1 L' has size 750 ML)
+                // No flavoured/spiced upgrade for a classic spirit (real bug: Mi Campo Blanco -> Ghost Blanco Spicy).
+                { const FLV = /\b(coconut|vanilla|citrus|citron|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i; if (FLV.test(p.name || '') && !FLV.test(item.name || '')) return false; }
                 if (n.includes('port') || sub.includes('port') || n.includes('tawny') || n.includes('sherry') || n.includes('sake') || sub.includes('fortified')) return false;
                 if (itemLabel === 'red wine' && sub && !sub.includes('red') && !sub.includes('cabernet') && !sub.includes('merlot') && !sub.includes('pinot noir') && !sub.includes('blend') && !sub.includes('chianti') && !sub.includes('bordeaux') && !sub.includes('barolo')) return false;
                 if (itemLabel === 'white wine' && sub && (sub.includes('red') || sub.includes('champagne') || sub.includes('sparkling') || sub.includes('sake') || sub.includes('port'))) return false;
@@ -615,11 +630,17 @@ async function executeTool(name, input) {
                           itemLabel2.includes('beer') || itemLabel2.includes('lager') ? 'beer' :
                           (item.label||item.name).split(' ').slice(0,2).join(' ');
             const cands2 = await searchProducts(loc.kitchen, loc.client, term2, 50, item.price + 1, maxForItem);
-            const best2 = cands2.map(function(p) { return {name:p.name,price:p.salePrice||p.price||0,upc:p.upc||'',url:p.url||'',product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'',establishmentId:p.establishmentId||'',subcategory:p.subCategory||p.subcategory||item.subcategory||''}; })
+            const best2 = cands2.map(function(p) { return {name:p.name,price:p.salePrice||p.price||0,upc:p.upc||'',url:p.url||'',product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'',establishmentId:p.establishmentId||'',subcategory:p.subCategory||p.subcategory||item.subcategory||'',size:(p.size&&p.units?p.size+p.units:(p.sizeStr||''))}; })
               .filter(function(p) {
                 const n=(p.name||'').toLowerCase();
                 const sub=(p.subCategory||p.subcategory||'').toLowerCase();
                 if (p.price <= item.price || p.price > maxForItem || usedNames.has(p.name)) return false;
+                // Same bottle/pack size only — an upgrade is a better product, not a bigger bottle at the
+                // same qty. Real bug (event-serving-mix): 2x Mi Campo 750 mL became 2x Cazadores 1.75 L and
+                // the line kept size '750 ML', so the supply check counted 48 spirit servings for ~95.
+                { const was = sizeKey(item.name) || sizeKey(item.size), now = sizeKey(p.name) || sizeKey(p.size); if (was && now !== was) return false; }   // name first: catalog size fields can be wrong ('Belvedere Vodka - 1 L' has size 750 ML)
+                // No flavoured/spiced upgrade for a classic spirit (real bug: Mi Campo Blanco -> Ghost Blanco Spicy).
+                { const FLV = /\b(coconut|vanilla|citrus|citron|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i; if (FLV.test(p.name || '') && !FLV.test(item.name || '')) return false; }
                 if (n.includes('port') || sub.includes('port') || n.includes('tawny') || n.includes('sherry') || n.includes('sake') || sub.includes('fortified')) return false;
                 if (itemLabel2 === 'red wine' && sub && !sub.includes('red') && !sub.includes('cabernet') && !sub.includes('merlot') && !sub.includes('pinot noir') && !sub.includes('blend') && !sub.includes('chianti') && !sub.includes('bordeaux') && !sub.includes('barolo')) return false;
                 if (itemLabel2 === 'white wine' && sub && (sub.includes('red') || sub.includes('champagne') || sub.includes('sparkling') || sub.includes('sake') || sub.includes('port'))) return false;
@@ -756,9 +777,15 @@ async function executeTool(name, input) {
             const candidates = await searchWithFallbacks(loc.kitchen, loc.client, searchTerm, 20);
             const rejectedStyle = [];
             const better = candidates
-              .map(function(p) { return { name: p.name, price: p.salePrice||p.price||0, upc: p.upc||'', url: p.url||'', product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'', establishmentId: p.establishmentId||'' }; })
+              .map(function(p) { return { name: p.name, price: p.salePrice||p.price||0, upc: p.upc||'', url: p.url||'', product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'', establishmentId: p.establishmentId||'', size: (p.size&&p.units?p.size+p.units:(p.sizeStr||'')) }; })
               .filter(function(p) {
                 if (!(p.price > item.price && p.price <= targetPrice * 1.2)) return false;
+                // Same bottle/pack size only — an upgrade is a better product, not a bigger bottle at the
+                // same qty. Real bug (event-serving-mix): 2x Mi Campo 750 mL became 2x Cazadores 1.75 L and
+                // the line kept size '750 ML', so the supply check counted 48 spirit servings for ~95.
+                { const was = sizeKey(item.name) || sizeKey(item.size), now = sizeKey(p.name) || sizeKey(p.size); if (was && now !== was) return false; }   // name first: catalog size fields can be wrong ('Belvedere Vodka - 1 L' has size 750 ML)
+                // No flavoured/spiced upgrade for a classic spirit (real bug: Mi Campo Blanco -> Ghost Blanco Spicy).
+                { const FLV = /\b(coconut|vanilla|citrus|citron|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i; if (FLV.test(p.name || '') && !FLV.test(item.name || '')) return false; }
                 // Same style as the line it upgrades (menu_build has the same guard). Real bug
                 // (event-serving-mix, Sep 27): custom_list upgraded the "Red Wine" line from The
                 // Prisoner Red Blend to Taylor Fladgate 20 Year Tawny Port — a dessert wine.
@@ -809,6 +836,14 @@ async function executeTool(name, input) {
     const finalSvc = Math.round(finalTotal2*0.10*100)/100;
     const finalTip = Math.round(finalTotal2*0.05*100)/100;
     const finalGrand = Math.round((finalTotal2+finalTax+finalSvc+finalTip+25)*100)/100;
+    // Supply check on the final custom_list package too (menu_build had it; custom_list — every
+    // cocktail event — logged nothing, so a 1-bottle-per-spirit under-supply went unseen).
+    let supply2 = { ok: true, text: 'supply check skipped' };
+    try {
+      const { supplyCheck } = require('/home/ubuntu/rachel/functions.js');
+      supply2 = supplyCheck(finalItems2, result.category_needs ? JSON.parse(result.category_needs) : null);
+      console.log('[buildPackage] custom_list ' + supply2.text + ' (' + input.guests + ' guests, ' + (input.hours || '?') + 'h)');
+    } catch (e) { console.error('[buildPackage] supply check error:', e.message); }
 
     // Save package to GBrain
     try {
@@ -825,6 +860,7 @@ async function executeTool(name, input) {
       delivery_fee: '25.00',
       estimated_grand_total: finalGrand.toFixed(2),
       unavailable: result.unavailable,
+      supply_check: supply2.text,
       tier_warning: result.tier_warning || ''
     };
   }
