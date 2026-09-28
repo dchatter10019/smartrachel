@@ -90,6 +90,7 @@ function getCapabilities(format) {
 
 // ── Email sending — extracted to email-utils.js so rachel-mcp.js can share it ──
 const { sendEmail, sendSupportEmail } = require('./email-utils.js');
+const { categorySubtotals, applySubtotals } = require('./package-subtotals.js');
 
 const KITCHEN_TO_CLIENT = {
   'Celonis - NYC': 'fooda',
@@ -888,7 +889,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       // more than they need). Appended to this turn's reply in code — not left to the LLM.
       try { if (saResult && saResult.full_bar_note) { getState(sessionKey).replyNote = saResult.full_bar_note; } } catch (e) {}
       // The totals of the latest build this turn, so the reply always shows them (see [reply] totals below).
-      try { if (saResult && saResult.product_total) { getState(sessionKey).builtTotals = { pt: saResult.product_total, tax: saResult.estimated_tax, svc: saResult.estimated_service, tip: saResult.estimated_tip, del: saResult.delivery_fee, grand: saResult.estimated_grand_total, budget: saInput && saInput.budget }; } } catch (e) {}
+      try { if (saResult && saResult.product_total) { getState(sessionKey).builtTotals = { pt: saResult.product_total, tax: saResult.estimated_tax, svc: saResult.estimated_service, tip: saResult.estimated_tip, del: saResult.delivery_fee, grand: saResult.estimated_grand_total, budget: saInput && saInput.budget, lineItems: saResult.line_items }; } } catch (e) {}
       // A successful build supersedes any prior "unavailable" state. Real bug: two
       // beers were falsely flagged unavailable on one rebuild (stale pendingSubstitutes
       // entries), then restored fine on the NEXT rebuild — but the pending list was
@@ -1196,8 +1197,9 @@ app.post('/chat', async (req, res) => {
     }
     getState(sessionKey).lastActive = Date.now(); saveFlowState();
   }
-  // A note produced while building this turn (e.g. the full-bar note) is appended to the reply.
-  { const _jN = res.json.bind(res); res.json = (payload) => { try { const stN = flowState[sessionKey]; if (stN && stN.replyNote && payload && typeof payload.text === 'string') { console.log('[reply] appended note: ' + stN.replyNote.slice(0, 80)); payload.text += '\n\n' + stN.replyNote; payload.response = (payload.response || '') + '\n\n' + stN.replyNote; stN.replyNote = null; saveFlowState(); } } catch (e) {} return _jN(payload); }; }
+  // A note produced while building this turn (e.g. the full-bar note) is added to the reply — before a
+  // closing question ("Would you also like to add mixers…?") so that question stays last.
+  { const _jN = res.json.bind(res); res.json = (payload) => { try { const stN = flowState[sessionKey]; if (stN && stN.replyNote && payload && typeof payload.text === 'string') { console.log('[reply] appended note: ' + stN.replyNote.slice(0, 80)); const addNote = (t) => { const paras = String(t || '').trimEnd().split(/\n\s*\n/); if (paras.length > 1 && /\?\s*\**\s*$/.test(paras[paras.length - 1])) paras.splice(paras.length - 1, 0, stN.replyNote); else paras.push(stN.replyNote); return paras.join('\n\n'); }; payload.text = addNote(payload.text); payload.response = addNote(payload.response || ''); stN.replyNote = null; saveFlowState(); } } catch (e) {} return _jN(payload); }; }
 
   console.log(`[rachel] chat — session: ${sessionKey} messages: ${sessions[sessionKey].length} — "${message}"`);
 
@@ -3795,6 +3797,21 @@ app.post('/chat', async (req, res) => {
         console.log('[reply] totals added in code — the LLM omitted them for this turn\'s build (product total $' + bt.pt + ')');
       }
     } catch (e) { console.error('[reply] totals insert failed:', e.message); }
+    // Category subtotals ("Wine total: $X") on every package reply — computed from the build, not left to
+    // the LLM (it wrote them in about half the Sep 27-28 QA runs). See package-subtotals.js.
+    try {
+      const bt = getState(sessionKey).builtTotals;
+      const pkgLines = (output.match(/(?:^|[\s:])[*_]?\d{1,3}x\s[^\n]*\$\d/gm) || []).length;
+      if (bt && bt.lineItems && pkgLines >= 2) {
+        const subs = categorySubtotals(bt.lineItems, bt.pt);
+        if (subs.skip) console.log('[reply] subtotals SKIPPED (' + subs.skip + ')');
+        else if (subs.length) {
+          const r = applySubtotals(output, subs, format === 'slack');
+          output = r.text;
+          console.log('[reply] subtotals in code: ' + subs.map(c => c.label + ' $' + c.total.toFixed(2)).join(', ') + (r.fallback.length ? ' | no section header for ' + r.fallback.join(', ') + ' — placed before Product total' : ''));
+        }
+      }
+    } catch (e) { console.error('[reply] subtotals insert failed:', e.message); }
 
     // ── Post-process: mixer/CTA using explicit state ─────────────────────
     const noKw = ['no', 'nope', 'no thanks', 'no worries', "that's all", 'thats all', "i'm good", 'im good', 'nothing else'];

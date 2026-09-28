@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-const { execSync } = require('child_process');
+const { gbrainPutPage } = require('/home/ubuntu/gbrain-put.js');   // writes via the running server — no gbrain-mcp stop needed
 
-const GBRAIN_CLI = '/home/ubuntu/.bun/bin/bun run /home/ubuntu/gbrain/src/cli.ts';
 const BEVVI_API  = 'https://api.getbevvi.com/api/bevviutils/getAllStoreTransactionsReportCsv';
 
 const END_DATE   = new Date().toISOString().split('T')[0];
@@ -104,9 +103,9 @@ ${monthLines || '  - No monthly data available'}
 `;
 }
 
-function ingestPage(slug, content) {
+async function ingestPage(slug, content) {
   try {
-    execSync(`${GBRAIN_CLI} put "retailers/${slug}"`, { input: content, encoding: 'utf8', cwd: '/home/ubuntu/gbrain' });
+    await gbrainPutPage(`retailers/${slug}`, content);
     log(`  wrote: retailers/${slug}`);
     return true;
   } catch (err) {
@@ -129,7 +128,7 @@ async function main() {
 
   let success = 0, failed = 0;
   for (const r of retailerList) {
-    const ok = ingestPage(slugify(r.name), buildRetailerPage(r));
+    const ok = await ingestPage(slugify(r.name), buildRetailerPage(r));
     if (ok) success++; else failed++;
   }
 

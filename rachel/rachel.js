@@ -453,6 +453,10 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         if (result.success && result.line_items && ['menu_build','custom_list'].includes(saInput.intent) && onPackageBuilt) {
           onPackageBuilt(saInput.email || '', result.line_items, saInput.channel, saInput, result);
         }
+        // The full-bar note is appended to the reply in code (server.js replyNote). Real bug (Sep 28):
+        // the model also read it here and wrote its own "heads-up" paragraph, so the customer got the
+        // same trim offer twice. The model no longer sees it.
+        if (result.full_bar_note) { console.log('[tool] full_bar_note withheld from the model — appended in code'); delete result.full_bar_note; }
         // Track unavailable items via the tool's own structured field, not by
         // trying to parse the LLM's eventual free-text reply — this is what lets
         // a later deterministic "yes, find a substitute" handler in server.js
