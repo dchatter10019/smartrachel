@@ -136,148 +136,6 @@ function calculateBasket({ total_budget, line_items }) {
   };
 }
 
-// ─── HELPERS ──────────────────────────────────────────────────────────────────
-
-function emptyOutput(errorMessage) {
-  return {
-    success: "false", error: errorMessage, is_custom_mode: "false",
-    total_drinks: "0", drinks_per_person: "0",
-    wine_bottles: "0", red_bottles: "0", white_bottles: "0", sparkling_bottles: "0",
-    beer_cases: "0", spirit_bottles: "0", bottles_per_type: "0", spirit_types: "",
-    product_budget: "0", wine_budget: "0", beer_budget: "0", spirit_budget: "0",
-    estimated_tax: "0", estimated_service: "0", estimated_tip: "0",
-    delivery_fee: "0", estimated_fees_total: "0",
-    wine_min_price: "0", wine_max_price: "0",
-    beer_min_price: "0", beer_max_price: "0",
-    spirit_min_price: "0", spirit_max_price: "0",
-    custom_allocations: ""
-  };
-}
-
-
-
-// --- CREATE ORDER ---
-async function createOrder({ products, customerData, tipAmount, deliveryDateTime, deliveryInstructions, client }) {
-  tipAmount = parseFloat(tipAmount) || 0;
-  // deliveryDateTime is required — convert to ISO or default to tomorrow 10am
-  if (!deliveryDateTime || isNaN(new Date(deliveryDateTime).getTime())) {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    tomorrow.setHours(10, 0, 0, 0);
-    deliveryDateTime = tomorrow.toISOString();
-  } else {
-    deliveryDateTime = new Date(deliveryDateTime).toISOString();
-  }
-  deliveryInstructions = deliveryInstructions || '';
-
-  try {
-    if (!products || products.length === 0) {
-      return { success: false, order_id: '', payment_url: '', error: 'No products provided' };
-    }
-
-    // Send the product ID and establishment, not just the UPC. Real bug: Bevvi's
-    // order-side UPC lookup fails for some catalog products ("No Product found for the
-    // upc:083085904081" — Ruffino Prosecco, which search returned fine); the basket
-    // carried the corpProductId the whole time and this path just never sent it.
-    // This is the DIRECT createOrder path used by Slack orders; agent.js (the RFQ
-    // path) already sends both.
-    const orderProducts = products.map(function(p) {
-      return {
-        name: p.name || '',
-        upc: p.upc || '',
-        productId: p.product_id || p.productId || '',
-        establishmentId: p.establishmentId || '',
-        qty: parseInt(p.qty) || parseInt(p.quantity) || 1,
-        price: parseFloat(p.price) || 0
-      };
-    });
-    // Tip / service charge with the field names Bevvi actually reads (tipAmt/tipPct/
-    // serviceChargeAmt/serviceChargePct). This path sent `tipAmount` — silently
-    // ignored — and no service charge at all, so every Slack order under-billed.
-    const productTotalOC = orderProducts.reduce(function(s, p){ return s + p.qty * p.price; }, 0);
-    const serviceChargePct = 10;
-    const serviceChargeAmt = Math.round(productTotalOC * serviceChargePct) / 100;
-    // Default the tip to 5% when none was passed, matching the quote shown to the
-    // customer (agent.js does the same) — otherwise the order would bill $0 tip
-    // against a summary that promised 5%.
-    const tipAmtOC = parseFloat(tipAmount) || Math.round(productTotalOC * 0.05 * 100) / 100;
-    const tipPct = productTotalOC > 0 ? Math.round(tipAmtOC / productTotalOC * 100) : 5;
-
-    const body = {
-      products: orderProducts,
-      client: client || 'airculinaire',
-      customerData: {
-        firstName: (customerData && customerData.firstName) || '',
-        lastName:  (customerData && customerData.lastName)  || '',
-        email:     (customerData && customerData.email)     || '',
-        address:   (customerData && customerData.address)   || '',
-        suiteNumber: '',
-        streetAddress: '',
-        city:      (customerData && customerData.city)      || '',
-        state:     (customerData && customerData.state)     || '',
-        zipcode:   (customerData && customerData.zipcode)   || '',
-        phoneNumber: ((customerData && customerData.phoneNumber) || (customerData && customerData.phone) || '').replace(/[^0-9]/g, ''),
-        companyName: ''
-      },
-      tipAmt: tipAmtOC,
-      tipPct: tipPct,
-      serviceChargeAmt: serviceChargeAmt,
-      serviceChargePct: serviceChargePct,
-      deliveryDateTime: deliveryDateTime,
-      deliveryInstructions: deliveryInstructions
-    };
-
-    // Log the FULL request body (it was truncated at 500 chars, which cut the product
-    // list off after ~2 items and made it impossible to verify what was actually sent).
-    console.log('[createOrder] sending:', JSON.stringify(body));
-    const response = await fetch('https://api.getbevvi.com/api/bevvibot/createOrder', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-
-    var data = await response.json();
-    console.log('[createOrder] response:', JSON.stringify(data).slice(0, 300));
-    if (typeof data === 'string') { data = JSON.parse(data); }
-    if (Array.isArray(data)) { data = data[0] || {}; }
-
-    const orderId    = data.orderNumber || data.order_id || data.orderId || data.id || '';
-    const paymentUrl = data.orderLink   || data.payment_url || data.paymentUrl || data.checkoutUrl || '';
-    const apiSuccess = data.success === true || data.success === 'true';
-
-    // Make a per-product rejection actionable. Bevvi's order API keys on UPC and
-    // returns "No Product found for the upc:XXXX" when a product its search index
-    // lists is missing from its order catalog (real case: Ruffino Prosecco 083085904081
-    // at the NYC store — search returns it, createOrder rejects it, even with productId
-    // and establishmentId sent). Previously this surfaced as a generic "order failed,
-    // contact support"; now we name the exact item so Rachel can offer to swap JUST
-    // that one and place the rest.
-    const errMsgOC = String((data.error && data.error.message) || data.message || data.error || '');
-    const upcMatch = errMsgOC.match(/No Product found for the upc:\s*([A-Za-z0-9]+)/i);
-    if (!apiSuccess && upcMatch) {
-      const badUpc = upcMatch[1];
-      const badItem = orderProducts.find(function(p){ return String(p.upc) === badUpc; });
-      const badName = badItem ? badItem.name : ('UPC ' + badUpc);
-      console.log('[createOrder] unfulfillable item:', badName, '(upc ' + badUpc + ') — Bevvi order catalog lacks it though search returned it');
-      return {
-        success: false, order_id: '', payment_url: '',
-        unfulfillable_item: badName, unfulfillable_upc: badUpc,
-        error: 'Bevvi cannot fulfill "' + badName + '" at this store right now (their order catalog does not have UPC ' + badUpc + ', although it appears in search). The rest of the order is fine — swap this one item to proceed.'
-      };
-    }
-
-    if (apiSuccess && (orderId || paymentUrl)) {
-      return { success: true, order_id: String(orderId), payment_url: String(paymentUrl), error: '' };
-    } else {
-      return { success: false, order_id: String(orderId), payment_url: String(paymentUrl), error: data.message || 'Order creation failed' };
-    }
-  } catch (err) {
-    return { success: false, order_id: '', payment_url: '', error: 'Request failed: ' + err.message };
-  }
-}
-
-
-
 // --- GET PRODUCTS BY ZIP (new API) ---
 async function getProductURLByZip({ product_name, zipcode, client_id, min_price, max_price, limit, exclude_sparkling }) {
   min_price = parseFloat(min_price) || 0;
@@ -456,7 +314,6 @@ async function buildPackage(iv) {
   var isSplit = (rawPackageType === "SPLIT" || rawPackageType === "split");
   var packageType = isCustom ? "CUSTOM" : (isSplit ? "SPLIT" : (parseInt(rawPackageType) || 5));
   var totalBudget = parseFloat(iv.total_budget) || 0;
-  var learned_splits = iv.learned_splits || null;
   var beerPackSize = parseInt(iv.beer_pack_size) || 12;
   var kitchenLocation = String(iv.kitchen_location || "").replace(/\u2013/g, "-");
   var clientName = String(iv.client_name || "");
@@ -770,107 +627,6 @@ async function buildPackage(iv) {
     return [];
   }
 
-  // Generalized fuzzy fallback — a last resort when NO exact-match retry (original,
-  // size-stripped, diacritic-stripped, brand-nickname-expanded, combined) found
-  // anything at all. Rather than maintaining an ever-growing hardcoded list of every
-  // brand nickname/abbreviation/misspelling we happen to encounter (Sam/Samuel Adams,
-  // Jack/Jack Daniel's, etc.), this searches broadly using just the first significant
-  // word (usually the brand), then scores every candidate's name against the cleaned
-  // search term using token overlap (same scoring formula already used elsewhere in
-  // this codebase for low_confidence_match detection), keeping only genuinely close
-  // matches above a confidence threshold — generalizes to any brand-naming mismatch
-  // without needing to know about it in advance.
-  function tokenOverlapScore(a, b) {
-    var norm = function(s) { return (s || '').toLowerCase().replace(/[^a-z0-9%.\s]/g, ' ').split(/\s+/).filter(Boolean); };
-    var ta = {}; norm(a).forEach(function(t){ ta[t] = true; });
-    var tbArr = norm(b);
-    var taSize = Object.keys(ta).length;
-    if (taSize === 0 || tbArr.length === 0) return 0;
-    var tb = {}; tbArr.forEach(function(t){ tb[t] = true; });
-    var tbSize = Object.keys(tb).length;
-    var overlap = 0;
-    for (var t in ta) if (tb[t]) overlap++;
-    return overlap / Math.min(taSize, tbSize);
-  }
-  var FUZZY_MATCH_THRESHOLD = 0.5; // at least half the smaller token set must overlap
-
-  function scoreCandidates(cleanedTerm, candidates, excludeWord) {
-    var termForScoring = cleanedTerm;
-    if (excludeWord) {
-      termForScoring = cleanedTerm.replace(new RegExp('\\b' + excludeWord + '\\b', 'gi'), '').trim();
-    }
-    return candidates
-      .map(function(p) {
-        var nameForScoring = excludeWord ? p.name.replace(new RegExp('\\b' + excludeWord + '\\b', 'gi'), '').trim() : p.name;
-        return { product: p, score: tokenOverlapScore(termForScoring, nameForScoring) };
-      })
-      .filter(function(s) { return s.score >= FUZZY_MATCH_THRESHOLD; })
-      .sort(function(a, b) { return b.score - a.score; });
-  }
-
-  // Coarse category fields ("spirits"/"wine"/"beer") aren't searchable text — no
-  // product is literally named "spirits". Extract the SPECIFIC type keyword actually
-  // present in the term itself (vodka, gin, whiskey, etc.) to use as a real, searchable
-  // broadening term instead.
-  var TYPE_KEYWORDS = [
-    'vodka', 'gin', 'rum', 'tequila', 'whiskey', 'whisky', 'bourbon', 'scotch',
-    'cognac', 'brandy', 'liqueur', 'wine', 'beer', 'seltzer', 'champagne', 'cider'
-  ];
-  function extractTypeKeyword(term) {
-    var lower = String(term || '').toLowerCase();
-    for (var i = 0; i < TYPE_KEYWORDS.length; i++) {
-      if (new RegExp('\\b' + TYPE_KEYWORDS[i] + '\\b').test(lower)) return TYPE_KEYWORDS[i];
-    }
-    return null;
-  }
-
-  async function fuzzyFallbackSearch(cleanedTerm, category) {
-    var words = cleanedTerm.trim().split(/\s+/).filter(Boolean);
-    if (words.length === 0) return [];
-
-    // Tier 1: broad search on just the first word (usually the brand name) — helps
-    // when the brand word itself is correct but other words in the query are wrong.
-    var broadResults = await rawSearch(words[0]);
-    if (broadResults.length > 0) {
-      var scored = scoreCandidates(cleanedTerm, broadResults, null);
-      // A mixer never falls back to an alcoholic product. Real bug (event-serving-mix, Sep 27):
-      // "Lime Juice" matched White Claw Natural Lime / Bud Light Lime on the word "lime" alone.
-      if (String(category || '').toLowerCase() === 'mixer') {
-        var ALC_RE = /\b(hard seltzer|seltzer|beer|lager|ale|ipa|stout|pilsner|cider|wine|vodka|gin|rum|tequila|mezcal|whiske?y|bourbon|scotch|cognac|brandy|liqueur|white claw|truly|high noon|bud|corona|michelob|modelo|margarita|cocktail|rtd|alcoholic|hard)\b/i;
-        var isAlc = function(nm) { return ALC_RE.test(String(nm || '').replace(/\b(ginger|root|birch)\s+(beer|ale)\b/gi, ' ')); };   // ginger beer / ginger ale are mixers
-        var dropped = scored.filter(function(sc) { return isAlc(sc.product.name); });
-        if (dropped.length) console.log('[doSearch] fuzzy fallback REJECTED for mixer ' + JSON.stringify(cleanedTerm) + ' (alcoholic product): ' + dropped.map(function(sc){ return sc.product.name; }).join(', '));
-        scored = scored.filter(function(sc) { return !isAlc(sc.product.name); });
-      }
-      if (scored.length > 0) {
-        console.log('[doSearch] fuzzy fallback (brand-word broad search) matched:', JSON.stringify(cleanedTerm), '->', scored.map(function(s){return s.product.name + ' (' + s.score.toFixed(2) + ')';}).join(', '));
-        return scored.map(function(s) { return s.product; });
-      }
-    }
-
-    // Tier 2: if the brand word itself might be misspelled (tier 1 found nothing at
-    // all — the API requires exact token spelling, so no query variation of a
-    // misspelled word will ever match), broaden using the SPECIFIC type keyword
-    // actually present in the term (e.g. "vodka" extracted from "Absolute Vodka") —
-    // NOT the coarse category bucket ("spirits"), which isn't literal searchable text
-    // and returns nothing. The type keyword is excluded from scoring on both sides —
-    // otherwise every candidate of that type would share the word and inflate scores
-    // regardless of actual relevance.
-    var typeKeyword = extractTypeKeyword(cleanedTerm) || (category && TYPE_KEYWORDS.indexOf(String(category).toLowerCase()) >= 0 ? category : null);
-    if (typeKeyword) {
-      var categoryResults = await rawSearch(typeKeyword);
-      if (categoryResults.length > 0) {
-        var categoryScored = scoreCandidates(cleanedTerm, categoryResults, typeKeyword);
-        if (categoryScored.length > 0) {
-          console.log('[doSearch] fuzzy fallback (type-keyword broad search) matched:', JSON.stringify(cleanedTerm), '->', categoryScored.map(function(s){return s.product.name + ' (' + s.score.toFixed(2) + ')';}).join(', '));
-          return categoryScored.map(function(s) { return s.product; });
-        }
-      }
-    }
-
-    return [];
-  }
-
   // Extract a requested size like "1 L", "750mL", "1.75 L" from a raw search term,
   // normalized to a comparable form (digits + unit, no space/case sensitivity) —
   // used to verify a retry step's results actually match what was asked for, not
@@ -1001,7 +757,6 @@ async function buildPackage(iv) {
     }
     if (!chosenPool) chosenPool=pool;
     // Priority: 1) Price (closest to target) 2) Sponsored brand 3) Preferred brand
-    const SPONSORED_PARENTS = ['LVMH','Constellation Brands','Breckenridge Distillery'];
     const BRAND_KEYWORD_MAP = {
       'veuve clicquot':'LVMH','moet':'LVMH','moët':'LVMH','dom perignon':'LVMH','hennessy':'LVMH','belvedere':'LVMH','krug':'LVMH','armand de brignac':'LVMH','chandon':'LVMH',
       'corona':'Constellation Brands','modelo':'Constellation Brands','robert mondavi':'Constellation Brands','kim crawford':'Constellation Brands','meiomi':'Constellation Brands','prisoner':'Constellation Brands','svedka':'Constellation Brands','high west':'Constellation Brands','mi campo':'Constellation Brands','ruffino':'Constellation Brands','woodbridge':'Constellation Brands',
@@ -1577,7 +1332,6 @@ async function buildPackage(iv) {
     var beerDrinks=Math.round(totalDrinks*split.beer);
     var rawSB=split.spirits>0?Math.ceil(spiritDrinks/16):0;
     var spiritBottles=split.spirits>0?Math.max(rawSB,5):0;
-    var bottlesPerType=spiritBottles>0?Math.ceil(spiritBottles/5):0;
     var wineBottles=split.wine>0?Math.ceil(wineDrinks/5):0;
     var beerCases=split.beer>0?Math.ceil(beerDrinks/beerPackSize):0;
     var redB=0,whiteB=0,sparkB=0;
@@ -1724,7 +1478,6 @@ async function buildPackage(iv) {
             continue;
           }
           var cands=await doSearch(term, li.category);
-          var liPack=(String(li.size||'').match(/(\d+)\s*x/i)||[])[1];
           // Option C: target a price tier. Compute the max unit price at which this
           // item's FULL quantity still fits within the budget (budget minus everything
           // else already in the basket), then pick the most expensive same-type product
@@ -1896,7 +1649,7 @@ function supplyCheck(items, needs) {
 }
 
 
-module.exports = { supplyCheck, getProductURL, getProductURLByZip, searchProducts, buildPackage, shoppingAgent, addToCart, calculateBasket, createOrder };
+module.exports = { supplyCheck, getProductURL, getProductURLByZip, searchProducts, buildPackage, addToCart, calculateBasket };
 
 // --- SEARCH PRODUCTS (B2B by kitchen location) ---
 async function searchProducts({ queries, kitchen_location, client_name, top_n }) {
@@ -1928,9 +1681,4 @@ async function searchProducts({ queries, kitchen_location, client_name, top_n })
     if (!found) results.push({ label: q.label, used_term: q.term, found: false, products: [] });
   }
   return { success: true, found_count: results.filter(r => r.found).length, results };
-}
-
-// --- SHOPPING AGENT ---
-async function shoppingAgent(message) {
-  return { success: false, response: 'Shopping agent not available' };
 }

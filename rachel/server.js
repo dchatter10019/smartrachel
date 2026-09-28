@@ -1,7 +1,4 @@
 
-// ── Store coverage check via Orchestrator ──────────────────────────────
-const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || 'http://127.0.0.1:8200';
-
 // Zip coverage via Bevvi's API, not the local store registry. The registry is the
 // store-agent layer we no longer route orders through; product search and
 // createCorpOrder both key on ?zipcode=. Real bug: 332 Pine St, San Francisco 94104
@@ -9,11 +6,10 @@ const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || 'http://127.0.0.1:8200'
 // (under client 'airculinaire'). Probe each known client; remember the one that works
 // per zip so search/order use it too (fooda vs airculinaire differ by zip: the Bronx
 // is fooda-only, SF is airculinaire-only).
-const KNOWN_CLIENTS = ['fooda', 'airculinaire'];
 const zipClientCache = {};
 async function checkStoreCoverage(zip) {
   try {
-    for (const client of ['bevvibot']) {   // single probe: the backend resolves the store from the zip (KNOWN_CLIENTS retired)
+    for (const client of ['bevvibot']) {   // single probe: the backend resolves the store from the zip
       const url = 'https://api-client.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode=' + encodeURIComponent(zip) + '&searchBy=' + encodeURIComponent('wine') + '&client=bevvibot' + '&limit=1';
       const res = await fetch(url);
       const data = await res.json().catch(() => []);
@@ -33,11 +29,10 @@ async function checkStoreCoverage(zip) {
 
 const express = require('express');
 const { rachelChat } = require('./rachel.js');
-const { getCustomerContext, getD2CSession, saveD2CSession, saveBasket, getPackage, clearBasket } = require('./gbrain.js');
+const { getCustomerContext, getD2CSession, saveD2CSession, saveBasket, clearBasket } = require('./gbrain.js');
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { google } = require('googleapis');
 const chrono = require('chrono-node');
 
 // ── Delivery time-slot validation ───────────────────────────────────────
@@ -334,13 +329,6 @@ function getState(sessionKey) {
   return flowState[sessionKey];
 }
 
-function setState(sessionKey, updates) {
-  const state = getState(sessionKey);
-  Object.assign(state, updates);
-  saveFlowState();
-  return state;
-}
-
 function resetState(sessionKey, email) {
   // COMPLIANCE: a stated under-21 refusal survives "reset" (and idle expiry) for 24h — a minor
   // could otherwise type reset and answer "yes".
@@ -572,7 +560,7 @@ function explicitZoneIn(text) {
 // opening at 8 AM Pacific. If Bevvi says windows are always Eastern, set this to
 // 'America/New_York' and the matching converts accordingly.
 const WINDOWS_ARE_STORE_LOCAL = true;
-// Wall-clock in an arbitrary IANA zone -> UTC ISO (generalization of nyToUtcIso).
+// Wall-clock in an arbitrary IANA zone -> UTC ISO.
 function zonedToUtcIso(dateStr, hour, minute, zone) {
   const guess = new Date(Date.UTC(+dateStr.slice(0,4), +dateStr.slice(5,7)-1, +dateStr.slice(8,10), hour, minute));
   const fmt = new Intl.DateTimeFormat('en-US', { timeZone: zone, hour12: false, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
@@ -595,13 +583,6 @@ function fmtWindowInZone(windowStr, dateStr, windowZone, custZone) {
     };
     return fmtOne(win.start) + ' - ' + fmtOne(win.end) + ' ' + abbr + ' (' + windowStr.replace(/\s*EST\s*$/i, ' ET') + ')';
   } catch (e) { return windowStr; }
-}
-function nyToUtcIso(dateStr, hour, minute) {
-  const guess = new Date(Date.UTC(+dateStr.slice(0,4), +dateStr.slice(5,7)-1, +dateStr.slice(8,10), hour, minute));
-  const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour12: false, year:'numeric', month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' });
-  const parts = Object.fromEntries(fmt.formatToParts(guess).map(p => [p.type, p.value]));
-  const nyAsUtc = Date.UTC(+parts.year, +parts.month-1, +parts.day, +parts.hour % 24, +parts.minute);
-  return new Date(guess.getTime() - (nyAsUtc - guess.getTime())).toISOString();
 }
 
 // Hoisted so the details block, the fast-path re-entry, and the no-total reconfirm all
@@ -2315,10 +2296,6 @@ app.post('/chat', async (req, res) => {
           const askM = 'Almost there — I just need ' + missing.join(' and ') + ' for the person placing the order. (An on-site contact for the driver can go in the delivery instructions.)';
           return res.json({ text: askM, response: askM });
         }
-        state.orderStep = 'name';
-        saveFlowState();
-        const ask = 'What is your full name — the person placing the order? (first and last). If someone else will receive the delivery, you can give their contact in the delivery instructions later.';
-        return res.json({ text: ask, response: ask });
       }
       // Skip the quantity question if it was already set at pick time (or stated).
       // Real bug: the customer answered "how many bottles?" when picking, then
@@ -3271,7 +3248,6 @@ app.post('/chat', async (req, res) => {
         // ("Sauvignon Blanc alternatives (~$20):") were not recognised, so grouped picks all
         // took global option #1 and a replacement was added as a new line.
         const MP = require('./multipick.js');
-        const normP = MP.normP;
         const groups = MP.parseOptionGroups(lastAssistantTextGate);
         const realGroups = groups.filter(g => g.options.length);
         const allOpts = realGroups.flatMap(g => g.options.map(o => Object.assign({ heading: g.heading }, o)));
@@ -3426,7 +3402,6 @@ app.post('/chat', async (req, res) => {
       // most recent assistant message misses anything presented earlier. Scan the
       // last several assistant turns instead, so an option is still matchable even
       // if it wasn't the very last thing said.
-      const priorMsgsSel = sessions[sessionKey] || [];
       // Real root cause found tonight: sessions[sessionKey] stores each step of the
       // LLM's multi-step tool-use loop as a SEPARATE assistant message — including
       // trivial filler text like "Let me search for both simultaneously!" emitted

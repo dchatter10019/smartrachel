@@ -6,7 +6,7 @@ const fs = require('fs');
 const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
 
 const GBRAIN_URL = 'http://127.0.0.1:7700/mcp';
-const GBRAIN_TOKEN = 'gbrain_71d7392edf8a722d8816739407f1455d13fff00a0c7b12e3afa208b4d081ebf4';
+const GBRAIN_TOKEN = process.env.GBRAIN_TOKEN || '';  // /etc/gbrain.env
 const CACHE_FILE = '/home/ubuntu/logs/package-intelligence.json';
 
 // In-memory cache

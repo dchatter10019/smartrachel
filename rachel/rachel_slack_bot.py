@@ -12,7 +12,6 @@ import threading
 import httpx
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
-import anthropic
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("rachel")
@@ -23,13 +22,12 @@ SLACK_BOT_TOKEN   = os.environ["SLACK_BOT_TOKEN"]
 # Dedup set for Slack retries
 _processed_events = set()
 SLACK_APP_TOKEN   = os.environ["SLACK_APP_TOKEN"]
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 RACHEL_CHANNEL_ID = os.environ["RACHEL_CHANNEL_ID"]
 ALLOWED_USERS     = set(os.environ.get("ALLOWED_USERS", "").split(","))
 
 # ── GBRAIN ────────────────────────────────────────────────────────────────────
 GBRAIN_URL   = "http://127.0.0.1:7700/mcp"
-GBRAIN_TOKEN = "gbrain_71d7392edf8a722d8816739407f1455d13fff00a0c7b12e3afa208b4d081ebf4"
+GBRAIN_TOKEN = os.environ.get("GBRAIN_TOKEN", "")  # /etc/gbrain.env
 GBRAIN_HEADERS = {
     "Content-Type": "application/json",
     "Authorization": f"Bearer {GBRAIN_TOKEN}",
@@ -102,49 +100,16 @@ def get_customer_context(client, user_id: str) -> str:
         return f"\n\n## Customer history from Bevvi\n{context}"
     return ""
 
-# ── SYSTEM PROMPT ─────────────────────────────────────────────────────────────
-RACHEL_SYSTEM_PROMPT = """
-You are Rachel, Bevvi's personal beverage specialist and concierge.
-You are warm, knowledgeable, a little funny, and deeply expert in wine, beer, and spirits.
-
-You remember customer preferences and past occasions. If customer history is provided
-below, use it naturally without announcing you are reading from a file — just know it
-the way a good friend would.
-
-You help build drink orders for events — boating trips, private dinners, home bar
-restocks, corporate gifts. You ask about the occasion, guest count, and budget before
-recommending anything. You never recommend a product without confirming it is available.
-When a basket is ready, you run bids across stores and present the best price.
-Always address the user by their first name or nickname once you know it.
-Keep responses concise — this is Slack, not an essay.
-"""
-
-# ── ANTHROPIC CLIENT ──────────────────────────────────────────────────────────
-claude = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
-
 # ── CONVERSATION + GBRAIN STORE ───────────────────────────────────────────────
-conversation_store: dict[str, list[dict]] = {}
 gbrain_cache: dict[str, str] = {}
 store_lock = threading.Lock()
 
-def get_history(user_id: str) -> list[dict]:
-    with store_lock:
-        return conversation_store.get(user_id, [])
-
-def append_history(user_id: str, role: str, content: str):
-    with store_lock:
-        if user_id not in conversation_store:
-            conversation_store[user_id] = []
-        conversation_store[user_id].append({"role": role, "content": content})
-        conversation_store[user_id] = conversation_store[user_id][-40:]
-
 def clear_history(user_id: str):
     with store_lock:
-        conversation_store[user_id] = []
         gbrain_cache.pop(user_id, None)
 
 # ── RACHEL RESPONSE ───────────────────────────────────────────────────────────
-def ask_rachel(user_id: str, text: str, customer_context: str = "", user_email: str = "", is_new_session: bool = False, images=None) -> str:
+def ask_rachel(user_id: str, text: str, customer_context: str = "", user_email: str = "", images=None) -> str:
     try:
         # Session key: prefer the customer's email over the raw Slack user_id.
         # Real bug found: the same person has DIFFERENT Slack user_ids across different
@@ -282,7 +247,7 @@ def _handle_unlocked(event: dict, say, client):
             user_email = ""
         if user_id not in gbrain_cache:
             gbrain_cache[user_id] = get_customer_context(client, user_id)
-        reply = ask_rachel(user_id, "__greeting__", gbrain_cache.get(user_id, ""), user_email, True)
+        reply = ask_rachel(user_id, "__greeting__", gbrain_cache.get(user_id, ""), user_email)
         say(reply)
         return
 
@@ -309,11 +274,7 @@ def _handle_unlocked(event: dict, say, client):
         user_email = profile.get("email", "")
     except Exception:
         pass
-    # On first message of a new session, let Rachel know
-    history = get_history(user_id)
-    is_new_session = len(history) == 0
-    
-    reply = ask_rachel(user_id, text, gbrain_cache[user_id], user_email, is_new_session, images or None)
+    reply = ask_rachel(user_id, text, gbrain_cache[user_id], user_email, images or None)
     say(reply)
     _react(client, channel, event.get("ts"), add="white_check_mark", remove="eyes")
 

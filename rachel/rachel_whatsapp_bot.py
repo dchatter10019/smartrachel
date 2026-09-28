@@ -12,7 +12,7 @@ Differences from Slack, all forced by the channel:
   line boundaries. Slack's <url|text> links become "text: url".
 """
 import os, re, json, time, logging, threading
-from flask import Flask, request, Response, render_template_string, abort
+from flask import Flask, request, Response, render_template_string
 import secrets, base64, io, subprocess, html as _html
 import httpx
 from twilio.rest import Client

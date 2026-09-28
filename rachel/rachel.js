@@ -556,12 +556,7 @@ function getTools(channel_format, context) {
   });
 }
 
-module.exports = { executeTool, getTools, ALL_TOOLS };
-
 // ─── RACHEL CHAT ──────────────────────────────────────────────────────────────
-
-const fs = require('fs');
-const path = require('path');
 
 const MAX_ITERATIONS = 10;
 

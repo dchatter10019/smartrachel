@@ -11,7 +11,7 @@ const fs = require('fs');
 
 const GBRAIN_CLI = '/home/ubuntu/.bun/bin/bun run /home/ubuntu/gbrain/src/cli.ts';
 const GBRAIN_URL = 'http://127.0.0.1:7700';
-const GBRAIN_TOKEN = 'gbrain_71d7392edf8a722d8816739407f1455d13fff00a0c7b12e3afa208b4d081ebf4';
+const GBRAIN_TOKEN = process.env.GBRAIN_TOKEN || '';  // /etc/gbrain.env
 const GBRAIN_HEADERS = {
   'Content-Type': 'application/json',
   'Authorization': `Bearer ${GBRAIN_TOKEN}`,

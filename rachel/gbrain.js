@@ -4,12 +4,7 @@
  */
 
 const GBRAIN_URL = 'http://127.0.0.1:7700';
-const GBRAIN_TOKEN = 'gbrain_71d7392edf8a722d8816739407f1455d13fff00a0c7b12e3afa208b4d081ebf4';
-const GBRAIN_HEADERS = {
-  'Content-Type': 'application/json',
-  'Authorization': `Bearer ${GBRAIN_TOKEN}`,
-  'Accept': 'application/json, text/event-stream'
-};
+const GBRAIN_TOKEN = process.env.GBRAIN_TOKEN || '';  // /etc/gbrain.env
 
 async function gbrainCall(toolName, args) {
   try {
@@ -190,63 +185,6 @@ async function saveBasket(userEmail, basket, total, channel) {
   }
 }
 
-async function getBasket(userEmail, channel) {
-  if (!userEmail) return null;
-  try {
-    const channelSlug = channel || 'default';
-    const basketSlug = emailToSlug(userEmail) + '-basket-' + channelSlug;
-    const payload = {
-      jsonrpc: '2.0', id: 1, method: 'tools/call',
-      params: { name: 'get_page', arguments: { slug: basketSlug }}
-    };
-    const res = await fetch(GBRAIN_URL, { method: 'POST', headers: GBRAIN_HEADERS, body: JSON.stringify(payload) });
-    for (const line of (await res.text()).split('\n')) {
-      if (line.startsWith('data: ')) {
-        const data = JSON.parse(line.slice(6));
-        return data?.result?.content?.[0]?.text || null;
-      }
-    }
-  } catch(e) { return null; }
-}
-
-// Save last search query
-async function saveSearch(userEmail, searchQuery) {
-  if (!userEmail || !searchQuery) return;
-  try {
-    const existing = await getD2CSession(userEmail) || {};
-    await saveD2CSession(userEmail, {
-      ...existing,
-      last_search: searchQuery
-    });
-  } catch(e) {
-    console.error('[gbrain] saveSearch error:', e.message);
-  }
-}
-
-
-async function savePackage(userEmail, lineItems, summary) {
-  if (!userEmail || !lineItems) return;
-  try {
-    const slug = emailToSlug(userEmail) + '-package';
-    const payload = {
-      jsonrpc: '2.0', id: 1, method: 'tools/call',
-      params: { name: 'put_page', arguments: {
-        slug,
-        frontmatter: {
-          email: userEmail,
-          updated: new Date().toISOString(),
-          summary: summary || ''
-        },
-        content: typeof lineItems === 'string' ? lineItems : JSON.stringify(lineItems)
-      }}
-    };
-    const res = await fetch(GBRAIN_URL, { method: 'POST', headers: GBRAIN_HEADERS, body: JSON.stringify(payload) });
-    console.log('[gbrain] package saved for:', userEmail);
-  } catch(e) { console.error('[gbrain] savePackage error:', e.message); }
-}
-
-
-
 // Drop the saved last basket once it has been ordered. getPackage() rehydrates an empty
 // session basket from this file, so without this a placed order came back as the "current"
 // basket after a reset or idle restart. (saveBasket(email, null) returns early — no-op.)
@@ -277,14 +215,12 @@ async function getPackage(userEmail, channel) {
     if (!entry || !entry.basket) return null;
     return entry.basket;
   } catch(e) { return null; }
-  return null;
 }
 module.exports = {
   getCustomerContext,
   getD2CSession,
   saveD2CSession,
   saveBasket,
-  saveSearch,
   getPackage,
   clearBasket
 };

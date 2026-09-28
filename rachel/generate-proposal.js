@@ -4,8 +4,6 @@
  */
 
 const { chromium } = require('playwright');
-const fs = require('fs');
-const path = require('path');
 
 const BEVVI_RED = '#B71C1C';
 const BEVVI_DARK = '#1A1A2E';
