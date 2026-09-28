@@ -210,6 +210,31 @@ def check(reply, expect, log_text=""):
     if "judge" in expect and not judge(reply, expect["judge"]): fails.append(f"judge NO: {expect['judge']}")
     return fails
 
+# capture: listed_partial — from Rachel's numbered option list, whatever it holds, a SHORT name
+# (first word + one later word) that fits exactly one listed line, as a customer would type it
+# ("Kendall Pinot"). Same fit rule as multipick.matchListedByName. Sets {pick}, {pick_full}, {pick_re}.
+# Scenarios never depend on a particular product being in the catalog.
+def listed_partial(reply):
+    opts = [re.sub(r"\*", "", m.group(1)).strip() for m in re.finditer(r"^\s*\d{1,2}[.)]\s*(.+?)\s+(?:—|–|-)\s+.*\$", reply, re.M)]
+    words = lambda s: [w for w in re.split(r"[^a-z0-9]+", s.lower().replace("'", "").replace("’", "")) if len(w) >= 3]
+    fits = lambda cand, name: all(any(x == c or x.startswith(c) for x in words(name)) for c in words(cand))
+    for full in opts:
+        ws = [w for w in full.split() if len(re.sub(r"[^A-Za-z]", "", w)) >= 3]
+        if len(ws) < 3: continue   # must be a real partial: at least one word of the name left out
+        for w in reversed(ws[1:]):
+            cand = f"{ws[0]} {w}"
+            if sum(fits(cand, o) for o in opts) == 1:   # {pick_re}: the pick's words in order (catalog names differ in punctuation)
+                return {"pick": cand, "pick_full": full, "pick_re": ".*".join(re.escape(x) for x in words(cand))}
+    return {}
+
+def _fill(x, vars_):
+    if isinstance(x, str):
+        for k, v in vars_.items(): x = x.replace("{" + k + "}", v)
+        return x
+    if isinstance(x, list): return [_fill(i, vars_) for i in x]
+    if isinstance(x, dict): return {k: _fill(v, vars_) for k, v in x.items()}
+    return x
+
 def load_image(path):
     p = os.path.join(HERE, "fixtures", path); mt = "application/pdf" if p.lower().endswith(".pdf") else ("image/png" if p.lower().endswith(".png") else "image/jpeg")
     return [{"media_type": mt, "data": base64.b64encode(open(p, "rb").read()).decode()}]
@@ -220,8 +245,9 @@ def run_scenario(sc, verbose):
     email = sc.get("email") or (f"qa-{name}-{int(time.time())}@getbevvi.com" if sc.get("fresh") else QA_EMAIL)
     session = f"qa-{name}-{int(time.time())}"
     print(f"\n▶ {name}  [{transport if transport != 'http' else fmt}]")
-    replies = []; failures = []
+    replies = []; failures = []; vars_ = {}
     for i, turn in enumerate(sc["turns"], 1):
+        turn = _fill(turn, vars_)
         text = turn.get("send", ""); images = load_image(turn["image"]) if turn.get("image") else None
         pos = _log_size()
         try:
@@ -230,6 +256,10 @@ def run_scenario(sc, verbose):
             reply, secs = f"<<ERROR {e}>>", 0
         replies.append({"turn": i, "send": text, "reply": reply, "secs": secs})
         fails = check(reply, turn.get("expect", {}), _log_since(pos))
+        if turn.get("capture") == "listed_partial":
+            got = listed_partial(reply)
+            if got: vars_.update(got); print(f"       captured pick={got['pick']!r} (listed as {got['pick_full']!r})")
+            else: fails.append("capture: no listed option with a unique partial name")
         mark = "✓" if not fails else "✗"
         print(f"  {mark} {i:>2}. {text[:48]!r:52} {secs:>5}s" + ("" if not fails else "  ← " + "; ".join(fails)))
         if verbose or fails: print("       " + reply[:600].replace("\n", "\n       "))

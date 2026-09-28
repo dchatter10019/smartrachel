@@ -1,0 +1,25 @@
+name: add-listed-by-partial-name
+tags: [smoke]
+# Real bugs (Sep 28, WhatsApp + QA), replaying the shape of the customer's conversation:
+#  - "Put it in the cart" (no product named) came back add_item with a ref the classifier copied
+#    from Rachel's list — a KJ Cabernet was added unasked. A ref must be words the customer wrote.
+#  - "Kendall Pinot" (a short name that fits ONE listed line) re-searched the catalog and re-asked
+#    with other Pinots. A short name that fits one line of Rachel's recent list adds that line.
+# Product-agnostic: {pick} is built from whatever Rachel lists (run.py listed_partial), e.g.
+# "Alamos Seleccion" for "Alamos Malbec Seleccion" — first word + one later word, unique on the list.
+turns:
+  - send: reset
+  - send: "Need a nice red for tonight"
+  - send: "yes"
+  - send: "11 Madison Ave, New York, NY 10010"
+    expect: {matches: "^\\s*2[.)] .*\\$"}
+    capture: listed_partial
+  - send: "Put it in the cart"
+    expect: {not_contains: ["added to your order", "already in your"], log_not_contains: ["[confirm-substitute-tool] replaced"]}
+  - send: "{pick}"
+    expect:
+      matches: "(?i)\\b(added|got it)\\b[^\\n]*{pick_re}"
+      not_contains: ["I found a few options", "already in your"]
+      log_contains: ["[add-item] listed-name"]
+  - send: "show my basket"
+    expect: {matches: "(?i){pick_re}"}

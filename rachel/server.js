@@ -1939,9 +1939,13 @@ app.post('/chat', async (req, res) => {
     // clear stale classifier label: eventParams persists across turns (guests/budget for
     // rebuilds), so last turn's 'recommend' must not rewrite this turn's product query.
     if (state.eventParams && state.eventParams.classified_intent) { delete state.eventParams.classified_intent; delete state.eventParams.classified_ref; }
-    if (!state.orderStep && !state.proposalStep && !state.pendingQtyFor && !isInternalMsg) {
+    // A pending "how many?" only owns QUANTITY-shaped replies (handled below); anything else is
+    // classified. Real bug (Sep 28 QA): "Kendall Pinot" while a quantity was pending skipped
+    // routing and the LLM claimed the Pinot was "already in your basket".
+    const qtyShaped = /^\s*(\d{1,3}|one|two|three|four|five|six|a dozen)\s*(?:x|bottles?|cases?|packs?)?\s*\.?\s*$/i.test(message);
+    if (!state.orderStep && !state.proposalStep && !(state.pendingQtyFor && qtyShaped) && !isInternalMsg) {
       try {
-        const { classifyIntent } = require('./classify-intent.js');
+        const { classifyIntent, groundedRef } = require('./classify-intent.js');
         const lastR2 = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
         let bsz2 = 0; try { bsz2 = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
         const cr = await classifyIntent(message, { lastKind: 'other', orderStep: null, basketSize: bsz2, lastQuestion: lastR2.slice(0, 160) });
@@ -1952,18 +1956,37 @@ app.post('/chat', async (req, res) => {
         // place_order with an EMPTY basket and named products is a build request, not a
         // checkout (real bug: "I'd like to order 3 bottles of Tito's…" at 0.78 jumped to
         // "What is your full name?" with nothing in the basket).
-        if (cr.source === 'llm' && cr.intent === 'place_order' && bsz2 === 0 && (cr.ref || /\b\d+\s*(bottles?|cases?|x)\b/i.test(message))) {
+        const clsUsable = /^(llm|rule)/.test(cr.source);
+        // A product ref must be words the customer wrote — never one the classifier copied from
+        // Rachel's list ("Put it in the cart" -> ref "Kendall-Jackson ... Cabernet", added unasked).
+        if (clsUsable && (cr.intent === 'add_item' || cr.intent === 'select_option') && cr.ref) {
+          const g = groundedRef(cr.ref, message);
+          if (!g) { console.log('[classify] ref ' + JSON.stringify(cr.ref) + ' is not in the message — dropped (no product named)'); cr.ref = ''; }
+        }
+        // A pick by NAME is resolved like an add: the add_item handler checks Rachel's recent
+        // option lists first (matchListedByName), then the catalog. Real bug (Sep 28 QA): the same
+        // "Kendall Pinot" was labeled add_item once and select_option once; select_option was not
+        // routed, the pick-list gate saw no list (it was two replies back) and the LLM improvised.
+        // Numbered/grouped picks ("2", "Pinot Noir 2") stay with the pick-list/multi-pick resolvers.
+        if (clsUsable && cr.intent === 'select_option' && cr.ref && !/\d/.test(cr.ref) && !/[,;&]/.test(cr.ref)) {
+          console.log('[classify] select_option by name ' + JSON.stringify(cr.ref) + ' -> add_item (resolved against the listed options)');
+          cr.intent = 'add_item';
+        }
+        if (clsUsable && cr.intent === 'place_order' && bsz2 === 0 && (cr.ref || /\b\d+\s*(bottles?|cases?|x)\b/i.test(message))) {
           console.log('[classify] place_order with empty basket + products -> treated as build, not checkout');
           cr.intent = 'custom_list';
         }
-        if (cr.source === 'llm' && THRESH[cr.intent] !== undefined && cr.confidence >= THRESH[cr.intent]) {
+        if (!(clsUsable && THRESH[cr.intent] !== undefined && cr.confidence >= THRESH[cr.intent])) {
+          console.log('[classify->no-route] ' + cr.intent + ' ' + cr.confidence.toFixed(2) + ' [' + cr.source + '] — ' + (!clsUsable ? 'classifier failed' : THRESH[cr.intent] === undefined ? 'not a routed intent' : 'below threshold ' + THRESH[cr.intent]) + ' | ' + JSON.stringify(message).slice(0, 60));
+        }
+        if (clsUsable && THRESH[cr.intent] !== undefined && cr.confidence >= THRESH[cr.intent]) {
           clsIntent = cr.intent; clsRef = cr.ref || ''; var clsQty = cr.qty || 0;
-          console.log('[classify->route]', clsIntent, cr.confidence.toFixed(2), '|', JSON.stringify(message).slice(0, 60));
+          console.log('[classify->route]', clsIntent, cr.confidence.toFixed(2), '[' + cr.source + ']', (clsRef ? 'ref=' + JSON.stringify(clsRef) : ''), '|', JSON.stringify(message).slice(0, 60));
           // Hand the label to rachel.js's executeTool via eventParams (already threaded
           // through; context is not) so the recommendation rewrite fires on it.
           state.eventParams = Object.assign({}, state.eventParams || {}, { classified_intent: clsIntent, classified_ref: clsRef });
         }
-      } catch (e) {}
+      } catch (e) { console.log('[classify->no-route] error:', e.message); }
     }
     const hasOrderIntent = clsIntent === 'place_order' || orderIntentRe.test(message) || orderTriggers.some(t => msgLower.includes(t));
     if ((hasOrderIntent || isDirectOrderRequest) && state.orderStep && state.orderStep !== 'placing' && !state.proposalStep) {
@@ -2041,14 +2064,22 @@ app.post('/chat', async (req, res) => {
     if (clsIntent === 'add_item' && (isMultiItem || multiName)) { console.log('[add-item] multi-item/multi-name — deferring'); clsIntent = null; }
     if (clsIntent === 'add_item' && clsRef && !state.orderStep && !state.proposalStep) {
       try {
-        const rr = await fetch('http://127.0.0.1:8300/mcp', {
-          method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
-          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: clsRef.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim(), limit: 8 }], zip: state.zip || '', email: email } } })
-        });
-        const rt = await rr.text(); const rl = rt.split('\n').find(l => l.startsWith('data:'));
-        const rd = rl ? JSON.parse(rl.replace('data:', '').trim()) : null;
-        const rres = rd ? JSON.parse(rd.result.content[0].text) : null;
-        let prods = (rres && rres.results && rres.results[0] && rres.results[0].products) || [];
+        // A name from Rachel's own recent option list is that product — never re-searched
+        // (multipick.js matchListedByName). Several listed fits -> ask among THOSE only.
+        const listedM = require('./multipick.js').matchListedByName(require('./classify-intent.js').groundedRef(clsRef, message) || clsRef, (lastRepliesBySession[sessionKey] || []).slice(-3));
+        const listed = listedM && listedM.matches.length ? listedM.matches.map(o => ({ name: o.name, price: o.price, salePrice: o.price, sizeStr: o.size })) : null;
+        if (listedM) console.log('[add-item] listed-name ' + JSON.stringify(clsRef) + ': ' + listedM.matches.length + ' of ' + listedM.listSize + ' listed options fit' + (listed ? ' -> ' + JSON.stringify(listed.map(p => p.name)) : ' — searching the catalog'));
+        let prods = listed;
+        if (!prods) {
+          const rr = await fetch('http://127.0.0.1:8300/mcp', {
+            method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: clsRef.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim(), limit: 8 }], zip: state.zip || '', email: email } } })
+          });
+          const rt = await rr.text(); const rl = rt.split('\n').find(l => l.startsWith('data:'));
+          const rd = rl ? JSON.parse(rl.replace('data:', '').trim()) : null;
+          const rres = rd ? JSON.parse(rd.result.content[0].text) : null;
+          prods = (rres && rres.results && rres.results[0] && rres.results[0].products) || [];
+        }
         // Relevance on DESCRIPTIVE requests. Real case: 'Red Wine (French Burgundy) 750ml'
         // matched the generic words and returned Chiantis and Merlots, presented as if they
         // fit. Keep only products whose names carry the request's distinctive terms (with
@@ -2058,7 +2089,7 @@ app.post('/chat', async (req, res) => {
         const cleanRef = clsRef.replace(/[()]/g, ' ').toLowerCase();
         const distinct = cleanRef.split(/[^a-zà-ÿ]+/).filter(w => w.length > 2 && !GENERIC.has(w) && !/^\d+$/.test(w));
         const regionTerms = distinct.filter(w => WINE_SYN[w]);
-        if (regionTerms.length) {
+        if (regionTerms.length && !listed) {
           const syns = [].concat(...regionTerms.map(w => WINE_SYN[w]));
           const nzr = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
           // Search the synonyms themselves: 'french burgundy' matched 'I Love French' and
@@ -2562,8 +2593,8 @@ app.post('/chat', async (req, res) => {
         const { classifyIntent } = require('./classify-intent.js');
         const lastRc = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
         const cr = await classifyIntent(message, { lastKind: 'yes_no', orderStep: 'confirm', basketSize: 0, lastQuestion: lastRc.slice(0, 160) });
-        if (cr.source === 'llm' && cr.confidence >= 0.7) cls = cr.intent;
-        if (cls) console.log('[classify@confirm]', cls, cr.confidence.toFixed(2));
+        if (/^(llm|rule)/.test(cr.source) && cr.confidence >= 0.7) cls = cr.intent;
+        console.log('[classify@confirm]', cls || ('none — ' + cr.intent + ' ' + cr.confidence.toFixed(2)), '[' + cr.source + ']');
       } catch (e) {}
       // CONTACT CHANGE at confirm: "use the phone number at X", "change my email to Y".
       // Real bug: there was NO handler for this — the classifier labeled it change_contact

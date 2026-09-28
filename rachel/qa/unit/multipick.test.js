@@ -84,5 +84,19 @@ console.log('flat list, picks by name');
   eq('no headings: a category word falls back to the shown number', run(text, 'wine 2').r.picks.map(p => p.name), ['Louis Jadot Bourgogne Pinot Noir']);
 }
 
+console.log('add_item by partial name from a list two replies back (the Sep 28 WhatsApp failure)');
+{
+  const { matchListedByName } = require('../../multipick.js');
+  const replies = [fx('reds-list-0928.txt'), 'Which one would you like to add — and how many bottles?'];
+  const names = (ref, rs) => { const m = matchListedByName(ref, rs || replies); return m && m.matches.map(o => o.name); };
+  eq('"Kendall Pinot" -> only #4', names('Kendall Pinot'), ["Kendall-Jackson Vintner's Reserve Pinot Noir"]);
+  eq('price/size carried', (({ size, price }) => ({ size, price }))(matchListedByName('Kendall Pinot', replies).matches[0]), { size: '750 mL', price: 20.89 });
+  eq('"kendall cab" (abbreviation) -> #3', names('kendall cab'), ["Kendall-Jackson Vintner's Reserve Cabernet Sauvignon"]);
+  eq('"Kendall" alone -> both KJ lines, ask among those', names('Kendall'), ["Kendall-Jackson Vintner's Reserve Cabernet Sauvignon", "Kendall-Jackson Vintner's Reserve Pinot Noir"]);
+  eq('not listed -> no matches (catalog search)', names('Meiomi Pinot'), []);
+  eq('no list in recent replies -> null', matchListedByName('Kendall Pinot', ['Which one?', 'Sure.']), null);
+  eq('newest list wins over an older one', names('Pinot', [fx('reds-list-0928.txt'), 'Options:\n1. Meiomi Pinot Noir — 750 mL — $22.99\n2. Decoy Merlot — 750 mL — $24.19']), ['Meiomi Pinot Noir']);
+}
+
 console.log(failed ? '\nmultipick: ' + failed + ' FAILED' : '\nmultipick: all passed');
 process.exit(failed ? 1 : 0);

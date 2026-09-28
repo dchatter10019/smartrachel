@@ -112,4 +112,25 @@ function replacementTarget(pick, items) {
   return pv.size ? (others.find(it => { const iv = varOf(it.name); return [...pv].some(v => iv.has(v)); }) || null) : null;
 }
 
-module.exports = { parseOptionGroups, splitSelection, resolvePicks, replacementTarget, normP, wordsOf };
+// A product named by a few of its words ("Kendall Pinot") from the option list Rachel sent in
+// one of her last few replies. Real bug (Sep 28, WhatsApp): Rachel listed 8 reds, then asked
+// "Which one would you like to add?" (no list in THAT reply); the customer said "Kendall Pinot"
+// — only #4 fits — but add_item searched the catalog and asked again with two other Pinots.
+// Every word of the ref must match a word of the option (exact, or a prefix of 3+ letters:
+// "cab" -> "cabernet"). Only the NEWEST list counts (older lists are stale). Returns null if no
+// recent reply has a list; else { matches } — one = that product, several = ask among them,
+// none = the customer named something not listed.
+const REF_FILLER = new Set(['the', 'please', 'bottle', 'bottles', 'wine', 'one', 'add', 'cart', 'that', 'this', 'with', 'and']);
+function matchListedByName(ref, replies) {
+  const rw = wordsOf(ref).filter(w => !REF_FILLER.has(w) && !/^\d+$/.test(w));
+  if (!rw.length) return null;
+  for (const text of (replies || []).slice().reverse()) {
+    const opts = parseOptionGroups(text).flatMap(g => g.options.map(o => Object.assign({ heading: g.heading }, o)));
+    if (opts.length < 2) continue;
+    const matches = opts.filter(o => { const ow = wordsOf(o.name); return rw.every(w => ow.some(x => x === w || (w.length >= 3 && x.startsWith(w)))); });
+    return { matches, listSize: opts.length };
+  }
+  return null;
+}
+
+module.exports = { parseOptionGroups, splitSelection, resolvePicks, replacementTarget, matchListedByName, normP, wordsOf };
