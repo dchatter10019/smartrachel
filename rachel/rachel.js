@@ -202,6 +202,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         // $21 for a ~$85 Paul Hobbs single-vineyard while Far Niente / Flowers were in stock.
         {
           const nf = sessionState && sessionState.lastNotFound;
+          const normNF = x => String(x || '').toLowerCase().replace(/\s*[-—]?\s*\d+(\.\d+)?\s*(ml|l)\b.*$/i, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
           const fresh = nf && Array.isArray(nf.items) && nf.items.length && (Date.now() - (nf.at || 0)) < 60 * 60 * 1000;
           const ALT_RE = /\balt\w{0,3}nativ|\bsimilar\b|\bsubstitut|\bcomparable\b|\bequivalent|\bsomething (?:else )?like\b|\bclose to\b|\binstead\b|\blike (?:those|these|them|that|it)\b|\bnot even close\b|\bcloser\b/i;
           // A reprice of wines already in the basket ("find alternative wines around $20") is not an
@@ -226,6 +227,12 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           if (saInput.intent === 'alternatives' && !(Array.isArray(saInput.originals) && saInput.originals.length) && fresh) {
             saInput.originals = nf.items;
             console.log('[ShoppingAgent] alternatives: originals filled from the last not-found search: ' + nf.items.map(x => x.name).join(' | '));
+          } else if (fresh && saInput.intent === 'product_query' && ALT_RE.test(String(customerMessage || '')) && (saInput.queries || []).some(q => !nf.items.some(x => normNF(x.name).includes(normNF(q.name || q.term || '').split(' ').slice(0, 2).join(' '))))) {
+            // A search naming OTHER products is not a request for alternatives to the not-found ones.
+            // Real bug (Sep 29, Slack): "Instead of Bacardi ..." + a not-found "high end whiskey"
+            // rerouted Rachel's Macallan / Johnnie Walker / Woodford searches to alternatives for
+            // "high end whiskey" (0 picks, 4 times) and she told DC search was broken.
+            console.log('[ShoppingAgent] ALTERNATIVES ROUTING skipped — product_query names other products: ' + saInput.queries.map(q => q.name || q.term).join(' | '));
           } else if (fresh && ['product_query', 'recommendation'].includes(saInput.intent) && ALT_RE.test(String(customerMessage || ''))) {
             console.log('[ShoppingAgent] ALTERNATIVES ROUTING: ' + saInput.intent + ' -> alternatives for ' + nf.items.map(x => x.name).join(' | '));
             ['queries', 'occasion', 'category', 'budget_per_bottle', 'min_price', 'max_price'].forEach(k => delete saInput[k]);
@@ -429,7 +436,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         // unrelated results are dropped (never presented as the product) and the original is kept on
         // the session, so "show me alternatives" can anchor to it (ALTERNATIVES ROUTING above).
         if (result.success && saInput.intent === 'product_query' && Array.isArray(result.results)) {
-          const GENERICW = /^(the|and|of|de|du|la|le|wine|wines|red|white|rose|rosé|sparkling|vineyard|vineyards|valley|estate|reserve|bottle|bottles|ml|l|oz|pack|case|chardonnay|cabernet|sauvignon|blanc|pinot|noir|grigio|gris|merlot|malbec|zinfandel|syrah|shiraz|riesling|champagne|prosecco|brut|vodka|gin|rum|tequila|whiskey|whisky|bourbon|scotch|beer|lager|ipa|seltzer|blanco|reposado|anejo|añejo)$/i;
+          const GENERICW = /^(the|and|of|de|du|la|le|wine|wines|red|white|rose|rosé|sparkling|vineyard|vineyards|valley|estate|reserve|bottle|bottles|ml|l|oz|pack|case|chardonnay|cabernet|sauvignon|blanc|pinot|noir|grigio|gris|merlot|malbec|zinfandel|syrah|shiraz|riesling|champagne|prosecco|brut|vodka|gin|rum|tequila|whiskey|whisky|bourbon|scotch|beer|lager|ipa|seltzer|blanco|reposado|anejo|añejo|high|higher|end|top|shelf|premium|luxury|upscale|fancy|nice|good|best|great|cheap|budget|affordable|mid|quality|expensive|smooth|popular|regular|standard|classic|something|some|any)$/i;   // descriptors are not a producer: "high end whiskey" was flagged not-found (Sep 29) and hijacked every later search
           const normW = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9' ]+/g, ' ');
           const notFound = [], checked = [];
           for (const r of result.results) {

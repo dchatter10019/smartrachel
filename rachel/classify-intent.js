@@ -65,6 +65,18 @@ function groundedRef(ref, message) {
   return w(ref).filter(t => mw.some(x => x === t || (x.length >= 3 && t.startsWith(x)) || (t.length >= 3 && x.startsWith(t)))).join(' ');
 }
 
+// The first JSON object in a model reply. Real bug (Sep 29): Sonnet and Haiku both followed the
+// JSON with a note ("Unexpected non-whitespace character after JSON"), the classifier failed and
+// the turn went unrouted. Tries each closing brace from the first '{' until one parses.
+function firstJson(txt) {
+  const s = String(txt || ''), a = s.indexOf('{');
+  if (a < 0) return JSON.parse(s);
+  for (let b = s.indexOf('}', a); b >= 0; b = s.indexOf('}', b + 1)) {
+    try { const o = JSON.parse(s.slice(a, b + 1)); if (b + 1 < s.trim().length) console.log('[classify] ignored text after the JSON: ' + JSON.stringify(s.slice(b + 1, b + 81))); return o; } catch (e) {}
+  }
+  return JSON.parse(s);
+}
+
 async function callClassifier(model, timeoutMs, user, key) {
   const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -76,7 +88,7 @@ async function callClassifier(model, timeoutMs, user, key) {
     const d = await r.json();
     if (d.error) throw new Error(d.error.type || 'api_error');
     const txt = (d.content || []).map(c => c.text || '').join('').replace(/```json|```/g, '').trim();
-    return JSON.parse(txt);
+    return firstJson(txt);
   } finally { clearTimeout(t); }
 }
 
@@ -96,4 +108,4 @@ async function classifyIntent(message, ctx = {}) {
   }
   return { intent: 'other', ref: '', qty: 0, confidence: 0, source: 'error:' + errs.join(',') };
 }
-module.exports = { classifyIntent, ruleIntent, groundedRef, INTENTS };
+module.exports = { firstJson, classifyIntent, ruleIntent, groundedRef, INTENTS };

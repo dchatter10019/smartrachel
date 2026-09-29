@@ -1,0 +1,22 @@
+name: swap-to-category-and-brands
+tags: [ux]
+# Real bug (Sep 29, Slack, DC, zip 33409): "Instead of Bacardi – please replace with a higher end
+# whiskey / ... Don Julio and Casa Migos as their two options" -> Rachel said "I'm running into a
+# search issue" and offered to email support. "high end whiskey" was flagged NOT-FOUND as if "high
+# end" were a producer; "instead" then rerouted every later search (Macallan, Johnnie Walker,
+# Woodford) to alternatives for "high end whiskey" (0 picks x4). The classifier also failed (JSON +
+# trailing text) and Don Julio came back as Primavera / Rosado / Alma Miel only (limit 3), no Blanco.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "1800 Palm Beach Lakes Blvd, West Palm Beach, FL 33409"
+    expect: {contains: ["33409"]}
+  - send: "I need 5 Bacardi Superior White Rum 750ml and 4 Patron Silver 750ml"
+    expect: {contains: ["Bacardi", "Patron"]}
+  - send: "• Instead of Bacardi – please replace with a higher end whiskey\n• For tequila, they would like Don Julio and Casa Migos as their two options."
+    expect:
+      matches: "(?i)don julio (blanco|reposado)"
+      contains: ["Casamigos"]
+      not_contains: ["search issue", "trouble pulling", "bevvi-support"]
+      log_contains: ["[tool] ShoppingAgent"]
+      log_not_contains: ["[not-found] \"high end", "ALTERNATIVES ROUTING: product_query", "classifier failed"]

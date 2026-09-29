@@ -289,6 +289,8 @@ function scoreBuyer(profile) {
   return { tier: 'new', discount: 0 };
 }
 
+const { coreFirst, spaceSize } = require('./core-first.js');
+
 async function searchProducts(location, client, query, limit, minPrice, maxPrice) {
   try {
     let url;
@@ -356,7 +358,7 @@ function expandBrandNicknames(term) {
 }
 
 async function searchWithFallbacks(location, client, name, limit, minPrice, maxPrice) {
-  name = expandBrandNicknames(name);
+  name = spaceSize(expandBrandNicknames(name));
   let products = await searchProducts(location, client, name, limit || 10, minPrice, maxPrice);
   if (products.length) return products;
   // Try stripping size/pack wording BEFORE the more aggressive word-count fallbacks
@@ -444,7 +446,10 @@ async function executeTool(name, input) {
       // Support both {name} and {term/label} formats
       const searchName = q.name || q.term || q.label || '';
       const fallbacks = q.fallback_terms || [];
-      let raw = await searchWithFallbacks(loc.kitchen, loc.client, searchName, q.limit || 5);
+      // Fetch at least 12 rows: Bevvi lists a brand's specialty bottles first, so with limit 3
+      // "Don Julio Tequila 750 mL" (zip 33409, Sep 29) returned Primavera / Rosado / Alma Miel and
+      // never the Blanco or Reposado the customer meant ("regular Don Julio blanco").
+      let raw = await searchWithFallbacks(loc.kitchen, loc.client, searchName, Math.max(q.limit || 5, 12));
       // Try fallback terms if main search fails
       for (var fi = 0; fi < fallbacks.length && raw.length === 0; fi++) {
         raw = await searchWithFallbacks(loc.kitchen, loc.client, fallbacks[fi], q.limit || 5);
@@ -464,7 +469,10 @@ async function executeTool(name, input) {
           // 3) Price as primary if significant difference
           return priceDiff;
         });
-      const filtered = sorted.slice(0, q.limit || 3).map(formatProduct);
+      // A brand's core expressions (the row is the query plus at most Blanco/Silver/Reposado/...)
+      // come before its specialty bottles; price order is kept within each group.
+      const coreRank = coreFirst(searchName, sorted);
+      const filtered = coreRank.slice(0, q.limit || 3).map(formatProduct);
       results.push({ query: q.name, found: filtered.length > 0, products: filtered });
     }
     // Save first product as basket for proposal/order reuse — but ONLY if there isn't

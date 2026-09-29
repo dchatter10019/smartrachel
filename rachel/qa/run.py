@@ -6,8 +6,15 @@ no real orders or email), checks replies, snapshots them, diffs vs the previous 
   ./qa/run.py --only order    run scenarios whose name contains 'order'
   ./qa/run.py --smoke         run only scenarios tagged smoke (fast pre-deploy set)
   ./qa/run.py -v              print every reply
+  ./qa/run.py -j 6            run up to 6 http scenarios at once (default 6; -j 1 = one at a time)
+
+Parallel runs: each scenario has its own session and its own qa-<name>@getbevvi.com customer
+(Rachel keys the package cache and saved basket by email, so a shared customer would cross-talk).
+A turn with log_contains / log_not_contains runs ALONE (exclusive lock) so the log slice it
+checks holds only its own lines. Channel transports (slack/email/whatsapp) always run one at a time.
 """
-import os, sys, json, time, re, glob, argparse, difflib, base64
+import os, sys, json, time, re, glob, argparse, difflib, base64, threading
+from concurrent.futures import ThreadPoolExecutor
 import yaml, httpx
 HERE = os.path.dirname(os.path.abspath(__file__))
 RACHEL = os.environ.get("RACHEL_URL", "http://127.0.0.1:3500/chat")
@@ -15,6 +22,34 @@ QA_EMAIL = os.environ.get("QA_EMAIL", "qa-rachel@getbevvi.com")
 for line in open("/etc/rachel.env"):
     if "=" in line and not line.startswith("#"):
         k, v = line.strip().split("=", 1); os.environ.setdefault(k, v)
+
+_out = threading.local()
+def say(*a):
+    """print, or buffer when running inside a parallel scenario (flushed whole when it ends)."""
+    buf = getattr(_out, "buf", None)
+    if buf is None: print(*a, flush=True)
+    else: buf.append(" ".join(str(x) for x in a))
+
+class TurnLock:
+    """Readers-writer lock over turns: ordinary turns share it; a turn that asserts on the logs
+    takes it exclusively (waits for in-flight turns, blocks new ones), writer-preferring."""
+    def __init__(self):
+        self.c = threading.Condition(); self.active = 0; self.excl = False; self.waiting = 0
+    def acquire(self, exclusive):
+        with self.c:
+            if exclusive:
+                self.waiting += 1
+                while self.excl or self.active: self.c.wait()
+                self.waiting -= 1; self.excl = True
+            else:
+                while self.excl or self.waiting: self.c.wait()
+                self.active += 1
+    def release(self, exclusive):
+        with self.c:
+            if exclusive: self.excl = False
+            else: self.active -= 1
+            self.c.notify_all()
+LOCK = TurnLock()
 
 def judge(reply, criterion):
     """LLM yes/no on a free-form reply. Cheap model; strict output."""
@@ -24,10 +59,10 @@ def judge(reply, criterion):
         r = c.messages.create(model="claude-haiku-4-5-20251001", max_tokens=60, messages=[{"role": "user", "content":
             f"Reply from a beverage-ordering assistant:\n---\n{reply[:3000]}\n---\nCriterion: {criterion}\nDoes the reply satisfy the criterion? First word YES or NO, then one short reason."}])
         verdict = r.content[0].text.strip(); ok = verdict.upper().startswith("YES")
-        if not ok: print("       judge:", verdict[:140])
+        if not ok: say("       judge:", verdict[:140])
         return ok
     except Exception as e:
-        print("   judge error:", e); return False
+        say("   judge error:", e); return False
 
 class SlackTransport:
     """Real Slack: DM Rachel as the QA user (SLACK_QA_USER_TOKEN), wait for her reply."""
@@ -239,30 +274,36 @@ def load_image(path):
     p = os.path.join(HERE, "fixtures", path); mt = "application/pdf" if p.lower().endswith(".pdf") else ("image/png" if p.lower().endswith(".png") else "image/jpeg")
     return [{"media_type": mt, "data": base64.b64encode(open(p, "rb").read()).decode()}]
 
-def run_scenario(sc, verbose):
+def run_scenario(sc, verbose, parallel=False):
     name = sc["name"]; fmt = sc.get("format", "slack"); transport = sc.get("transport", "http")
     slack = {"slack": SlackTransport, "email": lambda: EmailTransport(name), "whatsapp": WhatsAppTransport}.get(transport, lambda: None)()
-    email = sc.get("email") or (f"qa-{name}-{int(time.time())}@getbevvi.com" if sc.get("fresh") else QA_EMAIL)
+    email = sc.get("email") or (f"qa-{name}-{int(time.time())}@getbevvi.com" if sc.get("fresh") else f"qa-{name}@getbevvi.com" if parallel else QA_EMAIL)
     session = f"qa-{name}-{int(time.time())}"
-    print(f"\n▶ {name}  [{transport if transport != 'http' else fmt}]")
+    say(f"\n▶ {name}  [{transport if transport != 'http' else fmt}]")
     replies = []; failures = []; vars_ = {}
     for i, turn in enumerate(sc["turns"], 1):
         turn = _fill(turn, vars_)
         text = turn.get("send", ""); images = load_image(turn["image"]) if turn.get("image") else None
-        pos = _log_size()
+        excl = bool(set(turn.get("expect", {}) or {}) & {"log_contains", "log_not_contains"})
+        LOCK.acquire(excl)
         try:
-            reply, secs = slack.send(text, images) if slack else send(session, text, fmt, email, images, turn.get("idle", False))
-        except Exception as e:
-            reply, secs = f"<<ERROR {e}>>", 0
+            pos = _log_size()
+            try:
+                reply, secs = slack.send(text, images) if slack else send(session, text, fmt, email, images, turn.get("idle", False))
+            except Exception as e:
+                reply, secs = f"<<ERROR {e}>>", 0
+            log_text = _log_since(pos) if excl else ""
+        finally:
+            LOCK.release(excl)
         replies.append({"turn": i, "send": text, "reply": reply, "secs": secs})
-        fails = check(reply, turn.get("expect", {}), _log_since(pos))
+        fails = check(reply, turn.get("expect", {}), log_text)
         if turn.get("capture") == "listed_partial":
             got = listed_partial(reply)
-            if got: vars_.update(got); print(f"       captured pick={got['pick']!r} (listed as {got['pick_full']!r})")
+            if got: vars_.update(got); say(f"       captured pick={got['pick']!r} (listed as {got['pick_full']!r})")
             else: fails.append("capture: no listed option with a unique partial name")
         mark = "✓" if not fails else "✗"
-        print(f"  {mark} {i:>2}. {text[:48]!r:52} {secs:>5}s" + ("" if not fails else "  ← " + "; ".join(fails)))
-        if verbose or fails: print("       " + reply[:600].replace("\n", "\n       "))
+        say(f"  {mark} {i:>2}. {text[:48]!r:52} {secs:>5}s" + ("" if not fails else "  ← " + "; ".join(fails)))
+        if verbose or fails: say("       " + reply[:600].replace("\n", "\n       "))
         if fails:
             failures.append({"turn": i, "send": text, "fails": fails, "reply": reply})
             if turn.get("stop_on_fail", sc.get("stop_on_fail", False)): break
@@ -280,20 +321,43 @@ def diff_prev(name, replies):
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--only", default=""); ap.add_argument("--smoke", action="store_true"); ap.add_argument("-v", action="store_true")
+    ap.add_argument("-j", type=int, default=int(os.environ.get("QA_JOBS", "6")))
     a = ap.parse_args()
     files = sorted(glob.glob(os.path.join(HERE, "scenarios", "*.yaml")))
     scs = [yaml.safe_load(open(f)) for f in files]
     scs = [s for s in scs if (a.only.lower() in s["name"].lower()) and (not a.smoke or "smoke" in s.get("tags", []))]
     stamp = time.strftime("%Y%m%d-%H%M%S"); outdir = os.path.join(HERE, "runs", stamp); os.makedirs(outdir, exist_ok=True)
-    results = []; t0 = time.time()
-    for sc in scs:
-        res = run_scenario(sc, a.v); results.append(res)
+    results = []; t0 = time.time(); out_lock = threading.Lock()
+    def one(sc, parallel):
+        _out.buf = [] if parallel else None
+        try:
+            res = run_scenario(sc, a.v, parallel)
+        except Exception as e:
+            res = {"name": sc["name"], "format": sc.get("format", "slack"), "replies": [], "failures": [{"turn": 0, "send": "", "fails": [f"runner error: {e}"], "reply": ""}]}
         json.dump(res, open(os.path.join(outdir, f"{res['name']}.json"), "w"), indent=1)
         d = diff_prev(res["name"], res["replies"])
         if d:
-            print(f"  ~ {len(d)} reply change(s) vs previous run:")
+            say(f"  ~ {len(d)} reply change(s) vs previous run:")
             for turn, sent, lines in d[:4]:
-                print(f"     turn {turn} {sent[:40]!r}"); [print("       " + l[:120]) for l in lines]
+                say(f"     turn {turn} {sent[:40]!r}"); [say("       " + l[:120]) for l in lines]
+        buf, _out.buf = _out.buf, None
+        with out_lock:
+            if buf: print("\n".join(buf), flush=True)
+            results.append(res)
+    http = [s for s in scs if s.get("transport", "http") == "http"]
+    chan = [s for s in scs if s.get("transport", "http") != "http"]
+    if a.j > 1 and len(http) > 1:
+        # longest scenarios first so the tail of the run isn't one slow scenario alone
+        prev = {}
+        for f in sorted(glob.glob(os.path.join(HERE, "runs", "*", "*.json")))[-400:]:
+            try: r = json.load(open(f)); prev[r["name"]] = sum(t["secs"] for t in r.get("replies", []))
+            except Exception: pass
+        http.sort(key=lambda s: -prev.get(s["name"], 30))
+        with ThreadPoolExecutor(max_workers=a.j) as ex: list(ex.map(lambda s: one(s, True), http))
+    else:
+        for sc in http: one(sc, False)
+    for sc in chan: one(sc, False)
+    order = {s["name"]: i for i, s in enumerate(scs)}; results.sort(key=lambda r: order.get(r["name"], 0))
     passed = [r for r in results if not r["failures"]]; failed = [r for r in results if r["failures"]]
     print(f"\n{'='*64}\n{len(passed)}/{len(results)} scenarios passed in {round(time.time()-t0)}s  → {outdir}")
     for r in failed: print(f"  ✗ {r['name']}: " + "; ".join(f"turn {f['turn']} ({', '.join(f['fails'])})" for f in r["failures"]))
