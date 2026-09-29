@@ -16,7 +16,14 @@ turns:
       contains: ["full name", "email", "phone number", "delivery date and time", "in one email"]
       not_contains: ["Payment link:"]
       log_contains: ["[email-order] command", "MISSING (asked in one reply)"]
-  - send: "Name: Jane Roe\r\nEmail: jane.roe@example.com\r\nPhone: 617-555-0142\r\nPlease deliver next Tuesday at 2pm.\r\n\r\nOn Tue, Sep 29, 2026 at 3:00 PM Rachel <rachelai@getbevvi.com> wrote:\r\n> I'll create the order and send the payment link as soon as I have"
+  # A date without a time (Sep 29, Gen II: "note the delivery date is Monday, October 5th" was ignored): kept,
+  # and only the time is asked, with that day's real windows.
+  - send: "Name: Jane Roe\r\nEmail: jane.roe@example.com\r\nPhone: 617-555-0142\r\nThe delivery date is next Tuesday. Please also send qa-link-copy@getbevvi.com the payment link.\r\n\r\nOn Tue, Sep 29, 2026 at 3:00 PM Rachel <rachelai@getbevvi.com> wrote:\r\n> I'll create the order and send the payment link as soon as I have"
+    expect:
+      contains: ["the delivery time on", "Delivery windows on", "delivery date:"]
+      not_contains: ["the delivery date and time", "Payment link:"]
+      log_contains: ["date only \"next Tuesday\" (time asked)", "link also to: qa-link-copy@getbevvi.com"]
+  - send: "2pm please"
     expect:
       contains: ["Your order is created", "QA dry run", "Payment link: https://corporate.getbevvi.com/direct-checkout?token=QA_DRY_RUN", "Jane Roe", "(617) 555-0142", "Tip (5% — standard"]
       log_contains: ["[email-order] details reply", "complete -> placing", "[QA] place_order dry run"]

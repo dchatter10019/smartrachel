@@ -51,5 +51,17 @@ const w = EO.extract('Name: Natalia Diaz\nPhone: 781-555-0100\nEmail: natalia@ge
 eq('typed fields', [w.name, w.email, w.phone, w.when], ['Natalia Diaz', 'natalia@gen2.example', '(781) 555-0100', 'Friday Oct 2 at 11am']);
 eq('a date with no hour is not a delivery time', EO.findWhen(['deliver Thursday please'], now), '');
 
+console.log("Sean's real follow-up (Sep 29): a date without a time, and who gets the link");
+const seanFU = "Rachel, \n\nCan you please send dipanjan@getbevvi.com a payment link to process this order? \n\nAlso, note the delivery date is Monday, October 5th. \n\nThanks";
+const f = EO.extract(seanFU, sean, now);
+eq('the command is seen', EO.isOrderCommand(seanFU), true);
+eq('date kept, no time', [f.when, f.date, f.time], ['', 'Monday, October 5th', '']);
+eq('link recipient', f.link_to, ['dipanjan@getbevvi.com']);
+eq('the ask names the date and asks only for the time', EO.missing({ name: 'Natalia Diaz', email: 'n@x.com', phone: '1', delivery_date: 'Monday, October 5th', delivery_date_label: 'Mon, Oct 5' }), ['the delivery time on Mon, Oct 5']);
+eq('"earlier today" is not a delivery date', EO.timing(['the proposal curated for Gen II Fund earlier today?'], now).date, '');
+eq('a time alone', EO.timing(['2pm works'], now), { when: '', date: '', time: '2pm' });
+eq('"send the payment link to a@b.com"', EO.linkRecipients('Please send the payment link to ap@gen2.example and me.'), ['ap@gen2.example']);
+eq('an address not about the link is not a recipient', EO.linkRecipients('Invoice questions go to ap@gen2.example.'), []);
+
 console.log(failed ? '\nemail-order: ' + failed + ' FAILED' : '\nemail-order: all passed');
 if (failed) process.exit(1);

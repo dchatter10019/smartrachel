@@ -97,12 +97,13 @@ def get_email(service, msg_id):
             'message_id': headers.get('message-id', ''), 'references': headers.get('references', ''),
             'to': headers.get('to', ''), 'cc': headers.get('cc', '')}
 
+LAST_EXTRA_CC = []
 def reply_all_cc(email, sender_email):
     # Reply-all (DC, Sep 29): everyone on the email's To and Cc gets Rachel's reply, except Rachel and the
     # sender (who is the To). Addresses parsed properly ("Name, Jr." <a@b>, lists), lowercased, deduped.
     from email.utils import getaddresses
     seen, out = {RACHEL_EMAIL.lower(), (sender_email or '').lower()}, []
-    for _name, addr in getaddresses([email.get('to', ''), email.get('cc', '')]):
+    for _name, addr in getaddresses([email.get('to', ''), email.get('cc', '')] + list(LAST_EXTRA_CC)):
         a = (addr or '').strip().lower()
         if '@' in a and a not in seen:
             seen.add(a); out.append(a)
@@ -125,7 +126,12 @@ def chat_with_rachel(message, session_id, sender_email, sender_name='', subject=
             },
             'request_id': request_id           # the Gmail message id: a retry gets the SAME reply, never a second run
         }, timeout=CHAT_TIMEOUT)
-        return r.json().get('text', '') or None   # an empty reply is a failure, never sent
+        j = r.json()
+        # Addresses the email asked to receive the payment link ("send dipanjan@... a payment link") — added to
+        # this reply's Cc by reply_all_cc (Sep 29: they were only copied if they already were).
+        global LAST_EXTRA_CC
+        LAST_EXTRA_CC = [a for a in (j.get('email_cc') or []) if isinstance(a, str) and '@' in a]
+        return j.get('text', '') or None   # an empty reply is a failure, never sent
     except Exception as e:
         log.error(f'Rachel chat error: {e}')
         return None
@@ -202,6 +208,8 @@ def linked_session(sender_email, subject, body):
         return None
 
 def process(service, email):
+    global LAST_EXTRA_CC
+    LAST_EXTRA_CC = []
     log.info(f"Processing: {email['from']} | {email['subject']}" + ('' if email.get('unread', True) else ' (already marked read in Gmail — picked up anyway)'))
     sender = email['from']
     sender_email = sender.split('<')[1].strip('>') if '<' in sender else sender.strip()

@@ -840,6 +840,20 @@ function renderOrderSummary(state, email, format, res) {
 // because validation was inline in the details block and unreachable from the confirm
 // handler. Returns a res.json(...) response when it must ask (unparseable / unavailable),
 // or null on success with the validated window stored on state.orderData.
+// The store's delivery windows on a date phrase ("Monday, October 5th"): { label, options, none }.
+async function deliveryWindowsOn(state, datePhrase) {
+  const r = chrono.parse(String(datePhrase || ''), new Date(), { forwardDate: true })[0];
+  if (!r) return { label: '', options: [], none: false };
+  const d = r.start.date();
+  const dateStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  let label = dateStr; try { label = new Date(dateStr + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }); } catch (e) {}
+  let est = ''; try { const it = JSON.parse(state.lastLineItems || '[]'); est = (it.find(li => li.establishmentId) || {}).establishmentId || ''; } catch (e) {}
+  if (!est) return { label, options: [], none: false };
+  const avail = await checkDeliveryAvailability(est, dateStr);
+  if (!avail || !Array.isArray(avail.deliveryTimes)) return { label, options: [], none: false };
+  const windowZone = WINDOWS_ARE_STORE_LOCAL ? zoneForAddress(state.address) : 'America/New_York';
+  return { label, options: avail.deliveryTimes.map(w => fmtWindowInZone(w.displayTime, dateStr, windowZone, null)), none: avail.deliveryTimes.length === 0 };
+}
 async function validateDeliveryTime(state, message, email, format, res) {
   // Parse as WALL-CLOCK. If the customer typed a zone ("11 am PST"), record it but
   // strip it before chrono sees it — otherwise chrono converts to UTC and the bare
@@ -2085,29 +2099,40 @@ app.post('/chat', async (req, res) => {
       let oItems = []; try { oItems = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
       const cmd = EO.isOrderCommand(message), poE = state.placedOrder;
       const x = EO.extract(message, { name: context && context.user_name, email }, new Date());
-      const provided = !!(x.name || x.phone || x.when || x.instructions || x.tip);
+      const provided = !!(x.name || x.phone || x.when || x.date || x.time || x.instructions || x.tip);   // a bare "2pm" answers the time question
       if (!oItems.length && cmd) {
         const t = poE && poE.payment_url
           ? 'This order was already created — order #' + poE.order_id + '. Payment link: ' + poE.payment_url + '\n\nIf something needs to change before paying, reply with the change and I\'ll create an updated order.'
           : 'There\'s no quote on this thread to order yet — send the list of items (and the delivery address) and I\'ll put it together.';
         console.log('[email-order] command with an empty basket — ' + (poE && poE.payment_url ? 'already placed ' + poE.order_id + ', link re-sent' : 'nothing to order, asked for the list'));
-        return res.json({ text: t, response: t });
+        return res.json({ text: t, response: t, email_cc: x.link_to || [] });
       }
       if (oItems.length && (cmd || provided)) {
         const od = Object.assign({}, state.emailOrder || {});
         for (const k of ['name', 'email', 'phone', 'instructions']) if (x[k]) od[k] = x[k];
         if (x.tip) od.tip = x.tip;
         if (x.source) od.source = x.source;
+        if (x.link_to && x.link_to.length) od.link_to = [...new Set((od.link_to || []).concat(x.link_to))];
         let problem = '';
-        if (x.when) {
+        // A date alone is kept; a time alone joins the kept date (Sep 29, Gen II: "the delivery date is Monday,
+        // October 5th" was ignored and the date+time asked for again).
+        if (!x.when && x.date) { od.delivery_date = x.date; od.delivery_ok = false; }
+        const whenPhrase = x.when || (x.time && od.delivery_date ? od.delivery_date + ' at ' + x.time : '');
+        if (!whenPhrase && od.delivery_date && !od.delivery_ok) {
+          const w = await deliveryWindowsOn(state, od.delivery_date);
+          od.delivery_date_label = w.label || od.delivery_date;
+          if (w.none) { problem = "There's no delivery availability on " + od.delivery_date_label + ' — which other date works?'; od.delivery_date = ''; od.delivery_date_label = ''; }
+          else if (w.options.length) problem = 'Delivery windows on ' + od.delivery_date_label + ': ' + w.options.join(', ') + '. Which one works?';
+        }
+        if (whenPhrase) {
           // The store's real delivery windows (validateDeliveryTime), captured instead of sent: a problem goes
           // into the ONE reply with the other questions.
           state.orderData = {}; let askedT = null;
-          await validateDeliveryTime(state, x.when, email, format, { json: pl => { askedT = pl && (pl.text || pl.response); return null; } });
+          await validateDeliveryTime(state, whenPhrase, email, format, { json: pl => { askedT = pl && (pl.text || pl.response); return null; } });
           if (askedT) { problem = askedT; od.delivery_ok = false; }
           else {
             od.delivery_ok = true; od.delivery_iso = state.orderData.delivery_datetime_iso || ''; od.delivery_window = state.orderData.delivery_datetime || x.when;
-            od.delivery_label = [state.orderData.delivery_date_label, state.orderData.delivery_window_display].filter(Boolean).join(', ') || x.when;
+            od.delivery_label = [state.orderData.delivery_date_label, state.orderData.delivery_window_display].filter(Boolean).join(', ') || whenPhrase;
           }
           state.orderData = null;
         }
@@ -2124,11 +2149,11 @@ app.post('/chat', async (req, res) => {
           miss.push('which product you mean for ' + unlinked.length + ' item(s) I can\'t match exactly in this store\'s catalog');
           problem = (problem ? problem + '\n\n' : '') + unlinked.map(u => '• ' + u.name + ' — ' + u.reason + (u.options.length ? '. Closest: ' + u.options.join('; ') : '')).join('\n');
         }
-        console.log('[email-order] ' + (cmd ? 'command' : 'details reply') + ' | contact: ' + JSON.stringify({ name: od.name, email: od.email, phone: od.phone, source: od.source }) + ' | delivery: ' + (od.delivery_ok ? od.delivery_label : (x.when ? 'REJECTED "' + x.when + '"' : 'none')) + ' | tip: ' + JSON.stringify(od.tip || 'default 5%') + (miss.length ? ' | MISSING (asked in one reply): ' + miss.join('; ') : ' | complete -> placing'));
+        console.log('[email-order] ' + (cmd ? 'command' : 'details reply') + ' | contact: ' + JSON.stringify({ name: od.name, email: od.email, phone: od.phone, source: od.source }) + ' | delivery: ' + (od.delivery_ok ? od.delivery_label : (whenPhrase ? 'REJECTED "' + whenPhrase + '"' : od.delivery_date ? 'date only "' + od.delivery_date + '" (time asked)' : 'none')) + (od.link_to ? ' | link also to: ' + od.link_to.join(', ') : '') + ' | tip: ' + JSON.stringify(od.tip || 'default 5%') + (miss.length ? ' | MISSING (asked in one reply): ' + miss.join('; ') : ' | complete -> placing'));
         if (miss.length) {
           state.emailOrder = od; saveFlowState();
           const t = (preText ? preText + '\n\n' : '') + EO.askText(miss, od, problem);
-          return res.json({ text: t, response: t });
+          return res.json({ text: t, response: t, email_cc: od.link_to || [] });
         }
         const pt = QE.total(oItems);
         const tipAmt = od.tip ? (od.tip.amount != null ? od.tip.amount : Math.round(pt * od.tip.pct) / 100) : Math.round(pt * 5) / 100;
@@ -2148,7 +2173,7 @@ app.post('/chat', async (req, res) => {
           state.emailOrder = od; saveFlowState();
           const why = r && r.unresolved_items ? 'these items aren\'t linked to a catalog product yet: ' + r.unresolved_items.join(', ') : (r && r.error) || 'no response from the order service';
           const t = (preText ? preText + '\n\n' : '') + 'I couldn\'t create the order — ' + why + '. A member of the Bevvi team will follow up; your details are saved, so replying "create the order" will retry.';
-          return res.json({ text: t, response: t });
+          return res.json({ text: t, response: t, email_cc: od.link_to || [] });
         }
         recordPlacedOrder(sessionKey, email, format, r, state.lastLineItems, {});   // {}: a forwarded customer is not saved as the sender's own contact
         state.emailOrder = null; saveFlowState();
@@ -2159,8 +2184,8 @@ app.post('/chat', async (req, res) => {
           '\nDelivery: ' + state.address + ' — ' + od.delivery_label + (od.instructions ? '\nInstructions: ' + od.instructions : '') +
           '\n\n' + oItems.length + ' item line(s). Product total ' + m2(pt) + '; estimated tax ' + m2(tax) + '; service charge (10%) ' + m2(svc) + '; ' + tipLabel + ' ' + m2(tipAmt) + '; estimated delivery ' + m2(25) + '. Estimated total ' + m2(grand) + '.' +
           '\n\nThe order is confirmed once the payment link is paid.';
-        console.log('[email-order] placed ' + r.order_id + (r.dry_run ? ' (QA dry run)' : '') + ' — payment link sent: ' + r.payment_url);
-        return res.json({ text: t, response: t });
+        console.log('[email-order] placed ' + r.order_id + (r.dry_run ? ' (QA dry run)' : '') + ' — payment link sent: ' + r.payment_url + (od.link_to ? ' (also to ' + od.link_to.join(', ') + ')' : ''));
+        return res.json({ text: t, response: t, email_cc: od.link_to || [] });
       }
     }
     // ── NEXT-BEST-ACTION (cta.js; Learning Phase 1, Part B) ──────────────────────────────────────────
