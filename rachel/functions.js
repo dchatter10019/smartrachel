@@ -1380,8 +1380,10 @@ async function buildPackage(iv) {
     categoryNeeds={wine:wineDrinks,beer:beerDrinks,spirits:hasCocktails?0:spiritDrinks,full_bar:spiritBottles>rawSB,beer_pack:beerPackSize};
     if (spiritBottles>0&&!hasCocktails) {
       if (rawSB < spiritBottles) {
-        fullBarNote = 'This includes a full bar — one bottle each of vodka, rum, bourbon, gin and tequila — which is more than the ~' + spiritDrinks + ' spirit drinks your guests will likely have. Want me to trim it to fewer spirits?';
-        console.log('[buildPackage] full-bar minimum: ' + spiritBottles + ' spirit bottles for ~' + spiritDrinks + ' spirit drinks (needs ' + rawSB + ') — customer will be told');
+        // A statement, never an offer to trim: DC (Sep 29) — the goal is to spend the customer's whole budget, and
+        // "want me to trim it?" was also a second question after the mixers upsell.
+        fullBarNote = 'This includes a full bar — one bottle each of vodka, rum, bourbon, gin and tequila — so every guest\'s spirit is covered.';
+        console.log('[buildPackage] full-bar minimum: ' + spiritBottles + ' spirit bottles for ~' + spiritDrinks + ' spirit drinks (needs ' + rawSB + ') — customer told it is a full bar (no trim offer)');
       }
       // Spread the exact bottle count across the types (13 -> 3,3,3,2,2). Real bug (found by the
       // supply check): every type got ceil(bottles/5), so 13 needed became 15 bought.

@@ -256,6 +256,7 @@ def check(reply, expect, log_text=""):
     for s in expect.get("not_contains", []):
         if s.lower() in low: fails.append(f"should not contain {s!r}")
     if "matches" in expect and not re.search(expect["matches"], reply, re.I | re.M): fails.append(f"no match /{expect['matches']}/")
+    if "not_matches" in expect and re.search(expect["not_matches"], reply, re.I | re.M): fails.append(f"matched forbidden /{expect['not_matches']}/")
     if "pdf_contains" in expect or "pdf_not_contains" in expect:
         m = re.search(r"https?://\S+?\.pdf", reply)
         txt = ""

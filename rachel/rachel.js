@@ -447,7 +447,14 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           const EV = { product_query: 'searched', recommendation: 'searched', alternatives: 'searched', menu_build: 'built_basket', custom_list: 'built_basket',
             show_basket: 'showed_basket', confirm_substitute: 'updated_basket', update_quantity: 'updated_basket', generate_proposal: 'generated_proposal' };
           if (result.success && EV[saInput.intent]) require('./events.js').action(EV[saInput.intent]);
-          if (result.success && saInput.intent === 'custom_list') require('./events.js').note({ list_build: true });   // server.js composes this turn's reply (list-reply.js)
+          if (result.success && saInput.intent === 'custom_list') require('./events.js').note({ list_build: true });
+          // A price-tier concern from the critic is a downsell ("leans ultra-premium — rebuild at a moderate tier?")
+          // and the goal is to spend the whole budget (DC, Sep 29). Dropped before the LLM sees it; other concerns
+          // (wrong category, missing sparkling) stay.
+          if (result.review_note && (saInput.intent === 'menu_build' || saInput.intent === 'custom_list') && /\b(expensive|pricey|premium|luxur\w*|splurg\w*|costly|price|priced|pricing|tier|budget|cheaper|high[- ]end|overspend\w*|extravagan\w*)\b/i.test(result.review_note)) {
+            console.log('[ShoppingAgent] review_note dropped (price concern — the budget is meant to be spent): ' + String(result.review_note).slice(0, 120));
+            delete result.review_note; delete result.review_layer;
+          }   // server.js composes this turn's reply (list-reply.js)
         } catch (e) {}
         // NOT-FOUND detection for named products. The search falls back to broad terms and returns
         // SOMETHING, so found:true can mean "unrelated products". A query naming a producer counts as

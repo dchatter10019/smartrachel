@@ -913,7 +913,7 @@ function ctaTurn(st, body, question, msg, context) {
   const changed = !captured && (e.basket0 ? events.basketOf(st).sig !== e.basket0.sig : false);
   const opts = [...String(body).matchAll(OPTION_LINE_RE)].filter(m => !/^\s*\d+\s*x\b/i.test(m[0])).map(m => ({ name: m[1].trim(), size: m[2].trim(), price: parseFloat(m[3].replace(/,/g, '')) }));
   const has = a => e.actions.includes(a);
-  const base = { stateLabel: label, corporate: !!((context && context.kitchen_location) || st.lastProposalUrl || st.savedClientName), orderStarted: !!st.orderStep };
+  const base = { stateLabel: label, corporate: !!((context && context.kitchen_location) || st.lastProposalUrl || st.savedClientName), orderStarted: !!st.orderStep, prevCta: st.ctaPrevId || null };
   let items = []; try { items = JSON.parse(st.lastLineItems || '[]'); } catch (x) {}
   if (has('placed_order')) return Object.assign(base, { kind: 'order_placed', basketItems: items.length });
   if (has('generated_proposal')) return Object.assign(base, { kind: 'proposal_sent' });
@@ -940,7 +940,8 @@ function ctaTurn(st, body, question, msg, context) {
     const offerQty = statedQty || (category === 'wine' ? 6 : 3);
     return Object.assign(base, { kind: 'search_single', category, statedQty, offerQty, product: opts[0] });
   }
-  return Object.assign(base, { kind: 'informational' });
+  // No question and nothing changed, but a basket exists: never a dead end (cta.js basket_idle).
+  return Object.assign(base, { kind: items.length ? 'basket_idle' : 'informational', basketItems: items.length });
 }
 
 // In-stock stand-in for an item the customer named that isn't available: the same product search
@@ -1998,7 +1999,10 @@ app.post('/chat', async (req, res) => {
                 listText = cL.text;
               } else console.log('[list-reply] custom_list turn with an empty basket — LLM reply kept');
             }
-            let t = listText != null ? listText : cta.stripTrailer(orig);
+            const orig0 = orig;
+            const dn = cta.denumberBasketLines(orig);
+            if (dn !== orig) console.log('[cta] removed list numbering from basket lines (they are not pick options)');
+            let t = listText != null ? listText : cta.stripTrailer(dn);
             if (listText == null && t !== orig.trimEnd()) console.log('[cta] stripped the generic four-action trailer');
             const cl = cta.splitCloser(t);
             if (cl.generic) { t = cl.body; console.log('[cta] removed generic closer ' + JSON.stringify(cl.closer.slice(0, 80)) + ' — the table decides the follow-up'); }
@@ -2045,6 +2049,7 @@ app.post('/chat', async (req, res) => {
     }
     // Did the customer act on the previous turn's CTA? Recorded on THIS turn's event (cta_taken); a CTA
     // not taken is not offered again this session. An accepted CTA is carried out here, in code.
+    if (!isInternalMsgEarly(message)) state.ctaPrevId = state.lastCta ? state.lastCta.id : null;   // the CTA offered on the previous turn (basket_idle isn't repeated back to back)
     if (state.lastCta && state.step === 'ready' && !isInternalMsgEarly(message)) {
       const lc = state.lastCta; state.lastCta = null;
       const took = cta.accepted(lc.id, message);
@@ -2057,6 +2062,13 @@ app.post('/chat', async (req, res) => {
       console.log('[cta] previous ' + lc.id + ' ' + (took ? 'TAKEN' : said_no ? 'not taken — declined, not offered again this session' : 'not taken (customer moved on)') + ' — ' + JSON.stringify(message.slice(0, 60)));
       if (said_no) state.ctaDeclined = [...new Set([...(state.ctaDeclined || []), lc.id])];
       saveFlowState();
+      // "yes" to "place the order, or send you a PDF proposal?" names neither: ask which, in code (the LLM
+      // would guess). "place the order" / "send the proposal" route normally below.
+      if (took && lc.id === 'basket.offer_order_or_proposal' && !/\bplace\b|\border\b|checkout|proposal|\bpdf\b|\bquote\b/i.test(message)) {
+        console.log('[cta] basket.offer_order_or_proposal: bare yes — asking which');
+        const rW = 'Sure — shall I place the order, or send you the PDF proposal?';
+        return res.json({ text: rW, response: rW });
+      }
       if (took && !state.orderStep && !state.proposalStep) {
         const pr = lc.id === 'sub.offer_named' ? lc.substitute : lc.product;
         if ((lc.id === 'search.offer_qty' || lc.id === 'search.add_more' || lc.id === 'sub.offer_named') && pr && pr.name) {
@@ -2094,7 +2106,8 @@ app.post('/chat', async (req, res) => {
     if (!isInternalMsg) try {   // skip internal sentinels / replayed windows
       const { classifyIntent } = require('./classify-intent.js');
       const lastR = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
-      const lastKind = /how many/i.test(lastR) ? 'how_many' : /^\s*1[\.\)]\s/m.test(lastR) ? 'numbered_list' : /shall i (go ahead|place)|\(yes\/no\)/i.test(lastR) ? 'yes_no' : /full name|phone number|email/i.test(lastR) ? 'contact_question' : /date and time|what time/i.test(lastR) ? 'time_question' : 'other';
+      // numbered_list = a PRICED option list; "1. How long is the event? 2. What's your budget?" is questions, not picks.
+      const lastKind = /how many/i.test(lastR) ? 'how_many' : /^\s*1[\.\)]\s[^\n]*\$\s?\d/m.test(lastR) ? 'numbered_list' : /shall i (go ahead|place)|\(yes\/no\)/i.test(lastR) ? 'yes_no' : /full name|phone number|email/i.test(lastR) ? 'contact_question' : /date and time|what time/i.test(lastR) ? 'time_question' : 'other';
       let bsz = 0; try { bsz = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
       classifyIntent(message, { lastKind, orderStep: state.orderStep, basketSize: bsz, lastQuestion: lastR.slice(0, 160) }).then(c => {
         console.log('[classify] ' + c.intent + ' (' + c.confidence.toFixed(2) + (c.ref ? ', ref=' + JSON.stringify(c.ref) : '') + (c.qty ? ', qty=' + c.qty : '') + ') [' + c.source + '] lastKind=' + lastKind + ' step=' + (state.orderStep || '-') + ' | ' + JSON.stringify(message).slice(0, 60));

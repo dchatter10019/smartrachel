@@ -14,10 +14,15 @@ turns:
     # hours were never given: the build is refused in code and Rachel asks (Sep 29 replay: LLM assumed 5 hours)
     expect: {matches: "(?i)how long", not_contains: ["Product total"]}
   - send: "2 hours"
-    expect: {contains: ["Product total"]}
+    # never a downsell or a trim offer (DC: spend the whole budget); basket lines are never a numbered pick list
+    expect:
+      contains: ["Product total"]
+      not_contains: ["fewer spirits", "trim it", "moderate tier", "more moderate"]
+      not_matches: "(?m)^\\s*\\d{1,2}[.)]\\s+[^\\n]*\\b\\d{1,3}\\s*x\\s"
   - send: "do you think the quantities are enough for 50 guests?"
     expect: {matches: "\\S{3,}"}
   - send: "no"
-    expect: {matches: "\\S{3,}"}
+    # never a dead end with a basket: offer the order or a PDF proposal (DC, Sep 29)
+    expect: {matches: "(?i)PDF proposal|place the order"}
   - send: "I see no replies"
     expect: {matches: "\\S{3,}"}

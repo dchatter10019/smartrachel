@@ -52,6 +52,14 @@ const TABLE = {
   proposal_sent: [
     { id: 'proposal.offer_order', text: 'When you\'re ready, say the word and I\'ll place it.', accept: /\bplace\b|\border\b/i },
   ],
+  // A reply with no question while a basket exists. Real dead end (DC, Sep 29, Slack): "no" to "add mixers?"
+  // after a $4,981 event package got "No problem!" and nothing else. DC: offer the order AND the PDF proposal.
+  // Not offered twice in a row (prevCta) so an informational back-and-forth doesn't nag every turn.
+  basket_idle: [
+    { id: 'basket.offer_order_or_proposal', when: t => !t.orderStarted && t.prevCta !== 'basket.offer_order_or_proposal',
+      text: 'Would you like me to place the order, or send you a PDF proposal?',
+      accept: /\bplace\b|\border\b|checkout|proposal|\bpdf\b|\bquote\b|^\s*(?:yes|yep|yeah|sure|ok(?:ay)?)\b/i },
+  ],
   informational: [
     { id: 'info.none', none: true },
   ],
@@ -146,10 +154,18 @@ function accepted(ctaOrId, message) {
 // twice. Never send an empty reply: a short acknowledgement plus the basket follow-up from the table.
 function fallbackIfEmpty(text, state, turn, basketItems, log = console.log) {
   if (String(text || '').trim()) return null;
-  const c = basketItems > 0 ? chooseCta(state, Object.assign({}, turn, { kind: 'basket_updated', question: false }), log) : null;
+  const c = basketItems > 0 ? chooseCta(state, Object.assign({}, turn, { kind: 'basket_idle', question: false }), log) : null;
   const t = 'Got it.' + (c ? ' ' + c.text : ' What else can I get you?');
   log('[cta] reply was empty after stripping the generic trailer — sent ' + JSON.stringify(t) + ' instead');
   return { text: t, cta: c };
 }
 
-module.exports = { chooseCta, accepted, findCta, stripTrailer, splitCloser, hasRealQuestion, scrubGenericQuestions, fallbackIfEmpty, TABLE, DATE_RE };
+// A basket line is never a numbered option. Real trap (DC, Sep 29, Slack): the LLM rendered the package's
+// spirits as "1. Vodka: 1x Belvedere ... 5. Tequila: 1x Cazcanes"; the next message was classified after a
+// "numbered_list", so a reply like "2" could have been taken as picking the rum. Lines carrying a
+// quantity ("1x", "2 x") lose their "N." prefix; real option lists (no quantity) keep it.
+function denumberBasketLines(text) {
+  return String(text || '').replace(/^(\s*)\d{1,2}[.)]\s+(?=(?:[^\n]*?[\s:*_])?\d{1,3}\s*x\s)/gm, '$1');
+}
+
+module.exports = { denumberBasketLines, chooseCta, accepted, findCta, stripTrailer, splitCloser, hasRealQuestion, scrubGenericQuestions, fallbackIfEmpty, TABLE, DATE_RE };

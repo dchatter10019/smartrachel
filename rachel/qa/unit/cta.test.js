@@ -25,6 +25,7 @@ console.log('every enabled row is reachable');
     [{ kind: 'item_unavailable', substitute: { name: 'Ketel One', size: '750 mL', price: 29.99 } }, 'sub.offer_named'],
     [{ kind: 'item_unavailable' }, 'sub.offer_search'],
     [{ kind: 'proposal_sent' }, 'proposal.offer_order'],
+    [{ kind: 'basket_idle' }, 'basket.offer_order_or_proposal'],
   ];
   for (const [t, want] of cases) { const got = pick(t); reached.add(got); eq(t.kind + ' -> ' + want, got, want); }
   const enabled = Object.values(TABLE).flat().filter(c => c.enabled !== false && !c.none).map(c => c.id);
@@ -109,11 +110,30 @@ console.log('fallbackIfEmpty: a trailer-only reply never goes out empty (Sep 29 
   const trailerOnly = stripTrailer('Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?');
   eq('trailer-only strips to empty', trailerOnly, '');
   const fb = cta.fallbackIfEmpty(trailerOnly, {}, { kind: 'informational' }, 3, q);
-  eq('with a basket: ack + checkout offer', fb && fb.text, 'Got it. Anything else, or ready to place the order?');
-  eq('with a basket: CTA recorded', fb && fb.cta && fb.cta.id, 'basket.offer_checkout');
+  eq('with a basket: ack + order/proposal offer', fb && fb.text, 'Got it. Would you like me to place the order, or send you a PDF proposal?');
+  eq('with a basket: CTA recorded', fb && fb.cta && fb.cta.id, 'basket.offer_order_or_proposal');
   const fb0 = cta.fallbackIfEmpty('  ', {}, { kind: 'informational' }, 0, q);
   eq('empty basket', fb0 && fb0.text, 'Got it. What else can I get you?');
   eq('non-empty reply untouched', cta.fallbackIfEmpty('No problem!', {}, { kind: 'informational' }, 3, q), null);
+}
+
+console.log('denumberBasketLines (Sep 29: package spirits rendered as a numbered list)');
+{
+  const cta = require('../../cta.js');
+  const pkg = 'SPIRITS — 5 bottles\n1. Vodka: 1x Belvedere Organic Vodka ⭐ — 1.75 L — $59.39\n2. Rum: 1x Barrell Craft Spirits Cask Strength Rum — 750 mL — $98.99\n*Spirits total: $158.38*';
+  eq('quantity lines lose the number', cta.denumberBasketLines(pkg), 'SPIRITS — 5 bottles\nVodka: 1x Belvedere Organic Vodka ⭐ — 1.75 L — $59.39\nRum: 1x Barrell Craft Spirits Cask Strength Rum — 750 mL — $98.99\n*Spirits total: $158.38*');
+  eq('"1. 3x Tito\'s" too', cta.denumberBasketLines('1. 3x Tito\'s — $24.19'), '3x Tito\'s — $24.19');
+  const opts = '1. *Whispering Angel Rosé* — 750 mL — $24.19\n2. *The Beach Rosé* — 750 mL — $20.89';
+  eq('a real option list keeps its numbers', cta.denumberBasketLines(opts), opts);
+  eq('"24x12 Oz" pack size is not a quantity', cta.denumberBasketLines('1. Stella Artois 24x12 Oz — $62.99'), '1. Stella Artois 24x12 Oz — $62.99');
+}
+console.log('basket_idle: a basket and no question is never a dead end (Sep 29 "No problem!")');
+{
+  const cta = require('../../cta.js');
+  eq('offers order or proposal', (chooseCta({}, { kind: 'basket_idle' }, q) || {}).id, 'basket.offer_order_or_proposal');
+  eq('not twice in a row', chooseCta({}, { kind: 'basket_idle', prevCta: 'basket.offer_order_or_proposal' }, q), null);
+  eq('not during an order', chooseCta({}, { kind: 'basket_idle', orderStarted: true }, q), null);
+  eq('"send the proposal" accepted', accepted('basket.offer_order_or_proposal', 'send the proposal'), true);
 }
 
 console.log(failed ? '\ncta: ' + failed + ' FAILED' : '\ncta: all passed');
