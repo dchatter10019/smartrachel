@@ -13,6 +13,27 @@ SERVICE_ACCOUNT_FILE = '/home/ubuntu/config/gmail-service-account.json'
 RACHEL_EMAIL = 'rachelai@getbevvi.com'
 POLL_INTERVAL = 60
 THREAD_SESSIONS = {}  # thread_id -> session_id for Rachel chat continuity
+# Rachel may take minutes on a big list (18 products + catalog-guard market-price lookups). Real loss
+# (Sep 29): Sean's 18-item quote request timed out at 120 s, the email was marked read with no reply and
+# no retry — silently dropped. Email isn't live chat: wait longer, and on failure leave it UNREAD and retry.
+CHAT_TIMEOUT = int(os.environ.get('RACHEL_EMAIL_TIMEOUT', '300'))
+MAX_ATTEMPTS = 3
+FAILED_ATTEMPTS = {}  # gmail message id -> failed Rachel calls (retried on the next poll while < MAX_ATTEMPTS)
+
+def _slack_alert(text):
+    # QA Slack channel, same creds as catalog-guard (/etc/rachel.env). Never raises.
+    try:
+        env = {}
+        for line in open('/etc/rachel.env'):
+            if '=' in line and not line.startswith('#'):
+                k, v = line.rstrip('\n').split('=', 1); env[k.strip()] = v.strip()
+        tok, ch = env.get('SLACK_BOT_TOKEN'), env.get('QA_SLACK_CHANNEL')
+        if not tok or not ch:
+            log.error('[alert] Slack not configured — alert logged only: ' + text); return
+        requests.post('https://slack.com/api/chat.postMessage', headers={'Authorization': 'Bearer ' + tok},
+                      json={'channel': ch, 'text': text}, timeout=10)
+    except Exception as e:
+        log.error(f'[alert] Slack alert failed: {e} — {text}')
 THREAD_FILE = '/home/ubuntu/logs/email-thread-sessions.json'
 try:
     import json as _json
@@ -68,8 +89,8 @@ def chat_with_rachel(message, session_id, sender_email):
                 'user_email': sender_email,
                 'age_verified': True
             }
-        }, timeout=120)
-        return r.json().get('text', '')
+        }, timeout=CHAT_TIMEOUT)
+        return r.json().get('text', '') or None   # an empty reply is a failure, never sent
     except Exception as e:
         log.error(f'Rachel chat error: {e}')
         return None
@@ -105,6 +126,25 @@ def save_to_gbrain(sender_email, thread_id):
         f"}});"],
         cwd='/home/ubuntu/rachel')
 
+def _failed(service, email, sender_email, where):
+    # Rachel gave no reply: leave the email UNREAD so the next poll retries it; after MAX_ATTEMPTS, alert
+    # QA Slack and tell the customer a person will follow up (never a silent drop).
+    n = FAILED_ATTEMPTS.get(email['id'], 0) + 1
+    FAILED_ATTEMPTS[email['id']] = n
+    if n < MAX_ATTEMPTS:
+        log.error(f"NO REPLY from Rachel ({where}) for {sender_email} | {email['subject']} — attempt {n}/{MAX_ATTEMPTS}, left unread for retry")
+        return
+    log.error(f"NO REPLY from Rachel after {n} attempts for {sender_email} | {email['subject']} — alerting QA Slack, holding reply sent")
+    _slack_alert(f":rotating_light: Rachel email: no reply after {n} attempts to {sender_email} — \"{email['subject']}\". Needs a person.")
+    try:
+        send_reply(service, email['thread_id'], sender_email, email['subject'],
+                   "Thanks for your email — I'm putting this together and a member of the Bevvi team will follow up with you shortly.",
+                   in_reply_to=email.get('message_id'), references=email.get('references'))
+    except Exception as e:
+        log.error(f'holding reply failed: {e}')
+    service.users().messages().modify(userId='me',id=email['id'],body={'removeLabelIds':['UNREAD']}).execute()
+    FAILED_ATTEMPTS.pop(email['id'], None)
+
 def process(service, email):
     log.info(f"Processing: {email['from']} | {email['subject']}")
     sender = email['from']
@@ -122,22 +162,28 @@ def process(service, email):
     if thread_id in THREAD_SESSIONS:
         session_id = THREAD_SESSIONS[thread_id]
         rachel_response = chat_with_rachel(email['body'], session_id, sender_email)
-        if rachel_response:
-            send_reply(service, thread_id, sender_email, email['subject'], rachel_response, in_reply_to=email.get('message_id'), references=email.get('references'))
-            log.info(f'Continuation reply sent for thread {thread_id[:8]}...')
+        if not rachel_response:
+            return _failed(service, email, sender_email, 'continuation')
+        send_reply(service, thread_id, sender_email, email['subject'], rachel_response, in_reply_to=email.get('message_id'), references=email.get('references'))
+        log.info(f'Continuation reply sent for thread {thread_id[:8]}...')
         service.users().messages().modify(userId='me',id=email['id'],body={'removeLabelIds':['UNREAD']}).execute()
+        FAILED_ATTEMPTS.pop(email['id'], None)
         return
 
     # New thread: every email goes through Rachel's chat, like every other channel. Her
     # state machine handles the age gate (keeping the order text to replay after "yes"),
     # the address, named products and event requests. The old email-only parser asked
     # customers for "guests, budget, event_type" when they had simply named products.
-    session_id = f'email-{thread_id[:16]}-{sender_email.split("@")[0]}'
+    # A retry gets a fresh session: the timed-out attempt may still finish into the first one.
+    tries = FAILED_ATTEMPTS.get(email['id'], 0)
+    session_id = f'email-{thread_id[:16]}-{sender_email.split("@")[0]}' + (f'-r{tries}' if tries else '')
     rachel_response = chat_with_rachel(email['body'], session_id, sender_email)
-    if rachel_response:
-        send_reply(service, thread_id, sender_email, email['subject'], rachel_response, in_reply_to=email.get('message_id'), references=email.get('references'))
-        log.info('Initial reply sent via Rachel chat')
-        save_to_gbrain(sender_email, thread_id)
+    if not rachel_response:
+        return _failed(service, email, sender_email, 'new thread')   # thread not mapped: the retry starts clean
+    send_reply(service, thread_id, sender_email, email['subject'], rachel_response, in_reply_to=email.get('message_id'), references=email.get('references'))
+    log.info('Initial reply sent via Rachel chat')
+    save_to_gbrain(sender_email, thread_id)
+    FAILED_ATTEMPTS.pop(email['id'], None)
 
     # Save session for this thread
     THREAD_SESSIONS[thread_id] = session_id; _persist_threads()
