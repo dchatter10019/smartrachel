@@ -1,0 +1,17 @@
+name: address-change-unit
+fresh: true
+tags: [address]
+# Real (Sep 29, Gen II session): a new delivery address with a numbered unit ("Floor 6") was not recognised as an
+# address change (the one-line pattern allowed no digit in a comma part) and went to the LLM, which answered
+# from stale history. The ready-state change now uses address-extract.js.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "100 Federal Street, Floor 6, Boston, MA 02110"
+    expect:
+      contains: ["Updated — delivering to 100 Federal Street, Floor 6, Boston, MA 02110"]
+      log_contains: ["[addr] address changed at ready"]
+  - send: "please change the delivery address to 1 Main St\nSuite 200\nBoston, MA 02110"
+    expect:
+      contains: ["Updated — delivering to 1 Main St, Suite 200, Boston, MA 02110"]

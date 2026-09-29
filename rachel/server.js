@@ -2022,8 +2022,13 @@ app.post('/chat', async (req, res) => {
     // check coverage, and if a different store serves it, the basket (built for the old
     // store's catalog) has to be rebuilt — say so.
     if (state.step === 'ready' && !state.orderStep && !state.proposalStep) {
-      const am = message.match(/\b(\d{1,6}\s+[A-Za-z0-9.'#\- ]{3,60}?(?:,\s*[A-Za-z. ]{2,40}){1,3},?\s+(\d{5}))\b/);
-      const rest = am ? message.replace(am[0], '').replace(/\b(please|change|update|use|switch|new|my|the|delivery|address|deliver|ship|send|it|to|is|at|instead|actually|now)\b|[^a-z]/gi, '') : 'x';
+      // address-extract.js, not a one-line pattern: "100 Federal Street, Floor 6, Boston, MA 02110" (a unit with a
+      // number) didn't match, so the change fell through to the LLM (Sep 29, Gen II session).
+      const afR = require('./address-extract.js').findAddress(message);
+      const am = afR ? [afR, afR, (afR.match(/(\d{5})(?:-\d{4})?$/) || [])[1]] : null;
+      // What's left once the address is taken out (letters only, so line breaks and commas don't matter).
+      const lettersOf = x => String(x || '').replace(/[^a-z]/gi, '').toLowerCase();
+      const rest = am ? lettersOf(String(message).replace(/\b(please|change|update|use|switch|new|my|the|delivery|address|deliver|ship|send|it|to|is|at|instead|actually|now)\b|[^a-z]/gi, '')).replace(lettersOf(afR), '') : 'x';
       if (am && rest.length <= 3) {
         const newZip = am[2];
         const cov = await checkStoreCoverage(newZip);
