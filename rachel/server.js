@@ -208,6 +208,8 @@ const packageCache = {};   // cacheKey -> line_items (L1)
 // flowState persisted to disk
 const FLOW_STATE_PATH = '/home/ubuntu/logs/flow-state.json';
 const IDLE_HOURS = Number(process.env.RACHEL_IDLE_HOURS) || 4;   // silence after which the next message starts a fresh conversation
+const CONFIRM_ADD_PRICE = Number(process.env.RACHEL_CONFIRM_ADD_PRICE) || 200;   // a single search match at/above this per-bottle price is offered, not added (add-item)
+const usd = n => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 let flowState = {};
 try {
   flowState = JSON.parse(fs.readFileSync(FLOW_STATE_PATH, 'utf8'));
@@ -897,6 +899,7 @@ async function validateDeliveryTime(state, message, email, format, res) {
   return null;
 }
 const cta = require('./cta.js');
+const contacts = require('./customer-contacts.js');   // name/phone from the last placed order + channel profile name (order flow)
 const isInternalMsgEarly = m => /^__/.test(m) || /^\d{1,2}:\d{2}\s*[AP]M\s*-\s*\d{1,2}:\d{2}\s*[AP]M/i.test(m);
 // The CTA table's view of a turn: which state row applies, and the facts its conditions read.
 const OPTION_LINE_RE = /^\s*(?:\d+[.)]\s*|[A-Z][.)]\s+)?[*_]*([^*_\n—]+?)[*_]*\s+—\s+([^—\n$]*?\d[^—\n$]*?)\s+—\s+\$([\d,]+(?:\.\d+)?)(?!\s*ea\s*=)[^\n=]*$/gm;
@@ -1005,6 +1008,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       if (prev && prev.reopened) console.log('[order] ' + (result.order_id || '?') + ' replaces reopened order ' + prev.order_id + ' — no cancel API; the earlier order stays in Bevvi unpaid');
       st.placedOrder = { order_id: result.order_id || '', payment_url: result.payment_url || '', line_items: typeof lineItems === 'string' ? lineItems : JSON.stringify(lineItems || []), placedAt: Date.now(), dry_run: !!result.dry_run, replaces: prev && prev.reopened ? prev.order_id : null };
       st.lastLineItems = '[]';   // '[]', not '': an empty string triggers the getPackage() rehydrate
+      if (st.orderData && st.orderData.name) contacts.save(email, { name: st.orderData.name, phone: st.orderData.phone, email: st.orderData.email });
       st.pendingSubstitutes = []; st.pendingAddOffer = null; st.pendingQtyFor = null; st.savedTipChoice = null; st.tipAsk = false;   // the next order asks for its own tip
       if (email) { Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; }); clearBasket(email, format || 'slack'); }
       saveFlowState();
@@ -2185,6 +2189,33 @@ app.post('/chat', async (req, res) => {
       if (/\btax[- ]?exempt\b|\bno\s+(sales\s+)?tax\b|\bset\s+tax\s+to\s+(0|zero)\b/i.test(message)) po.tax_exempt = true;
       if (Object.keys(po).length) { state.proposalOpts = po; state.eventParams = Object.assign({}, state.eventParams || {}, { proposalOpts: po }); saveFlowState(); console.log('[proposal] options captured:', JSON.stringify(po)); }
     }
+    // Answer to the add-item confirmation ("I found X — $1,099.99 a bottle. Want me to add it? If so,
+    // how many bottles?"). A yes or a quantity adds it; anything else lets the offer lapse (logged)
+    // and the message is handled normally.
+    if (state.pendingAddOffer && state.pendingAddOffer.confirm && !state.orderStep && !state.proposalStep && !isInternalMsg) {
+      const off = state.pendingAddOffer; state.pendingAddOffer = null; saveFlowState();
+      const NW = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12, 'a dozen': 12, dozen: 12 };
+      const qm = msgLower.trim().replace(/[.!]+$/, '').match(/^(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)[,!\s]+)?(?:(?:add|get|give me|i'?ll take|make it|let'?s do|lets do)\s+)?(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|twelve|a dozen|dozen)(?:\s*x)?(?:\s+(?:bottles?|of (?:them|it|those)))?(?:\s+please)?$/);
+      const yes = /^\s*(yes|yes please|yeah|yep|sure|ok|okay|please|do it|do that|add it|go ahead|absolutely|sounds good)\b/i.test(message);
+      if (qm || yes) {
+        const q = qm ? (NW[qm[1]] || parseInt(qm[1])) : off.qty;
+        await applyBasketSubstitute(sessionKey, email, '', off.name, off.price, off.size);
+        retirePendingFor(state, off.name);
+        const nzA = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const labelA = off.name + (off.size && nzA(off.name).indexOf(nzA(off.size)) < 0 ? ' — ' + off.size : '') + ' — ' + usd(off.price);
+        console.log('[add-confirm] accepted ' + JSON.stringify(message.slice(0, 40)) + ' -> ' + off.name + (q ? ' x' + q : ' (quantity to ask)'));
+        if (q > 0) {
+          try { const it = JSON.parse(state.lastLineItems || '[]'); const row = it.find(x => nzA(x.name) === nzA(off.name)); if (row) { row.qty = q; row.quantity = q; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); } } catch (e) {}
+          saveFlowState();
+          const rQ = 'Added ' + q + 'x ' + labelA + (q > 1 ? ' (' + usd(off.price * q) + ')' : '') + '. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+          return res.json({ text: rQ, response: rQ });
+        }
+        state.pendingQtyFor = off.name; saveFlowState();
+        const rY = 'Added ' + labelA + '. How many bottles would you like?';
+        return res.json({ text: rY, response: rY });
+      }
+      console.log('[add-confirm] offer for ' + off.name + ' lapsed — reply is not a yes or a quantity: ' + JSON.stringify(message.slice(0, 60)));
+    }
     let clsIntent = null, clsRef = '';
     // clear stale classifier label: eventParams persists across turns (guests/budget for
     // rebuilds), so last turn's 'recommend' must not rewrite this turn's product query.
@@ -2436,6 +2467,23 @@ app.post('/chat', async (req, res) => {
               return res.json({ text: rT, response: rT });
             }
           }
+          // CONFIRM BEFORE ADDING a costly or vintage-specific bottle the customer didn't name exactly.
+          // Real bug (DC, Sep 29, Slack): "I need an opus" put Opus One 2017 at $1,099.99 straight into
+          // the cart. Search picked it, not the customer — so it is offered, and added only on a yes or
+          // a number (pendingAddOffer.confirm, answered before the classifier).
+          if (!listed) {
+            const vintage = (pr.name.match(/\b(19[5-9]\d|20[0-4]\d)\b/) || [])[1];
+            const why = price >= CONFIRM_ADD_PRICE ? 'price $' + price.toFixed(2) + ' >= $' + CONFIRM_ADD_PRICE
+              : (vintage && message.indexOf(vintage) < 0 ? 'vintage ' + vintage + ' not in the request' : '');
+            if (why) {
+              state.pendingAddOffer = { name: pr.name, price, size, qty: clsQty > 1 ? clsQty : 0, confirm: true };
+              saveFlowState();
+              console.log('[add-item] single match NOT added — confirming first (' + why + '): ' + pr.name);
+              const lbl = pr.name + (size && nz(pr.name).indexOf(nz(size)) < 0 ? ' — ' + size : '') + ' — ' + usd(price) + ' a bottle';
+              const rF = 'I found ' + lbl + '. ' + (clsQty > 1 ? 'Add ' + clsQty + ' bottles (' + usd(price * clsQty) + ')?' : 'Want me to add it? If so, how many bottles?');
+              return res.json({ text: rF, response: rF });
+            }
+          }
           await applyBasketSubstitute(sessionKey, email, '', pr.name, price, size);
             retirePendingFor(state, pr.name);
           const label = pr.name + (size && nz(pr.name).indexOf(nz(size)) < 0 ? ' — ' + size : '') + ' — $' + price.toFixed(2);
@@ -2565,10 +2613,7 @@ app.post('/chat', async (req, res) => {
         // Multi-item package: quantities are already per-line in the basket. Skip qty.
         state.orderData.qty = null;
         { const skipped = contactKnownSkip(); if (skipped) return skipped; }
-        state.orderStep = 'name';
-        saveFlowState();
-        const ask = 'What is your full name — the person placing the order? (first and last). If someone else will receive the delivery, you can give their contact in the delivery instructions later.';
-        return res.json({ text: ask, response: ask });
+        return askNameStep();
       }
       // Check whether the customer already specified a quantity in the message that
       // triggered this order (e.g. "order a bottle of opus", "get me 2 bottles") —
@@ -2591,9 +2636,10 @@ app.post('/chat', async (req, res) => {
         // Then ask ONLY for what's genuinely missing, in one message — previously every
         // order was 4 sequential questions even for a repeat customer with a known date.
         {
-          const sc = state.savedCustomer || {};
+          const sc = knownContact();
           const knownDate = state.savedEventDate || (state.eventParams && state.eventParams.event_date) || '';
-          state.orderData.name = sc.name || '';
+          state.orderData.name = sc.name || contacts.profileName(context && context.user_name);
+          if (!sc.name && state.orderData.name) { state.orderData.namePrefilled = (format || 'channel') + ' profile'; console.log('[order] name prefilled from ' + state.orderData.namePrefilled + ': ' + JSON.stringify(state.orderData.name) + ' — not asked'); }
           state.orderData.phone = sc.phone || '';
           state.orderData.email = email || sc.email || '';
           state.orderData.known_date = knownDate;
@@ -2612,7 +2658,7 @@ app.post('/chat', async (req, res) => {
           }
           state.orderStep = 'name';
           saveFlowState();
-          const askM = 'Almost there — I just need ' + missing.join(' and ') + ' for the person placing the order. (An on-site contact for the driver can go in the delivery instructions.)';
+          const askM = (state.orderData.namePrefilled ? 'I\'ll put the order under *' + state.orderData.name + '* (tell me if it should be someone else). ' : '') + 'Almost there — I just need ' + missing.join(' and ') + ' for the person placing the order. (An on-site contact for the driver can go in the delivery instructions.)';
           return res.json({ text: askM, response: askM });
         }
       }
@@ -2623,9 +2669,7 @@ app.post('/chat', async (req, res) => {
         if (one && one.qty_confirmed) {
           state.orderData.qty = one.qty || 1;
           { const skipped = contactKnownSkip(); if (skipped) return skipped; }
-          state.orderStep = 'name'; saveFlowState();
-          const askN = 'What is your full name — the person placing the order? (first and last). If someone else will receive the delivery, you can give their contact in the delivery instructions later.';
-          return res.json({ text: askN, response: askN });
+          return askNameStep();
         } }
       state.orderStep = 'qty';
       saveFlowState();
@@ -2637,8 +2681,6 @@ app.post('/chat', async (req, res) => {
       const qtyMatch = message.match(/\b(\d+)\b/);
       state.orderData.qty = qtyMatch ? parseInt(qtyMatch[1]) : 1;
       { const skipped = contactKnownSkip(); if (skipped) return skipped; }
-      state.orderStep = 'name';
-      saveFlowState();
       // Load basket to get product info
       if (email && !state.lastLineItems) {
         try {
@@ -2647,8 +2689,7 @@ app.post('/chat', async (req, res) => {
           if (basket) { state.lastLineItems = typeof basket === 'string' ? basket : JSON.stringify(basket); saveFlowState(); }
         } catch(e) {}
       }
-      const ask = 'What is your full name — the person placing the order? (first and last). If someone else will receive the delivery, you can give their contact in the delivery instructions later.';
-      return res.json({ text: ask, response: ask });
+      return askNameStep();
     }
 
     // Strip Slack markup before any order-step parsing. Slack delivers phone links as
@@ -2754,6 +2795,16 @@ app.post('/chat', async (req, res) => {
       if (ph) { state.orderData.phone = ph[0].replace(/\D/g, ''); }
       const nameOnly = ph ? t.replace(ph[0], '').replace(/[,;]+/g, ' ').trim() : t;
       if (!state.orderData.name && nameOnly) state.orderData.name = nameOnly;
+      else if (state.orderData.namePrefilled && nameOnly) {   // "I'll put the order under X" was stated with this ask
+        const fix = contacts.nameCorrection(nameOnly);
+        if (fix) { console.log('[order] prefilled name ' + JSON.stringify(state.orderData.name) + ' corrected -> ' + JSON.stringify(fix)); state.orderData.name = fix; state.orderData.namePrefilled = null; }
+        else if (contacts.refusesName(nameOnly)) {
+          state.orderData.name = ''; state.orderData.namePrefilled = null; saveFlowState();
+          console.log('[order] prefilled name refused — asking for it');
+          const rN = 'Who should the order be under? (first and last name)';
+          return res.json({ text: rN, response: rN });
+        }
+      }
       // Recipient email is a required step (business decision): asked right after the
       // name; if the customer skips it, it falls back to the account email. This
       // replaces the old 'email_confirm' step (which asked a weaker version later).
@@ -2764,6 +2815,24 @@ app.post('/chat', async (req, res) => {
     }
     if (state.orderStep === 'recipient_email') {
       const em = message.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+      // The name was prefilled (askNameStep) and stated with this question: a reply that corrects or
+      // refuses it is about the NAME, not the email — never fall back to the account email on it.
+      if (state.orderData.namePrefilled && !em) {
+        const fix = contacts.nameCorrection(message);
+        if (fix || contacts.refusesName(message)) {
+          state.orderData.namePrefilled = null;
+          if (!fix) {
+            state.orderData.name = ''; state.orderStep = 'name'; saveFlowState();
+            console.log('[order] prefilled name refused — asking for it');
+            const rN = 'Who should the order be under? (first and last name)';
+            return res.json({ text: rN, response: rN });
+          }
+          console.log('[order] prefilled name ' + JSON.stringify(state.orderData.name) + ' corrected -> ' + JSON.stringify(fix));
+          state.orderData.name = fix; saveFlowState();
+          const rE = 'Got it — the order will be under *' + fix + '*. What email should we use for the delivery recipient? (Reply "same" to use ' + (email || 'your account email') + '.)';
+          return res.json({ text: rE, response: rE });
+        }
+      }
       // Fallback to the account email on "same"/skip/no email found. Lowercased: phone
       // keyboards capitalize the first letter and Bevvi's account lookup is case-sensitive
       // (real failure: 'Dipanjan@getbevvi.com' -> 'Invalid accountId').
@@ -2849,8 +2918,38 @@ app.post('/chat', async (req, res) => {
     // `function`, not `const` arrow: it's called from order-entry branches ABOVE this
     // point, and a const isn't hoisted — real crash: "Cannot access 'contactKnownSkip'
     // before initialization" on "place the order" with a 2-item basket.
-    function contactKnownSkip() {
+    // Contact from this conversation, else from the customer's last placed order (customer-contacts.js)
+    // — savedCustomer alone was wiped by reset / idle expiry, so every order re-asked the name.
+    function knownContact() {
       const sc = state.savedCustomer || {};
+      if (sc.name && sc.phone) return sc;
+      const stc = contacts.get(email);
+      if (stc && stc.name && stc.phone) {
+        state.savedCustomer = { name: stc.name, phone: stc.phone, email: stc.email || '' };
+        console.log('[order] contact from the last placed order (saved ' + stc.savedAt + ')');
+        return state.savedCustomer;
+      }
+      return sc;
+    }
+    // The name question. When a name is already known — this conversation, the last placed order, or
+    // the channel profile's real name (Slack) — state it instead of asking; the customer can correct it
+    // at the next step (recipient_email handles "no" / a different name). DC, Sep 29.
+    function askNameStep() {
+      const sc = state.savedCustomer || {}, stc = contacts.get(email) || {};
+      const hit = [[sc.name, 'this conversation'], [stc.name, 'the last placed order'], [contacts.profileName(context && context.user_name), (format || 'channel') + ' profile']].find(c => c[0]);
+      if (hit) {
+        state.orderData.name = hit[0]; state.orderData.namePrefilled = hit[1];
+        state.orderStep = 'recipient_email'; saveFlowState();
+        console.log('[order] name prefilled from ' + hit[1] + ': ' + JSON.stringify(hit[0]) + ' — not asked');
+        const a = 'I\'ll put the order under *' + hit[0] + '* (tell me if it should be someone else). What email should we use for the delivery recipient? (Reply "same" to use ' + (email || 'your account email') + '.)';
+        return res.json({ text: a, response: a });
+      }
+      state.orderStep = 'name'; saveFlowState();
+      const ask = 'What is your full name — the person placing the order? (first and last). If someone else will receive the delivery, you can give their contact in the delivery instructions later.';
+      return res.json({ text: ask, response: ask });
+    }
+    function contactKnownSkip() {
+      const sc = knownContact();
       if (!(sc.name && sc.phone)) return null;
       state.orderData.name = sc.name; state.orderData.phone = sc.phone;
       state.orderData.email = sc.email || email || ''; state.orderData.account_email = email || '';

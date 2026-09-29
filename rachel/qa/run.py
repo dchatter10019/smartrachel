@@ -195,9 +195,9 @@ class WhatsAppTransport:
         if bad: print(f"       [whatsapp] handset delivery: {', '.join(sorted(set(bad)))}" + (" (63016 = outside 24h window: message Rachel from the phone to reopen it)" if any("63016" in b for b in bad) else ""))
         return "\n".join(m.body or "" for m in got if not (m.body or "").startswith(self.NOTES)), secs
 
-def send(session, text, fmt, email, images=None, idle=False):
+def send(session, text, fmt, email, images=None, idle=False, ctx=None):
     payload = {"message": text, "session_id": session, "format": fmt, "gbrain_context": "", "qa": True,
-               "context": {"kitchen_location": "", "client_id": "airculinaire", "user_email": email, "account_id": ""}}
+               "context": {"kitchen_location": "", "client_id": "airculinaire", "user_email": email, "account_id": "", **(ctx or {})}}
     if images: payload["images"] = images
     if idle: payload["simulate_idle"] = True   # server treats the session as idle past RACHEL_IDLE_HOURS
     t0 = time.time()
@@ -320,7 +320,7 @@ def run_scenario(sc, verbose, parallel=False):
         try:
             pos = _log_size()
             try:
-                reply, secs = slack.send(text, images) if slack else send(session, text, fmt, email, images, turn.get("idle", False))
+                reply, secs = slack.send(text, images) if slack else send(session, text, fmt, email, images, turn.get("idle", False), sc.get("context"))
             except Exception as e:
                 reply, secs = f"<<ERROR {e}>>", 0
             log_text = "" if not logs else _log_since(pos) if glob_scope else _own_lines(_log_since(pos), session)

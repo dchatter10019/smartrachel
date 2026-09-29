@@ -1,0 +1,31 @@
+name: order-name-prefilled
+fresh: true
+tags: [smoke]
+# Real complaint (DC, Sep 29, Slack): a known customer was asked "What is your full name?" at checkout.
+# The channel profile name (Slack real_name -> context.user_name) is stated instead, and a correction
+# at the next step replaces it — never taken as the recipient email.
+context: {user_name: "Quinn Tester"}
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+  - send: "place the order"
+    expect:
+      contains: ["Quinn Tester", "email"]
+      not_contains: ["What is your full name"]
+      log_contains: ["[order] name prefilled from slack profile"]
+  - send: "no, it's Jordan Smith"
+    expect:
+      contains: ["Jordan Smith", "email"]
+      log_contains: ["corrected -> \"Jordan Smith\""]
+  - send: "same"
+    expect: {contains: ["phone"]}
+  - send: "9175550100"
+    expect: {contains: ["date", "time"]}
+  - send: "tomorrow at 5 pm"
+  - send: "none"
+  - send: "15%"
+    expect: {contains: ["Order Summary", "Jordan Smith"], not_contains: ["Quinn Tester"]}

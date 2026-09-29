@@ -109,7 +109,7 @@ def clear_history(user_id: str):
         gbrain_cache.pop(user_id, None)
 
 # ── RACHEL RESPONSE ───────────────────────────────────────────────────────────
-def ask_rachel(user_id: str, text: str, customer_context: str = "", user_email: str = "", images=None) -> str:
+def ask_rachel(user_id: str, text: str, customer_context: str = "", user_email: str = "", images=None, user_name: str = "") -> str:
     try:
         # Session key: prefer the customer's email over the raw Slack user_id.
         # Real bug found: the same person has DIFFERENT Slack user_ids across different
@@ -128,6 +128,7 @@ def ask_rachel(user_id: str, text: str, customer_context: str = "", user_email: 
                 "kitchen_location": "",
                 "client_id": "airculinaire",
                 "user_email": user_email,
+                "user_name": user_name,   # Slack real_name: Rachel states it at checkout instead of asking (customer-contacts.js)
                 "account_id": ""
             }
         }
@@ -269,12 +270,14 @@ def _handle_unlocked(event: dict, say, client):
 
     # Get email for Rachel context
     user_email = ""
+    user_name = ""
     try:
         profile = client.users_info(user=user_id)["user"]["profile"]
         user_email = profile.get("email", "")
+        user_name = profile.get("real_name", "")   # real_name, not display_name: the order needs first + last
     except Exception:
         pass
-    reply = ask_rachel(user_id, text, gbrain_cache[user_id], user_email, images or None)
+    reply = ask_rachel(user_id, text, gbrain_cache[user_id], user_email, images or None, user_name)
     say(reply)
     _react(client, channel, event.get("ts"), add="white_check_mark", remove="eyes")
 

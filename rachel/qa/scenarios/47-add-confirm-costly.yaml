@@ -1,0 +1,29 @@
+name: add-confirm-costly
+fresh: true
+tags: [smoke]
+# Real bug (DC, Sep 29, Slack): "I need an opus" put Opus One 2017 at $1,099.99 straight into the cart.
+# A single search match at/above CONFIRM_ADD_PRICE ($200), or with a vintage the customer didn't name,
+# is OFFERED with its price; a quantity reply adds it. A reply that isn't yes/quantity lets it lapse.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "I need an opus"
+    expect:
+      contains: ["Opus One 2017", "$1,099.99", "Want me to add it?"]
+      not_contains: ["Added"]
+      log_contains: ["[add-item] single match NOT added — confirming first"]
+  - send: "2"
+    expect:
+      contains: ["Added 2x Opus One 2017", "$2,199.98"]
+      log_contains: ["[add-confirm] accepted"]
+  - send: "show me my basket"
+    expect:
+      matches: "(?i)2\\s*x?\\s*[^\\n]*Opus One|Opus One[^\\n]*(?:qty|quantity|×|x)\\s*:?\\s*2"
+  - send: "need a dom perignon luminous rose"
+    expect:
+      contains: ["Want me to add it?"]
+  - send: "actually what's the cheapest champagne you have?"
+    expect:
+      not_contains: ["Added Dom"]
+      log_contains: ["[add-confirm] offer for Dom Perignon"]
