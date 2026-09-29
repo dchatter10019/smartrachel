@@ -2224,6 +2224,23 @@ app.post('/chat', async (req, res) => {
     // classified. Real bug (Sep 28 QA): "Kendall Pinot" while a quantity was pending skipped
     // routing and the LLM claimed the Pinot was "already in your basket".
     const qtyShaped = /^\s*(\d{1,3}|one|two|three|four|five|six|a dozen)\s*(?:x|bottles?|cases?|packs?)?\s*\.?\s*$/i.test(message);
+    // The LLM's own "How many bottles?" gets a code-owned answer too. Real bug (Sep 29 QA): after
+    // "do you have Tito's 1.75 L?" (search result captured as the basket at qty 1), "3" went to the
+    // LLM, which replied "adding 3 bottles" and made no tool call — the basket stayed at 1. Bind the
+    // quantity to the one line the question is about, then the pendingQtyFor handler below sets it.
+    if (qtyShaped && !state.pendingQtyFor && !state.pendingQtyChange && !state.orderStep && !state.proposalStep && !isInternalMsg) {
+      const lastRq = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
+      // Only a BOTTLE question: "How many guests?" answered "30" must never become 30 bottles.
+      const qtyQ = (lastRq.match(/[^?\n]*\bhow many\b[^?\n]*\?/gi) || []).pop() || '';
+      if (/\bhow many\s+(?:bottles?|cases?|packs?|cans?|of (?:those|them|these|it)|would you like|do you (?:want|need))\b/i.test(qtyQ) && !/\b(guests?|people|persons|hours?|attendees)\b/i.test(qtyQ) && !/^\s*\d+[.)]\s/m.test(lastRq)) {
+        let itq = []; try { itq = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+        const nq = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const named = itq.filter(x => !x.qty_confirmed && nq(lastRq).indexOf(nq(String(x.name || '').replace(/\s*-\s*[\d.]+\s*(?:ml|l|oz)\s*$/i, '')).slice(0, 12)) >= 0);
+        const line = named.length === 1 ? named[0] : itq.length === 1 && !itq[0].qty_confirmed ? itq[0] : null;
+        if (line) { state.pendingQtyFor = line.name; saveFlowState(); console.log('[qty] answer to the LLM\'s "how many" bound to ' + JSON.stringify(line.name) + ' (' + (named.length === 1 ? 'named in the question' : 'only basket line') + ')'); }
+        else console.log('[qty] "how many" answer not bound — ' + (itq.length ? named.length + ' unconfirmed lines named in the question, ' + itq.length + ' in the basket' : 'basket empty') + '; LLM handles it');
+      }
+    }
     if (!state.orderStep && !state.proposalStep && !(state.pendingQtyFor && qtyShaped) && !state.pendingQtyChange && !isInternalMsg) {   // a pending change-vs-add answer is handled below (pendingQtyChange)
       try {
         const { classifyIntent, groundedRef } = require('./classify-intent.js');
