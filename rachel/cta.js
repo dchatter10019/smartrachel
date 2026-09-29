@@ -142,6 +142,23 @@ function scrubGenericQuestions(text) {
     .replace(/[ \t]+\n/g, '\n').replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trimEnd();
 }
 
+// A real question with a generic alternative tacked on: the alternative goes, the question stays. Real
+// flake (Sep 29, smoke cta-search-single): "How many bottles would you like, or is there anything else I
+// can help with?" — the "how many" made the whole sentence a kept real question, "anything else" included.
+// -> { text, cut: [removed tails] }
+function trimGenericAlternative(text) {
+  const cut = [];
+  const out = String(text || '').replace(Q_SENT, q => {
+    const m = q.match(/^([\s\S]*?\S)\s*,?\s+or\s+((?:[^?]|\?(?!\s*[*_)]*$))+)\?([*_)]*)$/i);
+    if (!m || !REAL_Q.test(m[1])) return q;
+    const tail = m[2].trim();
+    if (!isGenericSentence(tail.charAt(0).toUpperCase() + tail.slice(1) + '?')) return q;
+    cut.push('or ' + tail + '?');
+    return m[1] + '?' + m[3];
+  });
+  return { text: out, cut };
+}
+
 function findCta(id) { for (const rows of Object.values(TABLE)) for (const c of rows) if (c.id === id) return c; return null; }
 function accepted(ctaOrId, message) {
   const c = typeof ctaOrId === 'string' ? findCta(ctaOrId) : ctaOrId;
@@ -168,4 +185,4 @@ function denumberBasketLines(text) {
   return String(text || '').replace(/^(\s*)\d{1,2}[.)]\s+(?=(?:[^\n]*?[\s:*_])?\d{1,3}\s*x\s)/gm, '$1');
 }
 
-module.exports = { denumberBasketLines, chooseCta, accepted, findCta, stripTrailer, splitCloser, hasRealQuestion, scrubGenericQuestions, fallbackIfEmpty, TABLE, DATE_RE };
+module.exports = { trimGenericAlternative, denumberBasketLines, chooseCta, accepted, findCta, stripTrailer, splitCloser, hasRealQuestion, scrubGenericQuestions, fallbackIfEmpty, TABLE, DATE_RE };

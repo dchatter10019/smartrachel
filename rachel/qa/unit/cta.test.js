@@ -1,7 +1,7 @@
 // Unit tests for cta.js (Learning Phase 1, Part B): every table row reachable from a hand-built state,
 // declined CTAs not repeated, question turns get none, disabled rows skipped, accept patterns.
 // (precheck.sh runs every qa/unit/*.test.js during lint.)
-const { chooseCta, accepted, TABLE, stripTrailer, splitCloser, hasRealQuestion, scrubGenericQuestions } = require('../../cta.js');
+const { chooseCta, accepted, TABLE, stripTrailer, splitCloser, hasRealQuestion, scrubGenericQuestions, trimGenericAlternative } = require('../../cta.js');
 let failed = 0;
 function eq(label, got, want) {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -134,6 +134,19 @@ console.log('basket_idle: a basket and no question is never a dead end (Sep 29 "
   eq('not twice in a row', chooseCta({}, { kind: 'basket_idle', prevCta: 'basket.offer_order_or_proposal' }, q), null);
   eq('not during an order', chooseCta({}, { kind: 'basket_idle', orderStarted: true }, q), null);
   eq('"send the proposal" accepted', accepted('basket.offer_order_or_proposal', 'send the proposal'), true);
+}
+
+console.log('a generic alternative is cut off a real question (Sep 29 smoke flake, cta-search-single)');
+{
+  const tito = "Yes! We have it:\n\n*Tito's Handmade Vodka* — 1.75 L — $43.99\n\nHow many bottles would you like, or is there anything else I can help with?";
+  const r = trimGenericAlternative(tito);
+  eq('the tail goes, the question stays', r.text.split('\n').pop(), 'How many bottles would you like?');
+  eq('what was cut is reported', r.cut, ['or is there anything else I can help with?']);
+  eq('still a question turn after', splitCloser(r.text).question, true);
+  eq('bold question keeps its markup', trimGenericAlternative('*Which size works, or anything else?*').text, '*Which size works?*');
+  eq('a real choice is not cut', trimGenericAlternative('Which do you want, the 750 mL or the 1.75 L?').cut, []);
+  eq('a mixers list is not cut', trimGenericAlternative('How many bottles, and would you like ice or cups?').cut, []);
+  eq('a generic-only question is left to splitCloser', trimGenericAlternative('Would you like to place an order, or is there anything else I can help with?').cut, []);
 }
 
 console.log(failed ? '\ncta: ' + failed + ' FAILED' : '\ncta: all passed');

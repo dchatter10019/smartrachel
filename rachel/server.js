@@ -2050,6 +2050,8 @@ app.post('/chat', async (req, res) => {
             if (dn !== orig) console.log('[cta] removed list numbering from basket lines (they are not pick options)');
             let t = listText != null ? listText : cta.stripTrailer(dn);
             if (listText == null && t !== orig.trimEnd()) console.log('[cta] stripped the generic four-action trailer');
+            const ga = cta.trimGenericAlternative(t);
+            if (ga.cut.length) { t = ga.text; console.log('[cta] cut the generic alternative off a real question: ' + JSON.stringify(ga.cut.join(' | ').slice(0, 100))); }
             const cl = cta.splitCloser(t);
             if (cl.generic) { t = cl.body; console.log('[cta] removed generic closer ' + JSON.stringify(cl.closer.slice(0, 80)) + ' — the table decides the follow-up'); }
             else if (cl.question) console.log('[cta] kept the reply\'s own question ' + JSON.stringify(cl.closer.slice(0, 80)) + ' — no CTA (question turn)');
