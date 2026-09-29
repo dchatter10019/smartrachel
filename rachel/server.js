@@ -412,6 +412,46 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
         if (!replacementName) return { success: false, error: 'replacement_name required' };
         let items = [];
         try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+        // No original named: a replacement stands in for the ONLY other basket line of its spirit type
+        // that wasn't itself just swapped in. Real bug (Sep 29, Slack): "Don Julio and Casamigos as their
+        // two options" — Don Julio replaced Mi Campo, then Casamigos came with no original_item and was
+        // added at 1 bottle beside the 4 Patron it was meant to replace.
+        if (!originalItem) {
+          try {
+            const { spiritType } = require('./spirit-type.js');
+            const t = spiritType(replacementName);
+            const nk0 = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            const cands = t ? items.filter(it => spiritType(it.name || it.label) === t && nk0(it.name).indexOf(nk0(replacementName).slice(0, 10)) < 0 && !(it.subst_at && Date.now() - it.subst_at < 30 * 60 * 1000)) : [];
+            if (cands.length === 1) { originalItem = cands[0].name; console.log('[confirm-substitute] no original given — ' + replacementName + ' replaces the only other ' + t + ' in the basket: ' + originalItem + ' (qty ' + (cands[0].qty || cands[0].quantity || 1) + ')'); }
+            else if (t) console.log('[confirm-substitute] no original given — ' + cands.length + ' other ' + t + ' line(s) ' + JSON.stringify(cands.map(c => c.name)) + ', adding as a new line');
+          } catch (e) {}
+        }
+        // A cross-type original must come from the customer. Real bug (Sep 29 QA, scenario 26): for
+        // "Don Julio Blanco and Casamigos Blanco" the LLM sent original_item = the Bacardi (a rum still
+        // waiting for its whiskey swap) for the Casamigos, leaving the 4 Patron in place. Allowed only
+        // when one of the customer's recent lines names the original together with the replacement's
+        // type or brand ("Instead of Bacardi – … whiskey"); otherwise the only other line of the
+        // replacement's type is the original.
+        if (originalItem) {
+          try {
+            const { spiritType } = require('./spirit-type.js');
+            const tR = spiritType(replacementName), tO = spiritType(originalItem);
+            if (tR && tO && tR !== tO) {
+              const nrm = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+              const userLines = (sessions[sessionKey] || []).filter(m => m.role === 'user' && typeof m.content === 'string').slice(-6).map(m => m.content)
+                .concat(state.currentUserMessage || '').flatMap(c => String(c).split(/\n+|•/)).map(nrm);
+              const oWord = nrm(originalItem).split(/[^a-z0-9']+/).find(w => w.length >= 3) || '';
+              const rWords = [tR].concat(tR === 'whiskey' ? ['whisky', 'bourbon', 'scotch', 'rye'] : []).concat(nrm(replacementName).split(/[^a-z0-9']+/).filter(w => w.length >= 4).slice(0, 2));
+              const said = userLines.some(l => l.includes(oWord) && rWords.some(w => new RegExp('\\b' + w + '\\b').test(l)));
+              if (!said) {
+                const nk0 = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                const cands = items.filter(it => spiritType(it.name || it.label) === tR && nk0(it.name).indexOf(nk0(replacementName).slice(0, 10)) < 0 && !(it.subst_at && Date.now() - it.subst_at < 30 * 60 * 1000));
+                console.log('[confirm-substitute] ' + replacementName + ' (' + tR + ') for ' + originalItem + ' (' + tO + ') — the customer never asked for that cross-type swap; ' + (cands.length === 1 ? 'replacing ' + cands[0].name + ' instead' : cands.length + ' ' + tR + ' line(s) fit — treated as no original'));
+                originalItem = cands.length === 1 ? cands[0].name : '';
+              }
+            }
+          } catch (e) { console.log('[confirm-substitute] cross-type check failed: ' + e.message); }
+        }
         const originalBrandWord = originalItem ? originalItem.split(' ')[0].toLowerCase() : null;
         let qtyToUse = 1;
         let categoryToUse = '';
@@ -506,12 +546,12 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
           const ex = items[dupIdx];
           // A replace sets the quantity; an add (no original) tops it up.
           ex.qty = originalItem ? qtyToUse : ((ex.qty || ex.quantity || 1) + (qtyToUse || 1));
-          ex.quantity = ex.qty;
+          ex.quantity = ex.qty; ex.subst_at = Date.now();
           if (rp) ex.price = rp;
           console.log('[confirm-substitute] merge into existing line:', ex.name, '-> qty', ex.qty);
         } else {
           items.push({
-            label: replacementName, name: newName, qty: qtyToUse, quantity: qtyToUse,
+            label: replacementName, name: newName, qty: qtyToUse, quantity: qtyToUse, subst_at: Date.now(),
             price: rp, size: resolved ? (resolved.sizeStr || resolved.size || replacementSize || '') : (replacementSize || ''),
             url: resolved ? (resolved.url || '') : '', product_id: newPid,
             upc: resolved ? (resolved.upc || '') : '', establishmentId: resolved ? (resolved.establishmentId || '') : '',
@@ -855,8 +895,19 @@ async function validateDeliveryTime(state, message, email, format, res) {
 }
 async function callRachel({ sessionKey, message, context, format, gbrainContext, addressRule, email, onProposalGenerated, alreadyConfirmed }) {
   const messages = sessions[sessionKey] || [];
-  const channelNote = getChannelNote(format);
+  let channelNote = getChannelNote(format);
   const stateForEmail = getState(sessionKey);
+  // Several instructions in one message: tell the LLM the checklist, then check the reply (below).
+  stateForEmail.currentUserMessage = message;   // read by applyBasketSubstitute's cross-type check (same-turn instructions)
+  const instrs = require('./instructions.js').splitInstructions(message);
+  let basketBefore = []; try { basketBefore = JSON.parse(stateForEmail.lastLineItems || '[]'); } catch (e) {}
+  if (instrs.length) {
+    console.log('[instructions] ' + instrs.length + ' in one message: ' + JSON.stringify(instrs));
+    const work = basketBefore.map(it => Object.assign({}, it));
+    const done = require('./instructions.js').applyCountInstructions(instrs, work);
+    if (done.length) { stateForEmail.lastLineItems = JSON.stringify(work); saveFlowState(); try { saveBasket(email, stateForEmail.lastLineItems, '', format || 'slack').catch(() => {}); } catch (e) {} }
+    channelNote += '\n\nThe customer\'s message has ' + instrs.length + ' separate instructions:\n' + instrs.map((x, i) => { const d = done.find(z => z.instr === x); return (i + 1) + '. ' + x + (d ? '  [You just changed this in the basket: ' + d.name + ' from ' + d.from + ' to ' + d.to + '. Tell the customer you updated it from ' + d.from + ' to ' + d.to + ' (never "already set" or "no change needed"); do not change it again]' : ''); }).join('\n') + '\nHandle EVERY one this turn — apply it, or ask the question you need to apply it. Never skip one.';
+  }
   const result = await rachelChat({
     messages: [...messages, { role: 'user', content: message }],
     context,
@@ -1125,8 +1176,16 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
   });
   sessions[sessionKey] = result.messages;
   const out = scrubDisabledOffers(formatResponse(result.response, format), format);
-  const numbered = require('./multipick.js').numberOptionLines(out);
+  let numbered = require('./multipick.js').numberOptionLines(out);
   if (numbered !== out) console.log('[reply] numbered an unnumbered options list (LLM left it bare) so a "3" can pick from it');
+  if (instrs.length) {
+    let basketAfter = []; try { basketAfter = JSON.parse(getState(sessionKey).lastLineItems || '[]'); } catch (e) {}
+    const missed = require('./instructions.js').unaddressed(instrs, numbered, basketBefore, basketAfter);
+    if (missed.length) {
+      console.log('[instructions] UNADDRESSED by the reply — asked about, not dropped: ' + JSON.stringify(missed));
+      numbered += '\n\nI haven\'t done ' + (missed.length === 1 ? 'this one' : 'these') + ' yet:\n' + missed.map(x => '• ' + x).join('\n') + '\nWant me to go ahead' + (missed.length === 1 ? '' : ' with ' + (missed.length === 2 ? 'both' : 'all of them')) + '?';
+    } else console.log('[instructions] all ' + instrs.length + ' handled');
+  }
   return numbered;
 }
 
@@ -1950,7 +2009,7 @@ app.post('/chat', async (req, res) => {
     // classified. Real bug (Sep 28 QA): "Kendall Pinot" while a quantity was pending skipped
     // routing and the LLM claimed the Pinot was "already in your basket".
     const qtyShaped = /^\s*(\d{1,3}|one|two|three|four|five|six|a dozen)\s*(?:x|bottles?|cases?|packs?)?\s*\.?\s*$/i.test(message);
-    if (!state.orderStep && !state.proposalStep && !(state.pendingQtyFor && qtyShaped) && !isInternalMsg) {
+    if (!state.orderStep && !state.proposalStep && !(state.pendingQtyFor && qtyShaped) && !state.pendingQtyChange && !isInternalMsg) {   // a pending change-vs-add answer is handled below (pendingQtyChange)
       try {
         const { classifyIntent, groundedRef } = require('./classify-intent.js');
         const lastR2 = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
@@ -2151,7 +2210,26 @@ app.post('/chat', async (req, res) => {
           const same = itemsA.find(it => nz(it.name) === nz(pr.name) || nz(it.name).indexOf(nz(pr.name).slice(0, 14)) === 0);
           if (same) {
             const q0 = same.qty || same.quantity || 1;
-            const rS = pr.name + ' is already in your order (' + q0 + ' bottle' + (q0 === 1 ? '' : 's') + '). Want to change the quantity, or add something else?';
+            const bl = n => n + ' bottle' + (n === 1 ? '' : 's');
+            // A stated quantity with set-wording IS the change. Real bug (Sep 29, Slack): "no make it to 5
+            // bottles of Mount Gay Black Barrel" got "already in your order (4 bottles). Want to change the
+            // quantity?", and the answer "change the quantity" then lost the 5 entirely.
+            const setWords = /\b(make|change|chnage|update|set|bump|increase|decrease|reduce|instead|total|should be)\b|\bto\s+\d/i.test(message);
+            if (clsQty > 0 && clsQty !== q0 && setWords) {
+              try { const it = JSON.parse(state.lastLineItems || '[]'); const row = it.find(x => nz(x.name) === nz(same.name)); if (row) { row.qty = clsQty; row.quantity = clsQty; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); } } catch (e) {}
+              saveFlowState();
+              console.log('[add-item] already in basket + stated qty with set-wording -> ' + same.name + ' ' + q0 + ' -> ' + clsQty);
+              const rQ = 'Done — ' + same.name + ' updated from ' + bl(q0) + ' to ' + bl(clsQty) + '. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+              return res.json({ text: rQ, response: rQ });
+            }
+            if (clsQty > 0 && clsQty !== q0) {
+              state.pendingQtyChange = { name: same.name, qty: clsQty, from: q0 }; saveFlowState();
+              console.log('[add-item] already in basket, qty ' + clsQty + ' stated without set-wording -> asking change vs add more');
+              const rC = same.name + ' is already in your order (' + bl(q0) + '). Change it to ' + clsQty + ', or add ' + clsQty + ' more (' + (q0 + clsQty) + ' total)?';
+              return res.json({ text: rC, response: rC });
+            }
+            state.pendingQtyFor = same.name; saveFlowState();
+            const rS = pr.name + ' is already in your order (' + bl(q0) + '). How many would you like in total? (Or tell me what else to add.)';
             return res.json({ text: rS, response: rS });
           }
           // Replace-in-varietal: "let's go with Tito's for vodka" when the basket holds another
@@ -3271,6 +3349,27 @@ app.post('/chat', async (req, res) => {
         const rS = 'For ' + n + ' people I\'d suggest *' + q + ' bottle' + (q > 1 ? 's' : '') + '* of ' + state.pendingQtyFor + ' — ' + (spirits ? 'about 2 drinks each, ~16 per 750 mL bottle' : 'about 2 glasses each, 5 per 750 mL bottle') + '. Want ' + q + ', or a different number?';
         return res.json({ text: rS, response: rS });
       }
+    }
+    // Answer to "Change it to N, or add N more?" (add-item on a product already in the basket).
+    if (state.pendingQtyChange && !state.orderStep && !state.proposalStep) {
+      const pc = state.pendingQtyChange; state.pendingQtyChange = null; saveFlowState();
+      const m = String(message || '').toLowerCase();
+      const n = /\b(add|more|extra|another|on top|plus)\b/.test(m) ? pc.from + pc.qty : /\b(change|chnage|yes|yeah|yep|sure|ok|okay|make|set|update|replace|that)\b/.test(m) ? pc.qty : 0;
+      if (n) {
+        try { const it = JSON.parse(state.lastLineItems || '[]'); const nk = s => String(s||'').toLowerCase().replace(/[^a-z0-9]/g,''); const row = it.find(x => nk(x.name) === nk(pc.name)); if (row) { row.qty = n; row.quantity = n; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); } } catch (e) {}
+        saveFlowState();
+        console.log('[qty-change] ' + pc.name + ' ' + pc.from + ' -> ' + n + ' (answer: ' + JSON.stringify(message.slice(0, 40)) + ')');
+        const reply = 'Done — ' + pc.name + ' is now ' + n + ' bottle' + (n === 1 ? '' : 's') + '. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+        return res.json({ text: reply, response: reply });
+      }
+      console.log('[qty-change] pending change for ' + pc.name + ' dropped — reply is neither change nor add: ' + JSON.stringify(message.slice(0, 60)));
+    }
+    // "change the quantity" after "already in your order ... how many in total?" — ask the number
+    // for THAT product, never start over (Sep 29: Rachel asked which rum and offered Bacardi back).
+    if (state.pendingQtyFor && /^\s*(?:(?:i\s+)?(?:want|would like|like)\s+to\s+)?(?:change|chnage|update|adjust|edit)\s+(?:the\s+)?(?:quantity|qty|amount|count|number)\b[\s.!]*$/i.test(message) && !state.orderStep && !state.proposalStep) {
+      const rH = 'How many bottles of ' + state.pendingQtyFor + ' would you like in total?';
+      console.log('[qty-change] "change the quantity" -> asking the number for ' + state.pendingQtyFor);
+      return res.json({ text: rH, response: rH });
     }
     // Quantity answer for the item just picked (see pendingQtyFor below).
     if (state.pendingQtyFor && /^\s*(\d{1,3})\s*(?:x|bottles?|cases?|packs?)?\s*\.?\s*$/i.test(message) && !state.orderStep && !state.proposalStep) {

@@ -1,0 +1,35 @@
+name: multi-instruction-edits
+tags: [ux]
+# Real session (Sep 29, Slack, DC, zip 33409). A 3-bullet edit message: "Change the Rum count to 5"
+# was silently dropped; "higher end whiskey" was searched as-is (High West Midwinter's Night Dram,
+# Peerless High Rye...); Casamigos went in at 1 bottle instead of replacing the 4 Patron; "make it to 5
+# bottles of Mount Gay Black Barrel" got "already in your order ... want to change the quantity?".
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "1399 N Military Trl, West Palm Beach, FL 33409"
+    expect: {contains: ["33409"]}
+  - send: "5 Bacardi Superior White Rum 750ml\n4 Mount Gay Black Barrel 750ml\n5 Mi Campo Reposado Tequila 750ml\n4 Patron Silver 750ml"
+    expect: {contains: ["Mount Gay", "Patron"]}
+  - send: "• Instead of Bacardi – please replace with a higher end whiskey\n• Change the Rum count to 5\n• For tequila, they would like Don Julio and Casa Migos as their two options."
+    expect:
+      matches: "(?i)(mount gay|\\brum\\b)"
+      not_contains: ["Midwinter", "Peerless", "no change needed", "already set"]
+      log_contains: ["[instructions] 3 in one message", "[instructions] APPLIED in code: \"Change the Rum count to 5\" -> Mount Gay"]
+      log_not_contains: ["searchBy=high%20end", "searchBy=higher%20end", "searchBy=High%20End", "searchBy=Higher%20End"]
+  - send: "show my basket"
+    # the rum count is Mount Gay (the Bacardi is being replaced in the same message), set in code
+    expect:
+      matches: "(?i)5\\s*x[^\\n]*Mount Gay"
+  - send: "make it 6 bottles of Mount Gay Black Barrel"
+    expect:
+      matches: "(?i)mount gay[^\\n]*\\b6\\b|\\b6\\b[^\\n]*mount gay"
+      not_contains: ["Want to change the quantity"]
+  - send: "show my basket"
+    expect: {matches: "(?i)6\\s*x[^\\n]*Mount Gay"}
+  - send: "Don Julio Blanco — 750 mL — $49.99, Casamigos Blanco — 750 mL — $53.99"
+    # DC's real pick message. Don Julio replaces Mi Campo (5), Casamigos replaces Patron (4). Rachel may
+    # ask first (LLM's call) — but Casamigos must never sit at 1x, or beside the Patron it replaces.
+  - send: "show my basket"
+    expect:
+      matches: "(?s)^(?!.*Patron.*Casamigos)(?!.*Casamigos.*Patron)(?!.*\\b1\\s*x[^\\n]*Casamigos).*$"

@@ -28,4 +28,14 @@ function coreFirst(query, rows) {
 // in every size and the 750 mL Blanco / Reposado never came back.
 function spaceSize(q) { return String(q || '').replace(/(\d)(ml|cl|l|oz)\b/gi, '$1 $2'); }
 
-module.exports = { coreFirst, spaceSize };
+// Quality words are not product words. Real bug (Sep 29, Slack): "higher end whiskey" was searched
+// as-is and Bevvi matched the word "High": High West Midwinter's Night Dram, Peerless High Rye,
+// Blue Run High Rye... Only whole descriptor phrases go ("High West" stays); results are already
+// sorted premium-first. Returns the query unchanged if nothing else would be left.
+const DESCRIPTORS = /\b(?:(?:higher|high)[- ]end|top[- ]shelf|premium|luxury|upscale|fancy|cheap(?:er)?|budget|affordable|inexpensive|mid[- ](?:range|tier|shelf|priced))\b/gi;
+function stripDescriptors(q) {
+  const out = String(q || '').replace(DESCRIPTORS, ' ').replace(/\s+/g, ' ').trim();
+  return /[a-z]{3,}/i.test(out.replace(/\b\d+(\.\d+)?\s*(ml|l|oz|cl)\b/gi, '')) ? out : String(q || '');
+}
+
+module.exports = { coreFirst, spaceSize, stripDescriptors };

@@ -289,7 +289,7 @@ function scoreBuyer(profile) {
   return { tier: 'new', discount: 0 };
 }
 
-const { coreFirst, spaceSize } = require('./core-first.js');
+const { coreFirst, spaceSize, stripDescriptors } = require('./core-first.js');
 
 async function searchProducts(location, client, query, limit, minPrice, maxPrice) {
   try {
@@ -358,7 +358,9 @@ function expandBrandNicknames(term) {
 }
 
 async function searchWithFallbacks(location, client, name, limit, minPrice, maxPrice) {
-  name = spaceSize(expandBrandNicknames(name));
+  const name0 = name;
+  name = stripDescriptors(spaceSize(expandBrandNicknames(name)));
+  if (stripDescriptors(name0) !== name0) console.log('[search] descriptor words dropped from the search text: ' + JSON.stringify(name0) + ' -> ' + JSON.stringify(name));
   let products = await searchProducts(location, client, name, limit || 10, minPrice, maxPrice);
   if (products.length) return products;
   // Try stripping size/pack wording BEFORE the more aggressive word-count fallbacks
