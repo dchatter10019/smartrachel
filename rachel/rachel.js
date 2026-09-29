@@ -128,7 +128,7 @@ const ALL_TOOLS = [
 
 const ORDER_CONFIRMATION_WORDS = ['yes', 'yeah', 'yep', 'yup', 'confirm', 'confirmed', 'go ahead', 'place it', 'place the order', 'sounds good', 'that works', 'correct', 'do it', 'please place', 'looks good', 'lgtm', 'proceed', 'ok place', 'okay place'];
 
-async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, onProposalGenerated, customerMessage, alreadyConfirmed, requesterEmail, sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems, onShowBasket, eventParams, onUpdateQuantity, onOrderPlaced, sessionState) {
+async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, onProposalGenerated, customerMessage, alreadyConfirmed, requesterEmail, sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems, onShowBasket, eventParams, onUpdateQuantity, onOrderPlaced, sessionState, customerSaid = '') {
   console.log(`[tool] ${toolName}`, JSON.stringify(toolInput).slice(0, 500));
   try {
     switch (toolName) {
@@ -331,6 +331,18 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             } catch (e) {}
           }
           if (filled.length) console.log('[ShoppingAgent] filled missing params from persisted eventParams:', filled.join(', '));
+        }
+        // DURATION IS NEVER ASSUMED. Real bug (Sep 29, QA replay of DC's Slack event): "event for 50 people for
+        // $5000, liquor beer and wine" -> the LLM built with hours=5 the customer never gave (the prompt says
+        // never default; it did anyway), then misread the customer's "2 hours" as a question. An event build's
+        // hours must come from the customer — a message in this conversation, or a persisted earlier build.
+        if ((saInput.intent === 'menu_build' || (saInput.intent === 'custom_list' && saInput.guests)) && saInput.hours && !saInput.drinks_per_person && !(eventParams && eventParams.hours) && !saInput._paramChange) {
+          const said = String(customerSaid || '') + '\n' + String(customerMessage || '');
+          const HOURS_RE = /\b\d+(?:\.\d+)?\s*(?:-|to)?\s*(?:\d+(?:\.\d+)?\s*)?(?:hours?|hrs?|hr)\b|\b(?:an?|one|two|three|four|five|six|seven|eight|half)[\s-]+(?:an?\s+)?(?:hours?|hrs?|day)\b|\ball[- ](?:day|night|evening)\b|\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\s*(?:-|to|until|till|–)\s*\d{1,2}(?::\d\d)?\s*(?:am|pm)\b|\bdrinks?\s+(?:per|a|each)\s+(?:person|head|guest)/i;
+          if (!HOURS_RE.test(said)) {
+            console.log('[ShoppingAgent] REFUSED ' + saInput.intent + ': hours=' + saInput.hours + ' was never stated by the customer — the LLM must ask the event length');
+            return { success: false, error: 'NEED_DURATION: the customer has not said how long the event is. Do NOT assume or default the hours. Ask exactly one question: "How long is the event? (e.g. 3 hours)" — then build with their answer.' };
+          }
         }
         if (saInput.intent === 'custom_list' && Array.isArray(saInput.named_products)) {
           const splitMergedNamedProducts = (list) => {
@@ -636,6 +648,8 @@ RULES:
     : systemPrompt + channelNote) + orderNote;
 
   let claudeMessages = [...messages];
+  // Everything the customer has said this conversation (tool guards check stated facts against it, e.g. event hours).
+  const customerSaid = messages.filter(mm => mm.role === 'user').map(mm => typeof mm.content === 'string' ? mm.content : (Array.isArray(mm.content) ? mm.content.filter(c => c && c.type === 'text').map(c => c.text).join(' ') : '')).join('\n');
   let finalResponse = '';
   let iterations = 0;
 
@@ -665,7 +679,7 @@ RULES:
       const toolResults = [];
       for (const block of response.content) {
         if (block.type === 'tool_use') {
-          const result = await executeTool(block.name, block.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems, onShowBasket, eventParams, onUpdateQuantity, onOrderPlaced, sessionState);
+          const result = await executeTool(block.name, block.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems, onShowBasket, eventParams, onUpdateQuantity, onOrderPlaced, sessionState, customerSaid);
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,

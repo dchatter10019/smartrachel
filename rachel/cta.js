@@ -140,4 +140,16 @@ function accepted(ctaOrId, message) {
   return !!(c && c.accept && c.accept.test(String(message || '')));
 }
 
-module.exports = { chooseCta, accepted, findCta, stripTrailer, splitCloser, hasRealQuestion, scrubGenericQuestions, TABLE, DATE_RE };
+// A reply that was ONLY the generic trailer strips to nothing. Real bug (DC, Sep 29, Slack): "no" to "add
+// mixers?" got "Would you like to see the estimated full price, place the order...?" from the LLM, the
+// trailer was stripped, the empty reply was refused by Slack (no_text) and the customer saw silence
+// twice. Never send an empty reply: a short acknowledgement plus the basket follow-up from the table.
+function fallbackIfEmpty(text, state, turn, basketItems, log = console.log) {
+  if (String(text || '').trim()) return null;
+  const c = basketItems > 0 ? chooseCta(state, Object.assign({}, turn, { kind: 'basket_updated', question: false }), log) : null;
+  const t = 'Got it.' + (c ? ' ' + c.text : ' What else can I get you?');
+  log('[cta] reply was empty after stripping the generic trailer — sent ' + JSON.stringify(t) + ' instead');
+  return { text: t, cta: c };
+}
+
+module.exports = { chooseCta, accepted, findCta, stripTrailer, splitCloser, hasRealQuestion, scrubGenericQuestions, fallbackIfEmpty, TABLE, DATE_RE };

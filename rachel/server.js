@@ -2033,6 +2033,12 @@ app.post('/chat', async (req, res) => {
               st.lastCta = { id: c.id, product: turn.product || null, qty: turn.offerQty || 0, substitute: turn.substitute || null, at: Date.now() };
               events.note({ cta_id: c.id });
             }
+            let nB = 0; try { nB = JSON.parse(st.lastLineItems || '[]').length; } catch (e) {}
+            const fb = cta.fallbackIfEmpty(t, st, turn, nB);
+            if (fb) {
+              t = fb.text;
+              if (fb.cta) { st.lastCta = { id: fb.cta.id, product: null, qty: 0, substitute: null, at: Date.now() }; events.note({ cta_id: fb.cta.id }); }
+            }
             saveFlowState();
             if (t !== orig) { payload.text = t; if (typeof payload.response === 'string') payload.response = t; }
       } catch (e) { console.log('[cta] error (reply sent unchanged): ' + e.message); }
@@ -2537,6 +2543,14 @@ app.post('/chat', async (req, res) => {
     }
     // change_instructions outside confirm: update the saved instructions (used at the next
     // summary) in one step, from the classifier's extracted ref.
+    // Only with delivery-instruction words in the message. Real bug (Sep 29 QA, swap-to-category-and-brands):
+    // the classifier's network call failed, the retry labeled "Instead of Bacardi – replace with a higher
+    // end whiskey / Don Julio and Casamigos" change_instructions (0.75) and the basket's product names were
+    // saved as the driver instructions. A label the message doesn't support is dropped, not acted on.
+    if (clsIntent === 'change_instructions' && !/\b(instructions?|notes?|driver|deliver(?:y|ing)?|door(?:man)?|buzz(?:er)?|lobby|concierge|front desk|reception|leave (?:it|them|the)|gate|code|floor|suite|apt|apartment|unit|loading dock|call (?:me|when|on arrival)|text (?:me|when)|ring|knock|security|mailroom)\b/i.test(message)) {
+      console.log('[order] change_instructions label ignored — no delivery-instruction words in the message: ' + JSON.stringify(message.slice(0, 80)));
+      clsIntent = null;
+    }
     if (!state.orderStep && !state.proposalStep && (clsIntent === 'change_instructions' || (/\b(instruction|instructions|note|notes|tell the driver|for the driver)\b/i.test(message) && /\b(change|update|set|add|make it|use)\b/i.test(message)))) {
       const txt = (clsRef || message.replace(/^.*?\b(instructions?|notes?|driver)\b\s*(to|:|-|—|should|is|are)?\s*/i, '')).trim();
       state.savedInstructions = /^(none|no|nothing|remove|clear)\b/i.test(txt) ? '' : txt;

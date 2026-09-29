@@ -19,4 +19,4 @@ turns:
       contains: ["Casamigos"]
       not_contains: ["search issue", "trouble pulling", "bevvi-support"]
       log_contains: ["[tool] ShoppingAgent"]
-      log_not_contains: ["[not-found] \"high end", "ALTERNATIVES ROUTING: product_query", "classifier failed"]
+      log_not_contains: ["[not-found] \"high end", "ALTERNATIVES ROUTING: product_query", "classifier failed", "[order] instructions change outside confirm"]

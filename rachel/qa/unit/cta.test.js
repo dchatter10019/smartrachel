@@ -103,5 +103,18 @@ console.log('questions anywhere in the reply');
   eq('a mid-reply real question counts', hasRealQuestion('*WHISKEY*\nWhich one would you like?\n\n*TEQUILA*\n1. Don Julio — 750 mL — $49.99'), true);
 }
 
+console.log('fallbackIfEmpty: a trailer-only reply never goes out empty (Sep 29 Slack no_text)');
+{
+  const cta = require('../../cta.js');
+  const trailerOnly = stripTrailer('Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?');
+  eq('trailer-only strips to empty', trailerOnly, '');
+  const fb = cta.fallbackIfEmpty(trailerOnly, {}, { kind: 'informational' }, 3, q);
+  eq('with a basket: ack + checkout offer', fb && fb.text, 'Got it. Anything else, or ready to place the order?');
+  eq('with a basket: CTA recorded', fb && fb.cta && fb.cta.id, 'basket.offer_checkout');
+  const fb0 = cta.fallbackIfEmpty('  ', {}, { kind: 'informational' }, 0, q);
+  eq('empty basket', fb0 && fb0.text, 'Got it. What else can I get you?');
+  eq('non-empty reply untouched', cta.fallbackIfEmpty('No problem!', {}, { kind: 'informational' }, 3, q), null);
+}
+
 console.log(failed ? '\ncta: ' + failed + ' FAILED' : '\ncta: all passed');
 process.exit(failed ? 1 : 0);

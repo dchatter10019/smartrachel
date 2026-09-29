@@ -136,6 +136,10 @@ def ask_rachel(user_id: str, text: str, customer_context: str = "", user_email: 
         r = httpx.post("http://127.0.0.1:3500/chat", json=payload, timeout=240)
         data = r.json()
         reply = data.get("text", "Sorry, I hit a snag — try again in a second.")
+        # An empty reply is refused by Slack (no_text) and the customer sees silence (Sep 29: twice in a row).
+        if not (reply or "").strip():
+            log.error(f"[rachel] EMPTY reply from Rachel for {session_key} on {text[:60]!r} — sent the fallback instead")
+            reply = "Sorry, I lost my reply there — could you say that again?"
         return reply
     except Exception as e:
         log.error(f"[rachel] error: {e}")

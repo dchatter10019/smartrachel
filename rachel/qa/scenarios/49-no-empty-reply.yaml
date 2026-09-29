@@ -1,0 +1,23 @@
+name: no-empty-reply
+fresh: true
+tags: [ux]
+# Real bug (DC, Sep 29, Slack): after an event package, "no" to "add mixers?" got an LLM reply that was
+# only the generic trailer; the CTA stripped it, the reply was EMPTY, Slack refused it (no_text) and the
+# customer saw nothing — twice. Every reply must have text (cta.fallbackIfEmpty). Also: the event length is
+# never assumed (rachel.js NEED_DURATION guard).
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a menu for an event for 50 people for 5000 dollars, need liquor, beer and wine"
+  - send: "this event is more wine heavy drinkers"
+    # hours were never given: the build is refused in code and Rachel asks (Sep 29 replay: LLM assumed 5 hours)
+    expect: {matches: "(?i)how long", not_contains: ["Product total"]}
+  - send: "2 hours"
+    expect: {contains: ["Product total"]}
+  - send: "do you think the quantities are enough for 50 guests?"
+    expect: {matches: "\\S{3,}"}
+  - send: "no"
+    expect: {matches: "\\S{3,}"}
+  - send: "I see no replies"
+    expect: {matches: "\\S{3,}"}
