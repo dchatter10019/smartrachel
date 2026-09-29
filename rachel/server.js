@@ -402,7 +402,7 @@ function getChannelNote(format) {
 // ── Rachel chat wrapper ────────────────────────────────────────────────────
 // Hoisted so BOTH the confirm_substitute tool path and the deterministic pick-list
 // handler (in the request handler, outside callRachel's scope) share one implementation.
-async function applyBasketSubstitute(sessionKey, email, originalItem, replacementName, replacementPrice, replacementSize) {
+async function applyBasketSubstitute(sessionKey, email, originalItem, replacementName, replacementPrice, replacementSize, opts) {
       // The LLM calls this explicitly whenever it recognizes the customer has confirmed
       // a substitute, in ANY phrasing — replacing the earlier, fundamentally fragile
       // approach of trying to detect confirmations by regex-matching the customer's raw
@@ -418,7 +418,7 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
         // that wasn't itself just swapped in. Real bug (Sep 29, Slack): "Don Julio and Casamigos as their
         // two options" — Don Julio replaced Mi Campo, then Casamigos came with no original_item and was
         // added at 1 bottle beside the 4 Patron it was meant to replace.
-        if (!originalItem) {
+        if (!originalItem && !(opts && opts.add)) {   // opts.add: a plain add (an accepted CTA), never an inferred replacement
           try {
             const { spiritType } = require('./spirit-type.js');
             const t = spiritType(replacementName);
@@ -896,6 +896,73 @@ async function validateDeliveryTime(state, message, email, format, res) {
   state.orderData.delivery_datetime = finalDeliveryText;
   return null;
 }
+const cta = require('./cta.js');
+const isInternalMsgEarly = m => /^__/.test(m) || /^\d{1,2}:\d{2}\s*[AP]M\s*-\s*\d{1,2}:\d{2}\s*[AP]M/i.test(m);
+// The CTA table's view of a turn: which state row applies, and the facts its conditions read.
+const OPTION_LINE_RE = /^\s*(?:\d+[.)]\s*|[A-Z][.)]\s+)?[*_]*([^*_\n—]+?)[*_]*\s+—\s+([^—\n$]*?\d[^—\n$]*?)\s+—\s+\$([\d,]+(?:\.\d+)?)(?!\s*ea\s*=)[^\n=]*$/gm;
+function ctaTurn(st, body, question, msg, context) {
+  const { spiritType } = require('./spirit-type.js');
+  const e = events.ctx() || { actions: [], unmatched: [] };
+  const label = events.stateLabel(st);
+  if (question || label !== 'ready') return { kind: label !== 'ready' ? label : 'question', question: true, stateLabel: label };
+  const captured = !!(e.ev && e.ev.discussed_capture);   // [product-discussed]: the searched product held as context
+  const changed = !captured && (e.basket0 ? events.basketOf(st).sig !== e.basket0.sig : false);
+  const opts = [...String(body).matchAll(OPTION_LINE_RE)].filter(m => !/^\s*\d+\s*x\b/i.test(m[0])).map(m => ({ name: m[1].trim(), size: m[2].trim(), price: parseFloat(m[3].replace(/,/g, '')) }));
+  const has = a => e.actions.includes(a);
+  const base = { stateLabel: label, corporate: !!((context && context.kitchen_location) || st.lastProposalUrl || st.savedClientName), orderStarted: !!st.orderStep };
+  let items = []; try { items = JSON.parse(st.lastLineItems || '[]'); } catch (x) {}
+  if (has('placed_order')) return Object.assign(base, { kind: 'order_placed', basketItems: items.length });
+  if (has('generated_proposal')) return Object.assign(base, { kind: 'proposal_sent' });
+  // Something the customer named isn't available: offering its substitute beats the basket follow-up.
+  if (e.unmatched.length) return Object.assign(base, { kind: 'item_unavailable', unmatchedName: e.unmatched[0], substitute: opts[0] || null });
+  if (has('built_basket')) return Object.assign(base, { kind: 'basket_built' });
+  if (has('updated_basket') || has('showed_basket') || changed) return Object.assign(base, { kind: 'basket_updated' });
+  if (opts.length >= 2) return Object.assign(base, { kind: 'search_multi', options: opts.length });
+  // A single search result held as context ([product-discussed]) IS the product — known in code, whatever
+  // the reply's layout (Sep 29 QA: "Yes! *Tito's Handmade Vodka 1.75 L* is available — $43.99" has no
+  // "Name — size — $price" line and was read as informational). Else one bold name + price on a line.
+  if (!opts.length && captured && items.length === 1) {
+    const it = items[0];
+    opts.push({ name: String(it.name || it.label || '').replace(/\s*-\s*[\d.]+\s*(?:ML|L|OZ)\s*$/i, ''), size: it.size || ((String(it.name || '').match(/[\d.]+\s*(?:ML|L|OZ)\s*$/i) || [''])[0]), price: parseFloat(it.price) || 0 });
+  } else if (!opts.length && has('searched')) {
+    const one = [...String(body).matchAll(/^[^\n]*?\*([^*\n]{3,80})\*[^\n$]*\$(\d+(?:\.\d\d)?)[^\n]*$/gm)];
+    if (one.length === 1) { const sz = (one[0][1].match(/\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/i) || [''])[0]; opts.push({ name: one[0][1].replace(sz, '').trim(), size: sz, price: parseFloat(one[0][2]) }); }
+  }
+  if (opts.length === 1 && (captured || !items.some(it => String(it.name || '').toLowerCase().indexOf(opts[0].name.toLowerCase().slice(0, 12)) >= 0))) {
+    const nm = opts[0].name + ' ' + opts[0].size;
+    const category = spiritType(nm) ? 'spirits' : /wine|pinot|cabernet|chardonnay|sauvignon|merlot|ros[eé]|prosecco|champagne|riesling|malbec|zinfandel|syrah/i.test(nm) ? 'wine' : '';
+    const qM = String(msg || '').match(/\b(\d{1,3})\s*(?:bottles?|x)\b/i);
+    const statedQty = qM ? parseInt(qM[1]) : 0;
+    const offerQty = statedQty || (category === 'wine' ? 6 : 3);
+    return Object.assign(base, { kind: 'search_single', category, statedQty, offerQty, product: opts[0] });
+  }
+  return Object.assign(base, { kind: 'informational' });
+}
+
+// In-stock stand-in for an item the customer named that isn't available: the same product search
+// without the size; offered only when the top result carries the item's own brand words (never an
+// unrelated product). Capped at 5 s — the reply goes out with the generic sub.offer_search otherwise.
+async function findSubstitute(name, zip, email) {
+  const words = n => String(n || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz|cl)\b/g, ' ').split(/[^a-z0-9']+/).filter(w => w.length >= 3 && !/^(vodka|tequila|rum|gin|whiskey|whisky|bourbon|wine|beer|bottle|bottles|the|and)$/.test(w));
+  const key = words(name).slice(0, 2);
+  if (!key.length || !zip) { console.log('[cta] substitute lookup skipped for ' + JSON.stringify(name) + (zip ? ' (no brand words)' : ' (no zip)')); return null; }
+  const q = String(name).replace(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz|cl)\b/gi, ' ').replace(/^\s*\d{1,3}\s*(?:x\s*)?/, '').replace(/\s+/g, ' ').trim();
+  const ctrl = new AbortController(); const tm = setTimeout(() => ctrl.abort(), 5000);
+  try {
+    const rr = await fetch('http://127.0.0.1:8300/mcp', { method: 'POST', signal: ctrl.signal, headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: q, limit: 3 }], zip, email } } }) });
+    const rt = await rr.text(); const rl = rt.split('\n').find(l => l.startsWith('data:'));
+    const res = rl ? JSON.parse(JSON.parse(rl.replace('data:', '').trim()).result.content[0].text) : null;
+    const prods = (res && res.results && res.results[0] && res.results[0].products) || [];
+    const p = prods.find(pr => { const pw = ' ' + words(pr.name).join(' ') + ' '; return key.every(k => pw.includes(' ' + k + ' ')); });
+    if (!p) { console.log('[cta] no same-brand substitute in stock for ' + JSON.stringify(name) + ' (searched ' + JSON.stringify(q) + ': ' + prods.map(x => x.name).join(' | ') + ')'); return null; }
+    const sub = { name: String(p.name).replace(/\s*-\s*[\d.]+\s*(ML|L|OZ)\s*$/i, ''), size: p.sizeStr || p.size || ((String(p.name).match(/[\d.]+\s*(?:ML|L|OZ)\s*$/i) || [''])[0]).replace(/ML$/i, 'mL'), price: parseFloat(p.salePrice || p.price) || 0 };
+    console.log('[cta] substitute for ' + JSON.stringify(name) + ': ' + sub.name + ' ' + sub.size + ' $' + sub.price);
+    return sub.price > 0 ? sub : null;
+  } catch (e) { console.log('[cta] substitute lookup failed for ' + JSON.stringify(name) + ': ' + e.message); return null; }
+  finally { clearTimeout(tm); }
+}
+
 async function callRachel({ sessionKey, message, context, format, gbrainContext, addressRule, email, onProposalGenerated, alreadyConfirmed }) {
   events.note({ handled_by: 'llm' });   // event log: the LLM wrote this turn's reply
   const messages = sessions[sessionKey] || [];
@@ -1099,6 +1166,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       state.lastLineItems = lineItems;
       saveFlowState();
       console.log('[product-discussed] captured as active context (no prior basket):', key);
+      events.note({ discussed_capture: true });   // a search result held as context — not a basket change the customer made (cta.js)
     },
     // show_basket: return the AUTHORITATIVE current basket. Real gap found: the LLM had
     // no way to READ state.lastLineItems — "show me the basket" only ever worked when
@@ -1273,6 +1341,7 @@ app.post('/chat', async (req, res) => {
   // wrappers so it sees the final text; state_in is taken after the idle reset.
   {
     const evSt0 = getState(sessionKey), evIn = events.stateLabel(evSt0), evBasket0 = events.basketOf(evSt0);
+    if (events.ctx()) events.ctx().basket0 = evBasket0;
     const _jE = res.json.bind(res);
     res.json = (payload) => {
       try { if (message !== '__greeting__') events.finish({ st: flowState[sessionKey], stateIn: evIn, basketBefore: evBasket0, sessionKey, format, context, email, isQA, reply: payload && (payload.text || payload.response) }); } catch (e) {}
@@ -1896,6 +1965,105 @@ app.post('/chat', async (req, res) => {
     console.log('[turn] state.step:', state.step, '| pendingSubstitutes:', JSON.stringify(state.pendingSubstitutes), '| message:', JSON.stringify(message).slice(0,80));
     { const _turnMsg = message; const _json = res.json.bind(res);
       res.json = (payload) => { try { recordTurn(sessionKey, _turnMsg, payload && (payload.text || payload.response)); } catch (e) {} return _json(payload); }; }
+    // ── NEXT-BEST-ACTION (cta.js; Learning Phase 1, Part B) ──────────────────────────────────────────
+    // Installed after recordTurn's wrapper so it runs FIRST: the history records the reply the customer
+    // actually got. Every reply here: the old four-action trailer is stripped; a generic LLM closer is
+    // replaced by the table's CTA; a real question stays and gets none (one question per turn).
+    {
+      const _jC = res.json.bind(res), turnMsg = message;
+      res.json = (payload) => {
+        try {
+          if (payload && typeof payload.text === 'string' && !/^__/.test(turnMsg)) {
+            const st = flowState[sessionKey] || state;
+            const orig = payload.text;
+            if (events.stateLabel(st) !== 'ready') {   // order / proposal / age / address steps own their question
+              cta.chooseCta(st, { kind: events.stateLabel(st), question: true });
+              st.lastCta = null; saveFlowState();
+              return _jC(payload);
+            }
+            let t = cta.stripTrailer(orig);
+            if (t !== orig.trimEnd()) console.log('[cta] stripped the generic four-action trailer');
+            const cl = cta.splitCloser(t);
+            if (cl.generic) { t = cl.body; console.log('[cta] removed generic closer ' + JSON.stringify(cl.closer.slice(0, 80)) + ' — the table decides the follow-up'); }
+            else if (cl.question) console.log('[cta] kept the reply\'s own question ' + JSON.stringify(cl.closer.slice(0, 80)) + ' — no CTA (question turn)');
+            const realQ = cl.question || cta.hasRealQuestion(t);
+            if (realQ && !cl.question) console.log('[cta] the reply asks a real question earlier on — no CTA (question turn)');
+            const turn = ctaTurn(st, t, realQ, turnMsg, context);
+            if (turn.kind === 'item_unavailable' && !turn.substitute && turn.unmatchedName) {
+              // sub.offer_named needs a real in-stock candidate: look it up, then send (the caller only returns res).
+              const tt = t;
+              findSubstitute(turn.unmatchedName, st.zip, email).then(sub => {
+                turn.substitute = sub;
+                finishCta(st, turn, tt, orig, payload);
+                _jC(payload);
+              }).catch(() => { finishCta(st, turn, tt, orig, payload); _jC(payload); });
+              return res;
+            }
+            finishCta(st, turn, t, orig, payload);
+          }
+        } catch (e) { console.log('[cta] error (reply sent unchanged): ' + e.message); }
+        return _jC(payload);
+      };
+    }
+    function finishCta(st, turn, t, orig, payload) {
+      try {
+            const c = cta.chooseCta(st, turn);
+            st.lastCta = null;
+            if (c) {
+              const t0 = t; t = cta.scrubGenericQuestions(t);
+              if (t !== t0.trimEnd()) console.log('[cta] removed generic question(s) from the body — the CTA is the one question');
+              t = t.trimEnd() + '\n\n' + c.text;
+              st.lastCta = { id: c.id, product: turn.product || null, qty: turn.offerQty || 0, substitute: turn.substitute || null, at: Date.now() };
+              events.note({ cta_id: c.id });
+            }
+            saveFlowState();
+            if (t !== orig) { payload.text = t; if (typeof payload.response === 'string') payload.response = t; }
+      } catch (e) { console.log('[cta] error (reply sent unchanged): ' + e.message); }
+    }
+    // Did the customer act on the previous turn's CTA? Recorded on THIS turn's event (cta_taken); a CTA
+    // not taken is not offered again this session. An accepted CTA is carried out here, in code.
+    if (state.lastCta && state.step === 'ready' && !isInternalMsgEarly(message)) {
+      const lc = state.lastCta; state.lastCta = null;
+      const took = cta.accepted(lc.id, message);
+      events.note({ cta_taken: took, cta_prev: lc.id });
+
+      // Declined = an explicit no. Moving on ("show my basket", a new question) is not taken (cta_taken:
+      // false, counted in the digest) but doesn't ban the CTA for the session — viewing the basket would
+      // otherwise have killed the checkout offer for good (Sep 29 QA).
+      const said_no = !took && /^\s*(?:no|nope|nah|not (?:yet|now|right now)|later|maybe later|no thanks?|not really|i'?m good|all good|that'?s (?:it|all))\b/i.test(message);
+      console.log('[cta] previous ' + lc.id + ' ' + (took ? 'TAKEN' : said_no ? 'not taken — declined, not offered again this session' : 'not taken (customer moved on)') + ' — ' + JSON.stringify(message.slice(0, 60)));
+      if (said_no) state.ctaDeclined = [...new Set([...(state.ctaDeclined || []), lc.id])];
+      saveFlowState();
+      if (took && !state.orderStep && !state.proposalStep) {
+        const pr = lc.id === 'sub.offer_named' ? lc.substitute : lc.product;
+        if ((lc.id === 'search.offer_qty' || lc.id === 'search.add_more' || lc.id === 'sub.offer_named') && pr && pr.name) {
+          const nM = message.match(/^\s*(\d{1,3})\b/) || message.match(/\b(\d{1,3})\s*(?:bottles?|x)\b/i);
+          const q = lc.id === 'search.offer_qty' ? (nM ? parseInt(nM[1]) : lc.qty) : 0;
+          const r = await applyBasketSubstitute(sessionKey, email, '', pr.name, pr.price, pr.size, { add: true });
+          if (r && r.success) {
+            let nm = r.with || pr.name;
+            try { const it = JSON.parse(state.lastLineItems || '[]'); const nk = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, ''); const row = it.find(x => nk(x.name).indexOf(nk(nm).slice(0, 12)) >= 0); if (row) { nm = row.name; if (q > 0) { row.qty = q; row.quantity = q; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); } } } catch (e) {}
+            if (q > 0) {
+              saveFlowState(); events.action('updated_basket');
+              console.log('[cta] ' + lc.id + ' accepted -> ' + q + 'x ' + nm + ' added');
+              const rA = 'Got it — ' + q + 'x ' + nm + ' added to your order.';
+              return res.json({ text: rA, response: rA });
+            }
+            state.pendingQtyFor = nm; saveFlowState(); events.action('updated_basket');
+            console.log('[cta] ' + lc.id + ' accepted -> ' + nm + ' added, asking how many');
+            const rH = 'Added *' + nm + '*. How many would you like?';
+            return res.json({ text: rH, response: rH });
+          }
+          console.log('[cta] ' + lc.id + ' accepted but the add failed (' + ((r && r.error) || '?') + ') — falling through');
+        } else if ((lc.id === 'basket.offer_checkout' || lc.id === 'proposal.offer_order') && !/\bplace\b.*\border\b/i.test(message)) {
+          console.log('[cta] ' + lc.id + ' accepted -> continuing as "place the order"');
+          message = 'place the order'; msgLower = message;
+        } else if (lc.id === 'basket.offer_proposal' && !/\b(proposal|pdf|quote)\b/i.test(message)) {
+          console.log('[cta] ' + lc.id + ' accepted -> continuing as a proposal request');
+          message = 'generate a PDF proposal'; msgLower = message.toLowerCase();
+        }
+      }
+    }
     // SHADOW classify: label every turn with the LLM classifier and log it beside what
     // the regex/state-machine path does — acting on NOTHING yet. Once real traffic shows
     // agreement (or shows where the classifier is better), it takes over routing.
@@ -2091,6 +2259,7 @@ app.post('/chat', async (req, res) => {
       state.orderStep = null; state.orderData = null; saveFlowState();
     }
     if (clsIntent === 'show_basket') {
+      events.action('showed_basket');
       try {
         const items = JSON.parse(state.lastLineItems || '[]');
         // single-product estimate: if the previous reply was a lookup of ONE product that

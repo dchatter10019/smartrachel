@@ -62,7 +62,7 @@ function finish({ st, stateIn, basketBefore, sessionKey, format, context, email,
     ev.state_out = stateLabel(st);
     // intent: the classifier label when it routed, else the path that handled the turn.
     if (!ev.intent) ev.intent = ev.handled_by === 'llm' ? 'llm' : stateIn === 'age' ? 'age_gate' : /^addr/.test(stateIn) ? 'address' : /^order:/.test(stateIn) ? 'order_flow' : /^proposal:/.test(stateIn) ? 'proposal_flow' : (ev.path || 'deterministic');
-    delete ev.handled_by; delete ev.path;
+    delete ev.handled_by; delete ev.path; delete ev.discussed_capture;
     const ranked = s.actions.filter(a => ACTION_RANK.includes(a)).sort((a, b) => ACTION_RANK.indexOf(a) - ACTION_RANK.indexOf(b));
     ev.action = ranked[0] || inferAction(ev, basketBefore, after, reply);
     ev.basket_items = after.n;
@@ -80,4 +80,4 @@ let warned = {};
 function warnOnce(k, e) { if (!warned[k]) { warned[k] = true; console.log('[events] ' + k + ' failed (logged once): ' + e.message); } }
 function write(ev) { fs.appendFile(FILE, JSON.stringify(ev) + '\n', e => { if (e) warnOnce('write', e); }); }
 
-module.exports = { run, note, action, unmatched, finish, stateLabel, basketOf, channelOf, FILE, ACTION_RANK };
+module.exports = { run, note, action, unmatched, finish, ctx: cur, stateLabel, basketOf, channelOf, FILE, ACTION_RANK };

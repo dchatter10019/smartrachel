@@ -1,0 +1,22 @@
+name: cta-no-double-question
+fresh: true
+tags: [smoke, cta]
+# A turn that asks its own question (the order flow's contact step) gets no CTA: one question per turn.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+    # a code-written reply: the table's follow-up is always offered here
+    expect:
+      matches: "Anything else, or ready to place the order\\?\\s*$"
+      log_contains: ["[cta] basket_updated -> basket.offer_checkout"]
+  - send: "place the order"
+    # acting on the CTA is recorded on this turn's event; the order flow's question gets no CTA
+    expect:
+      contains: ["full name"]
+      not_contains: ["ready to place the order", "Anything else"]
+      log_contains: ["[cta] previous basket.offer_checkout TAKEN", "[cta] order:name -> none (question turn)"]
+      events: {any: [{cta_prev: basket.offer_checkout, cta_taken: true}]}

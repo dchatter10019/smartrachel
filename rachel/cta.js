@@ -27,7 +27,8 @@ const TABLE = {
       accept: /^\s*#?\d{1,2}\b|\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/i },
   ],
   basket_built: [
-    { id: 'basket.ask_event_date', when: t => !t.eventDateKnown, text: 'When\'s the event? I\'ll line up the delivery window.', accept: DATE_RE },
+    // No event-date ask here: DC (Sep 29) — the event date is relevant ONLY when a proposal is created,
+    // and the proposal flow asks it. The spec's basket.ask_event_date row is dropped, not disabled.
     // References consumption: needs DC's approval of the wording before it goes live (spec).
     { id: 'basket.round_up', enabled: false, when: t => t.drinksPerGuest && t.drinksFloor && t.drinksPerGuest < t.drinksFloor * 0.7,
       text: t => 'That\'s about ' + t.drinksPerGuest + ' drinks per guest — want me to round it up?', accept: /^\s*(?:yes|round|sure)\b/i },
@@ -39,7 +40,7 @@ const TABLE = {
   ],
   item_unavailable: [
     { id: 'sub.offer_named', when: t => t.substitute && t.substitute.name && t.substitute.price > 0,
-      text: t => t.substitute.name + (t.substitute.size ? ' ' + t.substitute.size : '') + ' is in stock at ' + money(t.substitute.price) + ' — swap it in?',
+      text: t => t.substitute.name + (t.substitute.size ? ' ' + String(t.substitute.size).replace(/(\d)\s*(ml|l|oz)\b/i, (m, d, u) => d + ' ' + (u.toLowerCase() === 'ml' ? 'mL' : u.toUpperCase() === 'L' ? 'L' : u)) : '') + ' is in stock at ' + money(t.substitute.price) + ' — swap it in?',
       accept: /\bswap\b|^\s*(?:yes|yep|yeah|sure|ok)\b/i },
     { id: 'sub.offer_search', text: 'Want me to look for an alternative?', accept: /^\s*(?:yes|yep|sure)\b|\blook\b/i },
   ],
@@ -58,7 +59,7 @@ const TABLE = {
 
 function chooseCta(state, turn, log = console.log) {
   const kind = turn && turn.kind;
-  const label = (turn && turn.stateLabel ? turn.stateLabel + ' ' : '') + (kind || '?');
+  const label = kind || '?';   // spec log shape: [cta] <state> -> <id> | none (<reason>)
   if (turn && turn.question) { log('[cta] ' + label + ' -> none (question turn)'); return null; }
   const rows = TABLE[kind];
   if (!rows) { log('[cta] ' + label + ' -> none (no row for this state)'); return null; }
@@ -77,10 +78,66 @@ function chooseCta(state, turn, log = console.log) {
   return null;
 }
 
+// ── Closers (DC, Sep 29: option A) ─────────────────────────────────────────────────────────────────
+// The reply's own last question decides whether a CTA may follow. A GENERIC nudge the LLM wrote
+// ("Want me to add it?", "Anything else?") is removed and the table's CTA goes in its place; a REAL
+// question Rachel needs answered ("Which size works for you?") stays and no CTA is added (one question
+// per turn). Anything not recognised as generic is treated as real: the worst case is a turn without
+// a table CTA, never two questions or a lost question. Confirmations ("Shall I go ahead and place it?")
+// are never generic: the order flow's own questions (and closers are only touched in the ready state).
+const GENERIC_CLOSER = /^\W*(?:(?:for|as for|on) (?:the )?[^,?]{1,80},\s*)?(?:would you like (?:the|this|that|it|one)\b(?![^?]*\bor\b)|would you like (?:me )?to (?:add|include|put|grab|see the estimated|place the order)|want me to (?:add|include|put|grab|throw)|do you want (?:me )?to add|should i add|shall i add|want to add (?:it|this|that|them|one|some|any)|would you like (?:any|one|some) of (?:these|those|them)|would you like me to (?:find|look for|search for|suggest) (?:a |an |some )?(?:substitutes?|alternatives?|replacements?)|would you like to (?:substitute|swap|switch)|if you(?:'?d| would)? (?:like|want)\b[^?]*?\b(?:just )?(?:say the word|let me know)|just say the word|anything else|is there anything else|what else can i|can i help with anything else|let me know if (?:you'?d like|you want|there'?s anything))/i;
+// A nudge phrase anywhere in a sentence that asks for nothing Rachel needs: generic too. Sep 29 QA: "Would
+// you like to place an order, or is there anything else I can help with?" slipped past the opening list.
+const NUDGE_ANY = /\b(?:anything else (?:i can|you(?:'?d)? (?:need|like|want))|(?:place|put in) (?:an|the|your) order|add (?:it|this|that|them|one|some) to your (?:order|basket|cart)|ready to (?:order|check ?out|place))\b/i;
+const REAL_Q = /\b(?:which|how many|what size|what kind|what type|when|where|who)\b/i;
+const isGenericSentence = x => { const y = String(x || '').replace(/^[*_\s]+/, ''); return GENERIC_CLOSER.test(y) || (NUDGE_ANY.test(y) && !REAL_Q.test(y)); };
+// The pre-CTA four-action trailer, in any of its forms: a question naming 2+ of these actions.
+const TRAILER_WORDS = [/estimated full price/i, /place the order/i, /(?:pdf )?proposal/i, /make any changes/i];
+
+function stripTrailer(text) {
+  return String(text || '').replace(/[^.!?\n]*\?[*_]*/g, q => (TRAILER_WORDS.filter(w => w.test(q)).length >= 2 ? '' : q))
+    .replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trimEnd();
+}
+// -> { body, closer, generic, question }. Looks at EVERY sentence of the last paragraph: a real question
+// anywhere in it makes this a question turn (kept, no CTA); trailing generic sentences (nudges, offers,
+// "just say the word") are removed so the table's CTA replaces them. Sep 29 QA: "Would you like to
+// substitute with one of these sizes? If you'd like 2x …, just say the word!" ended in "!", was not seen
+// as a question, and got "swap it in?" appended — two questions.
+function splitCloser(text) {
+  const t = String(text || '').trimEnd();
+  const paras = t.split(/\n\s*\n/);
+  const last = paras[paras.length - 1] || '';
+  const sents = last.split(/(?<=[.!?][*_)]*)\s+(?=[A-Z*_(])/);
+  const isQ = x => /\?\s*[*_)]*\s*$/.test(x);
+  const isGeneric = isGenericSentence;
+  const trailingGeneric = [];
+  while (sents.length && isGeneric(sents[sents.length - 1])) trailingGeneric.unshift(sents.pop());
+  const realQ = sents.some(isQ) && !sents.filter(isQ).every(isGeneric);
+  if (!trailingGeneric.length) {
+    const q = sents.some(isQ);
+    return { body: t, closer: q ? sents.filter(isQ).pop() : '', generic: false, question: q && realQ };
+  }
+  const rest = sents.join(' ').trim();
+  const body = paras.slice(0, -1).concat(rest ? [rest] : []).join('\n\n').trimEnd();
+  const q2 = /\?\s*[*_)]*\s*$/.test(body.split(/\n\s*\n/).pop() || '') || realQ;
+  return { body, closer: trailingGeneric.join(' '), generic: true, question: q2 };
+}
+
+// Question sentences anywhere in the reply (not only the closer). Sep 29 QA: the LLM asked "Would you
+// like to substitute 2x Grey Goose 1.75 L (or another size) instead?" ABOVE its options list; the table's
+// "swap it in?" then made two questions. A real question anywhere = a question turn; when a CTA is added,
+// generic question sentences anywhere are removed.
+const Q_SENT = /(?:[^.!?\n]|(?<=\d)\.(?=\d))*\?[*_)]*/g;   // a '.' between digits (1.75 L, $54.40) doesn't end a sentence
+function hasRealQuestion(text) { return (String(text || '').match(Q_SENT) || []).some(q => !isGenericSentence(q.trim())); }
+function scrubGenericQuestions(text) {
+  return String(text || '').replace(Q_SENT, q => (isGenericSentence(q.trim()) ? '' : q))
+    .replace(/[ \t]+\n/g, '\n').replace(/[ \t]{2,}/g, ' ').replace(/\n{3,}/g, '\n\n').trimEnd();
+}
+
 function findCta(id) { for (const rows of Object.values(TABLE)) for (const c of rows) if (c.id === id) return c; return null; }
 function accepted(ctaOrId, message) {
   const c = typeof ctaOrId === 'string' ? findCta(ctaOrId) : ctaOrId;
   return !!(c && c.accept && c.accept.test(String(message || '')));
 }
 
-module.exports = { chooseCta, accepted, findCta, TABLE, DATE_RE };
+module.exports = { chooseCta, accepted, findCta, stripTrailer, splitCloser, hasRealQuestion, scrubGenericQuestions, TABLE, DATE_RE };

@@ -1,0 +1,14 @@
+name: cta-sub-named
+fresh: true
+tags: [cta]
+# A named product at a size the store doesn't carry (3.5 L) -> the reply names a specific in-stock
+# substitute with its price, chosen in code (sub.offer_named), never "would you like me to find a substitute?".
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "2 Grey Goose Vodka 3.5 L\n3 Tito's Handmade Vodka 750ml"
+    expect:
+      matches: "(?i)Grey Goose[^\\n]*is in stock at \\$\\d+\\.\\d\\d — swap it in\\?\\s*$"
+      not_contains: ["find a substitute", "Would you like to substitute", "just say the word"]
+      log_contains: ["[cta] item_unavailable -> sub.offer_named"]

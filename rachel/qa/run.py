@@ -228,15 +228,18 @@ def check_events(session, spec, wait=3.0):
     session's lines in logs/events.jsonl (written after the reply, so wait briefly for the last one)."""
     sys.path.insert(0, HERE); import events as E
     fails = []; t_end = time.time() + wait
+    sub = lambda e, want: all(e.get(k) == v for k, v in want.items())
+    def done(evs):   # the last line is appended just after the reply: poll until the spec can hold
+        if "count" in spec and len(evs) < spec["count"]: return False
+        return all(any(sub(e, w) for e in evs) for w in spec.get("any", []))
     while True:
         evs = E.load(session=session, include_qa=True)
-        if "count" not in spec or len(evs) >= spec["count"] or time.time() > t_end: break
+        if done(evs) or time.time() > t_end: break
         time.sleep(0.2)
     if "count" in spec and len(evs) != spec["count"]: fails.append(f"events: {len(evs)} lines, want {spec['count']}")
     for f in spec.get("each_has", []):
         miss = [e.get("action", "?") for e in evs if f not in e]
         if miss: fails.append(f"events: {len(miss)} line(s) missing {f!r}")
-    sub = lambda e, want: all(e.get(k) == v for k, v in want.items())
     for want in spec.get("any", []):
         if not any(sub(e, want) for e in evs): fails.append(f"events: no line matches {want}")
     if spec.get("all") and not all(sub(e, spec["all"]) for e in evs): fails.append(f"events: not every line matches {spec['all']}")
@@ -351,10 +354,12 @@ def diff_prev(name, replies):
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--only", default=""); ap.add_argument("--smoke", action="store_true"); ap.add_argument("-v", action="store_true")
     ap.add_argument("-j", type=int, default=int(os.environ.get("QA_JOBS", "6")))
+    ap.add_argument("--skip-tag", action="append", default=[], help="leave out scenarios with this tag (e.g. channel: real Slack/email sends)")
     a = ap.parse_args()
     files = sorted(glob.glob(os.path.join(HERE, "scenarios", "*.yaml")))
     scs = [yaml.safe_load(open(f)) for f in files]
     scs = [s for s in scs if (a.only.lower() in s["name"].lower()) and (not a.smoke or "smoke" in s.get("tags", []))]
+    scs = [s for s in scs if not set(a.skip_tag) & set(s.get("tags", []))]
     stamp = time.strftime("%Y%m%d-%H%M%S"); outdir = os.path.join(HERE, "runs", stamp); os.makedirs(outdir, exist_ok=True)
     results = []; t0 = time.time(); out_lock = threading.Lock()
     def one(sc, parallel):

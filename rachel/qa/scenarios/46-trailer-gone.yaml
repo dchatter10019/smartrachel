@@ -1,0 +1,18 @@
+name: trailer-gone
+fresh: true
+tags: [smoke, cta]
+# The generic four-action trailer is gone everywhere; an informational answer after a basket gets no CTA.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+    expect: {not_contains: ["generate a PDF proposal, or make any changes", "see the estimated full price"]}
+  - send: "what's the difference between Sauvignon Blanc and Pinot Grigio?"
+    expect:
+      not_contains: ["place the order, generate a PDF proposal", "make any changes", "ready to place the order"]
+      # an answer may end with the LLM's own conversational question (kept: question turn) — either way, no CTA
+      log_contains: ["-> none ("]
+      log_not_contains: ["-> basket.", "-> search."]
