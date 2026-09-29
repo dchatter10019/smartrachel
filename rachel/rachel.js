@@ -435,6 +435,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           const EV = { product_query: 'searched', recommendation: 'searched', alternatives: 'searched', menu_build: 'built_basket', custom_list: 'built_basket',
             show_basket: 'showed_basket', confirm_substitute: 'updated_basket', update_quantity: 'updated_basket', generate_proposal: 'generated_proposal' };
           if (result.success && EV[saInput.intent]) require('./events.js').action(EV[saInput.intent]);
+          if (result.success && saInput.intent === 'custom_list') require('./events.js').note({ list_build: true });   // server.js composes this turn's reply (list-reply.js)
         } catch (e) {}
         // NOT-FOUND detection for named products. The search falls back to broad terms and returns
         // SOMETHING, so found:true can mean "unrelated products". A query naming a producer counts as

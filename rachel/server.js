@@ -899,6 +899,7 @@ async function validateDeliveryTime(state, message, email, format, res) {
   return null;
 }
 const cta = require('./cta.js');
+const listReply = require('./list-reply.js');   // shopping-list replies composed in code (see the NEXT-BEST-ACTION wrapper)
 const contacts = require('./customer-contacts.js');   // name/phone from the last placed order + channel profile name (order flow)
 const isInternalMsgEarly = m => /^__/.test(m) || /^\d{1,2}:\d{2}\s*[AP]M\s*-\s*\d{1,2}:\d{2}\s*[AP]M/i.test(m);
 // The CTA table's view of a turn: which state row applies, and the facts its conditions read.
@@ -1985,8 +1986,20 @@ app.post('/chat', async (req, res) => {
               st.lastCta = null; saveFlowState();
               return _jC(payload);
             }
-            let t = cta.stripTrailer(orig);
-            if (t !== orig.trimEnd()) console.log('[cta] stripped the generic four-action trailer');
+            // A shopping list (custom_list) turn: the reply is composed in code from the real basket (list-reply.js).
+            let listText = null;
+            const evL = events.ctx();
+            if (evL && evL.ev && evL.ev.list_build && !evL.actions.includes('placed_order') && !evL.actions.includes('generated_proposal')) {
+              let itL = []; try { itL = JSON.parse(st.lastLineItems || '[]'); } catch (e) {}
+              if (itL.length) {
+                const cL = listReply.compose({ items: itL, unmatched: evL.unmatched, llmText: orig });
+                console.log(cL.log);
+                evL.unmatched.sort((a, b) => (listReply.isNamed(b) ? 1 : 0) - (listReply.isNamed(a) ? 1 : 0));   // the CTA offers a substitute for [0]: a named product first
+                listText = cL.text;
+              } else console.log('[list-reply] custom_list turn with an empty basket — LLM reply kept');
+            }
+            let t = listText != null ? listText : cta.stripTrailer(orig);
+            if (listText == null && t !== orig.trimEnd()) console.log('[cta] stripped the generic four-action trailer');
             const cl = cta.splitCloser(t);
             if (cl.generic) { t = cl.body; console.log('[cta] removed generic closer ' + JSON.stringify(cl.closer.slice(0, 80)) + ' — the table decides the follow-up'); }
             else if (cl.question) console.log('[cta] kept the reply\'s own question ' + JSON.stringify(cl.closer.slice(0, 80)) + ' — no CTA (question turn)');

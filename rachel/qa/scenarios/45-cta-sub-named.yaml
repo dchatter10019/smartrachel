@@ -11,4 +11,4 @@ turns:
     expect:
       matches: "(?i)Grey Goose[^\\n]*is in stock at \\$\\d+\\.\\d\\d — swap it in\\?\\s*$"
       not_contains: ["find a substitute", "Would you like to substitute", "just say the word"]
-      log_contains: ["[cta] item_unavailable -> sub.offer_named"]
+      log_contains: ["[list-reply] composed in code", "[cta] item_unavailable -> sub.offer_named"]
