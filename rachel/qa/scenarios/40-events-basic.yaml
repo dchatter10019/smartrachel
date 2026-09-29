@@ -1,0 +1,23 @@
+name: events-basic
+tags: [events]
+# Learning Phase 1, Part A: every /chat turn writes one line to logs/events.jsonl with state_in,
+# state_out and action; a QA session is marked qa: true (excluded from every digest metric).
+turns:
+  - send: reset
+    expect: {contains: ["21 or older"]}
+  - send: "yes"
+    expect: {contains: ["delivery address"]}
+  - send: "425 W 53rd St, New York, NY 10019"
+    expect: {contains: ["10019"]}
+  - send: "do you have Tito's"
+    expect:
+      matches: "Tito"
+      events:
+        count: 4
+        each_has: [state_in, state_out, action, channel, latency_ms, basket_items]
+        all: {qa: true, dry_run: true}
+        any:
+          - {state_in: age, action: asked_age}
+          - {state_in: age, state_out: addr_new, action: asked_address}
+          - {state_in: addr_new, state_out: ready, action: accepted_address}
+          - {state_in: ready, action: searched}

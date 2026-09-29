@@ -104,6 +104,8 @@ app.use(express.json({ limit: '25mb' }));   // base64 photos of order lists
 // runner can run scenarios in parallel and still assert on just its own log lines.
 const logTag = require('./log-tag.js'); logTag.install();
 app.use('/chat', (req, res, next) => logTag.runTagged(req.body && req.body.session_id, next));
+const events = require('./events.js');   // per-turn event record (events.jsonl) — see the EVENT LOG wrapper in /chat
+app.use('/chat', (req, res, next) => events.run(next));
 
 const PORT = process.env.RACHEL_PORT || 3500;
 
@@ -530,6 +532,7 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
           // the raw "tomorrow at 5 pm") and would be refused at placement. Return a
           // structured failure the LLM must act on instead.
           console.log('[confirm-substitute] REFUSED: could not resolve', JSON.stringify(replacementName), 'to a catalog product — not added');
+          events.unmatched(replacementName);
           return { success: false, unresolved_replacement: replacementName, error: 'Could not find "' + replacementName + '" in the catalog. Search for it and present the real matches so the customer can pick one; do not assume a product name.' };
         }
         const rp = resolved ? (parseFloat(resolved.salePrice || resolved.price) || replacementPrice || 0) : (replacementPrice || 0);
@@ -894,6 +897,7 @@ async function validateDeliveryTime(state, message, email, format, res) {
   return null;
 }
 async function callRachel({ sessionKey, message, context, format, gbrainContext, addressRule, email, onProposalGenerated, alreadyConfirmed }) {
+  events.note({ handled_by: 'llm' });   // event log: the LLM wrote this turn's reply
   const messages = sessions[sessionKey] || [];
   let channelNote = getChannelNote(format);
   const stateForEmail = getState(sessionKey);
@@ -937,6 +941,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       st.pendingSubstitutes = []; st.pendingAddOffer = null; st.pendingQtyFor = null; st.savedTipChoice = null; st.tipAsk = false;   // the next order asks for its own tip
       if (email) { Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; }); clearBasket(email, format || 'slack'); }
       saveFlowState();
+      events.action('placed_order');
       console.log('[order] placed ' + (result.order_id || '?') + (result.dry_run ? ' (QA dry run)' : '') + ' — basket cleared, kept on placedOrder for reopen');
     },
     onPackageBuilt: (em, lineItems, fmt, saInput, saResult) => {
@@ -1011,6 +1016,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       }
     },
     onUnavailableItems: (unavailableStr) => {
+      try { events.unmatched(String(unavailableStr || '').split(/\s*[,;\n]\s*/).map(x => x.replace(/^[-•*\s]+/, '')).filter(x => x.length > 1)); } catch (e) {}
       // Real bug found tonight: this used to REPLACE the entire pendingSubstitutes
       // list on every call, including calls that had nothing to do with the original
       // substitution search — e.g. the LLM's own follow-up "let me search for gin
@@ -1262,6 +1268,16 @@ app.post('/chat', async (req, res) => {
       resetState(sessionKey, email);
     }
     getState(sessionKey).lastActive = Date.now(); saveFlowState();
+  }
+  // EVENT LOG (events.js): one line per turn to logs/events.jsonl. Installed before the other reply
+  // wrappers so it sees the final text; state_in is taken after the idle reset.
+  {
+    const evSt0 = getState(sessionKey), evIn = events.stateLabel(evSt0), evBasket0 = events.basketOf(evSt0);
+    const _jE = res.json.bind(res);
+    res.json = (payload) => {
+      try { if (message !== '__greeting__') events.finish({ st: flowState[sessionKey], stateIn: evIn, basketBefore: evBasket0, sessionKey, format, context, email, isQA, reply: payload && (payload.text || payload.response) }); } catch (e) {}
+      return _jE(payload);
+    };
   }
   // A note produced while building this turn (e.g. the full-bar note) is added to the reply — before a
   // closing question ("Would you also like to add mixers…?") so that question stays last.
@@ -2049,10 +2065,12 @@ app.post('/chat', async (req, res) => {
           cr.intent = 'custom_list';
         }
         if (!(clsUsable && THRESH[cr.intent] !== undefined && cr.confidence >= THRESH[cr.intent])) {
+          if (clsUsable && THRESH[cr.intent] !== undefined) events.note({ low_conf_intent: cr.intent, intent_conf: Math.round(cr.confidence * 100) / 100 });
           console.log('[classify->no-route] ' + cr.intent + ' ' + cr.confidence.toFixed(2) + ' [' + cr.source + '] — ' + (!clsUsable ? 'classifier failed' : THRESH[cr.intent] === undefined ? 'not a routed intent' : 'below threshold ' + THRESH[cr.intent]) + ' | ' + JSON.stringify(message).slice(0, 60));
         }
         if (clsUsable && THRESH[cr.intent] !== undefined && cr.confidence >= THRESH[cr.intent]) {
           clsIntent = cr.intent; clsRef = cr.ref || ''; var clsQty = cr.qty || 0;
+          events.note({ intent: clsIntent, intent_conf: Math.round(cr.confidence * 100) / 100 });
           console.log('[classify->route]', clsIntent, cr.confidence.toFixed(2), '[' + cr.source + ']', (clsRef ? 'ref=' + JSON.stringify(clsRef) : ''), '|', JSON.stringify(message).slice(0, 60));
           // Hand the label to rachel.js's executeTool via eventParams (already threaded
           // through; context is not) so the recommendation rewrite fires on it.
@@ -2202,6 +2220,7 @@ app.post('/chat', async (req, res) => {
           if (bySize.length) prods = bySize;
         }
         console.log('[add-item] ref=' + JSON.stringify(clsRef) + ' matches=' + prods.length);
+        events.note({ path: 'add_item' });
         if (prods.length === 1) {
           const pr = prods[0]; const price = parseFloat(pr.salePrice || pr.price) || 0; const size = pr.sizeStr || pr.size || '';
           const nz = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -3437,6 +3456,7 @@ app.post('/chat', async (req, res) => {
             const unmatched = partsRaw.filter(part => !resolvedParts.has(part));
             if (unmatched.length) done.push('couldn\'t match ' + unmatched.join(', ') + ' to anything I listed — tell me the exact name or number and I\'ll add it');
             console.log('[multi-pick]', JSON.stringify(partsRaw), '->', JSON.stringify(done));
+            events.note({ path: 'multi_pick' });
             const lines2 = items.map(li => (li.qty || li.quantity || 1) + 'x ' + li.name + ' — $' + (parseFloat(li.price) || 0).toFixed(2) + ' ea = $' + ((li.qty || li.quantity || 1) * (parseFloat(li.price) || 0)).toFixed(2));
             const tot2 = items.reduce((a, li) => a + (li.qty || li.quantity || 1) * (parseFloat(li.price) || 0), 0);
             const rMP = 'Got it:\n' + done.map(d => '• ' + d).join('\n') + '\n\nUpdated basket:\n' + lines2.join('\n') + '\n\nProduct total: $' + tot2.toFixed(2) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
@@ -3500,6 +3520,7 @@ app.post('/chat', async (req, res) => {
           try { already = JSON.parse(state.lastLineItems || '[]').some(it => norm(it.name) === norm(picked.name)); } catch (e) {}
           if (!already) {
             console.log('[pick-list] deterministic selection:', JSON.stringify(picked));
+            events.note({ path: 'pick_list' });
             state.lastPickResolved = { name: picked.name, size: picked.size, at: Date.now() };
             // Replace-in-varietal (same rule as the multi-pick resolver): if the basket already
             // holds a wine/spirit of this varietal, the pick REPLACES it and keeps the quantity.

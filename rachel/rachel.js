@@ -430,6 +430,12 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         const saData = JSON.parse(saLine.replace('data:', '').trim());
         const result = JSON.parse(saData.result.content[0].text);
         console.log('[ShoppingAgent] intent:', saInput.intent, 'channel:', saInput.channel, 'success:', result.success);
+        // Event log: what this tool call did (events.js keeps the strongest action of the turn).
+        try {
+          const EV = { product_query: 'searched', recommendation: 'searched', alternatives: 'searched', menu_build: 'built_basket', custom_list: 'built_basket',
+            show_basket: 'showed_basket', confirm_substitute: 'updated_basket', update_quantity: 'updated_basket', generate_proposal: 'generated_proposal' };
+          if (result.success && EV[saInput.intent]) require('./events.js').action(EV[saInput.intent]);
+        } catch (e) {}
         // NOT-FOUND detection for named products. The search falls back to broad terms and returns
         // SOMETHING, so found:true can mean "unrelated products". A query naming a producer counts as
         // found only if a result carries that producer's first two distinctive words; otherwise the
@@ -447,6 +453,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             const key = words.slice(0, 2);
             const hit = (r.products || []).some(p => { const pn = ' ' + normW(p.name) + ' '; return key.every(k => pn.includes(' ' + k + ' ') || pn.includes(' ' + k.replace(/'/g, '') + ' ')); });
             if (!hit) {
+              try { require('./events.js').unmatched(qname); } catch (e) {}
               console.log('[not-found] ' + JSON.stringify(qname) + ' — no result carries "' + key.join(' ') + '"; dropped ' + (r.products || []).length + ' unrelated result(s): ' + (r.products || []).map(p => p.name).join(' | '));
               r.found = false; r.products = [];
               r.note = 'NOT carried at this store (the search only returned unrelated products). Tell the customer it is not available here; offer alternatives (intent=alternatives) or to alert our team to source it.';

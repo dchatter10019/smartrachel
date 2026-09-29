@@ -223,6 +223,25 @@ def _own_lines(txt, session):
     tag = f" «{session}»"
     return "\n".join(l[:-len(tag)] for l in txt.splitlines() if l.endswith(tag))
 
+def check_events(session, spec, wait=3.0):
+    """events: {count: N, each_has: [fields], any: [{field: value}], all: {field: value}} over this
+    session's lines in logs/events.jsonl (written after the reply, so wait briefly for the last one)."""
+    sys.path.insert(0, HERE); import events as E
+    fails = []; t_end = time.time() + wait
+    while True:
+        evs = E.load(session=session, include_qa=True)
+        if "count" not in spec or len(evs) >= spec["count"] or time.time() > t_end: break
+        time.sleep(0.2)
+    if "count" in spec and len(evs) != spec["count"]: fails.append(f"events: {len(evs)} lines, want {spec['count']}")
+    for f in spec.get("each_has", []):
+        miss = [e.get("action", "?") for e in evs if f not in e]
+        if miss: fails.append(f"events: {len(miss)} line(s) missing {f!r}")
+    sub = lambda e, want: all(e.get(k) == v for k, v in want.items())
+    for want in spec.get("any", []):
+        if not any(sub(e, want) for e in evs): fails.append(f"events: no line matches {want}")
+    if spec.get("all") and not all(sub(e, spec["all"]) for e in evs): fails.append(f"events: not every line matches {spec['all']}")
+    return fails
+
 def check(reply, expect, log_text=""):
     fails = []; low = reply.lower()
     for s in expect.get("log_contains", []):
@@ -306,6 +325,7 @@ def run_scenario(sc, verbose, parallel=False):
             LOCK.release(excl)
         replies.append({"turn": i, "send": text, "reply": reply, "secs": secs})
         fails = check(reply, turn.get("expect", {}), log_text)
+        if (turn.get("expect") or {}).get("events"): fails += check_events(session, turn["expect"]["events"])
         if turn.get("capture") == "listed_partial":
             got = listed_partial(reply)
             if got: vars_.update(got); say(f"       captured pick={got['pick']!r} (listed as {got['pick_full']!r})")
