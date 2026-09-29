@@ -199,6 +199,18 @@ async function generateProposal(proposal, outputPath) {
   });
   await browser.close();
   console.log('[proposal] Generated:', outputPath);
+  // Every PDF keeps its line items (logs/proposal-items/<pdf>.json, not web-served), so the exact quote a
+  // customer holds can be loaded back into a session (/internal/session-basket from_proposal). Sep 29: the
+  // Gen II quote was built by hand and had to be re-typed from the PDF text to apply the customer's edits.
+  try {
+    const fs = require('fs'), path = require('path');
+    const dir = path.join(path.dirname(outputPath), 'proposal-items');
+    fs.mkdirSync(dir, { recursive: true });
+    const items = typeof proposal.line_items === 'string' ? JSON.parse(proposal.line_items) : proposal.line_items;
+    fs.writeFileSync(path.join(dir, path.basename(outputPath) + '.json'), JSON.stringify({
+      pdf: path.basename(outputPath), at: new Date().toISOString(), client_name: proposal.client_name || '',
+      event_date: proposal.event_date || '', notes: proposal.notes || '', line_items: items }, null, 1));
+  } catch (e) { console.log('[proposal] line items NOT saved for ' + outputPath + ': ' + e.message); }
   return outputPath;
 }
 

@@ -57,9 +57,29 @@ def get_service():
     creds = service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
     return build('gmail', 'v1', credentials=creds.with_subject(RACHEL_EMAIL))
 
+# Which inbox emails Rachel has handled — NOT the Gmail UNREAD label. Real miss (Sep 29): Sean's forwarded
+# Gen II edits were opened in the rachelai@ inbox before the next poll; the agent only fetched is:unread,
+# so the email was never processed and nothing was logged. Now every inbox email from the last 3 days
+# that isn't in this set is processed, read or not (a read one is logged as such).
+PROCESSED_FILE = '/home/ubuntu/logs/email-processed.json'
+def _load_processed():
+    try:
+        return set(json.load(open(PROCESSED_FILE)))
+    except Exception:
+        return None
+PROCESSED = _load_processed()
+def mark_processed(msg_id):
+    PROCESSED.add(msg_id)
+    try:
+        json.dump(sorted(PROCESSED)[-5000:], open(PROCESSED_FILE, 'w'))
+    except Exception as e:
+        log.error(f'processed-list persist failed: {e}')
+
+INBOX_QUERY = 'in:inbox newer_than:3d -from:rachelai@getbevvi.com'
 def get_unread(service):
-    r = service.users().messages().list(userId='me', q='is:unread -from:rachelai@getbevvi.com', maxResults=10).execute()
-    return r.get('messages', [])
+    # Oldest first, anything not yet handled (the name is kept for callers; "unread" = unhandled).
+    r = service.users().messages().list(userId='me', q=INBOX_QUERY, maxResults=50).execute()
+    return [m for m in reversed(r.get('messages', [])) if m['id'] not in PROCESSED]
 
 def get_email(service, msg_id):
     msg = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
@@ -72,7 +92,7 @@ def get_email(service, msg_id):
             if data: body += base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
         for part in p.get('parts', []): get_body(part)
     get_body(msg['payload'])
-    return {'id': msg_id, 'thread_id': msg['threadId'],
+    return {'id': msg_id, 'thread_id': msg['threadId'], 'unread': 'UNREAD' in (msg.get('labelIds') or []),
             'from': headers.get('from', ''), 'subject': headers.get('subject', ''), 'body': body.strip(),
             'message_id': headers.get('message-id', ''), 'references': headers.get('references', '')}
 
@@ -154,9 +174,21 @@ def _failed(service, email, sender_email, where):
         log.error(f'holding reply failed: {e}')
     service.users().messages().modify(userId='me',id=email['id'],body={'removeLabelIds':['UNREAD']}).execute()
     FAILED_ATTEMPTS.pop(email['id'], None)
+    mark_processed(email['id'])
+
+def linked_session(sender_email, subject, body):
+    # A NEW thread that continues an earlier quote (a forward, a fresh email about "the proposal"): Rachel's
+    # server decides from its sessions (email-link.js) and logs why. None = start a new session.
+    try:
+        r = requests.post('http://127.0.0.1:3500/internal/email-link', json={'sender_email': sender_email, 'subject': subject, 'body': body}, timeout=10).json()
+        log.info(f"[email-link] {subject[:60]!r} -> {r.get('session_id') or 'new session'} — {r.get('reason')}")
+        return r.get('session_id')
+    except Exception as e:
+        log.error(f'[email-link] lookup failed ({e}) — starting a new session')
+        return None
 
 def process(service, email):
-    log.info(f"Processing: {email['from']} | {email['subject']}")
+    log.info(f"Processing: {email['from']} | {email['subject']}" + ('' if email.get('unread', True) else ' (already marked read in Gmail — picked up anyway)'))
     sender = email['from']
     sender_email = sender.split('<')[1].strip('>') if '<' in sender else sender.strip()
     sender_name = sender.split('<')[0].strip().strip('"') if '<' in sender else ''
@@ -165,6 +197,7 @@ def process(service, email):
     if any(s in sender_email.lower() for s in skip_senders):
         log.info(f'Skipping automated email from {sender_email}')
         service.users().messages().modify(userId='me',id=email['id'],body={'removeLabelIds':['UNREAD']}).execute()
+        mark_processed(email['id'])
         return
 
     thread_id = email['thread_id']
@@ -179,6 +212,7 @@ def process(service, email):
         log.info(f'Continuation reply sent for thread {thread_id[:8]}...')
         service.users().messages().modify(userId='me',id=email['id'],body={'removeLabelIds':['UNREAD']}).execute()
         FAILED_ATTEMPTS.pop(email['id'], None)
+        mark_processed(email['id'])
         return
 
     # New thread: every email goes through Rachel's chat, like every other channel. Her
@@ -187,7 +221,7 @@ def process(service, email):
     # customers for "guests, budget, event_type" when they had simply named products.
     # A retry uses the same session and request_id: the server returns the first run's reply (it may have
     # finished after our timeout) instead of running the email again.
-    session_id = f'email-{thread_id[:16]}-{sender_email.split("@")[0]}'
+    session_id = linked_session(sender_email, email['subject'], email['body']) or f'email-{thread_id[:16]}-{sender_email.split("@")[0]}'
     rachel_response = chat_with_rachel(email['body'], session_id, sender_email, sender_name, email['subject'], email['id'])
     if not rachel_response:
         return _failed(service, email, sender_email, 'new thread')   # thread not mapped: the retry gets the same reply (request_id)
@@ -201,17 +235,28 @@ def process(service, email):
     log.info(f'Thread {thread_id[:8]}... -> session {session_id}')
 
     service.users().messages().modify(userId='me',id=email['id'],body={'removeLabelIds':['UNREAD']}).execute()
+    mark_processed(email['id'])
 
 def main():
     log.info('=== Rachel Email Agent Starting ===')
     log.info(f'Monitoring: {RACHEL_EMAIL}')
     service = get_service()
     log.info('Gmail connected')
+    global PROCESSED
+    if PROCESSED is None:
+        # First run with the processed list: inbox mail already READ counts as handled (under the old unread-only
+        # rule it was, or it was answered by hand); unread mail is still processed, as before.
+        r = service.users().messages().list(userId='me', q=INBOX_QUERY + ' -is:unread', maxResults=500).execute()
+        PROCESSED = set()
+        for m in r.get('messages', []):
+            PROCESSED.add(m['id'])
+        json.dump(sorted(PROCESSED), open(PROCESSED_FILE, 'w'))
+        log.info(f'[processed] first run: {len(PROCESSED)} already-read inbox email(s) recorded as handled')
     while True:
         try:
             emails = get_unread(service)
             if emails:
-                log.info(f'{len(emails)} unread email(s)')
+                log.info(f'{len(emails)} new email(s)')
                 for ref in emails:
                     process(service, get_email(service, ref['id']))
         except Exception as e:

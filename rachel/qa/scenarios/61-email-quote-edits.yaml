@@ -1,0 +1,19 @@
+name: email-quote-edits
+fresh: true
+tags: [email]
+# Real case (Sep 29, Gen II Fund): the customer replied to her quote "remove the following ... remove all beer
+# in bottles ... resend me an updated quote". Edits to an existing quote are applied in code (quote-edits.js):
+# every change listed, a typo'd name still matched, bottled beer removed by rule, the PDF regenerated.
+format: plain
+context: {email_subject: "Drinks quote - Acme Test Co", user_name: "QA Tester"}
+turns:
+  - send: "Hi,\r\n\r\nPlease send a quote for the items below.\r\n\r\nI am 21 years old. Deliver to 100 Federal Street, Floor 6\r\nBoston, MA 02110\r\n\r\n2 x Bud Light (30 cans per case)\r\n2 x Corona Extra (12 bottles per case)\r\n2 Josh Cellars Cabernet Sauvignon\r\n1 Oyster Bay Sauvignon Blanc\r\n\r\nThanks!"
+    expect:
+      contains: ["PDF proposal is attached"]
+      log_contains: ["[quote-pdf] email quote request -> proposal generated in code"]
+  - send: "Hi,\r\n\r\nThank you. Please remove the following\r\nitems from the order:\r\n\r\n- Josh Celars Cabernet\r\n\r\n- Oyster Bay (I only need 2 bottles)\r\n\r\nAdditionally, please remove all beer in bottles, as we cannot have that in\r\nthe office. Could you please resend me an updated quote?\r\n\r\nOn Tue, Sep 29, 2026 at 2:36 PM Rachel <rachelai@getbevvi.com> wrote:\r\n> 2 x Corona Extra (12 bottles per case)\r\n> 2 Josh Cellars Cabernet Sauvignon"
+    expect:
+      contains: ["Removed:", "Josh Cellars Cabernet", "— bottled beer", "Oyster Bay", "1 → 2", "updated PDF proposal is attached"]
+      not_contains: ["Not in the quote"]
+      log_contains: ["[email-body] quoted history cut", "[quote-edits] ", "[quote-pdf] email quote request -> proposal generated in code"]
+      log_not_contains: ["[rachel] iteration 1"]

@@ -13,9 +13,15 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - gbrain (port 7700): customer memory; rachel/gbrain.js. rachel-mcp (3600). WhatsApp bot (3601).
 - rachel-slack: rachel/rachel_slack_bot.py (Bolt, Socket Mode). Log: logs/slack-rachel.log
 - rachel-email: rachel/email-agent.py (polls rachelai@ inbox every 60s, every email → Rachel chat,
-  thread→session map in logs/email-thread-sessions.json). Log: logs/email-agent.log
+  thread→session map in logs/email-thread-sessions.json). Log: logs/email-agent.log. "New" = an inbox email
+  (3 days) not in logs/email-processed.json — NOT the UNREAD label (an email opened in Gmail first is still
+  handled). A new thread asks /internal/email-link (email-link.js) whether it continues an earlier quote
+  (same sender + client name, or the sender's only quote in 14 days). Server-side, email bodies are cut to
+  the new text + a forwarded message (email-body.js); quoted history never reaches Rachel.
 - rachel-whatsapp: rachel/rachel_whatsapp_bot.py (Flask + Twilio; invite gate; admin page). Env: /etc/rachel-whatsapp.env
-- Proposals: rachel/generate-proposal.js. Address geocoding: Google Maps (geocodeAddress in server.js).
+- Proposals: rachel/generate-proposal.js; each PDF's line items → logs/proposal-items/<pdf>.json (load one into a
+  session: POST localhost:3500/internal/session-basket {session_id, from_proposal}). nginx /proposals/ serves
+  ONLY bevvi-proposal*.pdf (sites rachel AND bevvi-support; until Sep 29 it served all of logs/). Address geocoding: Google Maps (geocodeAddress in server.js).
 - Logs: /home/ubuntu/logs/ (rachel.log, shopping-agent.log, ...). Journal is NOT where bots log.
 
 ## Secrets (never print them)
@@ -25,7 +31,7 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - Gmail service account: /home/ubuntu/config/gmail-service-account.json (domain-wide delegation).
 
 ## Rules — follow every time
-1. Deploy rachel/shopping-agent ONLY via `/home/ubuntu/precheck.sh --deploy`: lint → restart the
+1. Deploy rachel/shopping-agent/rachel-email ONLY via `/home/ubuntu/precheck.sh --deploy`: lint → restart the
    services whose files changed → smoke set against the new code. If the service doesn't come up or
    smoke fails, it stashes the uncommitted rachel/ + store-agent/ changes (`git stash pop` restores),
    restarts on HEAD and re-smokes. Never a bare `systemctl restart`. Deploy BEFORE committing — a clean
@@ -46,7 +52,7 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 ## QA harness (rachel/qa/)
 - `qa/unit/*.test.js`: pure-logic unit tests on saved real replies (multi-pick resolver), run by every
   `precheck.sh` lint/deploy. Lint also enforces eslint no-use-before-define (runtime TDZ errors).
-- `./qa/run.py` every scenario in qa/scenarios/ (48 on Sep 29); `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
+- `./qa/run.py` every scenario in qa/scenarios/ (50 on Sep 29); `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
 - Scenarios are YAML in qa/scenarios/. Assertions: contains / not_contains / matches / not_matches / log_contains / log_not_contains /
   pdf_contains / pdf_not_contains, plus a Haiku `judge` — prefer structural checks; the judge is
   unreliable on nuanced criteria. `transport: slack` (real DM as rachel_qa) and `transport: email`
@@ -80,6 +86,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   spirit type) is kept and stated (never an offer to trim). Packages spend the whole budget: no downsell,
   price-tier critic notes are dropped (rachel.js), prompt SPEND-THE-BUDGET rule. Every menu_build logs a supply check (OK/FAILED).
 - A conversation expires after RACHEL_IDLE_HOURS (4) idle, except email threads; age is re-asked.
+- Edits to a quote the customer has (remove lines, "all beer in bottles", "only 1 case of X") are applied in
+  code (quote-edits.js; email sessions or sessions with a proposal), listed back, PDF regenerated. An edit that
+  also ADDS items goes to the LLM. An email quote request's reply + PDF are always built in code.
 - A placed order (API success only) leaves the cart → state.placedOrder; touching it asks reopen/new.
   Bevvi has no cancel API: a re-placed reopened order leaves the earlier one unpaid (logged).
 

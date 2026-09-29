@@ -22,6 +22,7 @@ lint() {
   for f in $FILES; do
     node --check "$f" 2>/dev/null || { echo "SYNTAX ERROR: $f"; fail=1; }
   done
+  python3 -m py_compile rachel/email-agent.py 2>/dev/null || { echo "SYNTAX ERROR: rachel/email-agent.py"; fail=1; }
   out=$(npx --yes eslint@8 --no-eslintrc --parser-options=ecmaVersion:2022 --env node,es2022 \
     --rule '{"no-const-assign":"error","no-dupe-keys":"error","no-undef":"error","no-use-before-define":["error",{"functions":false,"classes":false,"variables":false}]}' $FILES 2>&1 | grep -E "no-const-assign|no-dupe-keys|no-undef|no-use-before-define")
   # no-use-before-define: a const/let read before its declaration throws at RUNTIME only
@@ -57,6 +58,8 @@ smoke() {
 # up <service>: active, answering HTTP, and still up a few seconds later (catches crash loops).
 up() {
   local svc=$1 url i
+  # rachel-email has no HTTP port: up = still active 10 s after the restart (catches a crash at startup).
+  if [ "$svc" = rachel-email ]; then sleep 10; systemctl is-active --quiet "$svc"; return $?; fi
   case $svc in rachel) url=http://127.0.0.1:3500/health ;; shopping-agent) url=http://127.0.0.1:8300/ ;; esac
   for i in $(seq 1 30); do
     if [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "$url")" != "000" ]; then
@@ -111,7 +114,10 @@ deploy() {
   echo "$DIRTY" | grep -q " rachel/" && svcs+=(rachel)
   # shopping-agent also loads rachel/functions.js, package-model.js and brand-lists.js — a change
   # to only those left it running the old code.
-  echo "$DIRTY" | grep -qE " store-agent/| rachel/(functions|package-model|brand-lists)\.js" && svcs+=(shopping-agent)
+  # generate-proposal.js too: shopping-agent's generate_proposal requires it (Sep 29).
+  echo "$DIRTY" | grep -qE " store-agent/| rachel/(functions|package-model|brand-lists|generate-proposal|product-match)\.js" && svcs+=(shopping-agent)
+  # The email agent (rachel/email-agent.py) is its own service.
+  echo "$DIRTY" | grep -q " rachel/email-agent\.py" && svcs+=(rachel-email)
   [ ${#svcs[@]} -eq 0 ] && svcs=(rachel)
   echo "Deploy $STAMP: HEAD $(git rev-parse --short HEAD), services: ${svcs[*]}"
   if [ -n "$DIRTY" ]; then echo "Uncommitted changes being deployed:"; echo "$DIRTY"; else echo "Working tree clean under $SCOPE (deploying HEAD)."; fi

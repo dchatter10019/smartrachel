@@ -902,6 +902,7 @@ async function validateDeliveryTime(state, message, email, format, res) {
   return null;
 }
 const cta = require('./cta.js');
+const QE = require('./quote-edits.js');   // edits to a quote the customer already has, applied in code
 const listReply = require('./list-reply.js');   // shopping-list replies composed in code (see the NEXT-BEST-ACTION wrapper)
 const contacts = require('./customer-contacts.js');   // name/phone from the last placed order + channel profile name (order flow)
 const isInternalMsgEarly = m => /^__/.test(m) || /^\d{1,2}:\d{2}\s*[AP]M\s*-\s*\d{1,2}:\d{2}\s*[AP]M/i.test(m);
@@ -1325,6 +1326,13 @@ app.post('/chat', async (req, res) => {
 
   if (!message) return res.status(400).json({ error: 'message required' });
 
+  // EMAIL: act on the new text (+ a forwarded message), never the quoted history below it (email-body.js).
+  // Real case (Sep 29, Gen II Fund): a forwarded edit request also carried the customer's ORIGINAL order list.
+  if (/^email-/.test(String(session_id || '')) || (context && context.email_subject)) {
+    const eb = require('./email-body.js').latest(message);
+    if (eb.trimmed) { console.log('[email-body] ' + (eb.forwarded ? 'forwarded message kept, ' : '') + 'quoted history cut: ' + String(message).length + ' -> ' + eb.text.length + ' chars'); message = eb.text; }
+  }
+
   if (context && context.kitchen_location && KITCHEN_TO_CLIENT[context.kitchen_location]) {
     context.client_id = KITCHEN_TO_CLIENT[context.kitchen_location];
   }
@@ -1350,6 +1358,13 @@ app.post('/chat', async (req, res) => {
 
   const email = context?.user_email || '';
   const isD2C = !context?.kitchen_location;
+  // Email sessions remember who wrote and the subject, so a later NEW thread (a forward) can be linked back
+  // to this quote (/internal/email-link, email-link.js).
+  if (/^email-/.test(String(sessionKey)) || (context && context.email_subject)) {
+    const stE = getState(sessionKey);
+    if (email) stE.userEmail = String(email).toLowerCase();
+    if (context && context.email_subject && !stE.emailSubject) stE.emailSubject = String(context.email_subject);   // the FIRST subject names the client; a forward's ("Fwd: ... - Drinks order") doesn't
+  }
 
   // IDLE EXPIRY: a conversation ends after IDLE_HOURS of silence and the next message starts
   // fresh, exactly as if the customer had typed "reset". Real complaint: flowState lives on
@@ -2002,6 +2017,43 @@ app.post('/chat', async (req, res) => {
     console.log('[turn] state.step:', state.step, '| pendingSubstitutes:', JSON.stringify(state.pendingSubstitutes), '| message:', JSON.stringify(message).slice(0,80));
     { const _turnMsg = message; const _json = res.json.bind(res);
       res.json = (payload) => { try { recordTurn(sessionKey, _turnMsg, payload && (payload.text || payload.response)); } catch (e) {} return _json(payload); }; }
+    // ── QUOTE EDITS (quote-edits.js) ─────────────────────────────────────────────────────────────────
+    // "Remove the following ... remove all beer in bottles ... I only need 1 case ... resend the updated
+    // quote" against a quote the customer already has: parsed and applied in code, every change listed,
+    // the PDF regenerated. Real case (Sep 29, Gen II Fund): there was no deterministic path — the LLM's
+    // update_quantity matched by substring ("Cantena" missed Catena), had no "all bottled beer" rule and
+    // nothing re-sent the PDF. Scope: email sessions and sessions that already have a proposal; an edit
+    // that also ADDS items goes to the LLM (adds need a catalog search). Removals/quantities only.
+    if (!state.orderStep && !state.proposalStep && (/^email-/.test(sessionKey) || (context && context.email_subject) || state.lastProposalUrl)) {
+      let qItems = []; try { qItems = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+      const qe = qItems.length ? QE.parseEdits(message) : null;
+      if (qe && qe.count && qe.adds) console.log('[quote-edits] the request also adds items — left to the LLM (adds need a catalog search)');
+      else if (qe && qe.count) {
+        const r = QE.applyEdits(qItems, qe);
+        console.log('[quote-edits] ' + qe.count + ' edit(s) -> ' + JSON.stringify(r.changes.map(c => c.kind + ': ' + c.name + (c.to != null ? ' ' + c.from + '->' + c.to : '') + (c.why && c.why !== 'asked' ? ' (' + c.why + ')' : '')))
+          + (r.notFound.length ? ' | NOT FOUND (told the customer): ' + JSON.stringify(r.notFound) : '') + (r.ambiguous.length ? ' | AMBIGUOUS (asked): ' + JSON.stringify(r.ambiguous) : '')
+          + ' | total $' + QE.total(qItems) + ' -> $' + QE.total(r.items));
+        if (r.changes.length) {
+          state.lastLineItems = JSON.stringify(r.items);
+          packageCache[makeCacheKey(email, state.zip, state.lastFingerprint)] = state.lastLineItems;
+          state.pendingSubstitutes = []; state.lastCta = null; saveFlowState();
+        }
+        let txt = QE.describe(r, qItems);
+        if (r.changes.length && r.items.length) {
+          const subj = String(state.emailSubject || (context && context.email_subject) || '');
+          const client = state.savedClientName || (subj.match(/\s[-–—|:]\s*([^-–—|:]{2,60})$/) || [])[1] || String((context && context.user_name) || '').trim();
+          try {
+            const url = await quotePdf(state, r.items, String(client || '').trim(), state.savedEventDate || '', r.items.filter(li => li.match && li.match.kind && li.match.kind !== 'exact').length);
+            txt += '\n\nYour updated PDF proposal is attached: ' + url;
+          } catch (e) {
+            console.log('[quote-edits] PDF regeneration failed (changes kept, customer told): ' + e.message);
+            txt += "\n\nI couldn't regenerate the PDF just now — reply \"send the proposal\" and I'll try again.";
+          }
+        }
+        if (!r.ambiguous.length) txt += '\n\nReply with any other changes, or say "place the order" when you\'re ready.';
+        return res.json({ text: txt, response: txt });
+      }
+    }
     // ── NEXT-BEST-ACTION (cta.js; Learning Phase 1, Part B) ──────────────────────────────────────────
     // Installed after recordTurn's wrapper so it runs FIRST: the history records the reply the customer
     // actually got. Every reply here: the old four-action trailer is stripped; a generic LLM closer is
@@ -2021,7 +2073,13 @@ app.post('/chat', async (req, res) => {
             // A shopping list (custom_list) turn: the reply is composed in code from the real basket (list-reply.js).
             let listText = null;
             const evL = events.ctx();
-            if (evL && evL.ev && evL.ev.list_build && !evL.actions.includes('placed_order') && !evL.actions.includes('generated_proposal')) {
+            // An EMAIL quote request is always composed here with the PDF built in code, even when the LLM generated
+            // its own proposal this turn. Real (Sep 29, QA 61): the classifier timed out, the LLM called
+            // generate_proposal itself with client "airculinaire" (the context client_id) and its reply was kept.
+            const subjQ = String((context && context.email_subject) || '');
+            const emailQuote = !!((/^email-/.test(sessionKey) || subjQ) && /\b(quote|proposal|pdf|estimate)\b/i.test(turnMsg + ' ' + subjQ));
+            if (emailQuote && evL && evL.ev && evL.ev.list_build && evL.actions.includes('generated_proposal')) console.log('[quote-pdf] the LLM generated its own proposal on an email quote turn — replaced by the reply and PDF built in code');
+            if (evL && evL.ev && evL.ev.list_build && !evL.actions.includes('placed_order') && (!evL.actions.includes('generated_proposal') || emailQuote)) {
               let itL = []; try { itL = JSON.parse(st.lastLineItems || '[]'); } catch (e) {}
               if (itL.length) {
                 const cL = listReply.compose({ items: itL, unmatched: evL.unmatched, llmText: orig });
@@ -2079,7 +2137,8 @@ app.post('/chat', async (req, res) => {
       const rr = await fetch('http://127.0.0.1:8300/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'generate_proposal', arguments: {
           line_items: JSON.stringify(items), client_name: client, event_date: eventDate, email, channel: format || 'plain',
-          notes: (st.address ? 'Delivery: ' + st.address + '.' : '') + (inexactCount ? ' Some items are recommended alternatives to what was asked (see email).' : '') } } }) });
+          notes: (st.address ? 'Delivery: ' + st.address + '.' : '') + (inexactCount ? ' Some items are recommended alternatives to what was asked (see email).' : '')
+            + (items.some(li => /\*\s*$/.test(String(li.name || ''))) ? ' * = recommended in place of a requested item this store does not carry.' : '') } } }) });
       const rt = await rr.text(); const rl = rt.split('\n').find(l => l.startsWith('data:'));
       const r = rl ? JSON.parse(JSON.parse(rl.replace('data:', '').trim()).result.content[0].text) : null;
       if (!r || !r.success) throw new Error((r && r.error) || 'no result');
@@ -4488,15 +4547,42 @@ app.get('/health', (req, res) => res.json({ status: 'ok', port: PORT }));
 // Operator correction (localhost only — the server binds 127.0.0.1): replace a session's basket with what was
 // actually sent to the customer, and record that message in the conversation, so their next reply starts from
 // it. Used when a person answered for Rachel (Sep 29: Sean's quote was sent by hand after Rachel's wrong list).
+// Which earlier email session a NEW thread continues (email-agent.py asks before starting a fresh session).
+// Localhost only, like session-basket. Decided in email-link.js; the decision and reason are logged.
+app.post('/internal/email-link', (req, res) => {
+  const { sender_email, subject, body } = req.body || {};
+  if (!sender_email) return res.status(400).json({ session_id: null, reason: 'sender_email required' });
+  const local = String(sender_email).toLowerCase().split('@')[0];
+  const candidates = [];
+  for (const [k, st] of Object.entries(flowState)) {
+    if (!/^email-/.test(k) || !st) continue;
+    // Sessions from before userEmail was recorded: the sender's local part is in the id (email-<thread>-<local>).
+    const who = st.userEmail || (k.split('-').slice(2).join('-') === local ? String(sender_email).toLowerCase() : '');
+    if (!who) continue;
+    let n = 0; try { n = JSON.parse(st.lastLineItems || '[]').length; } catch (e) {}
+    candidates.push({ session_id: k, sender_email: who, client: st.savedClientName || '', subject: st.emailSubject || '', last_active: st.lastActive || 0, has_quote: n > 0 });
+  }
+  const r = require('./email-link.js').pick({ sender_email, subject, body: require('./email-body.js').latest(body).text }, candidates);
+  console.log('[email-link] ' + JSON.stringify(String(subject || '').slice(0, 60)) + ' from ' + sender_email + ' -> ' + (r.session_id || 'new session') + ' — ' + r.reason);
+  res.json(r);
+});
+
 app.post('/internal/session-basket', (req, res) => {
-  const { session_id, line_items, sent_text } = req.body || {};
-  if (!session_id || !Array.isArray(line_items) || !line_items.length) return res.status(400).json({ ok: false, error: 'session_id and line_items required' });
+  const { session_id, sent_text, from_proposal } = req.body || {};
+  let line_items = req.body && req.body.line_items, prop = null;
+  // from_proposal: a proposal PDF's file name -> the line items it was generated from (generate-proposal.js).
+  if (from_proposal) {
+    try { prop = JSON.parse(fs.readFileSync(path.join('/home/ubuntu/logs/proposal-items', path.basename(String(from_proposal)) + '.json'), 'utf8')); line_items = prop.line_items; }
+    catch (e) { return res.status(404).json({ ok: false, error: 'no saved line items for ' + from_proposal }); }
+  }
+  if (!session_id || !Array.isArray(line_items) || !line_items.length) return res.status(400).json({ ok: false, error: 'session_id and line_items (or from_proposal) required' });
   const st = getState(session_id);
+  if (prop) { st.lastProposalUrl = 'http://3.138.180.46/proposals/' + prop.pdf; if (prop.client_name) st.savedClientName = prop.client_name; if (prop.event_date) st.savedEventDate = prop.event_date; }
   st.lastLineItems = JSON.stringify(line_items); st.pendingSubstitutes = []; st.pendingAddOffer = null; st.pendingQtyFor = null; st.lastCta = null;
   if (!sessions[session_id]) sessions[session_id] = [];
   if (sent_text) sessions[session_id].push({ role: 'assistant', content: String(sent_text) });
   saveFlowState();
-  console.log('[internal] session-basket: ' + session_id + ' basket replaced with ' + line_items.length + ' line(s)' + (sent_text ? ', sent message recorded' : ''));
+  console.log('[internal] session-basket: ' + session_id + ' basket replaced with ' + line_items.length + ' line(s)' + (prop ? ' from proposal ' + prop.pdf : '') + (sent_text ? ', sent message recorded' : ''));
   res.json({ ok: true, lines: line_items.length });
 });
 

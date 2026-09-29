@@ -1,0 +1,166 @@
+{
+ "note": "The Gen II Fund quote Natalia received (Sep 29 16:17 PDF, product total $1102.45)",
+ "line_items": [
+  {
+   "category": "wine",
+   "name": "Oyster Bay Sauvignon Blanc",
+   "size": "750 mL",
+   "qty": 1,
+   "price": 16.99
+  },
+  {
+   "category": "wine",
+   "name": "Josh Cellars Cabernet Sauvignon",
+   "size": "750 mL",
+   "qty": 2,
+   "price": 15.99
+  },
+  {
+   "category": "wine",
+   "name": "Catena Malbec",
+   "size": "750 mL",
+   "qty": 1,
+   "price": 24.99
+  },
+  {
+   "category": "spirits",
+   "name": "Crook & Marker Lime Margarita 8x11.5 oz Cans *",
+   "size": "8 x 11.5 oz",
+   "qty": 2,
+   "price": 18.99
+  },
+  {
+   "category": "spirits",
+   "name": "Sun Cruiser Iced Tea Vodka Variety Pack",
+   "size": "12 oz cans",
+   "qty": 2,
+   "price": 18.99
+  },
+  {
+   "category": "spirits",
+   "name": "Surfside Vodka Lemonade Variety Pack *",
+   "size": "12 oz cans",
+   "qty": 2,
+   "price": 18.99
+  },
+  {
+   "category": "spirits",
+   "name": "Nantucket Cran Cocktail 12 oz Cans",
+   "size": "12 oz cans",
+   "qty": 3,
+   "price": 10.99
+  },
+  {
+   "category": "spirits",
+   "name": "Baileys Irish Cream",
+   "size": "1.75 L",
+   "qty": 1,
+   "price": 54.99
+  },
+  {
+   "category": "beer",
+   "name": "Bud Light American Lager 30x12 oz Cans",
+   "size": "30 x 12 oz",
+   "qty": 2,
+   "price": 29.99
+  },
+  {
+   "category": "beer",
+   "name": "Michelob ULTRA Light Lager 30x12 oz Cans",
+   "size": "30 x 12 oz",
+   "qty": 2,
+   "price": 32.99
+  },
+  {
+   "category": "beer",
+   "name": "New Belgium Voodoo Ranger IPA 12x12 oz Cans *",
+   "size": "12 x 12 oz",
+   "qty": 2,
+   "price": 22.49
+  },
+  {
+   "category": "beer",
+   "name": "Pilsner Urquell 12pk 12 oz Bottles *",
+   "size": "12 x 12 oz",
+   "qty": 2,
+   "price": 18.99
+  },
+  {
+   "category": "beer",
+   "name": "Carlsberg 12x16 oz Cans",
+   "size": "12 x 16 oz",
+   "qty": 2,
+   "price": 28.99
+  },
+  {
+   "category": "beer",
+   "name": "Allagash White 12x12 oz Cans",
+   "size": "12 x 12 oz",
+   "qty": 2,
+   "price": 21.99
+  },
+  {
+   "category": "beer",
+   "name": "Spaten Oktoberfest Ur-Marzen 6x12 oz Bottles *",
+   "size": "6 x 12 oz",
+   "qty": 4,
+   "price": 11.49
+  },
+  {
+   "category": "beer",
+   "name": "Lord Hobo Boom Sauce 4x16 oz Cans",
+   "size": "4 x 16 oz",
+   "qty": 1,
+   "price": 14.99
+  },
+  {
+   "category": "beer",
+   "name": "High Noon Variety Pool Pack 8x12 oz Cans *",
+   "size": "8 x 12 oz",
+   "qty": 11,
+   "price": 22.99
+  },
+  {
+   "category": "beer",
+   "name": "High Noon Hard Seltzer Grapefruit 12 oz Cans",
+   "size": "12 oz cans",
+   "qty": 2,
+   "price": 11.99
+  },
+  {
+   "category": "beer",
+   "name": "Founders All Day IPA 15x12 oz Cans",
+   "size": "15 x 12 oz",
+   "qty": 2,
+   "price": 19.99
+  },
+  {
+   "category": "beer",
+   "name": "Redhook ESB 6x12 oz Bottles *",
+   "size": "6 x 12 oz",
+   "qty": 2,
+   "price": 9.49
+  },
+  {
+   "category": "beer",
+   "name": "Downeast Tropical Mix Cider 9x12 oz Cans *",
+   "size": "9 x 12 oz",
+   "qty": 3,
+   "price": 19.99
+  },
+  {
+   "category": "beer",
+   "name": "Downeast Original Blend Cider 4x12 oz Cans",
+   "size": "4 x 12 oz",
+   "qty": 3,
+   "price": 12.99
+  },
+  {
+   "category": "beer",
+   "name": "Shipyard Pumpkinhead Ale 12x12 oz Cans",
+   "size": "12 x 12 oz",
+   "qty": 1,
+   "price": 19.99
+  }
+ ]
+}
