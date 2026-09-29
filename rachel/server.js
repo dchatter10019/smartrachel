@@ -1120,7 +1120,10 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
     onSubstituteConfirmed: async (originalItem, replacementName, replacementPrice, replacementSize) => applyBasketSubstitute(sessionKey, email, originalItem, replacementName, replacementPrice, replacementSize)
   });
   sessions[sessionKey] = result.messages;
-  return scrubDisabledOffers(formatResponse(result.response, format), format);
+  const out = scrubDisabledOffers(formatResponse(result.response, format), format);
+  const numbered = require('./multipick.js').numberOptionLines(out);
+  if (numbered !== out) console.log('[reply] numbered an unnumbered options list (LLM left it bare) so a "3" can pick from it');
+  return numbered;
 }
 
 // ── POST /chat ─────────────────────────────────────────────────────────────
@@ -1968,7 +1971,13 @@ app.post('/chat', async (req, res) => {
         // "Kendall Pinot" was labeled add_item once and select_option once; select_option was not
         // routed, the pick-list gate saw no list (it was two replies back) and the LLM improvised.
         // Numbered/grouped picks ("2", "Pinot Noir 2") stay with the pick-list/multi-pick resolvers.
-        if (clsUsable && cr.intent === 'select_option' && cr.ref && !/\d/.test(cr.ref) && !/[,;&]/.test(cr.ref)) {
+        // The MESSAGE must be one pick too: the classifier sometimes names one product for a
+        // several-pick message (Sep 29 smoke: "Sauvignon Blanc 1, Pinot Noir 1, rosé 1" -> ref
+        // "Justin Sauvignon Blanc"; add_item took the turn and the other two picks were lost).
+        const selParts = require('./multipick.js').splitSelection(message);
+        if (clsUsable && cr.intent === 'select_option' && cr.ref && (selParts.length >= 2 || /\?/.test(message))) {
+          console.log('[classify] select_option by name ' + JSON.stringify(cr.ref) + ' NOT routed to add_item — message has ' + (selParts.length >= 2 ? selParts.length + ' parts' : 'a question') + ' (multi-pick resolver / LLM)');
+        } else if (clsUsable && cr.intent === 'select_option' && cr.ref && !/\d/.test(cr.ref) && !/[,;&]/.test(cr.ref)) {
           console.log('[classify] select_option by name ' + JSON.stringify(cr.ref) + ' -> add_item (resolved against the listed options)');
           cr.intent = 'add_item';
         }
@@ -2011,7 +2020,10 @@ app.post('/chat', async (req, res) => {
           const one = lastR.replace(/\*/g, '').match(/^\s*([^\n]+?)\s+—\s+([^\n—$]*?)\s*—\s*\$([\d,.]+)\s*$/m);
           const nk = x => String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
           const isList = /^\s*1[\.\)]\s/m.test(lastR);
-          if (one && !isList && !items.some(it => nk(it.name).indexOf(nk(one[1]).slice(0, 12)) >= 0)) {
+          // Never when the customer names the basket: "show my basket" after Rachel quoted one
+          // product got that product's estimate plus 'say "show my basket"' (Sep 29 QA).
+          const asksBasket = /\b(basket|cart|my order|order so far)\b/i.test(message);
+          if (one && !isList && !asksBasket && !items.some(it => nk(it.name).indexOf(nk(one[1]).slice(0, 12)) >= 0)) {
             const pp = parseFloat(one[3].replace(/,/g, '')) || 0;
             const tax1 = Math.round(pp * 10) / 100, svc1 = Math.round(pp * 10) / 100, { tip: tip1, label: tipL1 } = tipFor(state, pp), del1 = 25.00;
             const g1 = Math.round((pp + tax1 + svc1 + tip1 + del1) * 100) / 100;
@@ -2056,7 +2068,11 @@ app.post('/chat', async (req, res) => {
     // being asked item by item. Two or more quantity tokens or lines -> custom_list path.
     const qtyTokens = (message.match(/\b\d+\s*(?:x\b|bottles?|cases?|packs?|btls?)\b|\b\d+x\b/gi) || []).length;
     const listLines = message.split(/\n/).map(l => l.trim()).filter(Boolean).length;
-    const isMultiItem = qtyTokens >= 2 || listLines >= 2;
+    // Bare quantities count too, one per comma/"and" part: "5 Bacardi ... 750ml and 4 Patron Silver
+    // 750ml" (Sep 29 QA) was added as the Bacardi alone — the Patron was silently dropped.
+    const qtyParts = message.split(/\s*(?:,|;|\band\b|\bplus\b|&)\s*/i)
+      .filter(pt => /^(?:(?:i\s+)?(?:need|want|add|get|order|take|have|also|plus)\s+)*\d{1,3}\s+(?!(?:ml|l|oz|year|yr|years)\b)[a-z]/i.test(pt.trim())).length;
+    const isMultiItem = qtyTokens >= 2 || listLines >= 2 || qtyParts >= 2;
     // Several names in one ref ('Decoy, Louis Jadot, Wolffer') are picks, not one product —
     // real bug: searched as one string, 0 matches, "couldn't find" after Rachel had just
     // listed all three. Defer to the multi-pick resolver / LLM.
@@ -3370,6 +3386,13 @@ app.post('/chat', async (req, res) => {
           else { console.log('[pick-list] size-only option with no product heading — deferring to LLM'); picked = null; }
         }
         if (picked) {
+          // Only a message that is JUST this pick is resolved here; anything more (a question,
+          // a second pick, a swap instruction) goes to the LLM whole. Real bug (Sep 28): a pick +
+          // "Do you have regular Don Julio blanco?" + "Casamigos look good" lost the last two.
+          const leftover = require('./multipick.js').pickLeftover(msgClean, picked);
+          if (leftover.length) { console.log('[pick-list] DEFERRED to LLM — message is more than a pick of #' + picked.n + ' (leftover: ' + JSON.stringify(leftover.slice(0, 12)) + ')'); picked = null; }
+        }
+        if (picked) {
           let already = false;
           try { already = JSON.parse(state.lastLineItems || '[]').some(it => norm(it.name) === norm(picked.name)); } catch (e) {}
           if (!already) {
@@ -3399,8 +3422,8 @@ app.post('/chat', async (req, res) => {
             // Ask quantity ONCE, at pick time — never silently default to 1 (real
             // complaint: a red wine was added at 1x with no question, while the white
             // got asked at order time). If the customer stated a number, use it.
-            const qm = msgClean.match(/\b(\d{1,3})\s*(?:x|bottles?|cases?|packs?)?\b/i);
-            const statedQty = qm && parseInt(qm[1]) > 0 && parseInt(qm[1]) < 500 && !/^\d{1,2}$/.test(msgClean.trim()) ? parseInt(qm[1]) : 0;
+            // A number inside the product's own name ("Knob Creek 12 Year") is not a quantity.
+            const statedQty = /^\d{1,2}$/.test(msgClean.trim()) ? 0 : require('./multipick.js').statedPickQty(msgClean, picked);
             if (statedQty > 1) {
               try { const it = JSON.parse(state.lastLineItems || '[]'); const nk = s => String(s||'').toLowerCase().replace(/[^a-z0-9]/g,''); const row = it.find(x => nk(x.name).indexOf(nk(picked.name).slice(0,12)) >= 0); if (row) { row.qty = statedQty; row.quantity = statedQty; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); saveFlowState(); } } catch (e) {}
               const reply = 'Got it — ' + statedQty + 'x ' + added + ' added to your order. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';

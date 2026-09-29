@@ -138,6 +138,16 @@ function screen(products, zip) {
     if (!isPack && nameMl && fieldMl && Math.abs(nameMl - fieldMl) / Math.max(nameMl, fieldMl) > 0.08)
       flag(i, 'name says ' + Math.round(nameMl) + ' ml but size field says ' + Math.round(fieldMl) + ' ml');
   });
+  // A single bottle priced far below its known web market price, even with no other row of the
+  // product to compare against. Real bug (Sep 29 smoke): Bevvi dropped the Veuve 1.5 L row, so the
+  // bogus 3 L at $71.49 (market ~$651.79, cached) had no sibling and was shown again. Uses the
+  // market cache only — no new web lookup in the request path — and needs < 40% of market.
+  products.forEach((p, i) => {
+    if (flagged.has(i) || !sizeComparable(p) || !(price(p) > 0)) return;
+    const m = cachedMarket(p, zip);
+    if (m && m.median && price(p) < m.median * 0.4)
+      flag(i, 'priced far below market: $' + price(p).toFixed(2) + ' vs market ~$' + m.median.toFixed(2) + ' for ' + Math.round(volumeMl(p)) + ' ml near ' + (zip || 'US'));
+  });
   // Same product compared across the result set. When two rows disagree, blame the one whose
   // price-per-litre is farthest from the rest of that product's rows; with no third row,
   // blame the cheaper same-size row, or the smaller bottle that costs more than a bigger one.

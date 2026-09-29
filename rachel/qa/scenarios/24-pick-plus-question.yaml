@@ -1,0 +1,25 @@
+name: pick-plus-question
+tags: [ux]
+# Real bug (Sep 28, Slack, DC): after an options list, "Knob Creek 12 Year Straight Bourbon — 750mL
+# looks good. Do you have regular Don Julio blanco? Casamigos look good" was taken by the single-pick
+# resolver as JUST option 1: the question and the second pick were dropped, and the "12" in the
+# product name became the quantity (12x). A message that is more than a pick goes to the LLM whole.
+# Found while writing this: "5 Bacardi ... and 4 Patron Silver" added only the Bacardi, and "show my
+# basket" after a one-product quote returned that product's estimate instead of the basket.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+    expect: {contains: ["10019"]}
+  - send: "I need 5 Bacardi Superior White Rum 750ml and 4 Patron Silver 750ml"
+    expect: {contains: ["Bacardi", "Patron"], matches: "(?i)4\\s*x[^\\n]*Patr"}
+  - send: "Instead of the Bacardi I'd like a higher end bourbon, same 5 bottles — show me a few options"
+    expect: {matches: "^\\s*2[.)] .*\\$"}
+    capture: listed_partial
+  - send: "{pick_full} looks good. Do you have Casamigos Blanco?"
+    expect:
+      contains: ["Casamigos"]
+      log_not_contains: ["[pick-list] deterministic selection"]
+  - send: "show my basket"
+    # the basket, not an estimate for the product Rachel just quoted; both original lines accounted for
+    expect: {matches: "(?i)\\b5\\s*x?\\b[^\\n]*{pick_re}", contains: ["Patr"], not_contains: ["Estimated all-in for", "Bacardi"]}

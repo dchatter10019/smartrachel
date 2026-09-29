@@ -3,7 +3,7 @@
 // (precheck.sh runs every qa/unit/*.test.js during lint — a failure blocks the deploy).
 const fs = require('fs');
 const path = require('path');
-const { parseOptionGroups, resolvePicks, replacementTarget } = require('../../multipick.js');
+const { numberOptionLines, parseOptionGroups, resolvePicks, replacementTarget, pickLeftover, statedPickQty } = require('../../multipick.js');
 const MPparse = parseOptionGroups;
 
 let failed = 0;
@@ -96,6 +96,41 @@ console.log('add_item by partial name from a list two replies back (the Sep 28 W
   eq('not listed -> no matches (catalog search)', names('Meiomi Pinot'), []);
   eq('no list in recent replies -> null', matchListedByName('Kendall Pinot', ['Which one?', 'Sure.']), null);
   eq('newest list wins over an older one', names('Pinot', [fx('reds-list-0928.txt'), 'Options:\n1. Meiomi Pinot Noir — 750 mL — $22.99\n2. Decoy Merlot — 750 mL — $24.19']), ['Meiomi Pinot Noir']);
+}
+
+console.log('single pick: only a message that is JUST the pick (the Sep 28 Knob Creek failure)');
+{
+  const opts = parseOptionGroups(fx('bourbon-tequila-picks-0928.txt')).flatMap(g => g.options);
+  const kc = opts.find(o => /^Knob Creek 12/.test(o.name));
+  eq('option 1 parsed', kc && [kc.name, kc.size, kc.price], ['Knob Creek 12 Year Straight Bourbon', '750mL', 100.79]);
+  const real = '*Knob Creek 12 Year Straight Bourbon* — 750mL looks good. Do you have regular DOn julio blanco? Casamigos look good';
+  eq('pick + question + second pick -> leftover, so the LLM gets it', pickLeftover(real, kc).length > 0, true);
+  eq('the question is part of the leftover', pickLeftover(real, kc).includes('?'), true);
+  eq('"<name> — 750mL looks good" -> selection-shaped', pickLeftover('Knob Creek 12 Year Straight Bourbon — 750mL looks good', kc), []);
+  eq('"I\'ll take the knob creek 12 year please" -> selection-shaped', pickLeftover("I'll take the knob creek 12 year please", kc), []);
+  eq('"5 bottles of <name>" -> selection-shaped', pickLeftover('5 bottles of Knob Creek 12 Year Straight Bourbon', kc), []);
+  eq('"<name> and 2 Casamigos" -> not a single pick', pickLeftover('Knob Creek 12 Year and 2 Casamigos', kc), ['casamigos']);
+  eq('"12" in the name is not a quantity', statedPickQty(real, kc), 0);
+  eq('"<name> looks good" -> no quantity', statedPickQty('Knob Creek 12 Year Straight Bourbon — 750mL looks good', kc), 0);
+  eq('"5 bottles of <name>" -> 5', statedPickQty('5 bottles of Knob Creek 12 Year Straight Bourbon', kc), 5);
+  eq('"<name>, 12 bottles" -> 12 (unit given)', statedPickQty('Knob Creek 12 Year, 12 bottles', kc), 12);
+  eq('"<name> x6" -> 6', statedPickQty('Knob Creek 12 Year x6', kc), 6);
+  eq('"750mL" is never a quantity', statedPickQty('Woodford Reserve Master 750 mL', opts.find(o => /Woodford/.test(o.name))), 0);
+}
+
+console.log('options lists are always numbered (the Sep 29 unnumbered Tito\'s list)');
+{
+  const bare = "Yep! Here's what's available:\n\n*Tito's Handmade Vodka* — 1.75 L — $43.99\n*Tito's Handmade Vodka* — 1 L — $31.89\n*Tito's Handmade Vodka* — 750 mL — $24.19\n\nWhich size works for you?";
+  const out = numberOptionLines(bare);
+  eq('bare lines numbered 1..3', out.split('\n').filter(l => /^\d\. /.test(l)).map(l => l.slice(0, 3)), ['1. ', '2. ', '3. ']);
+  eq('numbered result parses as options', parseOptionGroups(out).flatMap(g => g.options).map(o => o.size), ['1.75 L', '1 L', '750 mL']);
+  eq('bulleted lines numbered', numberOptionLines('- *A Wine* — 750 mL — $20.00\n- *B Wine* — 750 mL — $22.00'), '1. *A Wine* — 750 mL — $20.00\n2. *B Wine* — 750 mL — $22.00');
+  const already = 'Options:\n1. *A* — 750 mL — $20.00\n*B* — 750 mL — $22.00';
+  eq('an already-numbered reply is untouched', numberOptionLines(already), already);
+  const basket = '*SPIRITS*\n5x *BACARDI Superior White Rum* — 750 mL — $18.58 ea = $92.90\n4x *Patron Silver* — 750 mL — $47.29 ea = $189.16';
+  eq('basket lines are untouched', numberOptionLines(basket), basket);
+  const one = 'Casamigos Blanco Tequila — 1 L — $62.87';
+  eq('a single product is untouched', numberOptionLines(one), one);
 }
 
 console.log(failed ? '\nmultipick: ' + failed + ' FAILED' : '\nmultipick: all passed');

@@ -133,4 +133,58 @@ function matchListedByName(ref, replies) {
   return null;
 }
 
-module.exports = { parseOptionGroups, splitSelection, resolvePicks, replacementTarget, matchListedByName, normP, wordsOf };
+// Is the message ONLY a pick of this option? What's left after removing the option's own words,
+// its size, a quantity and acknowledgement words must be nothing. Real bug (Sep 28, Slack):
+// "Knob Creek 12 Year Straight Bourbon — 750mL looks good. Do you have regular Don Julio blanco?
+// Casamigos look good" matched option 1 by name, the single-pick path took the turn, and the
+// Don Julio question and the Casamigos pick were silently dropped. Returns the leftover words
+// ([] = selection-shaped); a '?' always counts as leftover.
+const tokensOf = x => normP(x).replace(/[’']/g, '').split(/[^a-z0-9]+/).filter(Boolean);
+const PICK_FILLER = new Set(['looks', 'look', 'good', 'great', 'perfect', 'fine', 'sounds', 'works', 'love', 'nice',
+  'yes', 'yeah', 'yep', 'sure', 'okay', 'thanks', 'thank', 'you', 'please', 'pls', 'the', 'that', 'this', 'one', 'those',
+  'let', 'lets', 'take', 'want', 'like', 'would', 'give', 'get', 'add', 'with', 'for', 'and', 'option', 'number', 'pick',
+  'choose', 'ill', 'im', 'ive', 'bottle', 'bottles', 'case', 'cases', 'pack', 'packs', 'of', 'it', 'is', 'go', 'me', 'us', 'ok', 'id']);
+function pickLeftover(message, option) {
+  const own = new Set(tokensOf((option.name || '') + ' ' + (option.size || '')).concat(['ml', 'oz']));
+  const left = tokensOf(message)
+    .filter(w => w.length >= 2 && !own.has(w) && !PICK_FILLER.has(w) && !/^(\d+(ml|l|oz|x)?|x\d+)$/.test(w));
+  return /\?/.test(message) ? left.concat('?') : left;
+}
+
+// The quantity a pick message states, or 0. A number that is part of the product's own name or
+// size ("Knob Creek 12 Year", "750mL") is not a quantity unless it carries a unit ("12 bottles",
+// "12x"). Real bug (Sep 28): the "12" in "Knob Creek 12 Year" was read as 12 bottles.
+function statedPickQty(message, option) {
+  const own = new Set(tokensOf((option.name || '') + ' ' + (option.size || '')).concat(String(option.size || '').match(/\d+/g) || []));
+  const re = /(?:\b|x\s*)(\d{1,3})\s*(x\b|bottles?\b|cases?\b|packs?\b)?/gi;
+  let m;
+  while ((m = re.exec(String(message || ''))) !== null) {
+    const n = parseInt(m[1]);
+    if (!(n > 0 && n < 500)) continue;
+    const unit = m[2] || /x\s*$/i.test(m[0].slice(0, m[0].indexOf(m[1])));
+    if (!unit && own.has(m[1])) continue;
+    if (/^\s*\d+\s*(ml|l|oz)\b/i.test(message.slice(m.index + m[0].indexOf(m[1])))) continue;
+    return n;
+  }
+  return 0;
+}
+
+// An options list Rachel sends is always numbered, so "3" can pick from it. The LLM numbers
+// it only some of the time — real bug (Sep 29 smoke, twice in a row): "do you have Tito's" came
+// back as five unnumbered "*Tito's Handmade Vodka* — 750 mL — $24.19" lines, and the customer's
+// "3" had nothing to resolve against. Numbers "Name — size — $price" option lines (bulleted or
+// bare) when there are 2+ of them and the reply has no numbered line already. Basket lines
+// ("5x Name — ... = $92.90") are not options and are left alone.
+const OPTION_LINE = /^(\s*)(?:[-•*]\s+(?=\S))?((?![*_]*\d+\s*x\b)[^\n—]*?[A-Za-z][^\n—]*?\s+—\s+[^\n—]*?\s*—\s*\$\d[\d,.]*[^\n=]*)$/i;
+function numberOptionLines(text) {
+  const t = String(text || '');
+  if (/^\s*\d+[.)]\s/m.test(t)) return t;
+  const lines = t.split('\n');
+  const idx = lines.map((l, i) => OPTION_LINE.test(l) && !/=\s*\$/.test(l) ? i : -1).filter(i => i >= 0);
+  if (idx.length < 2) return t;
+  let n = 0;
+  idx.forEach(i => { const m = lines[i].match(OPTION_LINE); lines[i] = m[1] + (++n) + '. ' + m[2]; });
+  return lines.join('\n');
+}
+
+module.exports = { numberOptionLines, parseOptionGroups, splitSelection, resolvePicks, replacementTarget, matchListedByName, pickLeftover, statedPickQty, normP, wordsOf };
