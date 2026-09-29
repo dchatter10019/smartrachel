@@ -25,7 +25,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   missing fields (name, email, phone, delivery date+time checked against real windows) asked in ONE reply,
   kept in state.emailOrder until the answer places it. Tip 5% unless stated. A repeat re-sends the link.
 - Basket lines with no catalog link (a hand-built quote) are linked by line-resolve.js — same price AND name
-  fits, exact only, else asked — on /internal/session-basket loads and before an email order is placed.
+  fits, exact only, else asked — on /internal/session-basket loads, when checkout starts on any channel (the
+  delivery-window check needs the lines' store), before placing, and before an email order is placed.
 - rachel-whatsapp: rachel/rachel_whatsapp_bot.py (Flask + Twilio; invite gate; admin page). Env: /etc/rachel-whatsapp.env
 - Proposals: rachel/generate-proposal.js; each PDF's line items → logs/proposal-items/<pdf>.json (load one into a
   session: POST localhost:3500/internal/session-basket {session_id, from_proposal}). nginx /proposals/ serves

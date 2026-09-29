@@ -2568,6 +2568,24 @@ app.post('/chat', async (req, res) => {
         if (od0.delivery_instructions) state.savedInstructions = od0.delivery_instructions; }
       state.orderStep = null; state.orderData = null; saveFlowState();
     }
+    // Checkout starts: link any basket line with no catalog product NOW (line-resolve.js, exact matches only).
+    // The delivery-time check reads the store from the lines, so an unlinked basket couldn't even confirm a
+    // delivery window (Sep 29 QA: "I couldn't confirm a delivery window" on a hand-built basket). Unmatched
+    // lines are asked about before any checkout question.
+    if ((hasOrderIntent || isDirectOrderRequest) && !state.orderStep && !state.proposalStep && state.zip) {
+      let itemsE = []; try { itemsE = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+      if (itemsE.some(LR.needsLink)) {
+        const rr = await LR.resolveLines(itemsE, (n, c) => catalogSearch(state.zip, n, c));
+        if (rr.linked.length) { state.lastLineItems = JSON.stringify(rr.items); saveFlowState(); }
+        if (rr.unresolved.length) {
+          console.log('[order] checkout held — ' + rr.unresolved.length + ' line(s) not linked to the catalog, customer asked: ' + JSON.stringify(rr.unresolved.map(u => u.name)));
+          const tE = 'Before I start the order I need you to confirm ' + (rr.unresolved.length === 1 ? 'one item' : rr.unresolved.length + ' items') + " I can't match exactly in this store's catalog:\n" +
+            rr.unresolved.map(u => '• ' + u.name + ' — ' + u.reason + (u.options.length ? '. Closest: ' + u.options.join('; ') : '')).join('\n') +
+            '\n\nWhich product should I use for ' + (rr.unresolved.length === 1 ? 'it' : 'each') + ' — or should I remove ' + (rr.unresolved.length === 1 ? 'it' : 'them') + '?';   // a real question: no CTA appended after it
+          return res.json({ text: tE, response: tE });
+        }
+      }
+    }
     if (clsIntent === 'show_basket') {
       events.action('showed_basket');
       try {
@@ -3401,6 +3419,24 @@ app.post('/chat', async (req, res) => {
             updatedLineItems = JSON.stringify(items);
           } catch(e) {}
         }
+        // Lines with no catalog link (a hand-built quote given on any channel) are linked before placing — exact
+        // matches only (line-resolve.js). Anything unmatched is asked about instead of sent: Bevvi refuses the
+        // order otherwise, naming items the customer can't act on (Sep 29, Gen II Fund).
+        try {
+          const itemsR = JSON.parse(updatedLineItems || '[]');
+          if (itemsR.some(LR.needsLink) && state.zip) {
+            const rr = await LR.resolveLines(itemsR, (n, c) => catalogSearch(state.zip, n, c));
+            if (rr.linked.length) { updatedLineItems = JSON.stringify(rr.items); state.lastLineItems = updatedLineItems; saveFlowState(); }
+            if (rr.unresolved.length) {
+              state.orderStep = 'confirm'; saveFlowState();
+              console.log('[order] NOT placed — ' + rr.unresolved.length + ' line(s) not linked to the catalog, customer asked: ' + JSON.stringify(rr.unresolved.map(u => u.name)));
+              const tU = 'Before I place this order I need you to confirm ' + (rr.unresolved.length === 1 ? 'one item' : rr.unresolved.length + ' items') + " I can't match exactly in this store's catalog:\n" +
+                rr.unresolved.map(u => '• ' + u.name + ' — ' + u.reason + (u.options.length ? '. Closest: ' + u.options.join('; ') : '')).join('\n') +
+                '\n\nWhich product should I use for ' + (rr.unresolved.length === 1 ? 'it' : 'each') + ' — or should I remove ' + (rr.unresolved.length === 1 ? 'it' : 'them') + '?';
+              return res.json({ text: tU, response: tU });
+            }
+          }
+        } catch (e) { console.log('[order] line linking failed (placing as is; Bevvi names any unlinked item): ' + e.message); }
         // Parse the address robustly. Real bug: a two-line address ("101 E 150th St" /
         // "Bronx, NY 10451") was stored with the line break collapsed to a space, so the
         // old comma-split produced city="NY 10451" and no state — Bevvi rejected it
