@@ -1,6 +1,6 @@
 // Unit tests for address-extract.js — the delivery address inside a longer first message / email.
 // (precheck.sh runs qa/unit/*.test.js.)
-const { findAddress } = require('../../address-extract.js');
+const { findAddress, formatGeocoded } = require('../../address-extract.js');
 let failed = 0;
 function eq(label, got, want) {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -16,6 +16,19 @@ eq('an age sentence before it is not part of it', findAddress('I am 21 years old
 eq('St. abbreviation', findAddress('deliver to 5 Main St., Boston, MA 02110'), '5 Main St., Boston, MA 02110');
 eq('no address', findAddress('need 2 cases of Bud Light for 30 people'), null);
 eq('a quantity list is not an address', findAddress('2 x Budlight (30 cans per case)\n2 x Carlsberg (12 cans per case)'), null);
+
+// formatGeocoded: the address echoed after Google geocodes it (components are real Google replies, Sep 29).
+const C = (...a) => a.map(([t, v]) => ({ types: [t], short_name: v, long_name: v }));
+const federal = C(['subpremise', '6'], ['premise', '100 Federal Street'], ['street_number', '100'], ['route', 'Federal St'], ['neighborhood', 'Downtown'], ['locality', 'Boston'], ['administrative_area_level_1', 'MA'], ['country', 'US'], ['postal_code', '02110']);
+eq("Sean (Sep 29): building name dropped, customer's floor kept", formatGeocoded(federal, '100 Federal Street, Floor 6, Boston, MA 02110'), '100 Federal St, Floor 6, Boston, MA 02110');
+eq('no unit typed: Google subpremise', formatGeocoded(federal, '100 Federal Street, Boston'), '100 Federal St, #6, Boston, MA 02110');
+eq('"6th floor" kept', formatGeocoded(federal, '100 Federal St 6th floor Boston MA'), '100 Federal St, 6th floor, Boston, MA 02110');
+const w53 = C(['street_number', '425'], ['route', 'W 53rd St'], ['political', 'Manhattan'], ['locality', 'New York'], ['administrative_area_level_1', 'NY'], ['country', 'US'], ['postal_code', '10019']);
+eq('sloppy typing cleaned, no unit', formatGeocoded(w53, '425 west 53rd st, NY, NY 10019'), '425 W 53rd St, New York, NY 10019');
+eq('the zip is never a unit', formatGeocoded(w53, '425 W 53rd St, New York, NY 10019'), '425 W 53rd St, New York, NY 10019');
+const bway = C(['subpremise', '200'], ['street_number', '11'], ['route', 'Broadway'], ['locality', 'New York'], ['administrative_area_level_1', 'NY'], ['postal_code', '10004']);
+eq('Suite kept as typed', formatGeocoded(bway, '11 Broadway Suite 200, New York, NY 10004'), '11 Broadway, Suite 200, New York, NY 10004');
+eq('no street number -> null (caller falls back)', formatGeocoded(C(['route', 'Broadway'], ['postal_code', '10004']), 'Broadway'), null);
 
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');

@@ -177,7 +177,10 @@ async function geocodeAddress(text) {
     const g = d.results[0]; const comp = {};
     for (const c of (g.address_components || [])) for (const ty of c.types) comp[ty] = c.short_name;
     if (!comp.postal_code || !comp.street_number) { console.log('[geocode] partial (no zip/street number):', g.formatted_address); return null; }
-    const formatted = String(g.formatted_address || '').replace(/,\s*USA$/i, '');
+    // Built from components (address-extract.js formatGeocoded): formatted_address can lead with a building
+    // name ("100 Federal Street, 100 Federal St #6, ...") and drops the customer's "Floor 6".
+    const formatted = require('./address-extract.js').formatGeocoded(g.address_components, text) || String(g.formatted_address || '').replace(/,\s*USA$/i, '');
+    if (comp.premise) console.log('[geocode] building name dropped from the echo: ' + JSON.stringify(comp.premise) + ' (Google: ' + JSON.stringify(g.formatted_address) + ')');
     return { formatted, zip: comp.postal_code, city: comp.locality || comp.sublocality || comp.neighborhood || '', state: comp.administrative_area_level_1 || '', lat: g.geometry.location.lat, lng: g.geometry.location.lng };
   } catch (e) { console.log('[geocode] error:', e.message); return null; }
 }

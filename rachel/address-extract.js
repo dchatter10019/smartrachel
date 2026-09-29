@@ -27,4 +27,22 @@ function findAddress(text) {
   return (found.find(f => f.cue) || found[0]).a;
 }
 
-module.exports = { findAddress };
+// The address to echo and store after Google geocodes it, built from the geocoder's components.
+// Real bug (Sep 29, Sean's email): formatted_address was "100 Federal Street, 100 Federal St #6, Boston,
+// MA 02110" — Google puts a building name (the "premise" component) in front of the street, and turns
+// "Floor 6" into "#6", which doesn't tell a driver it's a floor. So: street number + route, then the
+// customer's own unit wording if they gave one (else Google's subpremise as "#6"), then city, state zip.
+// components: Google address_components; typed: what the customer wrote. Returns null if incomplete.
+const UNIT = /\b(?:(?:floor|fl\.?|suite|ste\.?|apartment|apt\.?|unit|room|rm\.?|building|bldg\.?)\s*#?\s*[A-Za-z0-9-]+|\d+(?:st|nd|rd|th)\s+floor|#\s*[A-Za-z0-9-]+)(?=\s*(?:,|$|\s))/i;
+function formatGeocoded(components, typed) {
+  const c = {};
+  for (const x of (components || [])) for (const ty of (x.types || [])) if (!c[ty]) c[ty] = x.short_name;
+  if (!c.street_number || !c.route || !c.postal_code) return null;
+  const um = String(typed || '').match(UNIT);
+  const unit = um ? um[0].replace(/\s+/g, ' ').trim() : (c.subpremise ? '#' + c.subpremise : '');
+  const city = c.locality || c.sublocality || c.postal_town || c.neighborhood || '';
+  return [c.street_number + ' ' + c.route, unit, city, ((c.administrative_area_level_1 || '') + ' ' + c.postal_code).trim()]
+    .filter(Boolean).join(', ');
+}
+
+module.exports = { findAddress, formatGeocoded };
