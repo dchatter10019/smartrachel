@@ -278,6 +278,28 @@ fs.watch(RACHEL_PROMPT_PATH, () => {
 });
 
 // ── Cache helpers ──────────────────────────────────────────────────────────
+// A shopping-agent MCP tool, called from code (no LLM): the parsed result object.
+async function callShoppingTool(name, args) {
+  const rr = await fetch('http://127.0.0.1:8300/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) });
+  const rt = await rr.text(); const rl = rt.split('\n').find(l => l.startsWith('data:'));
+  return rl ? JSON.parse(JSON.parse(rl.replace('data:', '').trim()).result.content[0].text) : null;
+}
+// A placed order (API success) leaves the cart; kept on placedOrder for reopen. Shared by the LLM's place_order
+// (onOrderPlaced) and the email order path (placeEmailOrder) so both record it the same way.
+function recordPlacedOrder(sessionKey, email, format, result, lineItems, orderData) {
+      const st = getState(sessionKey);
+      const prev = st.placedOrder;
+      if (prev && prev.reopened) console.log('[order] ' + (result.order_id || '?') + ' replaces reopened order ' + prev.order_id + ' — no cancel API; the earlier order stays in Bevvi unpaid');
+      st.placedOrder = { order_id: result.order_id || '', payment_url: result.payment_url || '', line_items: typeof lineItems === 'string' ? lineItems : JSON.stringify(lineItems || []), placedAt: Date.now(), dry_run: !!result.dry_run, replaces: prev && prev.reopened ? prev.order_id : null };
+      st.lastLineItems = '[]';   // '[]', not '': an empty string triggers the getPackage() rehydrate
+      if ((orderData || st.orderData) && (orderData || st.orderData).name) { const odP = orderData || st.orderData; contacts.save(email, { name: odP.name, phone: odP.phone, email: odP.email }); };
+      st.pendingSubstitutes = []; st.pendingAddOffer = null; st.pendingQtyFor = null; st.savedTipChoice = null; st.tipAsk = false;   // the next order asks for its own tip
+      if (email) { Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; }); clearBasket(email, format || 'slack'); }
+      saveFlowState();
+      events.action('placed_order');
+      console.log('[order] placed ' + (result.order_id || '?') + (result.dry_run ? ' (QA dry run)' : '') + ' — basket cleared, kept on placedOrder for reopen');
+    }
 function makeCacheKey(email, zip, fingerprint) {
   return email + ':' + zip + ':' + fingerprint;
 }
@@ -903,6 +925,7 @@ async function validateDeliveryTime(state, message, email, format, res) {
 }
 const cta = require('./cta.js');
 const QE = require('./quote-edits.js');   // edits to a quote the customer already has, applied in code
+const EO = require('./email-order.js');   // "create the order" / "payment link" from an email, placed in code
 const listReply = require('./list-reply.js');   // shopping-list replies composed in code (see the NEXT-BEST-ACTION wrapper)
 const contacts = require('./customer-contacts.js');   // name/phone from the last placed order + channel profile name (order flow)
 const isInternalMsgEarly = m => /^__/.test(m) || /^\d{1,2}:\d{2}\s*[AP]M\s*-\s*\d{1,2}:\d{2}\s*[AP]M/i.test(m);
@@ -1008,19 +1031,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
     // order" started checkout for them again (a duplicate order). Fired only on a real
     // place_order success (rachel.js); the items are kept on placedOrder so the customer
     // can reopen the order (see PLACED ORDER below) — they may not have paid yet.
-    onOrderPlaced: (result, lineItems) => {
-      const st = getState(sessionKey);
-      const prev = st.placedOrder;
-      if (prev && prev.reopened) console.log('[order] ' + (result.order_id || '?') + ' replaces reopened order ' + prev.order_id + ' — no cancel API; the earlier order stays in Bevvi unpaid');
-      st.placedOrder = { order_id: result.order_id || '', payment_url: result.payment_url || '', line_items: typeof lineItems === 'string' ? lineItems : JSON.stringify(lineItems || []), placedAt: Date.now(), dry_run: !!result.dry_run, replaces: prev && prev.reopened ? prev.order_id : null };
-      st.lastLineItems = '[]';   // '[]', not '': an empty string triggers the getPackage() rehydrate
-      if (st.orderData && st.orderData.name) contacts.save(email, { name: st.orderData.name, phone: st.orderData.phone, email: st.orderData.email });
-      st.pendingSubstitutes = []; st.pendingAddOffer = null; st.pendingQtyFor = null; st.savedTipChoice = null; st.tipAsk = false;   // the next order asks for its own tip
-      if (email) { Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; }); clearBasket(email, format || 'slack'); }
-      saveFlowState();
-      events.action('placed_order');
-      console.log('[order] placed ' + (result.order_id || '?') + (result.dry_run ? ' (QA dry run)' : '') + ' — basket cleared, kept on placedOrder for reopen');
-    },
+    onOrderPlaced: (result, lineItems) => recordPlacedOrder(sessionKey, email, format, result, lineItems),
     onPackageBuilt: (em, lineItems, fmt, saInput, saResult) => {
       // Full-bar note (DC: keep one bottle of each spirit type, but tell the customer when that's
       // more than they need). Appended to this turn's reply in code — not left to the LLM.
@@ -2024,6 +2035,7 @@ app.post('/chat', async (req, res) => {
     // update_quantity matched by substring ("Cantena" missed Catena), had no "all bottled beer" rule and
     // nothing re-sent the PDF. Scope: email sessions and sessions that already have a proposal; an edit
     // that also ADDS items goes to the LLM (adds need a catalog search). Removals/quantities only.
+    let preText = '';   // quote edits applied this turn, shown above the order reply when the same email also orders
     if (!state.orderStep && !state.proposalStep && (/^email-/.test(sessionKey) || (context && context.email_subject) || state.lastProposalUrl)) {
       let qItems = []; try { qItems = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
       const qe = qItems.length ? QE.parseEdits(message) : null;
@@ -2039,7 +2051,9 @@ app.post('/chat', async (req, res) => {
           state.pendingSubstitutes = []; state.lastCta = null; saveFlowState();
         }
         let txt = QE.describe(r, qItems);
-        if (r.changes.length && r.items.length) {
+        const alsoOrder = EO.isOrderCommand(message) && !r.ambiguous.length && r.items.length;
+        if (alsoOrder) { preText = txt; console.log('[quote-edits] the email also asks to create the order — continuing to the email order'); }
+        else if (r.changes.length && r.items.length) {
           const subj = String(state.emailSubject || (context && context.email_subject) || '');
           const client = state.savedClientName || (subj.match(/\s[-–—|:]\s*([^-–—|:]{2,60})$/) || [])[1] || String((context && context.user_name) || '').trim();
           try {
@@ -2050,8 +2064,85 @@ app.post('/chat', async (req, res) => {
             txt += "\n\nI couldn't regenerate the PDF just now — reply \"send the proposal\" and I'll try again.";
           }
         }
-        if (!r.ambiguous.length) txt += '\n\nReply with any other changes, or say "place the order" when you\'re ready.';
-        return res.json({ text: txt, response: txt });
+        if (!alsoOrder) {
+          if (!r.ambiguous.length) txt += '\n\nReply with any other changes, or say "place the order" when you\'re ready.';
+          return res.json({ text: txt, response: txt });
+        }
+      }
+    }
+    // ── EMAIL ORDER (email-order.js) ─────────────────────────────────────────────────────────────────
+    // DC (Sep 29): "create the order" / "send a payment link" in an email creates the order and the reply
+    // carries the payment link. Contact = the customer in the email; everything missing is asked for in ONE
+    // reply and the answer places it; tip 5% unless stated. Placed here in code (no LLM), QA = dry run.
+    if ((/^email-/.test(sessionKey) || (context && context.email_subject)) && !state.orderStep && !state.proposalStep
+        && (EO.isOrderCommand(message) || state.emailOrder)) {
+      let oItems = []; try { oItems = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+      const cmd = EO.isOrderCommand(message), poE = state.placedOrder;
+      const x = EO.extract(message, { name: context && context.user_name, email }, new Date());
+      const provided = !!(x.name || x.phone || x.when || x.instructions || x.tip);
+      if (!oItems.length && cmd) {
+        const t = poE && poE.payment_url
+          ? 'This order was already created — order #' + poE.order_id + '. Payment link: ' + poE.payment_url + '\n\nIf something needs to change before paying, reply with the change and I\'ll create an updated order.'
+          : 'There\'s no quote on this thread to order yet — send the list of items (and the delivery address) and I\'ll put it together.';
+        console.log('[email-order] command with an empty basket — ' + (poE && poE.payment_url ? 'already placed ' + poE.order_id + ', link re-sent' : 'nothing to order, asked for the list'));
+        return res.json({ text: t, response: t });
+      }
+      if (oItems.length && (cmd || provided)) {
+        const od = Object.assign({}, state.emailOrder || {});
+        for (const k of ['name', 'email', 'phone', 'instructions']) if (x[k]) od[k] = x[k];
+        if (x.tip) od.tip = x.tip;
+        if (x.source) od.source = x.source;
+        let problem = '';
+        if (x.when) {
+          // The store's real delivery windows (validateDeliveryTime), captured instead of sent: a problem goes
+          // into the ONE reply with the other questions.
+          state.orderData = {}; let askedT = null;
+          await validateDeliveryTime(state, x.when, email, format, { json: pl => { askedT = pl && (pl.text || pl.response); return null; } });
+          if (askedT) { problem = askedT; od.delivery_ok = false; }
+          else {
+            od.delivery_ok = true; od.delivery_iso = state.orderData.delivery_datetime_iso || ''; od.delivery_window = state.orderData.delivery_datetime || x.when;
+            od.delivery_label = [state.orderData.delivery_date_label, state.orderData.delivery_window_display].filter(Boolean).join(', ') || x.when;
+          }
+          state.orderData = null;
+        }
+        const miss = EO.missing(od);
+        console.log('[email-order] ' + (cmd ? 'command' : 'details reply') + ' | contact: ' + JSON.stringify({ name: od.name, email: od.email, phone: od.phone, source: od.source }) + ' | delivery: ' + (od.delivery_ok ? od.delivery_label : (x.when ? 'REJECTED "' + x.when + '"' : 'none')) + ' | tip: ' + JSON.stringify(od.tip || 'default 5%') + (miss.length ? ' | MISSING (asked in one reply): ' + miss.join('; ') : ' | complete -> placing'));
+        if (miss.length) {
+          state.emailOrder = od; saveFlowState();
+          const t = (preText ? preText + '\n\n' : '') + EO.askText(miss, od, problem);
+          return res.json({ text: t, response: t });
+        }
+        const pt = QE.total(oItems);
+        const tipAmt = od.tip ? (od.tip.amount != null ? od.tip.amount : Math.round(pt * od.tip.pct) / 100) : Math.round(pt * 5) / 100;
+        const tipLabel = od.tip ? (od.tip.amount != null ? 'Tip' : 'Tip (' + od.tip.pct + '%)') : 'Tip (5% — standard, since none was given)';
+        const nm = String(od.name).trim().split(/\s+/);
+        let r = null;
+        try {
+          r = await callShoppingTool('place_order', {
+            line_items: state.lastLineItems,
+            customer: { firstName: nm[0], lastName: nm.slice(1).join(' '), email: od.email, phone: od.phone, address: state.address, zipcode: state.zip },
+            account_email: email, email, tip_amount: tipAmt,
+            delivery_datetime: od.delivery_iso || od.delivery_window, delivery_instructions: od.instructions || '',
+            zip: state.zip, dry_run: isQA });
+        } catch (e) { r = { success: false, error: e.message }; }
+        if (!r || !r.success) {
+          console.log('[email-order] place_order FAILED (customer told, details kept for a retry): ' + JSON.stringify(r).slice(0, 300));
+          state.emailOrder = od; saveFlowState();
+          const why = r && r.unresolved_items ? 'these items aren\'t linked to a catalog product yet: ' + r.unresolved_items.join(', ') : (r && r.error) || 'no response from the order service';
+          const t = (preText ? preText + '\n\n' : '') + 'I couldn\'t create the order — ' + why + '. A member of the Bevvi team will follow up; your details are saved, so replying "create the order" will retry.';
+          return res.json({ text: t, response: t });
+        }
+        recordPlacedOrder(sessionKey, email, format, r, state.lastLineItems, {});   // {}: a forwarded customer is not saved as the sender's own contact
+        state.emailOrder = null; saveFlowState();
+        const tax = Math.round(pt * 10) / 100, svc = Math.round(pt * 10) / 100, grand = Math.round((pt + tax + svc + tipAmt + 25) * 100) / 100;
+        const m2 = n => QE.money(n);
+        const t = (preText ? preText + '\n\n' : '') + 'Your order is created — order #' + r.order_id + (r.dry_run ? ' (QA dry run)' : '') + '.\n\nPayment link: ' + r.payment_url +
+          '\n\nOrder for: ' + od.name + ', ' + od.phone + ', ' + od.email +
+          '\nDelivery: ' + state.address + ' — ' + od.delivery_label + (od.instructions ? '\nInstructions: ' + od.instructions : '') +
+          '\n\n' + oItems.length + ' item line(s). Product total ' + m2(pt) + '; estimated tax ' + m2(tax) + '; service charge (10%) ' + m2(svc) + '; ' + tipLabel + ' ' + m2(tipAmt) + '; estimated delivery ' + m2(25) + '. Estimated total ' + m2(grand) + '.' +
+          '\n\nThe order is confirmed once the payment link is paid.';
+        console.log('[email-order] placed ' + r.order_id + (r.dry_run ? ' (QA dry run)' : '') + ' — payment link sent: ' + r.payment_url);
+        return res.json({ text: t, response: t });
       }
     }
     // ── NEXT-BEST-ACTION (cta.js; Learning Phase 1, Part B) ──────────────────────────────────────────

@@ -18,6 +18,12 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   handled). A new thread asks /internal/email-link (email-link.js) whether it continues an earlier quote
   (same sender + client name, or the sender's only quote in 14 days). Server-side, email bodies are cut to
   the new text + a forwarded message (email-body.js); quoted history never reaches Rachel.
+  Replies are reply-all (To + Cc of the incoming email, minus rachelai@ and the sender).
+- Email orders (email-order.js, server.js EMAIL ORDER): "create/place the order", "payment link" in an email
+  places the order in code (shopping-agent place_order, no LLM) and replies with the payment link. Contact =
+  the customer in the email (a forwarded customer's header + signature; the sender unless @getbevvi.com); all
+  missing fields (name, email, phone, delivery date+time checked against real windows) asked in ONE reply,
+  kept in state.emailOrder until the answer places it. Tip 5% unless stated. A repeat re-sends the link.
 - rachel-whatsapp: rachel/rachel_whatsapp_bot.py (Flask + Twilio; invite gate; admin page). Env: /etc/rachel-whatsapp.env
 - Proposals: rachel/generate-proposal.js; each PDF's line items → logs/proposal-items/<pdf>.json (load one into a
   session: POST localhost:3500/internal/session-basket {session_id, from_proposal}). nginx /proposals/ serves
@@ -52,7 +58,7 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 ## QA harness (rachel/qa/)
 - `qa/unit/*.test.js`: pure-logic unit tests on saved real replies (multi-pick resolver), run by every
   `precheck.sh` lint/deploy. Lint also enforces eslint no-use-before-define (runtime TDZ errors).
-- `./qa/run.py` every scenario in qa/scenarios/ (50 on Sep 29); `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
+- `./qa/run.py` every scenario in qa/scenarios/ (52 on Sep 29); `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
 - Scenarios are YAML in qa/scenarios/. Assertions: contains / not_contains / matches / not_matches / log_contains / log_not_contains /
   pdf_contains / pdf_not_contains, plus a Haiku `judge` — prefer structural checks; the judge is
   unreliable on nuanced criteria. `transport: slack` (real DM as rachel_qa) and `transport: email`

@@ -94,7 +94,19 @@ def get_email(service, msg_id):
     get_body(msg['payload'])
     return {'id': msg_id, 'thread_id': msg['threadId'], 'unread': 'UNREAD' in (msg.get('labelIds') or []),
             'from': headers.get('from', ''), 'subject': headers.get('subject', ''), 'body': body.strip(),
-            'message_id': headers.get('message-id', ''), 'references': headers.get('references', '')}
+            'message_id': headers.get('message-id', ''), 'references': headers.get('references', ''),
+            'to': headers.get('to', ''), 'cc': headers.get('cc', '')}
+
+def reply_all_cc(email, sender_email):
+    # Reply-all (DC, Sep 29): everyone on the email's To and Cc gets Rachel's reply, except Rachel and the
+    # sender (who is the To). Addresses parsed properly ("Name, Jr." <a@b>, lists), lowercased, deduped.
+    from email.utils import getaddresses
+    seen, out = {RACHEL_EMAIL.lower(), (sender_email or '').lower()}, []
+    for _name, addr in getaddresses([email.get('to', ''), email.get('cc', '')]):
+        a = (addr or '').strip().lower()
+        if '@' in a and a not in seen:
+            seen.add(a); out.append(a)
+    return out
 
 def chat_with_rachel(message, session_id, sender_email, sender_name='', subject='', request_id=''):
     try:
@@ -125,9 +137,11 @@ def proposal_pdf(reply):
     p = os.path.join('/home/ubuntu/logs', m.group(1)) if m else None
     return p if p and os.path.exists(p) else None
 
-def send_reply(service, thread_id, to, subject, body, pdf_path=None, in_reply_to=None, references=None):
+def send_reply(service, thread_id, to, subject, body, pdf_path=None, in_reply_to=None, references=None, cc=None):
     msg = MIMEMultipart()
     msg['To'] = to
+    if cc:
+        msg['Cc'] = ', '.join(cc)
     # Threading headers so the CUSTOMER's client (Outlook, Apple Mail, Gmail) groups the
     # reply with their email and their next reply comes back into the same thread/session.
     if in_reply_to:
@@ -144,7 +158,7 @@ def send_reply(service, thread_id, to, subject, body, pdf_path=None, in_reply_to
         msg.attach(part)
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
     service.users().messages().send(userId='me', body={'raw': raw, 'threadId': thread_id}).execute()
-    log.info(f'Reply sent to {to}')
+    log.info(f'Reply sent to {to}' + (f' (cc: {", ".join(cc)})' if cc else ''))
 
 def save_to_gbrain(sender_email, thread_id):
     subprocess.Popen(['node', '-e',
@@ -169,7 +183,7 @@ def _failed(service, email, sender_email, where):
     try:
         send_reply(service, email['thread_id'], sender_email, email['subject'],
                    "Thanks for your email — I'm putting this together and a member of the Bevvi team will follow up with you shortly.",
-                   in_reply_to=email.get('message_id'), references=email.get('references'))
+                   in_reply_to=email.get('message_id'), references=email.get('references'), cc=reply_all_cc(email, sender_email))
     except Exception as e:
         log.error(f'holding reply failed: {e}')
     service.users().messages().modify(userId='me',id=email['id'],body={'removeLabelIds':['UNREAD']}).execute()
@@ -208,7 +222,7 @@ def process(service, email):
         rachel_response = chat_with_rachel(email['body'], session_id, sender_email, sender_name, email['subject'], email['id'])
         if not rachel_response:
             return _failed(service, email, sender_email, 'continuation')
-        send_reply(service, thread_id, sender_email, email['subject'], rachel_response, pdf_path=proposal_pdf(rachel_response), in_reply_to=email.get('message_id'), references=email.get('references'))
+        send_reply(service, thread_id, sender_email, email['subject'], rachel_response, pdf_path=proposal_pdf(rachel_response), in_reply_to=email.get('message_id'), references=email.get('references'), cc=reply_all_cc(email, sender_email))
         log.info(f'Continuation reply sent for thread {thread_id[:8]}...')
         service.users().messages().modify(userId='me',id=email['id'],body={'removeLabelIds':['UNREAD']}).execute()
         FAILED_ATTEMPTS.pop(email['id'], None)
@@ -225,7 +239,7 @@ def process(service, email):
     rachel_response = chat_with_rachel(email['body'], session_id, sender_email, sender_name, email['subject'], email['id'])
     if not rachel_response:
         return _failed(service, email, sender_email, 'new thread')   # thread not mapped: the retry gets the same reply (request_id)
-    send_reply(service, thread_id, sender_email, email['subject'], rachel_response, pdf_path=proposal_pdf(rachel_response), in_reply_to=email.get('message_id'), references=email.get('references'))
+    send_reply(service, thread_id, sender_email, email['subject'], rachel_response, pdf_path=proposal_pdf(rachel_response), in_reply_to=email.get('message_id'), references=email.get('references'), cc=reply_all_cc(email, sender_email))
     log.info('Initial reply sent via Rachel chat')
     save_to_gbrain(sender_email, thread_id)
     FAILED_ATTEMPTS.pop(email['id'], None)

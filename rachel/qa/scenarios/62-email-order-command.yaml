@@ -1,0 +1,26 @@
+name: email-order-command
+fresh: true
+tags: [email]
+# DC (Sep 29): "create the order" / "send the payment link" in an email creates the order (here: QA dry run)
+# and the reply carries the payment link. Contact = the customer in the email — the QA sender is a
+# @getbevvi.com address (staff), so name/email/phone/time are ALL asked for in ONE reply; the answer email
+# places it; tip 5% unless stated; a repeat command never places a second order.
+format: plain
+context: {email_subject: "Drinks quote - Acme Test Co", user_name: "QA Tester"}
+turns:
+  - send: "Hi,\r\n\r\nPlease send a quote for the items below.\r\n\r\nI am 21 years old. Deliver to 100 Federal Street, Floor 6\r\nBoston, MA 02110\r\n\r\n2 x Bud Light (30 cans per case)\r\n2 Josh Cellars Cabernet Sauvignon\r\n\r\nThanks!"
+    expect:
+      contains: ["PDF proposal is attached"]
+  - send: "Looks good - please create the order and send me the payment link.\r\n\r\nThanks,\r\nQA"
+    expect:
+      contains: ["full name", "email", "phone number", "delivery date and time", "in one email"]
+      not_contains: ["Payment link:"]
+      log_contains: ["[email-order] command", "MISSING (asked in one reply)"]
+  - send: "Name: Jane Roe\r\nEmail: jane.roe@example.com\r\nPhone: 617-555-0142\r\nPlease deliver next Tuesday at 2pm.\r\n\r\nOn Tue, Sep 29, 2026 at 3:00 PM Rachel <rachelai@getbevvi.com> wrote:\r\n> I'll create the order and send the payment link as soon as I have"
+    expect:
+      contains: ["Your order is created", "QA dry run", "Payment link: https://corporate.getbevvi.com/direct-checkout?token=QA_DRY_RUN", "Jane Roe", "(617) 555-0142", "Tip (5% — standard"]
+      log_contains: ["[email-order] details reply", "complete -> placing", "[QA] place_order dry run"]
+  - send: "Can you create the order please?"
+    expect:
+      contains: ["already created", "QA_DRY_RUN"]
+      log_not_contains: ["complete -> placing"]
