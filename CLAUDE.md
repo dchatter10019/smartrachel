@@ -33,7 +33,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 2. Ask DC before running anything that places a real order, sends a real email/message, or changes
    systemd units, nginx, or secrets.
 3. Commit with a message that names the real bug and the fix; `git push` after. Commit scope: rachel/,
-   store-agent/, precheck.sh. qa/runs/ is gitignored.
+   store-agent/, precheck.sh and CLAUDE.md (update it in the same commit when a fact here changes).
+   qa/runs/ is gitignored.
 4. Compliance: age verification is per session, never inherited from a saved profile. Never weaken it.
 5. QA identities are dry-run on every channel: session ids starting `qa-`, and emails qa-*@getbevvi.com
    / rachel_qa@getbevvi.com (server.js isQA). They never train the price profile (gbrain.saveBasket).
@@ -45,8 +46,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 ## QA harness (rachel/qa/)
 - `qa/unit/*.test.js`: pure-logic unit tests on saved real replies (multi-pick resolver), run by every
   `precheck.sh` lint/deploy. Lint also enforces eslint no-use-before-define (runtime TDZ errors).
-- `./qa/run.py` all 34 scenarios; `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
-- Scenarios are YAML in qa/scenarios/. Assertions: contains / not_contains / matches / log_contains / log_not_contains /
+- `./qa/run.py` every scenario in qa/scenarios/ (48 on Sep 29); `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
+- Scenarios are YAML in qa/scenarios/. Assertions: contains / not_contains / matches / not_matches / log_contains / log_not_contains /
   pdf_contains / pdf_not_contains, plus a Haiku `judge` — prefer structural checks; the judge is
   unreliable on nuanced criteria. `transport: slack` (real DM as rachel_qa) and `transport: email`
   (real mail as rachel_qa@) scenarios are tagged `channel` and run nightly only.
@@ -76,7 +77,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - Events: a request mixing drink types asks "what will your guests drink most?" (server.js parseServingMix)
   -> eventParams.serving_mix -> buildPackage serving_mix (menu_build and cocktail custom_list). Drinks per
   guest = rule of thumb (2 first hour + 1/hour). Quantities use real bottle sizes; a full bar (1 bottle per
-  spirit type) is kept and called out when it exceeds need. Every menu_build logs a supply check (OK/FAILED).
+  spirit type) is kept and stated (never an offer to trim). Packages spend the whole budget: no downsell,
+  price-tier critic notes are dropped (rachel.js), prompt SPEND-THE-BUDGET rule. Every menu_build logs a supply check (OK/FAILED).
 - A conversation expires after RACHEL_IDLE_HOURS (4) idle, except email threads; age is re-asked.
 - A placed order (API success only) leaves the cart → state.placedOrder; touching it asks reopen/new.
   Bevvi has no cancel API: a re-placed reopened order leaves the earlier one unpaid (logged).
