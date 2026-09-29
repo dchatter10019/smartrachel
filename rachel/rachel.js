@@ -5,7 +5,7 @@
 
 const Anthropic = require('@anthropic-ai/sdk');
 const { addToCart } = require('./functions.js');
-const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
+const fetch = (url, opts) => import('node-fetch').then(({default: f}) => f(url, require('./log-tag.js').withQAHeader(url, opts)));   // QA turns tag shopping-agent's log lines too
 
 const client = new Anthropic.Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY

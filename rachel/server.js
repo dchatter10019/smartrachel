@@ -50,7 +50,7 @@ function parseTimeWindow(windowStr) {
 
 async function checkDeliveryAvailability(establishmentId, dateStr) {
   try {
-    const fetchFn = (...args) => import('node-fetch').then(({default: f}) => f(...args));
+    const fetchFn = (url, opts) => import('node-fetch').then(({default: f}) => f(url, require('./log-tag.js').withQAHeader(url, opts)));
     const url = 'https://api-client.getbevvi.com/api/bevviutils/getDeliveryDateTimes?accountId=rachel&establishmentId=' + encodeURIComponent(establishmentId) + '&date=' + encodeURIComponent(dateStr);
     const res = await fetchFn(url);
     if (!res.ok) return null;
@@ -100,6 +100,10 @@ const KITCHEN_TO_CLIENT = {
 
 const app = express();
 app.use(express.json({ limit: '25mb' }));   // base64 photos of order lists
+// QA sessions: tag every log line of the request with the session (rachel/log-tag.js), so the QA
+// runner can run scenarios in parallel and still assert on just its own log lines.
+const logTag = require('./log-tag.js'); logTag.install();
+app.use('/chat', (req, res, next) => logTag.runTagged(req.body && req.body.session_id, next));
 
 const PORT = process.env.RACHEL_PORT || 3500;
 

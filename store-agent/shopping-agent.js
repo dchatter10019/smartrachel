@@ -1271,7 +1271,10 @@ const TOOLS = [
 
 function sendSSE(res, data) { res.write('data: ' + JSON.stringify(data) + '\n\n'); }
 
-const server = http.createServer(async function(req, res) {
+// QA log tagging (see rachel/log-tag.js): a request carrying x-qa-session logs with that tag.
+const logTag = require('/home/ubuntu/rachel/log-tag.js'); logTag.install();
+const server = http.createServer(function(req, res) { return logTag.runTagged(req.headers[logTag.HEADER], () => handleRequest(req, res)); });
+async function handleRequest(req, res) {
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', version: '2.0.0' }));
@@ -1280,7 +1283,8 @@ const server = http.createServer(async function(req, res) {
   if (req.method === 'POST' && req.url === '/mcp') {
     let body = '';
     req.on('data', function(chunk) { body += chunk; });
-    req.on('end', async function() {
+    // bind: a stream event does not carry the request's AsyncLocalStorage context (the QA tag) itself
+    req.on('end', require('async_hooks').AsyncResource.bind(async function() {
       try {
         const msg = JSON.parse(body);
         res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', 'Connection': 'keep-alive' });
@@ -1329,11 +1333,11 @@ const server = http.createServer(async function(req, res) {
         console.error('[shopping-agent] error:', e.message);
         res.writeHead(500); res.end(JSON.stringify({ error: e.message }));
       }
-    });
+    }));
     return;
   }
   res.writeHead(404); res.end('Not found');
-});
+}
 
 server.listen(PORT, '127.0.0.1', function() {
   console.log('[shopping-agent] Bevvi Shopping Agent v2 on http://127.0.0.1:' + PORT);

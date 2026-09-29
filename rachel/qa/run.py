@@ -10,8 +10,10 @@ no real orders or email), checks replies, snapshots them, diffs vs the previous 
 
 Parallel runs: each scenario has its own session and its own qa-<name>@getbevvi.com customer
 (Rachel keys the package cache and saved basket by email, so a shared customer would cross-talk).
-A turn with log_contains / log_not_contains runs ALONE (exclusive lock) so the log slice it
-checks holds only its own lines. Channel transports (slack/email/whatsapp) always run one at a time.
+log_contains / log_not_contains see only the lines tagged with the scenario's session (rachel and
+shopping-agent append « <session> » to every line of a QA request — rachel/log-tag.js). A scenario
+with `log_scope: global` checks untagged lines too, so its log turns run ALONE (exclusive lock).
+Channel transports (slack/email/whatsapp) always run one at a time.
 """
 import os, sys, json, time, re, glob, argparse, difflib, base64, threading
 from concurrent.futures import ThreadPoolExecutor
@@ -216,6 +218,11 @@ def _log_since(pos):
             with open(L, "rb") as f: f.seek(pos.get(L, 0)); txt += f.read().decode("utf-8", "ignore") + "\n"
         except Exception: pass
     return txt
+def _own_lines(txt, session):
+    """The lines of this session's request (tagged « session » by rachel/log-tag.js)."""
+    tag = f" «{session}»"
+    return "\n".join(l[:-len(tag)] for l in txt.splitlines() if l.endswith(tag))
+
 def check(reply, expect, log_text=""):
     fails = []; low = reply.lower()
     for s in expect.get("log_contains", []):
@@ -284,7 +291,9 @@ def run_scenario(sc, verbose, parallel=False):
     for i, turn in enumerate(sc["turns"], 1):
         turn = _fill(turn, vars_)
         text = turn.get("send", ""); images = load_image(turn["image"]) if turn.get("image") else None
-        excl = bool(set(turn.get("expect", {}) or {}) & {"log_contains", "log_not_contains"})
+        logs = bool(set(turn.get("expect", {}) or {}) & {"log_contains", "log_not_contains"})
+        glob_scope = sc.get("log_scope") == "global" or transport != "http"
+        excl = logs and glob_scope
         LOCK.acquire(excl)
         try:
             pos = _log_size()
@@ -292,7 +301,7 @@ def run_scenario(sc, verbose, parallel=False):
                 reply, secs = slack.send(text, images) if slack else send(session, text, fmt, email, images, turn.get("idle", False))
             except Exception as e:
                 reply, secs = f"<<ERROR {e}>>", 0
-            log_text = _log_since(pos) if excl else ""
+            log_text = "" if not logs else _log_since(pos) if glob_scope else _own_lines(_log_since(pos), session)
         finally:
             LOCK.release(excl)
         replies.append({"turn": i, "send": text, "reply": reply, "secs": secs})
