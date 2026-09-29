@@ -56,9 +56,38 @@ function field(lines, re) {
 //   time: a time alone ("2pm", "11am-12pm") — combined with a date given earlier.
 // Real (Sep 29, Gen II): "note the delivery date is Monday, October 5th" was ignored (no hour) and Rachel
 // re-asked for "the delivery date and time". "earlier today" is not a delivery date.
+// Delivery-time wording chrono gets wrong, rewritten first (checked on real phrasings, Sep 29):
+//   a range -> its START with a meridiem: "between 2 and 4pm" -> 2pm (chrono took 4pm), "12-2" -> 12pm (no
+//   meridiem: no time at all), "11-1pm" -> 11am, "noon - 2pm" -> 12pm;
+//   a bare hour -> delivery hours: "at 3" -> 3pm (chrono: 3 AM), "at 11" -> 11am;
+//   "the 5th" -> the next 5th ("deliver on the 5th at 2pm" lost its date).
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const merFor = h => ((h >= 1 && h <= 7) || h === 12 ? 'pm' : 'am');   // no am/pm given: business hours
+const mer = x => (x ? (/^p/i.test(x) ? 'pm' : 'am') : '');
+function normalizeTimes(text, now) {
+  let t = String(text || '');
+  t = t.replace(/(^|[^\d/:-])(between\s+|from\s+)?(noon|\d{1,2})(?::(\d{2}))?\s*(am|pm|a\.m\.|p\.m\.)?\s*(?:-|–|—|to|and|until)\s*(noon|\d{1,2})(?::\d{2})?\s*(am|pm|a\.m\.|p\.m\.)?(?![\d/-])/gi,
+    (m, pre, bw, h1, mm, a1, h2, a2) => {
+      if (!(a1 || a2 || bw || /noon/i.test(h1 + h2))) return m;   // "10-5" alone may be a date: left alone
+      if (/noon/i.test(h1)) return pre + '12pm';
+      const a = Number(h1), b = /noon/i.test(h2) ? 12 : Number(h2);
+      if (a < 1 || a > 12 || b < 1 || b > 12) return m;
+      const m1 = mer(a1) || (a2 ? (a <= b && a !== 12 ? mer(a2) : (a === 12 ? 'pm' : 'am')) : merFor(a));
+      return pre + a + (mm ? ':' + mm : '') + m1;
+    });
+  t = t.replace(/\b(at|@)\s+(\d{1,2})(?::(\d{2}))?(?!\s*(?:am|pm|a\.m|p\.m|:|\d|\/|st\b|nd\b|rd\b|th\b|%|o'?clock))(?!\s+(?!(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec))[A-Z][a-z])/g,
+    (m, at, h, mm) => (Number(h) >= 1 && Number(h) <= 12 ? at + ' ' + h + (mm ? ':' + mm : '') + merFor(Number(h)) : m));
+  const n = now || new Date();
+  t = t.replace(/\bthe\s+(\d{1,2})(?:st|nd|rd|th)\b(?!\s+of\b)/gi, (m, d) => {
+    const day = Number(d); if (day < 1 || day > 31) return m;
+    for (let k = 0; k < 3; k++) { const c = new Date(n.getFullYear(), n.getMonth() + k, day); if (c.getDate() === day && c > n) return MONTHS[c.getMonth()] + ' ' + day; }
+    return m;
+  });
+  return t;
+}
 function timing(lines, now) {
   const n = now || new Date();
-  const text = (lines || []).filter(l => !HEADER.test(l) && !/^\s*On\s.+wrote:\s*$/.test(l)).join('\n');
+  const text = normalizeTimes((lines || []).filter(l => !HEADER.test(l) && !/^\s*On\s.+wrote:\s*$/.test(l)).join('\n'), n);
   const tomorrow = new Date(n.getFullYear(), n.getMonth(), n.getDate() + 1).getTime();
   const out = { when: '', date: '', time: '' };
   for (const r of chrono.parse(text, n, { forwardDate: true })) {
@@ -137,4 +166,4 @@ function askText(miss, od, problem) {
     '\n\nPlease reply with ' + (miss.length > 1 ? 'all of these' : 'this') + ' in one email (e.g. "Natalia Diaz, 617-555-0100, natalia@company.com, Thursday Oct 1 at 2pm").';
 }
 
-module.exports = { isOrderCommand, extract, missing, askText, isStaff, tipIn, findWhen, timing, linkRecipients };
+module.exports = { isOrderCommand, extract, missing, askText, isStaff, tipIn, findWhen, timing, linkRecipients, normalizeTimes };

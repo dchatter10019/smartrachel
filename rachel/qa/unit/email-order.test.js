@@ -63,5 +63,28 @@ eq('a time alone', EO.timing(['2pm works'], now), { when: '', date: '', time: '2
 eq('"send the payment link to a@b.com"', EO.linkRecipients('Please send the payment link to ap@gen2.example and me.'), ['ap@gen2.example']);
 eq('an address not about the link is not a recipient', EO.linkRecipients('Invoice questions go to ap@gen2.example.'), []);
 
+console.log('delivery date/time phrasings (checked on real wording, Sep 29) -> the hour Rachel will check');
+{
+  const chrono = require('chrono-node');
+  const hourOf = x => { const t = EO.timing(x.split('\n'), now); const ph = t.when || (t.date && t.time ? t.date + ' at ' + t.time : ''); const r = ph && chrono.parse(ph.replace(/\b(ET|EST|EDT)\b/g, ''), now, { forwardDate: true })[0]; return r ? r.start.get('month') + '/' + r.start.get('day') + ' ' + r.start.get('hour') + ':' + String(r.start.get('minute')).padStart(2, '0') : null; };
+  const cases = [
+    ["Sean's email: 'Delivery Date: Monday, Oct 5th' + 'Delivery Time: noon - 2pm ET'", 'Delivery Date: Monday, Oct 5th\nDelivery Time: noon - 2pm ET', '10/5 12:00'],
+    ['Oct 5 at 2pm', 'Please deliver Oct 5 at 2pm', '10/5 14:00'],
+    ['10/5 at 11:30am', 'deliver 10/5 at 11:30am', '10/5 11:30'],
+    ['a range starts at its start: between 2 and 4pm', 'next Friday between 2 and 4pm', '10/9 14:00'],
+    ['1-2pm', 'Monday 10/5, 1-2pm', '10/5 13:00'],
+    ['11-1pm is 11am', 'Oct 5, 11-1pm', '10/5 11:00'],
+    ['12-2 with no am/pm is noon', 'Monday Oct 5 anytime between 12-2', '10/5 12:00'],
+    ['a bare "at 3" is 3pm', 'tomorrow at 3', '9/30 15:00'],
+    ['a bare "at 11" is 11am', 'Monday at 11', '10/5 11:00'],
+    ['"the 5th" is the next 5th', 'deliver on the 5th at 2pm', '10/5 14:00'],
+    ['ISO date', 'delivery 2026-10-05 at 2pm', '10/5 14:00'],
+    ['vague time: date kept, time asked', 'Thursday morning', null],
+    ['a street number is not a time', 'order #3 at 5 Main St', null],
+    ['"Suite 10-5" is not a time', 'Suite 10-5', null],
+  ];
+  for (const [label, text, want] of cases) eq(label, hourOf(text), want);
+}
+
 console.log(failed ? '\nemail-order: ' + failed + ' FAILED' : '\nemail-order: all passed');
 if (failed) process.exit(1);
