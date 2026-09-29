@@ -86,8 +86,9 @@ function parseEdits(text) {
 }
 
 // ── matching a named line to a basket item ─────────────────────────────────────────────────────────
+// Category words too ("Downeast Tropical Mix Cider" is "Downeast Tropical Mix" in the catalog).
 const STOP = new Set(('a an the of and or with per case cases pack packs pk can cans bottle bottles btl oz ml l x ct ' +
-  'count only please each i need want order item items').split(' '));
+  'count only please each i need want order item items cider ciders seltzer seltzers hard beer beers wine wines').split(' '));
 function lev(a, b) {
   if (Math.abs(a.length - b.length) > 1) return 2;
   const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
@@ -96,7 +97,8 @@ function lev(a, b) {
     d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
   return d[a.length][b.length];
 }
-const keyWords = s => [...new Set(PM.words(s).filter(w => !STOP.has(w) && !/^\d+(?:pk|oz|ml)?$/.test(w)))];
+// Sizes are not name words: "12", "12pk", "8x11.5", "750ml", "1.75l".
+const keyWords = s => [...new Set(PM.words(s).filter(w => !STOP.has(w) && !/^\d+(?:\.\d+)?(?:x\d+(?:\.\d+)?)?(?:pk|oz|ml|l)?$/.test(w)))];
 const tokEq = (a, b) => a === b || (a.length >= 5 && b.length >= 5 && lev(a, b) <= 1);
 function score(req, item) {
   const rw = keyWords(req);
@@ -170,4 +172,4 @@ function describe(result, beforeItems) {
   return 'Done — here are the changes to your quote:\n\n' + lines.join('\n\n');
 }
 
-module.exports = { parseEdits, applyEdits, describe, total, money };
+module.exports = { parseEdits, applyEdits, describe, total, money, score };

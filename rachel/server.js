@@ -285,6 +285,11 @@ async function callShoppingTool(name, args) {
   const rt = await rr.text(); const rl = rt.split('\n').find(l => l.startsWith('data:'));
   return rl ? JSON.parse(JSON.parse(rl.replace('data:', '').trim()).result.content[0].text) : null;
 }
+// Catalog rows for a name in the store serving zip (shopping-agent product_query, first 12 + the product fields).
+async function catalogSearch(zip, name, category) {
+  const r = await callShoppingTool('product_query', { queries: [{ name, category: category || '', limit: 12 }], zip, email: 'line-resolve@getbevvi.com' });
+  return ((r && r.results) || []).flatMap(x => x.products || []);
+}
 // A placed order (API success) leaves the cart; kept on placedOrder for reopen. Shared by the LLM's place_order
 // (onOrderPlaced) and the email order path (placeEmailOrder) so both record it the same way.
 function recordPlacedOrder(sessionKey, email, format, result, lineItems, orderData) {
@@ -925,7 +930,8 @@ async function validateDeliveryTime(state, message, email, format, res) {
 }
 const cta = require('./cta.js');
 const QE = require('./quote-edits.js');   // edits to a quote the customer already has, applied in code
-const EO = require('./email-order.js');   // "create the order" / "payment link" from an email, placed in code
+const EO = require('./email-order.js');
+const LR = require('./line-resolve.js');   // unlinked basket lines (a hand-built quote) -> catalog products, exact matches only   // "create the order" / "payment link" from an email, placed in code
 const listReply = require('./list-reply.js');   // shopping-list replies composed in code (see the NEXT-BEST-ACTION wrapper)
 const contacts = require('./customer-contacts.js');   // name/phone from the last placed order + channel profile name (order flow)
 const isInternalMsgEarly = m => /^__/.test(m) || /^\d{1,2}:\d{2}\s*[AP]M\s*-\s*\d{1,2}:\d{2}\s*[AP]M/i.test(m);
@@ -2105,7 +2111,19 @@ app.post('/chat', async (req, res) => {
           }
           state.orderData = null;
         }
+        // Every line must be a catalog product before Bevvi can take the order: link what matches exactly (same
+        // price + name), and ask about the rest in the same single reply — never a guess.
+        let unlinked = [];
+        if (oItems.some(LR.needsLink) && state.zip) {
+          const rr = await LR.resolveLines(oItems, (n, c) => catalogSearch(state.zip, n, c));
+          if (rr.linked.length) { oItems = rr.items; state.lastLineItems = JSON.stringify(oItems); saveFlowState(); }
+          unlinked = rr.unresolved;
+        }
         const miss = EO.missing(od);
+        if (unlinked.length) {
+          miss.push('which product you mean for ' + unlinked.length + ' item(s) I can\'t match exactly in this store\'s catalog');
+          problem = (problem ? problem + '\n\n' : '') + unlinked.map(u => '• ' + u.name + ' — ' + u.reason + (u.options.length ? '. Closest: ' + u.options.join('; ') : '')).join('\n');
+        }
         console.log('[email-order] ' + (cmd ? 'command' : 'details reply') + ' | contact: ' + JSON.stringify({ name: od.name, email: od.email, phone: od.phone, source: od.source }) + ' | delivery: ' + (od.delivery_ok ? od.delivery_label : (x.when ? 'REJECTED "' + x.when + '"' : 'none')) + ' | tip: ' + JSON.stringify(od.tip || 'default 5%') + (miss.length ? ' | MISSING (asked in one reply): ' + miss.join('; ') : ' | complete -> placing'));
         if (miss.length) {
           state.emailOrder = od; saveFlowState();
@@ -4658,7 +4676,7 @@ app.post('/internal/email-link', (req, res) => {
   res.json(r);
 });
 
-app.post('/internal/session-basket', (req, res) => {
+app.post('/internal/session-basket', async (req, res) => {
   const { session_id, sent_text, from_proposal } = req.body || {};
   let line_items = req.body && req.body.line_items, prop = null;
   // from_proposal: a proposal PDF's file name -> the line items it was generated from (generate-proposal.js).
@@ -4668,13 +4686,22 @@ app.post('/internal/session-basket', (req, res) => {
   }
   if (!session_id || !Array.isArray(line_items) || !line_items.length) return res.status(400).json({ ok: false, error: 'session_id and line_items (or from_proposal) required' });
   const st = getState(session_id);
+  // Lines with no catalog link (a hand-built quote) are linked now, exact matches only, so the session can be
+  // ORDERED on any channel (Sep 29: the Gen II basket loaded from its PDF had 0 of 19 orderable lines).
+  const zipR = st.zip || (req.body && req.body.zip) || '';
+  let resolveNote = '';
+  if (zipR && line_items.some(LR.needsLink)) {
+    const rr = await LR.resolveLines(line_items, (n, c) => catalogSearch(zipR, n, c));
+    line_items = rr.items;
+    resolveNote = rr.linked.length + ' line(s) linked to the catalog' + (rr.unresolved.length ? ', NOT linked: ' + rr.unresolved.map(u => u.name + ' (' + u.reason + ')').join('; ') : '');
+  }
   if (prop) { st.lastProposalUrl = 'http://3.138.180.46/proposals/' + prop.pdf; if (prop.client_name) st.savedClientName = prop.client_name; if (prop.event_date) st.savedEventDate = prop.event_date; }
   st.lastLineItems = JSON.stringify(line_items); st.pendingSubstitutes = []; st.pendingAddOffer = null; st.pendingQtyFor = null; st.lastCta = null;
   if (!sessions[session_id]) sessions[session_id] = [];
   if (sent_text) sessions[session_id].push({ role: 'assistant', content: String(sent_text) });
   saveFlowState();
-  console.log('[internal] session-basket: ' + session_id + ' basket replaced with ' + line_items.length + ' line(s)' + (prop ? ' from proposal ' + prop.pdf : '') + (sent_text ? ', sent message recorded' : ''));
-  res.json({ ok: true, lines: line_items.length });
+  console.log('[internal] session-basket: ' + session_id + ' basket replaced with ' + line_items.length + ' line(s)' + (prop ? ' from proposal ' + prop.pdf : '') + (sent_text ? ', sent message recorded' : '') + (resolveNote ? ' | ' + resolveNote : ''));
+  res.json({ ok: true, lines: line_items.length, orderable: line_items.filter(li => !LR.needsLink(li)).length, resolve: resolveNote });
 });
 
 app.listen(PORT, '127.0.0.1', () => {
