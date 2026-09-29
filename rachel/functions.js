@@ -3,6 +3,8 @@
  * GetProductURL, AddToCart, CalculateQuantities, CalculateBasket
  */
 
+const PM = require('./product-match.js');   // request -> product fit, per list line (buildPackage named products)
+
 // ─── GET PRODUCT URL ─────────────────────────────────────────────────────────
 
 async function getProductURL({ product_name, kitchen_location, client_id, min_price = 0, max_price = 999999, limit = 100 }) {
@@ -1082,7 +1084,19 @@ async function buildPackage(iv) {
       var prefer750=(catN==="wine"||catN==="spirits")&&!/\d+(\.\d+)?\s*(mL|ML|L|oz|OZ)\b/i.test(np.name||'');
       // (750 mL preference is applied as a tiebreaker inside the main sort below —
       // a standalone pre-sort here was silently overwritten by that sort.)
-      if (found.length===0){console.log('[buildPackage] UNAVAILABLE (no search results):', JSON.stringify(np.name));unavailable.push(np.name);continue;}
+      // Ready-to-drink cans are filed under beer OR spirits by Bevvi: an alternative for "margarita cans" may be either.
+      function altSane(p){ return categorySane(p,catN) || (/\bcans?\b/i.test(np.name||'') && (catN==='beer'||catN==='spirits') && categorySane(p, catN==='beer'?'spirits':'beer')); }
+      var reqForFit=(typeof expandBrandNicknames==='function'?expandBrandNicknames(np.name):np.name);   // "Sam Adams" -> "Samuel Adams", as the search does
+      var altNote='';
+      if (found.length===0){
+        // Not carried: recommend the closest style instead of dropping the line (DC, Sep 29: "if you can't
+        // find something, send what you would recommend instead"). Style words only ("red ale", "margarita").
+        var sq0=PM.styleQuery(reqForFit, PM.fit(reqForFit, {name:''}).missing);
+        var alt0=sq0 ? (await doSearch(sq0, catN)).filter(function(p){return !isMini(p)&&altSane(p);}) : [];
+        if (!alt0.length){console.log('[buildPackage] UNAVAILABLE (no search results'+(sq0?', no "'+sq0+'" alternative':', no style words to search')+'):', JSON.stringify(np.name));unavailable.push(np.name);continue;}
+        found=alt0; altNote=PM.brandWords(reqForFit).length ? PM.displayName(np.name)+' isn\'t in stock here' : '';
+        console.log('[buildPackage] ALTERNATIVE for '+JSON.stringify(np.name)+' (not carried): searching "'+sq0+'" — '+alt0.length+' candidate(s)');
+      }
       var capMin=0,capMax=0;
       if (catN==="wine"){capMin=capWineMin;capMax=capWineMax;}
       else if (catN==="beer"){capMin=capBeerMin;capMax=capBeerMax;}
@@ -1134,6 +1148,8 @@ async function buildPackage(iv) {
       var reqSizeSort=(String(np.name||'').match(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/i)||[''])[0].toLowerCase().replace(/\s+/g,'');
       found.sort(function(a,b) {
         if(reqSizeSort){ var sa=String(a.sizeStr||'').toLowerCase().replace(/\s+/g,'')===reqSizeSort?0:1, sb=String(b.sizeStr||'').toLowerCase().replace(/\s+/g,'')===reqSizeSort?0:1; if(sa!==sb) return sa-sb; }
+        // Fit to the request (product-match.js): brand + style words present, no type-changing words, pack size.
+        var fa=PM.fit(reqForFit,a).score, fb=PM.fit(reqForFit,b).score; if(fa!==fb) return fb-fa;
         var ea=nameKey(a)===reqKey?1:0, eb=nameKey(b)===reqKey?1:0; if(ea!==eb) return eb-ea;
         function score(x){var s=0;var ln=x.name.toLowerCase();for(var t=0;t<terms.length;t++) if(ln.indexOf(terms[t])>=0) s++;return s;}
         var d=score(b)-score(a);if(d) return d;
@@ -1152,6 +1168,41 @@ async function buildPackage(iv) {
         return b.price-a.price;
       });
       var best=found[0];
+      // Not an exact fit: retry the search with just the request's distinctive words + pack count. Real bug:
+      // "Bud Light 30 pack cans" returned the Platinum seltzer; "bud light 30" returns the lager 30-pack.
+      if (PM.verdict(reqForFit,best).kind!=='exact') {
+        var sk=PM.searchKey(reqForFit);
+        if (sk && sk!==String(np.name).toLowerCase()) {
+          var seen={}; found.forEach(function(p){seen[p.product_id||p.name]=1;});
+          var more=(await doSearch(sk, catN)).filter(function(p){return !seen[p.product_id||p.name]&&!isMini(p)&&categorySane(p,catN);});
+          if (more.length) {
+            var fb0=PM.fit(reqForFit,best).score;
+            more.sort(function(a,b){return PM.fit(reqForFit,b).score-PM.fit(reqForFit,a).score;});
+            if (PM.fit(reqForFit,more[0]).score>fb0) { console.log('[buildPackage] better fit for '+JSON.stringify(np.name)+' from "'+sk+'": '+more[0].name+' (was '+best.name+')'); found=more.concat(found); best=more[0]; }
+          }
+        }
+      }
+      // A picked product missing a STYLE word the customer asked for (Octoberfest, Pilsener, Lemonade): search
+      // that style and take it if it fits better — "Sam Adams Octoberfest" -> an Oktoberfest, not Boston Lager.
+      if (!altNote) {
+        var f0=PM.fit(reqForFit,best), sq1=f0.missing.length ? PM.styleQuery(reqForFit, f0.missing) : '';
+        if (sq1 && f0.missing.some(PM.isStyle)) {
+          var alt1=(await doSearch(sq1, catN)).filter(function(p){return !isMini(p)&&altSane(p);});
+          alt1.sort(function(a,b){return PM.fit(reqForFit,b).score-PM.fit(reqForFit,a).score;});
+          if (alt1.length && PM.fit(reqForFit,alt1[0]).score>f0.score) {
+            console.log('[buildPackage] ALTERNATIVE for '+JSON.stringify(np.name)+': '+best.name+' lacks "'+f0.missing.join(' ')+'" — '+alt1[0].name+' fits better (searched "'+sq1+'")');
+            found=alt1.concat(found); best=alt1[0]; altNote=PM.brandWords(reqForFit).length ? PM.displayName(np.name)+' isn\'t in stock here' : '';
+          }
+        }
+      }
+      // Two requests never silently become the same product. Real bug: "Sun Cruiser Iced Tea" and "Sun Cruiser
+      // Lemonade" were both the Iced Tea pack. Next best unused candidate; flagged either way.
+      var dupOf=lineItems.find(function(li){return li.product_id&&li.product_id===best.product_id;});
+      if (dupOf) {
+        var nxt=found.find(function(p){return p.product_id!==best.product_id&&!lineItems.some(function(li){return li.product_id===p.product_id;});});
+        console.log('[buildPackage] DUPLICATE: '+JSON.stringify(np.name)+' resolved to '+best.name+', already the line for '+JSON.stringify(dupOf.label)+(nxt?' — using '+nxt.name+' instead':' — no other candidate, flagged'));
+        if (nxt) best=nxt; else altNote=(altNote?altNote+'; ':'')+'same product as your '+dupOf.label+' line';
+      }
       // Real bug found tonight: when a requested size ("New Amsterdam Gin 750 mL")
       // isn't available and search returns a DIFFERENT size instead (e.g. 1.75L), that
       // wrong-size item was silently added to the basket, and the "size mismatch, want
@@ -1200,7 +1251,19 @@ async function buildPackage(iv) {
       if (np.qty && parseInt(np.qty) > 0 && !pq.qtyFromCustomer) {
         console.log('[buildPackage] qty override: LLM supplied qty', np.qty, 'for', JSON.stringify(np.name), 'without qty_from_customer — using calculator value', pq.computedQty);
       }
-      lineItems.push({label:np.name,name:best.name,qty:qty,price:best.price,size:best.sizeStr,url:best.url,product_id:best.product_id,upc:best.upc||"",establishmentId:best.establishmentId||"",category:catN,role:pq.mod?"modifier":undefined});
+      var vd=PM.verdict(reqForFit,best), fw=PM.fit(reqForFit,best);
+      // A different pack size keeps the customer's unit count: 8 x 12-can packs asked, 8-can packs in stock -> 12.
+      if (pq.hasExplicitQty && fw.pack.want && fw.pack.got && fw.pack.want!==fw.pack.got) {
+        var q3=Math.ceil(qty*fw.pack.want/fw.pack.got);
+        console.log('[buildPackage] pack size: '+JSON.stringify(np.name)+' asked '+qty+' x '+fw.pack.want+' = '+(qty*fw.pack.want)+' units; '+best.name+' is a '+fw.pack.got+'-pack -> '+q3);
+        var packNote=fw.pack.got+'-packs here: '+q3+' = '+(q3*fw.pack.got)+' cans'+(q3*fw.pack.got===qty*fw.pack.want?', as asked':' (you asked for '+(qty*fw.pack.want)+')');
+        qty=q3;
+      }
+      if (typeof packNote==='string' && packNote) vd.note=vd.note.replace(/\d+-pack, not \d+/, packNote);
+      var match=altNote ? {kind:'alternative',asked:np.name,note:altNote+(vd.note&&/packs here/.test(vd.note)?'; '+packNote:'')} : vd.kind==='exact' ? {kind:'exact'} : {kind:'closest',asked:np.name,note:vd.note};
+      packNote='';
+      if (match.kind!=='exact') console.log('[buildPackage] NOT EXACT ('+match.kind+'): '+JSON.stringify(np.name)+' -> '+best.name+' — '+match.note);
+      lineItems.push({label:np.name,name:best.name,qty:qty,price:best.price,size:best.sizeStr,url:best.url,product_id:best.product_id,upc:best.upc||"",establishmentId:best.establishmentId||"",category:catN,role:pq.mod?"modifier":undefined,match:match});
     }
     // Supply check for an event built from generic lines (no customer-stated quantities), as
     // menu_build does — the custom_list path logged nothing, so under-supply went unseen.

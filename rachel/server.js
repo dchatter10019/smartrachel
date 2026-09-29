@@ -1270,6 +1270,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
 }
 
 // ── POST /chat ─────────────────────────────────────────────────────────────
+const REQUEST_REPLIES = new Map();   // session|request_id -> { at, payload, done } (idempotent retries; see /chat)
 app.post('/chat', async (req, res) => {
   // `let`, not `const`: the proposal flow re-dispatches into the date handler by
   // reassigning `message = state.savedEventDate` when client+date are already saved.
@@ -1283,6 +1284,27 @@ app.post('/chat', async (req, res) => {
   // or sends real email — place_order and SendEmail simulate success. Everything else
   // (search, builds, proposals) runs for real so tests exercise the actual catalog.
   const isQA = !!(req.body.qa) || /^qa-/i.test(String(session_id || '')) || /^(qa-[^@]*|rachel_qa)@getbevvi\.com$/i.test(String((context && context.user_email) || ''));   // QA identities are dry-run on EVERY channel
+  // IDEMPOTENT RETRY: a caller's request_id (email: the Gmail message id) runs ONCE per session. Real bug
+  // (Sep 29): Sean's email timed out on the agent's side while Rachel finished; the retry fed the same email
+  // into the session again and Rachel replied to it as edits ("couldn't find 1x Oyster Bay"). A repeat gets
+  // the first run's reply — waiting for it if it's still running.
+  const reqId = req.body.request_id ? String(session_id || '') + '|' + String(req.body.request_id) : '';
+  if (reqId) {
+    const prev = REQUEST_REPLIES.get(reqId);
+    if (prev) {
+      console.log('[request] repeat of ' + reqId + ' — ' + (prev.payload ? 'returning the stored reply' : 'waiting for the first run') + ', not running it again');
+      // The first run may have crashed without replying: wait at most 4 min, then run it fresh (logged).
+      const payload = prev.payload || await Promise.race([prev.done, new Promise(r => setTimeout(() => r(null), 240e3))]);
+      if (payload) return res.json(payload);
+      console.log('[request] first run of ' + reqId + ' never replied — running it again');
+      REQUEST_REPLIES.delete(reqId);
+    }
+    let resolveDone; const entry = { at: Date.now(), payload: null, done: new Promise(r => { resolveDone = r; }) };
+    REQUEST_REPLIES.set(reqId, entry);
+    for (const [k, v] of REQUEST_REPLIES) if (Date.now() - v.at > 6 * 3600e3) REQUEST_REPLIES.delete(k);
+    const _jR = res.json.bind(res);
+    res.json = (payload) => { entry.payload = payload; resolveDone(payload); return _jR(payload); };
+  }
   let imagePrefix = '';
   if (Array.isArray(images) && images.length) {
     const caption = String(message || '').trim();
@@ -1579,12 +1601,12 @@ app.post('/chat', async (req, res) => {
         if (rest.replace(/[^a-z0-9]/gi, '').length > 8) {
           state.pendingIntent = [rest, state.pendingIntent].filter(Boolean).join('. ');
           console.log('[age] request carried with the yes, held for after the address: ' + JSON.stringify(rest).slice(0, 80));
-          if (state.step === 'addr_new' && !/\b(\d{1,6}\s+[A-Za-z0-9.'#\- ]{3,60}?(?:,\s*[A-Za-z. ]{2,40}){1,3},?\s+\d{5})\b/.test(state.pendingIntent)) {
+          if (state.step === 'addr_new' && !require('./address-extract.js').findAddress(state.pendingIntent)) {
             saveFlowState();
             const askA = 'Thanks! What\'s your delivery address? (street, city, state and zip) — I\'ll pick up your request right after.';
             return res.json({ text: askA, response: askA });
           }
-        } else if (state.step === 'addr_new' && !(state.pendingIntent && /\b(\d{1,6}\s+[A-Za-z0-9.'#\- ]{3,60}?(?:,\s*[A-Za-z. ]{2,40}){1,3},?\s+\d{5})\b/.test(state.pendingIntent))) {
+        } else if (state.step === 'addr_new' && !(state.pendingIntent && require('./address-extract.js').findAddress(state.pendingIntent))) {
           saveFlowState();
           const askA = 'What is your delivery address? (Please include street, city, state, and zip code)';
           return res.json({ text: askA, response: askA });
@@ -1623,9 +1645,15 @@ app.post('/chat', async (req, res) => {
     // the address step now and replay the rest once the address is accepted; if the flow is
     // already ready (saved address), replay it whole.
     if (state.pendingIntent && state.step === 'addr_new') {
-      const am = state.pendingIntent.match(/\b(\d{1,6}\s+[A-Za-z0-9.'#\- ]{3,60}?(?:,\s*[A-Za-z. ]{2,40}){1,3},?\s+\d{5})\b/);
+      // address-extract.js: line breaks and unit lines inside the address (Sep 29: "Floor 6\r\nBoston" became "6, Boston").
+      const addrF = require('./address-extract.js').findAddress(state.pendingIntent);
+      const am = addrF ? [addrF, addrF] : null;
       if (am) {
-        const rest = state.pendingIntent.replace(am[1], '').replace(/\b(deliver(?:ed|y)?\s+(?:to|at)|ship(?:ped)?\s+to|address(?: is)?:?)\s*(?=,|\.|\s+on\b|\s*$)/i, '').trim();
+        // Cut the address out of the original text (it still has its line breaks): street start .. zip end.
+        const pi = state.pendingIntent, st0 = pi.indexOf(addrF.split(',')[0]), zm = addrF.match(/\d{5}(?:-\d{4})?$/);
+        const en0 = zm && st0 >= 0 ? pi.indexOf(zm[0], st0) : -1;
+        const cut = st0 >= 0 && en0 > st0 ? pi.slice(0, st0) + pi.slice(en0 + zm[0].length) : pi.replace(addrF, '');
+        const rest = cut.replace(/\b(deliver(?:ed|y)?\s+(?:to|at)|ship(?:ped)?\s+to|address(?: is)?:?)\s*(?=,|\.|\s+on\b|\s*$)/i, '').trim();
         message = am[1]; msgLower = message.toLowerCase();
         state.pendingIntent = rest.replace(/\s+/g, ' ').length > 8 ? rest : null; saveFlowState();
         console.log('[age] pre-gate message: address', JSON.stringify(message), '| replaying rest:', JSON.stringify((state.pendingIntent || '').slice(0, 80)));
@@ -1997,6 +2025,21 @@ app.post('/chat', async (req, res) => {
                 console.log(cL.log);
                 evL.unmatched.sort((a, b) => (listReply.isNamed(b) ? 1 : 0) - (listReply.isNamed(a) ? 1 : 0));   // the CTA offers a substitute for [0]: a named product first
                 listText = cL.text;
+                // An EMAIL asking for a quote/proposal gets the PDF now, built in code from this basket (DC, Sep 29:
+                // "just send the proper proposal"). Real gap: Sean's quote request got a basket and no PDF.
+                const subj = String((context && context.email_subject) || '');
+                if ((/^email-/.test(sessionKey) || subj) && /\b(quote|proposal|pdf|estimate)\b/i.test(turnMsg + ' ' + subj) && !cL.blocks.length) {
+                  const client = (subj.match(/\s[-–—|:]\s*([^-–—|:]{2,60})$/) || [])[1] || String((context && context.user_name) || '').trim() || '';
+                  const dm = String(turnMsg).match(cta.DATE_RE), eventDate = dm ? dm[0] : '';
+                  const lt = listText;
+                  quotePdf(st, itL, client.trim(), eventDate, cL.inexact.length).then(url => {
+                    payload.text = lt + (url ? '\n\nYour PDF proposal is attached' + (eventDate ? '' : ' — reply with the event date and I\'ll add it') + ': ' + url : '');
+                    if (typeof payload.response === 'string') payload.response = payload.text;
+                    st.lastCta = null; saveFlowState();
+                    _jC(payload);
+                  }).catch(e => { console.log('[quote-pdf] failed (list sent without it): ' + e.message); payload.text = lt; payload.response = lt; _jC(payload); });
+                  return res;
+                }
               } else console.log('[list-reply] custom_list turn with an empty basket — LLM reply kept');
             }
             const orig0 = orig;
@@ -2025,6 +2068,20 @@ app.post('/chat', async (req, res) => {
         } catch (e) { console.log('[cta] error (reply sent unchanged): ' + e.message); }
         return _jC(payload);
       };
+    }
+    // The quote PDF for an email list request: generate_proposal on the real basket (no LLM), logged.
+    async function quotePdf(st, items, client, eventDate, inexactCount) {
+      const rr = await fetch('http://127.0.0.1:8300/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'generate_proposal', arguments: {
+          line_items: JSON.stringify(items), client_name: client, event_date: eventDate, email, channel: format || 'plain',
+          notes: (st.address ? 'Delivery: ' + st.address + '.' : '') + (inexactCount ? ' Some items are recommended alternatives to what was asked (see email).' : '') } } }) });
+      const rt = await rr.text(); const rl = rt.split('\n').find(l => l.startsWith('data:'));
+      const r = rl ? JSON.parse(JSON.parse(rl.replace('data:', '').trim()).result.content[0].text) : null;
+      if (!r || !r.success) throw new Error((r && r.error) || 'no result');
+      st.lastProposalUrl = r.download_url; if (client) st.savedClientName = client; if (eventDate) st.savedEventDate = eventDate;
+      events.action('generated_proposal');
+      console.log('[quote-pdf] email quote request -> proposal generated in code for ' + JSON.stringify(client) + ' (' + items.length + ' lines' + (eventDate ? ', event ' + eventDate : ', no event date') + '): ' + r.download_url);
+      return r.download_url;
     }
     function finishCta(st, turn, t, orig, payload) {
       try {
@@ -4423,6 +4480,20 @@ app.post('/reset', (req, res) => {
 
 // ── GET /health ────────────────────────────────────────────────────────────
 app.get('/health', (req, res) => res.json({ status: 'ok', port: PORT }));
+// Operator correction (localhost only — the server binds 127.0.0.1): replace a session's basket with what was
+// actually sent to the customer, and record that message in the conversation, so their next reply starts from
+// it. Used when a person answered for Rachel (Sep 29: Sean's quote was sent by hand after Rachel's wrong list).
+app.post('/internal/session-basket', (req, res) => {
+  const { session_id, line_items, sent_text } = req.body || {};
+  if (!session_id || !Array.isArray(line_items) || !line_items.length) return res.status(400).json({ ok: false, error: 'session_id and line_items required' });
+  const st = getState(session_id);
+  st.lastLineItems = JSON.stringify(line_items); st.pendingSubstitutes = []; st.pendingAddOffer = null; st.pendingQtyFor = null; st.lastCta = null;
+  if (!sessions[session_id]) sessions[session_id] = [];
+  if (sent_text) sessions[session_id].push({ role: 'assistant', content: String(sent_text) });
+  saveFlowState();
+  console.log('[internal] session-basket: ' + session_id + ' basket replaced with ' + line_items.length + ' line(s)' + (sent_text ? ', sent message recorded' : ''));
+  res.json({ ok: true, lines: line_items.length });
+});
 
 app.listen(PORT, '127.0.0.1', () => {
   console.log(`[rachel] Server running on http://127.0.0.1:${PORT}`);

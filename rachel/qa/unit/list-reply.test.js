@@ -56,5 +56,17 @@ console.log('generic unmatched with no options');
 console.log('pickBlocks ignores unpriced numbered steps');
 eq('no blocks', pickBlocks('1. Pick a size\n2. Tell me how many').length, 0);
 
+console.log('not-exact lines are shown with the reason (Sep 29, Sean: 7 silent substitutions)');
+{
+  const items = [
+    { name: 'Bud Light American Lager Beer 30x12 OZ Can', price: 29.99, qty: 2, label: 'Bud Light 30 pack cans', match: { kind: 'exact' } },
+    { name: 'Goose Island Seasonal - Oktoberfest 6pk 12 OZ Can', price: 10.49, qty: 4, label: 'Samuel Adams Octoberfest 12 pack cans',
+      match: { kind: 'alternative', asked: 'Samuel Adams Octoberfest 12 pack cans', note: "Samuel Adams Octoberfest isn't in stock here; 6-packs here: 4 = 24 cans, as asked" } }];
+  const r = compose({ items, unmatched: [], llmText: 'Here you go!' });
+  has('the section', r.text, "Not an exact match — here's what I'd recommend instead:");
+  has('the line says asked -> picked and why', r.text, "• Samuel Adams Octoberfest → 4x Goose Island Seasonal - Oktoberfest 6pk 12 OZ Can (Samuel Adams Octoberfest isn't in stock here; 6-packs here: 4 = 24 cans, as asked)");
+  hasnt('an exact line is not listed as a recommendation', r.text, '• Bud Light');
+  eq('ends with the swap question', /Want me to keep these, or swap any of them\?$/.test(r.text), true);
+}
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');

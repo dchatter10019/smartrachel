@@ -1,0 +1,17 @@
+name: email-quote-list
+fresh: true
+tags: [email]
+# Sean's real email (Sep 29, Boston 02110), sent as the first message the way the email agent does.
+# Bugs it covers: address "Floor 6\nBoston" read as "6, Boston"; 7 silent wrong substitutions (Bud Light
+# 30-pack -> Bud Light Platinum seltzer 6-pack, Warsteiner Pilsener -> variety pack, Sam Adams
+# Octoberfest -> Boston Lager, Sun Cruiser Lemonade -> the Iced Tea pack twice, Pumpkin beer -> a spiked
+# seltzer ...); a quote request answered without a PDF.
+format: plain
+context: {email_subject: "Alcohol Menu Proposal Needed - Gen II Fund", user_name: "Sean Fitzgibbons"}
+turns:
+  - send: "Hi,\r\n\r\nI need an alcohol menu quote that includes the below items.\r\n\r\nI am 21 years old. The delivery address is 100 Federal Street, Floor 6\r\nBoston, MA 02110\r\n\r\nItem Request:\r\n\r\n2 x Budlight (30 cans per case)\r\n2 x Michelop ULTRA (30 cans per case)\r\n2 x New Belgium Voodoo Juice Force IPA (12 cans per case)\r\n1 x Warsteiner Premium Pilsener (24 cans per case ONLY PILSENER)\r\n2 x Carlsberg (12 cans per case)\r\n2 x Allagash White (12 cans per case)\r\n2 x Samuel Adams Octoberfest (12 cans per case)\r\n1 x Lord Hobo Boom Sauce (4 cans per case)\r\n8 x High Noon Hard Seltzer Variety (12 cans per case Include GRAPEFRUIT)\r\n2 x All Day IPA (15 cans per case)\r\n1 x Smithwicks Red Ale\r\n2 x Ciderboys Island Mix Pack (12 cans per case)\r\n1 x Downeast cider (12 cans per case)\r\n1 x Pumkin beer (12 cans per case)\r\n2 Casamigos Margaritas Cocktail Cans (8 pack)\r\n2 x Sun Cruiser Ice tea Variety pack (18 cans per case)\r\n2 x Sun Cruiser Lemonade Variety pack (18 cans per case)\r\n3 Nantucket Cran Cocktail (4 pack)\r\n1 Baileys 1.75L\r\n1 Oyster Bay Sauvignon Blanc, 2023\r\n2 Josh Cellar Cabernet Sauvignon\r\n1 Malbec\r\n\r\nThanks!\r\nSean"
+    expect:
+      contains: ["100 Federal Street, Floor 6", "Bud Light American Lager", "Not an exact match", "PDF proposal is attached"]
+      not_contains: ["Platinum", "delivering to 6", "Bon & Viv"]
+      not_matches: "(?s)Sun Cruiser Iced Tea[^\\n]*\\n[^\\n]*Sun Cruiser Iced Tea"
+      log_contains: ["[list-reply] composed in code", "[quote-pdf] email quote request -> proposal generated in code"]

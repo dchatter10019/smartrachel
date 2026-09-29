@@ -1,7 +1,9 @@
 name: trailer-gone
 fresh: true
 tags: [smoke, cta]
-# The generic four-action trailer is gone everywhere; an informational answer after a basket gets no CTA.
+# The generic four-action trailer is gone everywhere. An informational answer after a basket either ends with
+# the LLM's own question (no CTA) or with the order/proposal offer (DC, Sep 29: a basket and no question is
+# never a dead end) — never the old trailer, never a search CTA.
 turns:
   - send: reset
   - send: "yes"
@@ -13,6 +15,4 @@ turns:
   - send: "what's the difference between Sauvignon Blanc and Pinot Grigio?"
     expect:
       not_contains: ["place the order, generate a PDF proposal", "make any changes", "ready to place the order"]
-      # an answer may end with the LLM's own conversational question (kept: question turn) — either way, no CTA
-      log_contains: ["-> none ("]
-      log_not_contains: ["-> basket.", "-> search."]
+      log_not_contains: ["-> basket.offer_checkout", "-> search."]

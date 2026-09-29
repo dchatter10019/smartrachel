@@ -48,16 +48,26 @@ function compose({ items, unmatched, llmText }) {
   // Option lists about a NAMED unavailable product (its other sizes) are dropped: the CTA names one substitute.
   const blocks = pickBlocks(llmText).filter(b => !named.some(n => { const bw = brandWords(n).slice(0, 2); const bt = ' ' + norm(b.intro + ' ' + b.lines.join(' ')).replace(/[^a-z0-9']+/g, ' ') + ' '; return bw.every(w => bt.includes(' ' + w + ' ')); }));
   let text = (lines.length ? 'Here\'s your list:\n\n' + lines.join('\n') + '\n\nProduct total: ' + money(total) : '');
+  // Never a silent substitution (Sep 29, Sean's quote): every line that isn't exactly what was asked says so,
+  // with the reason the builder recorded (functions.js buildPackage -> line.match).
+  const inexact = items.filter(li => li.match && li.match.kind && li.match.kind !== 'exact');
+  if (inexact.length) {
+    text += '\n\nNot an exact match — here\'s what I\'d recommend instead:\n' + inexact.map(li =>
+      '• ' + displayAsked(li.match.asked || li.label) + ' → ' + q(li) + 'x ' + li.name + (li.match.note ? ' (' + li.match.note + ')' : '')).join('\n');
+  }
   for (const n of named) text += '\n\n' + n + ' isn\'t available at this store.';
   const coveredGeneric = generic.filter(g => blocks.some(b => brandWordsLoose(g).some(w => norm(b.intro + ' ' + b.lines.join(' ')).includes(w))));
   for (const g of generic.filter(x => !coveredGeneric.includes(x))) text += '\n\nI couldn\'t find a match for ' + g + ' at this store.';
   for (const b of blocks) text += '\n\n' + (b.intro ? b.intro + '\n' : '') + b.lines.join('\n');
   if (blocks.length) text += '\n\n' + (blocks.length === 1 ? 'Which one would you like?' : 'Which would you like from each list?');
+  else if (inexact.length && !named.length) text += '\n\nWant me to keep these, or swap any of them?';
   const log = '[list-reply] composed in code: ' + items.length + ' line(s), total ' + money(total) +
     (named.length ? ', unavailable named: ' + JSON.stringify(named) : '') + (generic.length ? ', unmatched generic: ' + JSON.stringify(generic) : '') +
+    (inexact.length ? ', ' + inexact.length + ' not-exact line(s) shown with reasons' : '') +
     ', ' + blocks.length + ' LLM option list(s) kept' + (pickBlocks(llmText).length > blocks.length ? ', ' + (pickBlocks(llmText).length - blocks.length) + ' dropped (sizes of a named unavailable product)' : '');
-  return { text: text.trim(), named, generic, blocks, log };
+  return { text: text.trim(), named, generic, blocks, inexact, log };
 }
+const displayAsked = a => require('./product-match.js').displayName(a) || String(a || '');
 // Words that tie a generic request to an option list ("dry rosé" -> rose); descriptors like "dry" alone don't.
 function brandWordsLoose(name) {
   return norm(name).replace(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz|cl)\b/g, ' ').split(/[^a-z0-9']+/).filter(w => w.length >= 3 && !/^(dry|sweet|off|the|and|bottle|bottles|wine|wines)$/.test(w));

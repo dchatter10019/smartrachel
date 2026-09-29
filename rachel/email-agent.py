@@ -76,7 +76,7 @@ def get_email(service, msg_id):
             'from': headers.get('from', ''), 'subject': headers.get('subject', ''), 'body': body.strip(),
             'message_id': headers.get('message-id', ''), 'references': headers.get('references', '')}
 
-def chat_with_rachel(message, session_id, sender_email):
+def chat_with_rachel(message, session_id, sender_email, sender_name='', subject='', request_id=''):
     try:
         r = requests.post('http://127.0.0.1:3500/chat', json={
             'message': message,
@@ -87,13 +87,23 @@ def chat_with_rachel(message, session_id, sender_email):
                 'client_id': 'fooda',
                 'account_id': '',
                 'user_email': sender_email,
+                'user_name': sender_name,      # From display name: the quote PDF's client fallback
+                'email_subject': subject,      # "... - Gen II Fund" names the client; "quote"/"proposal" asks for the PDF
                 'age_verified': True
-            }
+            },
+            'request_id': request_id           # the Gmail message id: a retry gets the SAME reply, never a second run
         }, timeout=CHAT_TIMEOUT)
         return r.json().get('text', '') or None   # an empty reply is a failure, never sent
     except Exception as e:
         log.error(f'Rachel chat error: {e}')
         return None
+
+def proposal_pdf(reply):
+    # A Rachel proposal link in the reply -> the PDF on disk, attached to the email (the file generate_proposal wrote).
+    import re
+    m = re.search(r'/proposals/(bevvi-proposal[\w.-]*\.pdf)', reply or '')
+    p = os.path.join('/home/ubuntu/logs', m.group(1)) if m else None
+    return p if p and os.path.exists(p) else None
 
 def send_reply(service, thread_id, to, subject, body, pdf_path=None, in_reply_to=None, references=None):
     msg = MIMEMultipart()
@@ -149,6 +159,7 @@ def process(service, email):
     log.info(f"Processing: {email['from']} | {email['subject']}")
     sender = email['from']
     sender_email = sender.split('<')[1].strip('>') if '<' in sender else sender.strip()
+    sender_name = sender.split('<')[0].strip().strip('"') if '<' in sender else ''
 
     skip_senders = ['noreply', 'no-reply', 'mailer-daemon', 'postmaster', 'mail-noreply']
     if any(s in sender_email.lower() for s in skip_senders):
@@ -161,10 +172,10 @@ def process(service, email):
     # Check if this is a continuation of an existing thread
     if thread_id in THREAD_SESSIONS:
         session_id = THREAD_SESSIONS[thread_id]
-        rachel_response = chat_with_rachel(email['body'], session_id, sender_email)
+        rachel_response = chat_with_rachel(email['body'], session_id, sender_email, sender_name, email['subject'], email['id'])
         if not rachel_response:
             return _failed(service, email, sender_email, 'continuation')
-        send_reply(service, thread_id, sender_email, email['subject'], rachel_response, in_reply_to=email.get('message_id'), references=email.get('references'))
+        send_reply(service, thread_id, sender_email, email['subject'], rachel_response, pdf_path=proposal_pdf(rachel_response), in_reply_to=email.get('message_id'), references=email.get('references'))
         log.info(f'Continuation reply sent for thread {thread_id[:8]}...')
         service.users().messages().modify(userId='me',id=email['id'],body={'removeLabelIds':['UNREAD']}).execute()
         FAILED_ATTEMPTS.pop(email['id'], None)
@@ -174,13 +185,13 @@ def process(service, email):
     # state machine handles the age gate (keeping the order text to replay after "yes"),
     # the address, named products and event requests. The old email-only parser asked
     # customers for "guests, budget, event_type" when they had simply named products.
-    # A retry gets a fresh session: the timed-out attempt may still finish into the first one.
-    tries = FAILED_ATTEMPTS.get(email['id'], 0)
-    session_id = f'email-{thread_id[:16]}-{sender_email.split("@")[0]}' + (f'-r{tries}' if tries else '')
-    rachel_response = chat_with_rachel(email['body'], session_id, sender_email)
+    # A retry uses the same session and request_id: the server returns the first run's reply (it may have
+    # finished after our timeout) instead of running the email again.
+    session_id = f'email-{thread_id[:16]}-{sender_email.split("@")[0]}'
+    rachel_response = chat_with_rachel(email['body'], session_id, sender_email, sender_name, email['subject'], email['id'])
     if not rachel_response:
-        return _failed(service, email, sender_email, 'new thread')   # thread not mapped: the retry starts clean
-    send_reply(service, thread_id, sender_email, email['subject'], rachel_response, in_reply_to=email.get('message_id'), references=email.get('references'))
+        return _failed(service, email, sender_email, 'new thread')   # thread not mapped: the retry gets the same reply (request_id)
+    send_reply(service, thread_id, sender_email, email['subject'], rachel_response, pdf_path=proposal_pdf(rachel_response), in_reply_to=email.get('message_id'), references=email.get('references'))
     log.info('Initial reply sent via Rachel chat')
     save_to_gbrain(sender_email, thread_id)
     FAILED_ATTEMPTS.pop(email['id'], None)
