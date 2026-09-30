@@ -433,8 +433,13 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           if (!saInput.serving_mix && eventParams.serving_mix) saInput.serving_mix = eventParams.serving_mix;
           let mixL = {}; try { mixL = JSON.parse(eventParams.serving_mix || '{}') || {}; } catch (e) {}
           const kept = [], dropped = [];
+          const DTl = require('./drink-type.js');
           for (const np of saInput.named_products) {
-            const cat = String((np && np.category) || '').toLowerCase();
+            // An aperitif (Lillet, vermouth, Aperol) counts as LIQUOR for the serving mix, whatever the LLM called it.
+            // DC (Sep 30): "just beer + wine" still listed 3x Lillet Blanc (the LLM filed it as wine; Bevvi as Liquor/Aperitif).
+            const cat0 = String((np && np.category) || '').toLowerCase();
+            const cat = DTl.typeOf({ name: np && np.name }) === 'aperitif' ? 'spirits' : cat0;
+            if (cat !== cat0) console.log('[list-scale] ' + JSON.stringify(np.name) + ' is an aperitif: counted as liquor, not ' + cat0);
             if (mixL[cat] === 0) { dropped.push(np.name); console.log('[list-scale] DROPPED ' + JSON.stringify(np.name) + ' (' + cat + ' — left out of the customer\'s serving mix)'); continue; }
             if (np.qty) console.log('[list-scale] qty ' + np.qty + ' for ' + JSON.stringify(np.name) + ' -> sized by the event calculator (' + saInput.guests + ' guests)');
             np.qty_from_customer = false; delete np.qty;

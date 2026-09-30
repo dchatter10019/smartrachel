@@ -164,6 +164,9 @@ function statedPickQty(message, option) {
     const unit = m[2] || /x\s*$/i.test(m[0].slice(0, m[0].indexOf(m[1])));
     if (!unit && own.has(m[1])) continue;
     if (/^\s*\d+\s*(ml|l|oz)\b/i.test(message.slice(m.index + m[0].indexOf(m[1])))) continue;
+    // A price is not a quantity: "Navigator Pinot Noir — 750 mL — $24.14 works" (Sep 30, DC) was added as 24 bottles.
+    const at = m.index + m[0].indexOf(m[1]);
+    if (/(?:\$\s*|\d[.,]?)$/.test(message.slice(0, at)) || /^\d*[.,]\d/.test(message.slice(at))) continue;
     return n;
   }
   return 0;

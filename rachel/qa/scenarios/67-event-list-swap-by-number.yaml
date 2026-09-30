@@ -1,5 +1,6 @@
-name: event-list-mix-stated-swap
-# Real case (Sep 30, DC, Slack): an invoice photo + "create a menu for 100 people for a 3 hour event, but only beer and
+name: event-list-swap-by-number
+# Same as 66, but the replacement is picked by NUMBER — the numbered-list (pick-list) path, which added it as a new
+# line (24x, read from "$24.14") instead of replacing La Crema. Real case (Sep 30, DC, Slack): an invoice photo + "create a menu for 100 people for a 3 hour event, but only beer and
 # wine.. make it equal" rebuilt the photo's own quantities with the vodka and gin; "use another pinot noir but 750 ML"
 # (La Crema 750 not carried) listed Goldeneye $73 first; picking Decoy added 1 bottle and asked "How many?".
 # Correct: the listed beer + wine sized for 100 x 3h at 50/50, spirits left out and said so; alternatives to La Crema
@@ -19,23 +20,8 @@ turns:
     expect:
       contains: ["Pinot Noir"]
       not_matches: "(?m)^\\s*1[.)]\\s*\\**Goldeneye"
-  # picked the way DC did: "<name> — 750 mL — $24.14 works" goes through the numbered-list path; the price is not a qty
-  - send: "{pick_full} — 750 mL — $24.14 works"
+  - send: "1"
     expect:
-      not_matches: "Got it — 2[0-9]x"
-      # DC (Sep 30): after the swap show the WHOLE basket and offer the proposal, not only "ready to place the order?"
-      contains: ["in place of La Crema", "Your order now:", "Product total", "PDF proposal"]
+      contains: ["in place of La Crema", "Your order now:", "Product total"]
       not_contains: ["How many bottles"]
-      log_contains: ["pick replaces the not-carried"]
-  # "no.. send me the proposal first" (a leading "no" and "send ME the proposal") starts the proposal flow in code;
-  # the LLM generated it with an invented client and replied "<url|Download proposal>" — no link.
-  - send: "no.. send me the proposal first"
-    expect:
-      contains: ["client or company name"]
-      log_contains: ["[proposal] request recognised"]
-  - send: "Acme QA Events"
-    expect: {matches: "(?i)event date"}
-  - send: "October 20"
-    expect:
-      matches: "https?://\\S+/proposals/bevvi-proposal[^\\s|>)]*\\.pdf"
-      not_contains: ["<url|"]
+      log_contains: ["[pick-list] pick replaces the not-carried"]

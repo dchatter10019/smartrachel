@@ -475,6 +475,26 @@ function basketLineFor(items, itemName) {
   const need = Math.min(origW.length, Math.max(2, Math.ceil(origW.length * 0.6)));
   return (items || []).findIndex(it => { const iw = new Set(nrmW(it.name || it.label)); return origW.filter(w => iw.has(w)).length >= need; });
 }
+// The ONE not-carried item (still pending) that a picked product stands in for: same varietal, or the same drink type
+// when the last reply named that item. -> { name, qty } | null. Used by every pick path (numbered list, add-item by
+// name), so a pick REPLACES the missing line at its planned qty. Real bug (Sep 30, DC): fixed in the add-item path
+// only; the numbered-list path added "Navigator Pinot Noir" as a new line (and read "$24.14" as 24 bottles).
+function pendingSubFor(state, sessionKey, pickedName, lastReply) {
+  const pend = (state.pendingSubstitutes || []);
+  if (!pend.length) return null;
+  const { varietalOf } = require('/home/ubuntu/store-agent/alternatives.js');
+  const DT = require('./drink-type.js');
+  const nz = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const pv = varietalOf(pickedName), pt = DT.typeOf({ name: pickedName });
+  const hits = pend.filter(pn => {
+    const v = varietalOf(pn);
+    if (v && pv) return v === pv;
+    const w = nz(String(pn).split(/\s+/)[0]);
+    return pt && DT.typeOf({ name: pn }) === pt && w.length >= 3 && nz(lastReply).includes(w);
+  });
+  if (hits.length !== 1) return null;
+  return { name: hits[0], qty: (state.unavailableQty || {})[hits[0]] || requestedQtyFor(sessionKey, hits[0]) || 0 };
+}
 // The whole basket after a change, so the customer sees what they now have. DC (Sep 30): "Got it — 10x Navigator ...
 // has replaced La Crema" showed one line of a 7-line event basket. Only for 2+ lines (a single line IS the reply).
 function basketAfterChange(state) {
@@ -2414,6 +2434,12 @@ app.post('/chat', async (req, res) => {
             const realQ = cl.question || cta.hasRealQuestion(t);
             if (realQ && !cl.question) console.log('[cta] the reply asks a real question earlier on — no CTA (question turn)');
             const turn = ctaTurn(st, t, realQ, turnMsg, context);
+            // The basket changed this turn but the reply doesn't list it: show it. DC (Sep 30): "after making the change
+            // the basket still doesn't show up.. I needed to ask for it" — whichever path made the change.
+            if (turn.kind === 'basket_updated' && evL && evL.actions && evL.actions.includes('updated_basket') && !/Product total/i.test(t)) {
+              const bk = basketAfterChange(st);
+              if (bk) { t = t.trimEnd() + bk; console.log('[reply] basket changed, reply did not list it — full basket appended'); }
+            }
             if (turn.kind === 'item_unavailable' && !turn.substitute && turn.unmatchedName) {
               // sub.offer_named needs a real in-stock candidate: look it up, then send (the caller only returns res).
               const tt = t;
@@ -2948,22 +2974,14 @@ app.post('/chat', async (req, res) => {
           // customer asked for it. Real bug (Sep 30, DC): "Which one would you like to swap in for the La Crema?" ->
           // "Decoy by Duckhorn Pinot Noir" -> "Added ... How many bottles?" (La Crema was 3 in his list).
           {
-            const { varietalOf } = require('/home/ubuntu/store-agent/alternatives.js');
-            const DT = require('./drink-type.js');
-            const lastR = String((lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '').toLowerCase();
-            const pv = varietalOf(pr.name), pt = DT.typeOf(pr);
-            const pend = (state.pendingSubstitutes || []).filter(pn => {
-              const v = varietalOf(pn);
-              if (v && pv) return v === pv;
-              const w = nz(pn.split(/\s+/)[0]);   // the brand word, named in the swap question
-              return pt && DT.typeOf({ name: pn }) === pt && w.length >= 3 && nz(lastR).includes(w);
-            });
+            const subA = targetA ? null : pendingSubFor(state, sessionKey, pr.name, String((lastRepliesBySession[sessionKey] || []).slice(-1)[0] || ''));
+            const pend = subA ? [subA.name] : [];
             if (pend.length === 1 && !targetA) {
-              const rq = (state.unavailableQty || {})[pend[0]] || requestedQtyFor(sessionKey, pend[0]);
+              const rq = subA.qty;
               const rrP = await applyBasketSubstitute(sessionKey, email, pend[0], pr.name, price, size, rq ? { qty: rq } : undefined);
               if (!(rrP && rrP.success === false)) {
                 state.pendingSubstitutes = (state.pendingSubstitutes || []).filter(x => x !== pend[0]); saveFlowState();
-                console.log('[add-item] pick replaces the not-carried ' + JSON.stringify(pend[0]) + ' (' + (pv || pt) + ') -> ' + pr.name + ' x' + (rq || 1));
+                console.log('[add-item] pick replaces the not-carried ' + JSON.stringify(pend[0]) + ' -> ' + pr.name + ' x' + (rq || 1));
                 if (rq) {
                   const rP = 'Got it — ' + rq + 'x ' + labelR + ' in place of ' + pend[0] + '.' + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
                   return res.json({ text: rP, response: rP });
@@ -4379,11 +4397,27 @@ app.post('/chat', async (req, res) => {
               const nk0 = x => String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
               if (pv.size) replTarget = items0.find(it => { const iv = nv(it.name); return [...pv].some(v => iv.has(v)) && nk0(it.name) !== nk0(picked.name); }) || null;
             } catch (e) {}
+            const subFor = replTarget ? null : pendingSubFor(state, sessionKey, picked.name, lastAssistantTextGate);
+            if (subFor) {
+              const rS = await applyBasketSubstitute(sessionKey, email, subFor.name, picked.name + (picked.size ? ' - ' + picked.size : ''), picked.price, picked.size, subFor.qty ? { qty: subFor.qty } : undefined);
+              if (!(rS && rS.success === false)) {
+                state.pendingSubstitutes = (state.pendingSubstitutes || []).filter(x => x !== subFor.name); saveFlowState();
+                console.log('[pick-list] pick replaces the not-carried ' + JSON.stringify(subFor.name) + ' -> ' + picked.name + ' x' + (subFor.qty || 1));
+                const lbl = picked.name + (picked.size ? ' — ' + picked.size : '') + ' — $' + picked.price.toFixed(2);
+                if (subFor.qty) {
+                  const rP = 'Got it — ' + subFor.qty + 'x ' + lbl + ' in place of ' + subFor.name + '.' + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+                  return res.json({ text: rP, response: rP });
+                }
+                state.pendingQtyFor = picked.name; saveFlowState();
+                const rP1 = 'Got it — ' + lbl + ' in place of ' + subFor.name + '. How many bottles would you like?';
+                return res.json({ text: rP1, response: rP1 });
+              }
+            }
             const r = await applyBasketSubstitute(sessionKey, email, replTarget ? replTarget.name : '', picked.name + (picked.size ? ' - ' + picked.size : ''), picked.price, picked.size);
             retirePendingFor(state, picked.name);
             if (replTarget && !(r && r.success === false)) {
               const keptQty = replTarget.qty || replTarget.quantity || 1;
-              const rR = 'Got it — ' + keptQty + 'x ' + picked.name + (picked.size ? ' — ' + picked.size : '') + ' — $' + picked.price.toFixed(2) + ' (replacing ' + replTarget.name + '). Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+              const rR = 'Got it — ' + keptQty + 'x ' + picked.name + (picked.size ? ' — ' + picked.size : '') + ' — $' + picked.price.toFixed(2) + ' (replacing ' + replTarget.name + ').' + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
               return res.json({ text: rR, response: rR });
             }
             const added = picked.name + (picked.size ? ' — ' + picked.size : '') + ' — $' + picked.price.toFixed(2);
@@ -4394,7 +4428,7 @@ app.post('/chat', async (req, res) => {
             const statedQty = /^\d{1,2}$/.test(msgClean.trim()) ? 0 : require('./multipick.js').statedPickQty(msgClean, picked);
             if (statedQty > 1) {
               try { const it = JSON.parse(state.lastLineItems || '[]'); const nk = s => String(s||'').toLowerCase().replace(/[^a-z0-9]/g,''); const row = it.find(x => nk(x.name).indexOf(nk(picked.name).slice(0,12)) >= 0); if (row) { row.qty = statedQty; row.quantity = statedQty; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); saveFlowState(); } } catch (e) {}
-              const reply = 'Got it — ' + statedQty + 'x ' + added + ' added to your order. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+              const reply = 'Got it — ' + statedQty + 'x ' + added + ' added to your order.' + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
               return res.json({ text: reply, response: reply });
             }
             state.pendingQtyFor = picked.name;

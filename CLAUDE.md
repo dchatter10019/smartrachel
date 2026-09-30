@@ -101,11 +101,13 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   "just/only beer + wine", "no liquor" set the other categories to 0%. A held PRODUCT LIST + guest count answered
   with the mix = the listed products sized for the event (eventParams.list_scale -> rachel.js [list-scale]:
   calculator quantities, 0% categories dropped and listed in the reply, no re-adds that turn) — also when the mix
-  is stated in the same message ("only beer and wine, make it equal").
+  is stated in the same message ("only beer and wine, make it equal"). An aperitif (Lillet, vermouth) counts as liquor.
 - A replacement for a not-carried line (pick from the listed options, or confirm_substitute) REPLACES it at the line's
   planned qty (buildPackage unavailable_qty -> state.unavailableQty; else the qty in the customer's own list).
+  Every pick path (numbered list, add-item by name) uses pendingSubFor to find the missing line it replaces.
   The basket line an item refers to = basketLineFor (whole words, most of them) — never a first-word substring.
-  After a swap the reply lists the whole basket (2+ lines); a 3+ line basket's follow-up offers order OR proposal.
+  After ANY basket change the reply lists the whole basket (2+ lines; appended in the CTA layer if the reply didn't);
+  a 3+ line basket's follow-up offers order OR proposal. A price in a pick ("$24.14") is never a quantity.
 - Proposal requests: phrase list + "<verb> ... proposal/pdf" (not negated/a question). A basket proposal (2+ lines) is
   generated IN CODE from the basket after client + date, reply and link written in code; the LLM is only a fallback.
   Any LLM-generated proposal reply gets the real URL (rachel.js replaces a placeholder like "<url|...>").
