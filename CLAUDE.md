@@ -101,7 +101,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   "just/only beer + wine", "no liquor" set the other categories to 0%. A held PRODUCT LIST + guest count answered
   with the mix = the listed products sized for the event (eventParams.list_scale -> rachel.js [list-scale]:
   calculator quantities, 0% categories dropped and listed in the reply, no re-adds that turn) — also when the mix
-  is stated in the same message ("only beer and wine, make it equal"). An aperitif (Lillet, vermouth) counts as liquor.
+  is stated in the same message ("only beer and wine, make it equal"). An aperitif (Lillet, vermouth) counts as liquor;
+  "just/only beer and wine" also leaves hard seltzer out (DC) unless the customer's own words mention seltzer.
 - A replacement for a not-carried line (pick from the listed options, or confirm_substitute) REPLACES it at the line's
   planned qty (buildPackage unavailable_qty -> state.unavailableQty; else the qty in the customer's own list).
   Every pick path (numbered list, add-item by name) uses pendingSubFor to find the missing line it replaces.

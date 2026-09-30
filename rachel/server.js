@@ -857,7 +857,11 @@ function listScaleFor(state, reqMsg, answerMsg, got) {
   const listLines = String(reqMsg).split('\n').filter(l => /^\s*\d+\s*(?:x|×)?\s+\S/i.test(l)).length;
   const keepQty = /\b(keep|same|don'?t change|as listed|as is)\b[^.\n]{0,20}\bquantit/i.test(answerMsg) && !/\bchange\b[^.\n]{0,20}\bquantit/i.test(answerMsg);
   if (!guests || listLines < 2 || keepQty) return false;
-  state.eventParams = Object.assign({}, state.eventParams || {}, { list_scale: { guests: parseInt(guests), hours: hours ? parseFloat(hours) : null } });
+  // "just / only beer and wine": hard seltzer is not beer here (DC, Sep 30) — left out unless the customer's own words
+  // (not the list's product names) mention seltzer.
+  const ownWords = String(answerMsg).split('\n').filter(l => !/^\s*\d+\s*(?:x|×)?\s+\S/i.test(l)).join('\n');
+  const noSeltzer = !!(got && got.excluded && got.excluded.length) && !/seltzer|white claw|truly|high noon/i.test(ownWords);
+  state.eventParams = Object.assign({}, state.eventParams || {}, { list_scale: { guests: parseInt(guests), hours: hours ? parseFloat(hours) : null, no_seltzer: noSeltzer } });
   saveFlowState();
   console.log('[menu] request is a ' + listLines + '-product list for ' + guests + ' guests — listed products sized for the event' + (got && got.excluded ? ', ' + got.excluded.join('/') + ' left out' : ''));
   return true;

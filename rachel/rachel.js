@@ -440,6 +440,10 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             const cat0 = String((np && np.category) || '').toLowerCase();
             const cat = DTl.typeOf({ name: np && np.name }) === 'aperitif' ? 'spirits' : cat0;
             if (cat !== cat0) console.log('[list-scale] ' + JSON.stringify(np.name) + ' is an aperitif: counted as liquor, not ' + cat0);
+            // "just beer and wine" leaves hard seltzer out too (DC, Sep 30), though it sits in the beer category.
+            if (ls.no_seltzer && /\b(?:hard\s+)?seltzers?\b|white claw|\btruly\b|high noon|vizzy|bon\s*&\s*viv/i.test(String((np && np.name) || ''))) {
+              dropped.push(np.name); console.log('[list-scale] DROPPED ' + JSON.stringify(np.name) + ' (hard seltzer — the customer said just ' + Object.keys(mixL).filter(k => mixL[k] > 0).join(' and ') + ')'); continue;
+            }
             if (mixL[cat] === 0) { dropped.push(np.name); console.log('[list-scale] DROPPED ' + JSON.stringify(np.name) + ' (' + cat + ' — left out of the customer\'s serving mix)'); continue; }
             if (np.qty) console.log('[list-scale] qty ' + np.qty + ' for ' + JSON.stringify(np.name) + ' -> sized by the event calculator (' + saInput.guests + ' guests)');
             np.qty_from_customer = false; delete np.qty;
