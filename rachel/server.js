@@ -1395,6 +1395,45 @@ app.post('/chat', async (req, res) => {
     const stE = getState(sessionKey);
     if (email) stE.userEmail = String(email).toLowerCase();
     if (context && context.email_subject && !stE.emailSubject) stE.emailSubject = String(context.email_subject);   // the FIRST subject names the client; a forward's ("Fwd: ... - Drinks order") doesn't
+    // Every proposal PDF this session sent — a forward or attachment of any of them links a new thread back here.
+    const _jP = res.json.bind(res);
+    res.json = (payload) => {
+      try {
+        const stP = flowState[sessionKey], pdf = stP && stP.lastProposalUrl ? String(stP.lastProposalUrl).split('/').pop() : '';
+        if (pdf && !(stP.proposalPdfs || []).includes(pdf)) { stP.proposalPdfs = (stP.proposalPdfs || []).concat(pdf).slice(-20); saveFlowState(); }
+      } catch (e) {}
+      return _jP(payload);
+    };
+  }
+  // PENDING LINK (email-link.js): a new email thread asked to change "the proposal" and this sender has several.
+  // The first turn asks which one (the email is held); the answer relinks the thread to that quote and the held
+  // email is replayed there by the email agent (`relink` in the reply). Decided in code, logged.
+  {
+    const stL = flowState[sessionKey];
+    if (stL && stL.pendingLink && message !== '__greeting__') {
+      const EL = require('./email-link.js'), pl = stL.pendingLink;
+      if (!pl.asked) {
+        pl.asked = true; saveFlowState();
+        const q = EL.question(pl.choices);
+        console.log('[email-link] asked which proposal (' + pl.choices.map(c => c.session_id).join(', ') + ') — held: ' + JSON.stringify(String(pl.held).slice(0, 80)));
+        return res.json({ text: q, response: q });
+      }
+      const a = EL.answer(message, pl.choices);
+      if (!a) {
+        const q = "Sorry, I couldn't tell which one you meant. " + EL.question(pl.choices).replace(/^[^\n]*\n\n/, 'Which proposal should I update?\n\n');
+        console.log('[email-link] answer not understood: ' + JSON.stringify(String(message).slice(0, 80)) + ' — asked again');
+        return res.json({ text: q, response: q });
+      }
+      stL.pendingLink = null; saveFlowState();
+      if (a.new) {
+        console.log('[email-link] answer: a new request — held email replayed on this session ' + sessionKey);
+        return res.json({ text: '', response: '', relink: { session_id: sessionKey, message: pl.held } });
+      }
+      const c = pl.choices[a.index];
+      console.log('[email-link] answer -> ' + c.session_id + ' (' + c.label + ') — held email replayed there, thread relinked');
+      const t = 'Updating: ' + c.label + '.';
+      return res.json({ text: t, response: t, relink: { session_id: c.session_id, message: pl.held } });
+    }
   }
 
   // IDLE EXPIRY: a conversation ends after IDLE_HOURS of silence and the next message starts
@@ -4734,12 +4773,29 @@ app.post('/internal/email-link', (req, res) => {
     // Sessions from before userEmail was recorded: the sender's local part is in the id (email-<thread>-<local>).
     const who = st.userEmail || (k.split('-').slice(2).join('-') === local ? String(sender_email).toLowerCase() : '');
     if (!who) continue;
-    let n = 0; try { n = JSON.parse(st.lastLineItems || '[]').length; } catch (e) {}
-    candidates.push({ session_id: k, sender_email: who, client: st.savedClientName || '', subject: st.emailSubject || '', last_active: st.lastActive || 0, has_quote: n > 0 });
+    // The quote: the basket, else the order placed from it (the cart moved to placedOrder), else a proposal PDF.
+    let items = [];
+    try { items = JSON.parse(st.lastLineItems || '[]'); } catch (e) {}
+    if (!items.length && st.placedOrder) try { items = JSON.parse(st.placedOrder.line_items || '[]'); } catch (e) {}
+    const total = items.reduce((a, li) => a + (Number(li.price) || 0) * (Number(li.qty) || 1), 0);
+    const pdfs = [...new Set([...(st.proposalPdfs || []), st.lastProposalUrl ? String(st.lastProposalUrl).split('/').pop() : ''].filter(Boolean))];
+    candidates.push({ session_id: k, sender_email: who, client: st.savedClientName || '', subject: st.emailSubject || '', last_active: st.lastActive || 0,
+      has_quote: items.length > 0 || pdfs.length > 0, event_date: st.savedEventDate || (st.eventParams && st.eventParams.event_date) || '',
+      address: st.address || '', zip: st.zip || '', total: Math.round(total * 100) / 100, items: items.length, pdfs });
   }
-  const r = require('./email-link.js').pick({ sender_email, subject, body: require('./email-body.js').latest(body).text }, candidates);
-  console.log('[email-link] ' + JSON.stringify(String(subject || '').slice(0, 60)) + ' from ' + sender_email + ' -> ' + (r.session_id || 'new session') + ' — ' + r.reason);
-  res.json(r);
+  const EL = require('./email-link.js');
+  const latest = require('./email-body.js').latest(body).text;
+  const r = EL.pick({ sender_email, subject, body: latest, body_full: body, pdfs: req.body.attachments || [] }, candidates);
+  console.log('[email-link] ' + JSON.stringify(String(subject || '').slice(0, 60)) + ' from ' + sender_email + ' -> ' + (r.session_id || (r.ask ? 'ASK which of ' + r.ask.map(c => c.session_id).join(', ') : 'new session')) + ' — ' + r.reason);
+  // Several quotes could be the one being changed: the new thread's session asks "which proposal?" on its first
+  // turn (the email is held and replayed on the chosen quote — /chat PENDING LINK).
+  if (r.ask && req.body.new_session_id) {
+    const stN = getState(String(req.body.new_session_id));
+    stN.pendingLink = { choices: r.ask.map(c => ({ session_id: c.session_id, label: EL.label(c), client: c.client || EL.clientFromSubject(c.subject), event_date: c.event_date, address: c.address, zip: c.zip, total: c.total, pdfs: c.pdfs })), held: latest, asked: false };
+    saveFlowState();
+    return res.json({ session_id: String(req.body.new_session_id), asking: true, reason: r.reason });
+  }
+  res.json({ session_id: r.session_id, reason: r.reason });
 });
 
 app.post('/internal/session-basket', async (req, res) => {

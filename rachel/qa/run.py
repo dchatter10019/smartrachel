@@ -111,6 +111,9 @@ class EmailTransport:
                 if t: return t
             return ""
         return walk(msg["payload"]).strip()
+    def new_thread(self, subject=None):
+        # The next send starts a NEW email thread (a forward, a fresh email about an earlier proposal).
+        self.subject = (subject or "QA new thread") + f" {int(time.time())}"; self.thread = None; self.last_msg_id = None
     def send(self, text, images=None, timeout=300):
         import base64 as b64
         from email.mime.text import MIMEText
@@ -321,6 +324,7 @@ def run_scenario(sc, verbose, parallel=False):
         try:
             pos = _log_size()
             try:
+                if turn.get("new_thread") and hasattr(slack, "new_thread"): slack.new_thread(turn.get("subject"))
                 reply, secs = slack.send(text, images) if slack else send(session, text, fmt, email, images, turn.get("idle", False), sc.get("context"))
             except Exception as e:
                 reply, secs = f"<<ERROR {e}>>", 0

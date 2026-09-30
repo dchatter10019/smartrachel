@@ -1,0 +1,26 @@
+name: email-which-proposal
+transport: email
+tags: [channel]
+# DC (Sep 30): Sean runs several proposals by email. A NEW thread that asks to change "the quote" without naming
+# it must not guess: Rachel asks which proposal (numbered, with client/date/venue/total), holds the email, and
+# the answer applies the edit to the chosen quote (email-link.js; the thread is relinked to that session).
+turns:
+  - subject: "Drinks quote - Northwind QA"
+    new_thread: true
+    send: "Hi,\n\nPlease send a quote for the items below. I am 21. Deliver to 100 Federal Street, Boston, MA 02110.\n\n2 x Bud Light (30 cans per case)\n1 Oyster Bay Sauvignon Blanc\n\nThanks!"
+    expect: {contains: ["PDF proposal is attached"]}
+  - subject: "Drinks quote - Contoso QA"
+    new_thread: true
+    send: "Hi,\n\nPlease send a quote for the items below. I am 21. Deliver to 100 Federal Street, Boston, MA 02110.\n\n2 Josh Cellars Cabernet Sauvignon\n1 Oyster Bay Sauvignon Blanc\n\nThanks!"
+    expect: {contains: ["PDF proposal is attached"]}
+  - subject: "Changes"
+    new_thread: true
+    send: "Hi,\n\nCan you update the quote? Please remove the Oyster Bay.\n\nThanks"
+    expect:
+      contains: ["which one should I update", "1. Contoso QA", "Northwind QA", "Reply with the number"]
+      not_contains: ["Removed:"]
+      log_contains: ["ASK which of"]
+  - send: "1"
+    expect:
+      contains: ["Updating: Contoso QA", "Removed:", "Oyster Bay", "updated PDF proposal is attached"]
+      log_contains: ["[email-link] answer -> "]

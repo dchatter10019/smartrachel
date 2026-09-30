@@ -84,9 +84,10 @@ def get_unread(service):
 def get_email(service, msg_id):
     msg = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
     headers = {h['name'].lower(): h['value'] for h in msg['payload']['headers']}
-    body = ''
+    body, attachments = '', []
     def get_body(p):
         nonlocal body
+        if p.get('filename'): attachments.append(p['filename'])   # a forwarded proposal PDF links the thread to its quote
         if p.get('mimeType') == 'text/plain':
             data = p.get('body', {}).get('data', '')
             if data: body += base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
@@ -95,9 +96,10 @@ def get_email(service, msg_id):
     return {'id': msg_id, 'thread_id': msg['threadId'], 'unread': 'UNREAD' in (msg.get('labelIds') or []),
             'from': headers.get('from', ''), 'subject': headers.get('subject', ''), 'body': body.strip(),
             'message_id': headers.get('message-id', ''), 'references': headers.get('references', ''),
-            'to': headers.get('to', ''), 'cc': headers.get('cc', '')}
+            'to': headers.get('to', ''), 'cc': headers.get('cc', ''), 'attachments': attachments}
 
 LAST_EXTRA_CC = []
+LAST_RELINK = None   # {session_id, message}: the "which proposal?" answer — replay the held email on that session
 def reply_all_cc(email, sender_email):
     # Reply-all (DC, Sep 29): everyone on the email's To and Cc gets Rachel's reply, except Rachel and the
     # sender (who is the To). Addresses parsed properly ("Name, Jr." <a@b>, lists), lowercased, deduped.
@@ -129,9 +131,10 @@ def chat_with_rachel(message, session_id, sender_email, sender_name='', subject=
         j = r.json()
         # Addresses the email asked to receive the payment link ("send dipanjan@... a payment link") — added to
         # this reply's Cc by reply_all_cc (Sep 29: they were only copied if they already were).
-        global LAST_EXTRA_CC
+        global LAST_EXTRA_CC, LAST_RELINK
         LAST_EXTRA_CC = [a for a in (j.get('email_cc') or []) if isinstance(a, str) and '@' in a]
-        return j.get('text', '') or None   # an empty reply is a failure, never sent
+        LAST_RELINK = j.get('relink') if isinstance(j.get('relink'), dict) else None
+        return j.get('text', '') or ('' if LAST_RELINK else None)   # an empty reply is a failure, never sent (unless relinked)
     except Exception as e:
         log.error(f'Rachel chat error: {e}')
         return None
@@ -160,7 +163,9 @@ def send_reply(service, thread_id, to, subject, body, pdf_path=None, in_reply_to
             part = MIMEBase('application', 'octet-stream')
             part.set_payload(f.read())
         encoders.encode_base64(part)
-        part.add_header('Content-Disposition', f'attachment; filename="bevvi-proposal.pdf"')
+        # The real file name ("bevvi-proposal-gen-ii-fund-...pdf"): when it comes back attached to a new thread, it
+        # names the quote (email-link.js). The old generic "bevvi-proposal.pdf" matched every quote.
+        part.add_header('Content-Disposition', f'attachment; filename="{os.path.basename(pdf_path)}"')
         msg.attach(part)
     raw = base64.urlsafe_b64encode(msg.as_bytes()).decode()
     service.users().messages().send(userId='me', body={'raw': raw, 'threadId': thread_id}).execute()
@@ -196,12 +201,27 @@ def _failed(service, email, sender_email, where):
     FAILED_ATTEMPTS.pop(email['id'], None)
     mark_processed(email['id'])
 
-def linked_session(sender_email, subject, body):
+def chat_following_relink(email, session_id, sender_email, sender_name):
+    # One email's reply, following a relink: the thread was asked "which proposal should I update?" and this
+    # email answered it. The held email is replayed on the chosen quote's session, and the thread is mapped
+    # there from now on. -> (reply text or None, the session the thread belongs to)
+    reply = chat_with_rachel(email['body'], session_id, sender_email, sender_name, email['subject'], email['id'])
+    rl = LAST_RELINK
+    if reply is None or not rl or not rl.get('session_id'):
+        return reply, session_id
+    target = rl['session_id']
+    reply2 = chat_with_rachel(rl.get('message') or '', target, sender_email, sender_name, email['subject'], email['id'] + '-relink')
+    log.info(f"[email-link] thread {email['thread_id'][:8]}... relinked {session_id} -> {target}; held email replayed")
+    if not reply2:
+        return None, session_id   # retried next poll: both calls return their stored replies (request ids)
+    return ((reply + '\n\n') if reply else '') + reply2, target
+
+def linked_session(sender_email, subject, body, new_session_id='', attachments=None):
     # A NEW thread that continues an earlier quote (a forward, a fresh email about "the proposal"): Rachel's
     # server decides from its sessions (email-link.js) and logs why. None = start a new session.
     try:
-        r = requests.post('http://127.0.0.1:3500/internal/email-link', json={'sender_email': sender_email, 'subject': subject, 'body': body}, timeout=10).json()
-        log.info(f"[email-link] {subject[:60]!r} -> {r.get('session_id') or 'new session'} — {r.get('reason')}")
+        r = requests.post('http://127.0.0.1:3500/internal/email-link', json={'sender_email': sender_email, 'subject': subject, 'body': body, 'new_session_id': new_session_id, 'attachments': attachments or []}, timeout=10).json()
+        log.info(f"[email-link] {subject[:60]!r} -> {r.get('session_id') or 'new session'}{' (asking which proposal)' if r.get('asking') else ''} — {r.get('reason')}")
         return r.get('session_id')
     except Exception as e:
         log.error(f'[email-link] lookup failed ({e}) — starting a new session')
@@ -227,9 +247,11 @@ def process(service, email):
     # Check if this is a continuation of an existing thread
     if thread_id in THREAD_SESSIONS:
         session_id = THREAD_SESSIONS[thread_id]
-        rachel_response = chat_with_rachel(email['body'], session_id, sender_email, sender_name, email['subject'], email['id'])
+        rachel_response, linked = chat_following_relink(email, session_id, sender_email, sender_name)
         if not rachel_response:
             return _failed(service, email, sender_email, 'continuation')
+        if linked != session_id:
+            THREAD_SESSIONS[thread_id] = linked; _persist_threads()
         send_reply(service, thread_id, sender_email, email['subject'], rachel_response, pdf_path=proposal_pdf(rachel_response), in_reply_to=email.get('message_id'), references=email.get('references'), cc=reply_all_cc(email, sender_email))
         log.info(f'Continuation reply sent for thread {thread_id[:8]}...')
         service.users().messages().modify(userId='me',id=email['id'],body={'removeLabelIds':['UNREAD']}).execute()
@@ -243,8 +265,9 @@ def process(service, email):
     # customers for "guests, budget, event_type" when they had simply named products.
     # A retry uses the same session and request_id: the server returns the first run's reply (it may have
     # finished after our timeout) instead of running the email again.
-    session_id = linked_session(sender_email, email['subject'], email['body']) or f'email-{thread_id[:16]}-{sender_email.split("@")[0]}'
-    rachel_response = chat_with_rachel(email['body'], session_id, sender_email, sender_name, email['subject'], email['id'])
+    new_id = f'email-{thread_id[:16]}-{sender_email.split("@")[0]}'
+    session_id = linked_session(sender_email, email['subject'], email['body'], new_id, email.get('attachments')) or new_id
+    rachel_response, session_id = chat_following_relink(email, session_id, sender_email, sender_name)
     if not rachel_response:
         return _failed(service, email, sender_email, 'new thread')   # thread not mapped: the retry gets the same reply (request_id)
     send_reply(service, thread_id, sender_email, email['subject'], rachel_response, pdf_path=proposal_pdf(rachel_response), in_reply_to=email.get('message_id'), references=email.get('references'), cc=reply_all_cc(email, sender_email))

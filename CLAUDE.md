@@ -16,7 +16,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   thread→session map in logs/email-thread-sessions.json). Log: logs/email-agent.log. "New" = an inbox email
   (3 days) not in logs/email-processed.json — NOT the UNREAD label (an email opened in Gmail first is still
   handled). A new thread asks /internal/email-link (email-link.js) whether it continues an earlier quote
-  (same sender + client name, or the sender's only quote in 14 days). Server-side, email bodies are cut to
+  (same sender; a proposal PDF of it attached/linked, the client name, or — for an edit request — the one quote
+  whose event date / venue / total matches, or the sender's only quote in 14 days). Several possible: the new
+  thread asks "which proposal?" (numbered), holds the email, and the answer relinks the thread to that quote
+  and replays it there (state.pendingLink; `relink` in the /chat reply). Replies attach the PDF by its real name. Server-side, email bodies are cut to
   the new text + a forwarded message (email-body.js); quoted history never reaches Rachel.
   Replies are reply-all (To + Cc of the incoming email, minus rachelai@ and the sender).
 - Email orders (email-order.js, server.js EMAIL ORDER): "create/place the order", "payment link" in an email
