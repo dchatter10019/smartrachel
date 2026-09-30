@@ -974,6 +974,13 @@ async function buildPackage(iv) {
       return hit / req.length;
     }
     var spiritBaseCount=byCat.spirits.filter(function(x){return !isModifier(x);}).length||byCat.spirits.length;
+    // Aperitif / fortified wines take a SMALLER share of the wine servings than red, white, sparkling and rosé
+    // (DC, Sep 30: an event list with Lillet Blanc gave it 8 bottles, as many as each table wine). Weight 1/4.
+    var APERITIF=/\b(lillet|dubonnet|cocchi|aperiti(?:f|vo)|kina|byrrh|pineau|sherry|port|porto|madeira|marsala|vermouth|sake)\b/i;
+    var APERITIF_W=0.25;
+    function wineWeight(np){ return APERITIF.test(String(np.name||'')) ? APERITIF_W : 1; }
+    var wineWeightSum=byCat.wine.reduce(function(a,np){ return a+wineWeight(np); },0)||1;
+    byCat.wine.forEach(function(np){ if (wineWeight(np)<1) console.log('[buildPackage] aperitif/fortified '+JSON.stringify(np.name)+': '+APERITIF_W+' of a table wine\'s share'); });
     // Quantity for a line — independent of which product is picked, so it is planned before
     // the search (the budget target per unit needs the category's unit count).
     function planQty(np) {
@@ -986,7 +993,7 @@ async function buildPackage(iv) {
       // Spirit servings come from the BASE spirits only. Real bug (event-serving-mix, Sep 27):
       // tequila, triple sec and vodka each took a third of 40 cocktail servings -> 1 bottle each
       // (32 pours for 40 cocktails) and the triple sec counted as a pour.
-      var perProd=catN==="spirits"&&!mod?catDrinks/spiritBaseCount:catDrinks/Math.max(1,byCat[catN]?byCat[catN].length:1);
+      var perProd=catN==="spirits"&&!mod?catDrinks/spiritBaseCount:catN==="wine"?catDrinks*wineWeight(np)/wineWeightSum:catDrinks/Math.max(1,byCat[catN]?byCat[catN].length:1);
       // Option C fix (real bug from a live 150-guest event): the LLM was passing
       // INVENTED qty values the customer never stated (8, 6, 13...), and any supplied
       // qty bypassed the calculator entirely — so a package the calculator would size

@@ -17,8 +17,9 @@ turns:
   - send: "you can take the same ones listed but change the quantities, the guests just wants beer + wine, more beer than wine"
     expect:
       contains: ["Product total", "Stella", "Left out", "Tito", "Hendrick"]
-      not_matches: "(?m)^\\s*\\d+x\\s+(Tito|Hendrick)"
       not_contains: ["Ruinart", "Lillet Blanc 750 mL isn't in stock"]
       # the NA Kolsch is a 6-pack ("6PKC"): ~125 beers need ~21 packs, not 11 counted as 12-packs
       matches: "(?m)^\\s*(1[6-9]|2\\d)x Fort Point"
+      # DC (Sep 30): an aperitif gets a smaller share than the table wines (1/4): ~2-3 Lillet, not 8
+      not_matches: "(?m)^\\s*(\\d{2}|[4-9])x Lillet|^\\s*\\d+x\\s+(Tito|Hendrick)"
       log_contains: ["left out: spirits", "[list-scale] custom_list:", "[list-scale] DROPPED", "custom_list supply check OK"]
