@@ -59,5 +59,16 @@ console.log('no price anchor (rosé) — the Sep 27 smoke: Dom Perignon Rosé $6
   eq('tier unknown when unanchored', r.alternatives.every(a => a.tier === 'unknown'), true);
 }
 
+
+// Same TYPE first (DC, Sep 30): Lillet Blanc (aperitif) was offered Ruinart Blanc de Blancs, Malbec, Cabernet.
+{
+  const c = [{ name: 'Ruinart Blanc de Blancs Brut NV - 750 ML', price: 138.59 }, { name: 'Catena Malbec - 750 ML', price: 27.29 },
+    { name: 'Cocchi Americano Bianco 750 ML', price: 24.99, subCategory: 'Aperitif' }, { name: 'Chandon Brut 750 ML', price: 26.99 },
+    { name: 'Ritual Zero Proof Aperitif Alt - 750 ML', price: 28.76 }];
+  const r1 = rankAlternatives({ name: 'Lillet Blanc 750 mL' }, c, 27.94);
+  eq('an aperitif gets only (alcoholic) aperitifs', r1.alternatives.map(a => a.name), ['Cocchi Americano Bianco 750 ML']);
+  const r2 = rankAlternatives({ name: 'Lillet Blanc 750 mL', type: 'sparkling' }, c, 27.94);
+  eq('asked for sparkling near its price: sparkling, in tier first', r2.alternatives.map(a => a.name), ['Chandon Brut 750 ML', 'Ruinart Blanc de Blancs Brut NV - 750 ML']);
+}
 console.log(failed ? '\nalternatives: ' + failed + ' FAILED' : '\nalternatives: all passed');
 process.exit(failed ? 1 : 0);

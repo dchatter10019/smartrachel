@@ -83,15 +83,21 @@ const mlOf = t => { const m = norm(t).match(/(\d+(?:\.\d+)?)\s*(ml|l|cl)\b/); re
 const isOddSize = (n, size, wantMl) => /\bbox\b|\btetra\b/.test(norm(n)) || ((mlOf(n) || mlOf(size) || 750) !== (wantMl || 750));
 
 // Rank store candidates for one original. refPrice may be null (no anchor: region then price desc).
+// The candidate must be the original's TYPE (drink-type.js) — or original.type when the customer asked for another.
+// Real complaint (DC, Sep 30): Lillet Blanc (an aperitif) got Malbec, Cabernet and Sauvignon Blanc here.
+const { typeOf, isNA } = require('/home/ubuntu/rachel/drink-type.js');
 function rankAlternatives(original, candidates, refPrice, opts) {
   const o = Object.assign({ band: 0.30, perOriginal: 3 }, opts || {});
-  const ov = varietalOf(original.name), oreg = regionOf(original.name), ospark = isSparkling(original.name) || ['champagne', 'prosecco', 'cava'].includes(ov);
+  const otype = original.type || typeOf({ name: original.name });
+  const ov = original.type ? '' : varietalOf(original.name), oreg = regionOf(original.name), ospark = otype === 'sparkling' || (!original.type && (isSparkling(original.name) || ['champagne', 'prosecco', 'cava'].includes(ov)));
   const rejected = [];
   const pool = [];
   const seen = new Set();
   for (const c of candidates) {
     const key = norm(c.name); if (!c.name || seen.has(key)) continue; seen.add(key);
     const price = Number(c.price || c.salePrice || 0); if (!(price > 0)) continue;
+    if (isNA(c) !== isNA(original)) { rejected.push([c.name, isNA(c) ? 'non-alcoholic, the original is not' : 'alcoholic, the original is non-alcoholic']); continue; }
+    if (otype && typeOf(c) !== otype) { rejected.push([c.name, 'different type (' + (typeOf(c) || '?') + ', not ' + otype + ')']); continue; }
     if (ov && varietalOf(c.name) !== ov && !(ov === 'rose' && /\bros[eé]\b/i.test(c.name))) { rejected.push([c.name, 'different varietal']); continue; }
     if (isSparkling(c.name) !== ospark) { rejected.push([c.name, 'still/sparkling mismatch']); continue; }
     if (notWine(c.name) && !notWine(original.name)) { rejected.push([c.name, 'can/cider/seltzer, not a bottle of wine']); continue; }
@@ -116,7 +122,7 @@ function rankAlternatives(original, candidates, refPrice, opts) {
     return Math.abs(a.price - anchor) - Math.abs(b.price - anchor);
   });
   const picks = pool.slice(0, o.perOriginal).map(x => { const y = Object.assign({}, x); delete y._rs; return y; });
-  return { original: original.name, varietal: ov || null, region: oreg ? oreg.name : null, ref_price: refPrice || null,
+  return { original: original.name, type: otype || null, varietal: ov || null, region: oreg ? oreg.name : null, ref_price: refPrice || null,
     alternatives: picks, no_tier_match: !!refPrice && !picks.some(p => p.tier === 'same tier'), considered: pool.length, rejected };
 }
 

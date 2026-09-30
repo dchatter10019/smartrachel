@@ -11,7 +11,19 @@ async function checkStoreCoverage(zip) {
   try {
     for (const client of ['bevvibot']) {   // single probe: the backend resolves the store from the zip
       const url = 'https://api-client.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode=' + encodeURIComponent(zip) + '&searchBy=' + encodeURIComponent('wine') + '&client=bevvibot' + '&limit=1';
-      const res = await fetch(url);
+      // Bevvi's search answers 503/429 in bursts (Sep 30: 17 sessions were told "we don't serve 10019" during
+      // one). Retry twice; still failing = coverage UNKNOWN (null: the address is accepted, search retries later),
+      // or the zip's earlier answer — never "no store".
+      let res = null, why = '';
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try { res = await fetch(url); why = res.ok ? '' : 'HTTP ' + res.status; } catch (e) { res = null; why = e.message; }
+        if (res && (res.ok || (res.status < 500 && res.status !== 429))) break;
+        if (attempt < 3) await new Promise(r => setTimeout(r, attempt * 600));
+      }
+      if (!res || !res.ok) {
+        console.log('[coverage] zip', zip, 'catalog unreachable (' + why + ') — coverage unknown, not refused' + (zipClientCache[zip] ? ' (served earlier)' : ''));
+        return zipClientCache[zip] ? { zip, store_count: 1, client: zipClientCache[zip], stores: [{ name: zipClientCache[zip] }] } : null;
+      }
       const data = await res.json().catch(() => []);
       if (Array.isArray(data) && data.length > 0) {
         zipClientCache[zip] = client;

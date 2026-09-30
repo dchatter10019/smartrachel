@@ -897,11 +897,13 @@ async function executeTool(name, input) {
     const loc = resolveLocation(input.zip || '');
     if (!loc.kitchen) return { success: false, error: 'No store for zip ' + input.zip };
     const { rankAlternatives, varietalOf, regionOf } = require('./alternatives.js');
+    const DT = require('/home/ubuntu/rachel/drink-type.js');
     const { lookupMarket, cachedMarket } = require('./catalog-guard.js');
     const originals = (Array.isArray(input.originals) ? input.originals : []).filter(o => o && o.name).slice(0, 6);
     if (!originals.length) return { success: false, error: 'originals required: [{name, category}]' };
     const results = await Promise.all(originals.map(async (o) => {
-      const v = varietalOf(o.name), reg = regionOf(o.name);
+      const oType = o.type || DT.typeOf({ name: o.name });
+      const v = o.type ? '' : varietalOf(o.name), reg = regionOf(o.name);
       let ref = parseFloat(o.ref_price) || 0, refSource = ref ? 'given' : '';
       if (!ref) {
         const probe = { name: o.name, size: '750', units: 'ML' };
@@ -915,11 +917,13 @@ async function executeTool(name, input) {
       }
       if (!ref && parseFloat(o.basket_price) > 0) { ref = parseFloat(o.basket_price); refSource = 'basket price'; }
       if (!ref) console.log('[alternatives] no market price for', JSON.stringify(o.name), '— ranking by region, then nearest the middle price; tier unknown');
-      const terms = [v || String(o.category || 'wine')];
+      const terms = [v || DT.searchTerm(oType) || String(o.category || 'wine')];   // "Lillet Blanc" -> "aperitif", not "wine"
       if (reg && v) terms.push(reg.name + ' ' + v);
       let cands = [];
       for (const t of terms) { try { cands = cands.concat(await searchWithFallbacks(loc.kitchen, loc.client, t, 100) || []); } catch (e) { console.error('[alternatives] search failed for', t, e.message); } }
-      const r = rankAlternatives({ name: o.name }, cands.map(formatProduct), ref || null);
+      // Bevvi's subCategory ("Aperitif", "Sparkling") decides the drink type — added here only, not to every search
+      // result the LLM sees (an extra field there changed how it formatted product lists).
+      const r = rankAlternatives({ name: o.name, type: o.type || '' }, cands.map(p => Object.assign(formatProduct(p), { subCategory: p.subCategory || '' })), ref || null);
       console.log('[alternatives] ' + JSON.stringify(o.name) + ' | varietal ' + (r.varietal || '?') + ' | region ' + (r.region || '?') + ' | ref ' + (ref ? '$' + ref.toFixed(2) + ' (' + refSource + ')' : 'none') +
         ' | considered ' + r.considered + ', rejected ' + r.rejected.length + ' | picks: ' + r.alternatives.map(a => a.name + ' $' + a.price + ' [' + a.tier + ', ' + a.region_match + ']').join('; ') + (r.no_tier_match ? ' | NO TIER MATCH' : ''));
       return { query: o.name, found: r.alternatives.length > 0, original_price_estimate: ref ? Math.round(ref) : null, price_source: refSource || null,

@@ -101,7 +101,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   "just/only beer + wine", "no liquor" set the other categories to 0%. A held PRODUCT LIST + guest count answered
   with the mix = the listed products sized for the event (eventParams.list_scale -> rachel.js [list-scale]:
   calculator quantities, 0% categories dropped and listed in the reply, no re-adds that turn).
-- A not-carried product's stand-in is anchored to its web market price (buildPackage, ±30% first). An exact
+- A not-carried product's stand-in is the SAME TYPE (rachel/drink-type.js: aperitif / fortified / sparkling / rose / red /
+  white / spirit type; non-alcoholic only for non-alcoholic), in buildPackage and the alternatives intent (originals[].type
+  only when the customer asks for another type); none of that type = unavailable, never another type. Then anchored
+  to its web market price (±30% first). An exact
   product filed under another category (Lillet = Liquor/Aperitif) is kept. In an event list, aperitif/fortified
   wines (Lillet, vermouth, sherry, port...) get 1/4 of a table wine's share of the wine servings (DC). Pack size comes from the name ("6PKC").
 - Catalog 5xx/429: searchProducts retries twice; a build that still hit failures returns CATALOG_UNREACHABLE,

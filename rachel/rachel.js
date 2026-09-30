@@ -52,7 +52,7 @@ const ALL_TOOLS = [
         zip:       { type: "string", description: "Delivery zip code" },
         email:     { type: "string", description: "Customer email" },
         queries:   { type: "array",  description: "For product_query: [{name, category, limit}]" },
-        originals: { type: "array",  description: "For alternatives: the products the customer asked for that this store does not carry — [{name, category}], names exactly as the customer gave them" },
+        originals: { type: "array",  description: "For alternatives: the products the customer asked for that this store does not carry — [{name, category}], names exactly as the customer gave them. Alternatives are the SAME TYPE as the original (an aperitif for an aperitif, sparkling for sparkling). Only when the customer explicitly asks for another type (\"a sparkling wine close to Lillet's price\") add type: aperitif | fortified | sparkling | rose | red | white." },
         guests:    { type: "number", description: "For menu_build/custom_list" },
         hours:     { type: "number", description: "For menu_build/custom_list — event duration in hours. Use this OR drinks_per_person, not both; if the customer gives drinks-per-person directly, omit hours entirely." },
         drinks_per_person: { type: "number", description: "For menu_build/custom_list — alternative to hours: use when the customer specifies how many drinks each person will have directly (e.g. 'each person will have about 2 drinks') instead of the event duration. Takes priority over hours if both are somehow present." },

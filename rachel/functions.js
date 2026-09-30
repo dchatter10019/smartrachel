@@ -1107,6 +1107,21 @@ async function buildPackage(iv) {
         // find something, send what you would recommend instead"). Style words only ("red ale", "margarita").
         var sq0=PM.styleQuery(reqForFit, PM.fit(reqForFit, {name:''}).missing);
         var alt0=sq0 ? (await doSearch(sq0, catN)).filter(function(p){return !isMini(p)&&altSane(p);}) : [];
+        // SAME TYPE FIRST (drink-type.js): an aperitif by an aperitif, sparkling by sparkling, red by red. Real
+        // complaint (DC, Sep 30): "Lillet Blanc" -> searching "blanc" -> Ruinart Blanc de Blancs, a $138 champagne.
+        // None of that type here: unavailable (and said), never a different type.
+        var DT=require('./drink-type.js'), origT=DT.typeOf({name:np.name});
+        if (origT) {
+          var origNA=DT.isNA({name:np.name});
+          var sameT=alt0.filter(function(p){return DT.typeOf(p)===origT&&DT.isNA(p)===origNA;}), viaT='';
+          if (!sameT.length && DT.searchTerm(origT)) {
+            viaT=DT.searchTerm(origT);
+            sameT=(await doSearch(viaT)).filter(function(p){return !isMini(p)&&DT.typeOf(p)===origT&&DT.isNA(p)===origNA;});   // no category check: an aperitif may be filed as Liquor
+          }
+          console.log('[buildPackage] ALTERNATIVE type for '+JSON.stringify(np.name)+': '+origT+' — '+sameT.length+' candidate(s) of that type'+(viaT?' (searched "'+viaT+'")':' of '+alt0.length+' "'+sq0+'" result(s)'));
+          if (!sameT.length){console.log('[buildPackage] UNAVAILABLE (no '+origT+' stand-in here — a different type is never substituted):', JSON.stringify(np.name));unavailable.push(np.name);continue;}
+          alt0=sameT;
+        }
         if (!alt0.length){console.log('[buildPackage] UNAVAILABLE (no search results'+(sq0?', no "'+sq0+'" alternative':', no style words to search')+'):', JSON.stringify(np.name));unavailable.push(np.name);continue;}
         found=alt0; altNote=PM.brandWords(reqForFit).length ? PM.displayName(np.name)+' isn\'t in stock here' : '';
         console.log('[buildPackage] ALTERNATIVE for '+JSON.stringify(np.name)+' (not carried): searching "'+sq0+'" — '+alt0.length+' candidate(s)');
