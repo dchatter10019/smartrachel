@@ -36,6 +36,11 @@ const TABLE = {
     { id: 'basket.offer_checkout', when: t => !t.corporate, text: 'Ready to place the order?', accept: /\bplace\b|\border\b|checkout|^\s*(?:yes|yep|sure)\b/i },
   ],
   basket_updated: [
+    // A real basket (3+ lines, e.g. an event menu) is often a proposal first. DC (Sep 30): after a swap Rachel
+    // offered only "ready to place the order?" and never the proposal. Same id as basket_idle's: a bare "yes" is asked which.
+    { id: 'basket.offer_order_or_proposal', when: t => !t.orderStarted && t.basketItems >= 3,
+      text: 'Anything else — or shall I place the order, or send you a PDF proposal?',
+      accept: /\bplace\b|\border\b|checkout|proposal|\bpdf\b|\bquote\b|^\s*(?:yes|yep|yeah|sure|ok(?:ay)?)\b/i },
     { id: 'basket.offer_checkout', when: t => !t.orderStarted, text: 'Anything else, or ready to place the order?', accept: /\bplace\b|\border\b|^\s*(?:yes|yep|sure)\b/i },
   ],
   item_unavailable: [

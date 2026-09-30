@@ -715,6 +715,7 @@ RULES:
   // Everything the customer has said this conversation (tool guards check stated facts against it, e.g. event hours).
   const customerSaid = messages.filter(mm => mm.role === 'user').map(mm => typeof mm.content === 'string' ? mm.content : (Array.isArray(mm.content) ? mm.content.filter(c => c && c.type === 'text').map(c => c.text).join(' ') : '')).join('\n');
   let finalResponse = '';
+  let proposalUrlThisTurn = '';
   let iterations = 0;
 
   const tools = getTools(channel_format, context);
@@ -744,6 +745,7 @@ RULES:
       for (const block of response.content) {
         if (block.type === 'tool_use') {
           const result = await executeTool(block.name, block.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems, onShowBasket, eventParams, onUpdateQuantity, onOrderPlaced, sessionState, customerSaid);
+          if (result && result.success && result.download_url && block.input && block.input.intent === 'generate_proposal') proposalUrlThisTurn = result.download_url;
           toolResults.push({
             type: 'tool_result',
             tool_use_id: block.id,
@@ -763,6 +765,14 @@ RULES:
     }
   }
 
+  // A proposal generated this turn is always linked with its REAL URL. Real bug (Sep 30, DC, Slack): the reply said
+  // "<url|Download proposal>" — the LLM wrote a placeholder, so there was no link at all.
+  if (proposalUrlThisTurn && !finalResponse.includes(proposalUrlThisTurn)) {
+    const link = channel_format === 'slack' ? '<' + proposalUrlThisTurn + '|Download proposal>' : proposalUrlThisTurn;
+    const fixed = finalResponse.replace(/<(?!https?:)[^<>|\s]*\|([^>]*)>/g, '<' + proposalUrlThisTurn + '|$1>').replace(/\((?!https?:)[^()\s]*\)/g, m => /url|link/i.test(m) ? '(' + proposalUrlThisTurn + ')' : m);
+    finalResponse = fixed.includes(proposalUrlThisTurn) ? fixed : link + '\n\n' + finalResponse;
+    console.log('[proposal] reply had no real link to the PDF — ' + (fixed.includes(proposalUrlThisTurn) ? 'placeholder replaced' : 'link added') + ': ' + proposalUrlThisTurn);
+  }
   return { response: finalResponse, messages: claudeMessages };
 }
 

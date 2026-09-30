@@ -104,6 +104,11 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   is stated in the same message ("only beer and wine, make it equal").
 - A replacement for a not-carried line (pick from the listed options, or confirm_substitute) REPLACES it at the line's
   planned qty (buildPackage unavailable_qty -> state.unavailableQty; else the qty in the customer's own list).
+  The basket line an item refers to = basketLineFor (whole words, most of them) — never a first-word substring.
+  After a swap the reply lists the whole basket (2+ lines); a 3+ line basket's follow-up offers order OR proposal.
+- Proposal requests: phrase list + "<verb> ... proposal/pdf" (not negated/a question). A basket proposal (2+ lines) is
+  generated IN CODE from the basket after client + date, reply and link written in code; the LLM is only a fallback.
+  Any LLM-generated proposal reply gets the real URL (rachel.js replaces a placeholder like "<url|...>").
 - A not-carried product's stand-in is the SAME TYPE (rachel/drink-type.js: aperitif / fortified / sparkling / rose / red /
   white / spirit type; non-alcoholic only for non-alcoholic), in buildPackage and the alternatives intent (originals[].type
   only when the customer asks for another type); none of that type = unavailable, never another type. Then anchored

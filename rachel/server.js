@@ -465,6 +465,26 @@ function getChannelNote(format) {
 // ── Rachel chat wrapper ────────────────────────────────────────────────────
 // Hoisted so BOTH the confirm_substitute tool path and the deterministic pick-list
 // handler (in the request handler, outside callRachel's scope) share one implementation.
+// The basket line an item name refers to: WHOLE words, most of them. Real bug (Sep 30): matched on the first word
+// as a substring, "La" (La Crema) hit "B-la-nc" — a swap for the never-added La Crema deleted 10x Chandon Reserve
+// Blanc de Blancs and gave its stand-in Chandon's quantity. -> index or -1
+function basketLineFor(items, itemName) {
+  const nrmW = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/['’]/g, '').replace(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/g, ' ').split(/[^a-z0-9]+/).filter(w => w.length >= 2 && !/^(the|of|and|de|du|la|le|el|by)$/.test(w));
+  const origW = nrmW(itemName);
+  if (!origW.length) return -1;
+  const need = Math.min(origW.length, Math.max(2, Math.ceil(origW.length * 0.6)));
+  return (items || []).findIndex(it => { const iw = new Set(nrmW(it.name || it.label)); return origW.filter(w => iw.has(w)).length >= need; });
+}
+// The whole basket after a change, so the customer sees what they now have. DC (Sep 30): "Got it — 10x Navigator ...
+// has replaced La Crema" showed one line of a 7-line event basket. Only for 2+ lines (a single line IS the reply).
+function basketAfterChange(state) {
+  let items = [];
+  try { items = JSON.parse(state.lastLineItems || '[]') || []; } catch (e) {}
+  if (items.length < 2) return '';
+  const total = items.reduce((a, li) => a + (li.qty || li.quantity || 1) * (parseFloat(li.price) || 0), 0);
+  return '\n\nYour order now:\n' + items.map(li => { const q = li.qty || li.quantity || 1, p = parseFloat(li.price) || 0; return q + 'x ' + String(li.name || li.label || '').replace(/ \*$/, '') + ' — $' + p.toFixed(2) + ' ea = $' + (q * p).toFixed(2); }).join('\n') +
+    '\n\nProduct total: $' + total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 // The quantity the customer asked for an item in their own recent messages ("3 x La Crema Pinot Noir Sonoma Coast
 // 750 mL") — for a replacement of an item that never made the basket (not carried). Real bug (Sep 30, DC): picking
 // Decoy Pinot Noir for the unavailable "3 x La Crema Pinot Noir" added 1 bottle and asked "How many?".
@@ -535,11 +555,12 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
             }
           } catch (e) { console.log('[confirm-substitute] cross-type check failed: ' + e.message); }
         }
-        const originalBrandWord = originalItem ? originalItem.split(' ')[0].toLowerCase() : null;
+        // The line being replaced (basketLineFor: whole words — "La" never matches "Blanc").
         let qtyToUse = 1;
         let categoryToUse = '';
-        if (originalBrandWord) {
-          const removeIdx = items.findIndex(it => (it.name || it.label || '').toLowerCase().includes(originalBrandWord));
+        if (originalItem) {
+          const removeIdx = basketLineFor(items, originalItem);
+          if (removeIdx >= 0) console.log('[confirm-substitute] line replaced: ' + JSON.stringify(items[removeIdx].name || items[removeIdx].label));
           if (removeIdx >= 0) {
             qtyToUse = items[removeIdx].qty || items[removeIdx].quantity || 1;
             categoryToUse = items[removeIdx].category || '';
@@ -1051,7 +1072,7 @@ function ctaTurn(st, body, question, msg, context) {
   // Something the customer named isn't available: offering its substitute beats the basket follow-up.
   if (e.unmatched.length) return Object.assign(base, { kind: 'item_unavailable', unmatchedName: e.unmatched[0], substitute: opts[0] || null });
   if (has('built_basket')) return Object.assign(base, { kind: 'basket_built' });
-  if (has('updated_basket') || has('showed_basket') || changed) return Object.assign(base, { kind: 'basket_updated' });
+  if (has('updated_basket') || has('showed_basket') || changed) return Object.assign(base, { kind: 'basket_updated', basketItems: items.length });
   if (opts.length >= 2) return Object.assign(base, { kind: 'search_multi', options: opts.length });
   // A single search result held as context ([product-discussed]) IS the product — known in code, whatever
   // the reply's layout (Sep 29 QA: "Yes! *Tito's Handmade Vodka 1.75 L* is available — $43.99" has no
@@ -2944,7 +2965,7 @@ app.post('/chat', async (req, res) => {
                 state.pendingSubstitutes = (state.pendingSubstitutes || []).filter(x => x !== pend[0]); saveFlowState();
                 console.log('[add-item] pick replaces the not-carried ' + JSON.stringify(pend[0]) + ' (' + (pv || pt) + ') -> ' + pr.name + ' x' + (rq || 1));
                 if (rq) {
-                  const rP = 'Got it — ' + rq + 'x ' + labelR + ' in place of ' + pend[0] + '. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+                  const rP = 'Got it — ' + rq + 'x ' + labelR + ' in place of ' + pend[0] + '.' + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
                   return res.json({ text: rP, response: rP });
                 }
                 state.pendingQtyFor = pr.name; saveFlowState();
@@ -2958,7 +2979,7 @@ app.post('/chat', async (req, res) => {
             if (!(rr2 && rr2.success === false)) {
               retirePendingFor(state, pr.name);
               const kq = targetA.qty || targetA.quantity || 1;
-              const rT = 'Got it — ' + kq + 'x ' + labelR + ' (replacing ' + targetA.name + '). Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+              const rT = 'Got it — ' + kq + 'x ' + labelR + ' (replacing ' + targetA.name + ').' + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
               return res.json({ text: rT, response: rT });
             }
           }
@@ -3755,7 +3776,13 @@ app.post('/chat', async (req, res) => {
       'generate the proposal', 'pdf proposal', 'create a proposal', 'create the proposal', 'make a proposal',
       'make the proposal', 'send a proposal', 'send the proposal', 'build a proposal', 'get me a proposal',
       'want a proposal', 'want the proposal'];
-    const isProposalTrigger = proposalTriggers.some(t => msgLower.includes(t));
+    // Also any "<verb> ... proposal/pdf" within a few words ("no.. send ME the proposal first", "can you prepare a
+    // proposal", "email me the pdf"), unless negated. Real bug (Sep 30, DC): "send me the proposal" matched no
+    // phrase; the LLM generated it with an invented client name and replied "<url|Download proposal>" (no link).
+    const PROPOSAL_ASK = /\b(?:generate|create|make|send|build|get|want|need|prepare|draft|give|share|email|do)\b[^.?!\n]{0,24}?\b(?:proposal|pdf)\b|^\W*(?:the\s+|a\s+)?(?:proposal|pdf)(?:\s+please)?\W*$/i;
+    const PROPOSAL_NOT = /\b(?:don'?t|do not|no need|not yet|without|skip)\b[^.?!\n]{0,20}\b(?:proposal|pdf)\b/i;
+    const isProposalTrigger = proposalTriggers.some(t => msgLower.includes(t)) || (PROPOSAL_ASK.test(message) && !PROPOSAL_NOT.test(message) && !/\?\s*$/.test(message.replace(/\b(?:can|could|would) you\b.*$/i, '')));
+    if (isProposalTrigger && !proposalTriggers.some(t => msgLower.includes(t))) console.log('[proposal] request recognised: ' + JSON.stringify(message).slice(0, 80));
     // An explicit proposal request ALWAYS restarts the flow. Previously it was ignored
     // whenever a step was already in progress (`&& !state.proposalStep`), so a request
     // that crashed mid-flow left proposalStep stuck (e.g. 'qty') and the customer's next
@@ -3899,6 +3926,34 @@ app.post('/chat', async (req, res) => {
         } catch(e) {}
       }
       const isMultiItemProposal = existingItemsForProposal.length > 1;
+      // A basket proposal is generated IN CODE from the basket (generate_proposal, no LLM) and the reply, with the
+      // real link, is written here. Real bug (Sep 30, DC): the LLM, handed "generate a proposal", stopped to ask about
+      // La Crema — already replaced two turns earlier — and before that replied "<url|Download proposal>" with no URL.
+      if (isMultiItemProposal) {
+        try {
+          const po = (state.eventParams && state.eventParams.proposalOpts) || {};
+          const rrP = await fetch('http://127.0.0.1:8300/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'generate_proposal', arguments: Object.assign({
+              line_items: JSON.stringify(existingItemsForProposal), client_name: pd.client_name || '', event_date: pd.event_date || '', email, channel: format || 'slack',
+              notes: state.address ? 'Delivery: ' + state.address + '.' : '' }, po.tax_exempt ? { tax_exempt: true } : {}, po.totals_only ? { totals_only: true } : {}, po.hide_subtotals ? { hide_subtotals: true } : {}) } }) });
+          const rtP = await rrP.text(); const rlP = rtP.split('\n').find(l => l.startsWith('data:'));
+          const rP = rlP ? JSON.parse(JSON.parse(rlP.replace('data:', '').trim()).result.content[0].text) : null;
+          if (rP && rP.success && rP.download_url) {
+            state.lastProposalUrl = rP.download_url; state.proposalStep = null; state.proposalData = null;
+            if (pd.client_name) state.savedClientName = pd.client_name;
+            saveFlowState(); events.action('generated_proposal');
+            const total = existingItemsForProposal.reduce((a, li) => a + (li.qty || li.quantity || 1) * (parseFloat(li.price) || 0), 0);
+            console.log('[proposal] generated in code from the basket for ' + JSON.stringify(pd.client_name) + ' (' + existingItemsForProposal.length + ' lines, event ' + (pd.event_date || 'none') + '): ' + rP.download_url);
+            const link = format === 'slack' ? '<' + rP.download_url + '|Download proposal>' : 'Download proposal: ' + rP.download_url;
+            const sumP = 'Your proposal is ready!\n\n' + (format === 'slack' ? '*Client:* ' : 'Client: ') + (pd.client_name || '—') + '\n' + (format === 'slack' ? '*Event Date:* ' : 'Event date: ') + (pd.event_date || '—') + '\n\n' +
+              existingItemsForProposal.map(li => { const q = li.qty || li.quantity || 1, pr = parseFloat(li.price) || 0; return q + 'x ' + String(li.name || li.label || '').replace(/ \*$/, '') + ' — $' + pr.toFixed(2) + ' ea = $' + (q * pr).toFixed(2); }).join('\n') +
+              '\n\nProduct total: $' + total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' (tax, service, tip and delivery are itemized in the PDF)\n\n' + link +
+              '\n\nWould you like me to email this to anyone, place the order, or make any changes?';
+            return res.json({ text: sumP, response: sumP });
+          }
+          console.log('[proposal] in-code generation failed (' + ((rP && rP.error) || 'no result') + ') — falling back to the LLM');
+        } catch (e) { console.log('[proposal] in-code generation error: ' + e.message + ' — falling back to the LLM'); }
+      }
       const proposalMsg = isMultiItemProposal
         ? `Generate a PDF proposal for client "${pd.client_name}" event date "${pd.event_date}" using the existing line items from the last product search results exactly as-is — do NOT change any quantities.`
         : `Generate a PDF proposal for client "${pd.client_name}" event date "${pd.event_date}" quantity ${pd.qty} bottles using the last product search results. Pass line_items with qty updated to ${pd.qty}.`;
@@ -4612,7 +4667,6 @@ app.post('/chat', async (req, res) => {
                 originalItemName = state.pendingSubstitutes[0];
               }
             }
-            const originalBrandWord = originalItemName ? originalItemName.split(' ')[0].toLowerCase() : null;
             let items = [];
             try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
             let qtyToUse = 1;
@@ -4621,9 +4675,10 @@ app.post('/chat', async (req, res) => {
             // line item with product_id:'', upc:'', establishmentId:'' — real bug: a
             // "yes" to a Tito's substitute pushed a bare name, and createCorpOrder failed
             // on a product with no identifiers ("system error placing the order").
-            if (originalBrandWord) {
-              const removeIdx = items.findIndex(it => (it.name || it.label || '').toLowerCase().includes(originalBrandWord));
+            if (originalItemName) {
+              const removeIdx = basketLineFor(items, originalItemName);   // whole words: "La" never matches "Blanc"
               if (removeIdx >= 0) qtyToUse = items[removeIdx].qty || items[removeIdx].quantity || 1;
+              else qtyToUse = (state.unavailableQty || {})[originalItemName] || requestedQtyFor(sessionKey, originalItemName) || 1;   // never in the basket (not carried)
             }
             const subRes = await applyBasketSubstitute(sessionKey, email, hasOriginalToReplace ? originalItemName : '', matched.name + (matched.size ? ' - ' + matched.size : ''), matched.price, matched.size);
             if (subRes && subRes.success === false) {
@@ -4651,6 +4706,7 @@ app.post('/chat', async (req, res) => {
             const stillPending = hasOriginalToReplace && state.pendingSubstitutes.length > 0;
             const confirmReply = 'Got it — ' + qtyToUse + 'x ' + matched.name + (matched.size ? ' (' + matched.size + ')' : '') +
               ' at $' + matched.price.toFixed(2) + ' ea ' + (hasOriginalToReplace ? 'has replaced ' + originalItemName + ' in your order.' : 'has been added to your order.') +
+              basketAfterChange(state) +
               (stillPending ? ' Still need a substitute for: ' + state.pendingSubstitutes.join(', ') + '.' : ' Would you like to place the order, generate a PDF proposal, or make any changes?');
             return res.json({ text: confirmReply, response: confirmReply });
           } catch (e) {

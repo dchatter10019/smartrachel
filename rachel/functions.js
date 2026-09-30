@@ -1101,6 +1101,14 @@ async function buildPackage(iv) {
         var exactX=results[n].filter(function(p){return !isMini(p)&&PM.verdict(reqForFit,p).kind==='exact';});
         if (exactX.length) { found=exactX; console.log('[buildPackage] category: '+JSON.stringify(np.name)+' asked as '+catN+', the catalog files '+exactX[0].name+' as '+(exactX[0].category||'?')+(exactX[0].subCategory?' / '+exactX[0].subCategory:'')+' — exact product kept'); }
       }
+      // Non-alcoholic only for non-alcoholic, alcoholic only for alcoholic — in every match, not only stand-ins. Real bug
+      // (Sep 30, DC): "Fort Point Beer Co. KSA Kolsch Non-Alcoholic" -> the alcoholic "Fort Point KSA Kolsch 6pk".
+      if (found.length) {
+        var DTna=require('./drink-type.js'), wantNA=DTna.isNA({name:np.name});
+        var naOk=found.filter(function(p){return DTna.isNA(p)===wantNA;});
+        if (naOk.length<found.length) console.log('[buildPackage] '+(wantNA?'non-alcoholic':'alcoholic')+' request '+JSON.stringify(np.name)+': dropped '+(found.length-naOk.length)+' '+(wantNA?'alcoholic':'non-alcoholic')+' match(es)'+(naOk.length?'':' — none left, looking for a stand-in'));
+        found=naOk;
+      }
       var altNote='', altRef0=0;
       if (found.length===0){
         // Not carried: recommend the closest style instead of dropping the line (DC, Sep 29: "if you can't

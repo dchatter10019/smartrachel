@@ -20,6 +20,19 @@ turns:
       not_matches: "(?m)^\\s*1[.)]\\s*\\**Goldeneye"
   - send: "{pick}"
     expect:
-      contains: ["in place of La Crema"]
+      # DC (Sep 30): after the swap show the WHOLE basket and offer the proposal, not only "ready to place the order?"
+      contains: ["in place of La Crema", "Your order now:", "Product total", "PDF proposal"]
       not_contains: ["How many bottles"]
       log_contains: ["[add-item] pick replaces the not-carried"]
+  # "no.. send me the proposal first" (a leading "no" and "send ME the proposal") starts the proposal flow in code;
+  # the LLM generated it with an invented client and replied "<url|Download proposal>" — no link.
+  - send: "no.. send me the proposal first"
+    expect:
+      contains: ["client or company name"]
+      log_contains: ["[proposal] request recognised"]
+  - send: "Acme QA Events"
+    expect: {matches: "(?i)event date"}
+  - send: "October 20"
+    expect:
+      matches: "https?://\\S+/proposals/bevvi-proposal[^\\s|>)]*\\.pdf"
+      not_contains: ["<url|"]

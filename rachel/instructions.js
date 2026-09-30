@@ -28,7 +28,11 @@ function unaddressed(instrs, reply, before, after) {
   const q = it => Number(it.qty || it.quantity || 1);
   const b = new Map((before || []).map(it => [key(it), q(it)]));
   const changed = (after || []).filter(it => b.get(key(it)) !== q(it));
+  // An approval of a line is not a request to do something: "12x Fort Point KSA Kolsch -> good" (Sep 30, DC) got
+  // "I haven't done this one yet ... Want me to go ahead?".
+  const APPROVAL = /(?:->|→|:|=|-|—|\bis\b|\bare\b)\s*(?:good|ok(?:ay)?|fine|great|perfect|keep(?: it)?|approved|looks good|that'?s (?:good|fine)|yes|👍)\s*[.!]*\s*$/i;
   return instrs.filter(instr => {
+    if (APPROVAL.test(String(instr))) return false;
     const kw = keywords(instr);
     if (!kw.length) return false;
     const num = (norm(instr).match(/\bto\s+(\d{1,3})\b|\b(\d{1,3})\s*(?:bottles?|x\b)/) || []).slice(1).find(Boolean);

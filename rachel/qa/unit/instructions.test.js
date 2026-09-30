@@ -63,5 +63,13 @@ console.log('descriptor words out of search text');
   eq('nothing left -> unchanged', stripDescriptors('premium 750 ml'), 'premium 750 ml');
 }
 
+// An approval is not an unaddressed instruction (Sep 30, DC: "... -> good" got "I haven't done this one yet").
+{
+  const { unaddressed } = require('../../instructions.js');
+  const got = unaddressed(['12x Fort Point KSA Kolsch 6pk 12 OZ Can -> good', 'La Crema Pinot Noir Sonoma Coast 750 mL -> suggest another 750 ML'], 'Here are some alternatives for La Crema Pinot Noir', [], []);
+  const ok = JSON.stringify(got) === JSON.stringify([]);
+  if (!ok) failed++;
+  console.log((ok ? '  ✓ ' : '  ✗ ') + 'an approval ("-> good") is never flagged as not done' + (ok ? '' : ' got ' + JSON.stringify(got)));
+}
 console.log(failed ? '\ninstructions: ' + failed + ' FAILED' : '\ninstructions: all passed');
 process.exit(failed ? 1 : 0);
