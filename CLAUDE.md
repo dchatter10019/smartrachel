@@ -100,7 +100,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   price-tier critic notes are dropped (rachel.js), prompt SPEND-THE-BUDGET rule. Every menu_build logs a supply check (OK/FAILED).
   "just/only beer + wine", "no liquor" set the other categories to 0%. A held PRODUCT LIST + guest count answered
   with the mix = the listed products sized for the event (eventParams.list_scale -> rachel.js [list-scale]:
-  calculator quantities, 0% categories dropped and listed in the reply, no re-adds that turn).
+  calculator quantities, 0% categories dropped and listed in the reply, no re-adds that turn) — also when the mix
+  is stated in the same message ("only beer and wine, make it equal").
+- A replacement for a not-carried line (pick from the listed options, or confirm_substitute) REPLACES it at the line's
+  planned qty (buildPackage unavailable_qty -> state.unavailableQty; else the qty in the customer's own list).
 - A not-carried product's stand-in is the SAME TYPE (rachel/drink-type.js: aperitif / fortified / sparkling / rose / red /
   white / spirit type; non-alcoholic only for non-alcoholic), in buildPackage and the alternatives intent (originals[].type
   only when the customer asks for another type); none of that type = unavailable, never another type. Then anchored

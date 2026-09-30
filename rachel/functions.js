@@ -1726,6 +1726,9 @@ async function buildPackage(iv) {
     estimated_tip:tip.toFixed(2), delivery_fee:delivery.toFixed(2), estimated_grand_total:grand.toFixed(2),
     product_budget:String(productBudget), budget_used_pct:String(usedPct),
     preferred_brands:prefList.join(", "), unavailable:unavailable.join(", "),
+    // The quantity each unavailable named line was planned at (the customer's, or the event calculator's): its
+    // stand-in gets it (server.js applyBasketSubstitute) instead of 1.
+    unavailable_qty:JSON.stringify(isCustom&&plannedQty?namedProducts.reduce(function(o,np,ix){ if(unavailable.indexOf(np.name)>=0&&plannedQty[ix]) o[np.name]=plannedQty[ix].qty; return o; },{}):{}),
     brand_substitutions:(typeof brandSubstitutions!=='undefined'?brandSubstitutions:[]).join("; "),
     total_drinks:String(totalDrinks), drinks_per_person:String(baseDpp), full_bar_note:fullBarNote,
     category_needs:categoryNeeds?JSON.stringify(categoryNeeds):"", summary:summary };

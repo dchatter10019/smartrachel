@@ -465,6 +465,24 @@ function getChannelNote(format) {
 // ── Rachel chat wrapper ────────────────────────────────────────────────────
 // Hoisted so BOTH the confirm_substitute tool path and the deterministic pick-list
 // handler (in the request handler, outside callRachel's scope) share one implementation.
+// The quantity the customer asked for an item in their own recent messages ("3 x La Crema Pinot Noir Sonoma Coast
+// 750 mL") — for a replacement of an item that never made the basket (not carried). Real bug (Sep 30, DC): picking
+// Decoy Pinot Noir for the unavailable "3 x La Crema Pinot Noir" added 1 bottle and asked "How many?".
+function requestedQtyFor(sessionKey, itemName) {
+  const nrm = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/['’]/g, '');
+  const want = nrm(itemName).replace(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/g, ' ').split(/[^a-z0-9]+/).filter(w => w.length >= 3);
+  if (!want.length) return 0;
+  const msgs = (sessions[sessionKey] || []).filter(m => m.role === 'user').slice(-8).reverse();
+  for (const m of msgs) {
+    for (const line of String(typeof m.content === 'string' ? m.content : '').split(/\n/)) {
+      const q = line.match(/^\s*(\d{1,4})\s*(?:x|×)?\s+(.+)$/i);
+      if (!q) continue;
+      const lw = nrm(q[2]);
+      if (want.filter(w => lw.includes(w)).length >= Math.min(3, want.length)) return parseInt(q[1], 10);
+    }
+  }
+  return 0;
+}
 async function applyBasketSubstitute(sessionKey, email, originalItem, replacementName, replacementPrice, replacementSize, opts) {
       // The LLM calls this explicitly whenever it recognizes the customer has confirmed
       // a substitute, in ANY phrasing — replacing the earlier, fundamentally fragile
@@ -526,6 +544,9 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
             qtyToUse = items[removeIdx].qty || items[removeIdx].quantity || 1;
             categoryToUse = items[removeIdx].category || '';
             items.splice(removeIdx, 1);
+          } else {
+            const rq = (opts && opts.qty) || ((getState(sessionKey).unavailableQty || {})[originalItem]) || requestedQtyFor(sessionKey, originalItem);
+            if (rq) { qtyToUse = rq; console.log('[confirm-substitute] ' + JSON.stringify(originalItem) + ' was never in the basket (not carried) — its requested qty ' + rq + ' goes to ' + replacementName); }
           }
         }
         // Resolve the replacement to a REAL catalog product. Real bug: the LLM called
@@ -787,6 +808,20 @@ function parseServingMix0(msg, cats, requireCue) {
   const tot = Object.values(out).reduce((x, y) => x + y, 0) || 1; cats.forEach(k => { out[k] = out[k] / tot; });
   return { mix: out, why: 'most: ' + named.join(' > ') };
 }
+// A product list + a guest count, with the serving mix known: the listed products are sized for the event
+// (rachel.js [list-scale]) — unless the customer says to keep the quantities. Sets eventParams.list_scale.
+function listScaleFor(state, reqMsg, answerMsg, got) {
+  const guests = (String(reqMsg).match(/\b(\d{1,5})\s*(?:people|guests|persons|ppl|attendees|folks|pax)\b/i) || [])[1];
+  const hours = (String(reqMsg).match(/\b(\d+(?:\.\d+)?)\s*-?\s*(?:hours?|hrs?)\b/i) || [])[1];
+  const listLines = String(reqMsg).split('\n').filter(l => /^\s*\d+\s*(?:x|×)?\s+\S/i.test(l)).length;
+  const keepQty = /\b(keep|same|don'?t change|as listed|as is)\b[^.\n]{0,20}\bquantit/i.test(answerMsg) && !/\bchange\b[^.\n]{0,20}\bquantit/i.test(answerMsg);
+  if (!guests || listLines < 2 || keepQty) return false;
+  state.eventParams = Object.assign({}, state.eventParams || {}, { list_scale: { guests: parseInt(guests), hours: hours ? parseFloat(hours) : null } });
+  saveFlowState();
+  console.log('[menu] request is a ' + listLines + '-product list for ' + guests + ' guests — listed products sized for the event' + (got && got.excluded ? ', ' + got.excluded.join('/') + ' left out' : ''));
+  return true;
+}
+const LIST_SCALE_NOTE = 'The customer wants THEIR LISTED products sized for this event, with their serving preference. The system applies the preference and sizes every quantity. Build now with ONE call: intent=custom_list, every listed product (name + category), guests and hours from the request, NO qty. Do not call menu_build. In one short line, say the quantities are sized for the event and lean toward what they said.';
 const mixText = mx => Object.entries(mx).map(([k, v]) => (k === 'spirits' ? 'liquor/cocktails' : k) + ' ' + Math.round(v * 100) + '%').join(' / ');
 
 function tipFor(state, base) {
@@ -1172,7 +1207,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
         console.log('[package] cart persistence skipped (can_add_to_cart disabled for channel):', fmt || format);
       }
     },
-    onUnavailableItems: (unavailableStr) => {
+    onUnavailableItems: (unavailableStr, unavailableQty) => {
       try { events.unmatched(String(unavailableStr || '').split(/\s*[,;\n]\s*/).map(x => x.replace(/^[-•*\s]+/, '')).filter(x => x.length > 1)); } catch (e) {}
       // Real bug found tonight: this used to REPLACE the entire pendingSubstitutes
       // list on every call, including calls that had nothing to do with the original
@@ -1193,6 +1228,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
         if (!merged.some(e => e.toLowerCase() === item.toLowerCase())) merged.push(item);
       }
       state.pendingSubstitutes = merged;
+      try { const uq = JSON.parse(unavailableQty || '{}') || {}; if (Object.keys(uq).length) { state.unavailableQty = Object.assign({}, state.unavailableQty || {}, uq); console.log('[substitute-tracking] planned qty of unavailable lines: ' + JSON.stringify(uq)); } } catch (e) {}
       saveFlowState();
       if (state.pendingSubstitutes.length > 0) {
         console.log('[substitute-tracking] pending:', state.pendingSubstitutes.join(', '));
@@ -2051,20 +2087,12 @@ app.post('/chat', async (req, res) => {
           // A held PRODUCT LIST + a guest count: the answer asks for the listed products sized for the event
           // (rachel.js [list-scale]: calculator quantities, left-out categories dropped) — unless it says to
           // keep the quantities. Real case (Sep 30, DC): "take the same ones listed but change the quantities".
-          const lsGuests = (pm.message.match(/\b(\d{1,5})\s*(?:people|guests|persons|ppl|attendees|folks|pax)\b/i) || [])[1];
-          const lsHours = (pm.message.match(/\b(\d+(?:\.\d+)?)\s*-?\s*(?:hours?|hrs?)\b/i) || [])[1];
-          const listLines = pm.message.split('\n').filter(l => /^\s*\d+\s*(?:x|×)?\s+\S/i.test(l)).length;
-          const keepQty = /\b(keep|same|don'?t change|as listed|as is)\b[^.\n]{0,20}\bquantit/i.test(message) && !/\bchange\b[^.\n]{0,20}\bquantit/i.test(message);
-          if (lsGuests && listLines >= 2 && !keepQty) {
-            state.eventParams.list_scale = { guests: parseInt(lsGuests), hours: lsHours ? parseFloat(lsHours) : null };
-            saveFlowState();
-            console.log('[menu] held request is a ' + listLines + '-product list for ' + lsGuests + ' guests — listed products sized for the event' + (got.excluded ? ', ' + got.excluded.join('/') + ' left out' : ''));
-          }
+          listScaleFor(state, pm.message, message, got);
           message = pm.message; msgLower = message.toLowerCase().trim();
           // No percentages in this note: given numbers, the LLM put them in category_splits and
           // switched the builder into SPLIT mode (spirits dropped, reviewer blocked the build).
           context.order_change_note = state.eventParams.list_scale
-            ? 'The customer answered which drinks their guests will have most, and wants THEIR LISTED products sized for this event. The system applies the preference and sizes every quantity. Build now with ONE call: intent=custom_list, every listed product (name + category), guests and hours from the request, NO qty. Do not call menu_build. In one short line, say the quantities are sized for the event and lean toward what they said.'
+            ? LIST_SCALE_NOTE
             : 'The customer answered which drinks their guests will have most (' + JSON.stringify(message).slice(0, 80) + '). That preference is applied automatically by the system. Build the event package now with intent=menu_build exactly as you normally would — do NOT set category_splits. In one short line, mention the package leans toward what they said.';
         } else if (!pm.reasked) {
           pm.reasked = true; saveFlowState();
@@ -2084,6 +2112,10 @@ app.post('/chat', async (req, res) => {
           if (stated) {
             saveFlowState();
             console.log('[menu] serving mix stated in the request (' + stated.why + '): ' + mixText(stated.mix));
+            // A product list + a guest count + the mix in ONE message ("create a menu for 100 people, only beer and
+            // wine, make it equal" with a photo of an invoice): the listed products sized for the event, as when the
+            // mix is answered separately. Real bug (Sep 30, DC): the photo's own quantities came back, vodka and gin in.
+            if (listScaleFor(state, message, message, stated)) context.order_change_note = LIST_SCALE_NOTE;
           } else {
             // Labels from the customer's own words — never from product names in a list (Sep 30: a photo list asked
             // "red, hard seltzer or vodka?" from "Prisoner RED Blend", "HARD SELTZER Variety", "Tito's VODKA").
@@ -2891,6 +2923,36 @@ app.post('/chat', async (req, res) => {
           const pvA = nv2(pr.name + ' ' + (pr.category || '') + ' ' + (pr.subCategory || '') + ' ' + message);
           const targetA = pvA.size ? itemsA.find(it => { const iv = nv2(it.name); return [...pvA].some(v => iv.has(v)); }) : null;
           const labelR = pr.name + (size && nz(pr.name).indexOf(nz(size)) < 0 ? ' — ' + size : '') + ' — $' + price.toFixed(2);
+          // A pick that stands in for an item that isn't carried (still pending): REPLACE it, with the quantity the
+          // customer asked for it. Real bug (Sep 30, DC): "Which one would you like to swap in for the La Crema?" ->
+          // "Decoy by Duckhorn Pinot Noir" -> "Added ... How many bottles?" (La Crema was 3 in his list).
+          {
+            const { varietalOf } = require('/home/ubuntu/store-agent/alternatives.js');
+            const DT = require('./drink-type.js');
+            const lastR = String((lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '').toLowerCase();
+            const pv = varietalOf(pr.name), pt = DT.typeOf(pr);
+            const pend = (state.pendingSubstitutes || []).filter(pn => {
+              const v = varietalOf(pn);
+              if (v && pv) return v === pv;
+              const w = nz(pn.split(/\s+/)[0]);   // the brand word, named in the swap question
+              return pt && DT.typeOf({ name: pn }) === pt && w.length >= 3 && nz(lastR).includes(w);
+            });
+            if (pend.length === 1 && !targetA) {
+              const rq = (state.unavailableQty || {})[pend[0]] || requestedQtyFor(sessionKey, pend[0]);
+              const rrP = await applyBasketSubstitute(sessionKey, email, pend[0], pr.name, price, size, rq ? { qty: rq } : undefined);
+              if (!(rrP && rrP.success === false)) {
+                state.pendingSubstitutes = (state.pendingSubstitutes || []).filter(x => x !== pend[0]); saveFlowState();
+                console.log('[add-item] pick replaces the not-carried ' + JSON.stringify(pend[0]) + ' (' + (pv || pt) + ') -> ' + pr.name + ' x' + (rq || 1));
+                if (rq) {
+                  const rP = 'Got it — ' + rq + 'x ' + labelR + ' in place of ' + pend[0] + '. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+                  return res.json({ text: rP, response: rP });
+                }
+                state.pendingQtyFor = pr.name; saveFlowState();
+                const rP1 = 'Got it — ' + labelR + ' in place of ' + pend[0] + '. How many bottles would you like?';
+                return res.json({ text: rP1, response: rP1 });
+              }
+            }
+          }
           if (targetA) {
             const rr2 = await applyBasketSubstitute(sessionKey, email, targetA.name, pr.name, price, size);
             if (!(rr2 && rr2.success === false)) {

@@ -1,0 +1,25 @@
+name: event-list-mix-stated-swap
+# Real case (Sep 30, DC, Slack): an invoice photo + "create a menu for 100 people for a 3 hour event, but only beer and
+# wine.. make it equal" rebuilt the photo's own quantities with the vodka and gin; "use another pinot noir but 750 ML"
+# (La Crema 750 not carried) listed Goldeneye $73 first; picking Decoy added 1 bottle and asked "How many?".
+# Correct: the listed beer + wine sized for 100 x 3h at 50/50, spirits left out and said so; alternatives to La Crema
+# anchored to its price; the pick REPLACES La Crema at its planned quantity.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "332 Pine St, San Francisco, CA 94104"
+  - send: "5 x The Prisoner Red Blend 750 mL\n3 x La Crema Pinot Noir Sonoma Coast 750 mL\n8 x Chandon Reserve Blanc de Blancs 750 mL\n2 x Fort Point Beer Co. KSA Kolsch Non-Alcoholic 6-pack 12 oz\n1 x Tito's Handmade Vodka 1.75 L\n1 x Hendrick's Gin 1.75 L\n2 x Stella Artois Premium Lager Beer 24 x 11 oz Bottles\n5 x Conundrum White 750 mL\ncan you create a menu for 100 people for a 3 hour event, but only beer and wine.. make it equal"
+    expect:
+      contains: ["Product total", "Left out", "Tito", "Hendrick"]
+      not_matches: "(?m)^\\s*\\d+x\\s+(Tito|Hendrick)|^\\s*5x The Prisoner"
+      log_contains: ["[menu] serving mix stated in the request", "left out: spirits", "[list-scale] custom_list:"]
+  - send: "use another pinot noir but 750 ML"
+    capture: listed_partial
+    expect:
+      contains: ["Pinot Noir"]
+      not_matches: "(?m)^\\s*1[.)]\\s*\\**Goldeneye"
+  - send: "{pick}"
+    expect:
+      contains: ["in place of La Crema"]
+      not_contains: ["How many bottles"]
+      log_contains: ["[add-item] pick replaces the not-carried"]

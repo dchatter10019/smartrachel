@@ -731,6 +731,7 @@ async function executeTool(name, input) {
       estimated_grand_total: result.estimated_grand_total,
       preferred_brands: result.preferred_brands,
       unavailable: result.unavailable,
+      unavailable_qty: result.unavailable_qty || '{}',
       brand_substitutions: result.brand_substitutions,
       swaps: swaps,
       total_drinks: result.total_drinks,
@@ -883,6 +884,7 @@ async function executeTool(name, input) {
       delivery_fee: '25.00',
       estimated_grand_total: finalGrand.toFixed(2),
       unavailable: result.unavailable,
+      unavailable_qty: result.unavailable_qty || '{}',
       supply_check: supply2.text,
       tier_warning: result.tier_warning || ''
     };

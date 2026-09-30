@@ -101,7 +101,15 @@ async function classifyIntent(message, ctx = {}) {
   const errs = [];
   for (const [model, ms, src] of [['claude-sonnet-4-6', 6000, 'llm'], ['claude-haiku-4-5-20251001', 4000, 'llm-retry']]) {
     try {
-      const j = await callClassifier(model, ms, user, key);
+      let j;
+      try { j = await callClassifier(model, ms, user, key); }
+      catch (e0) {
+        // A dropped connection ("fetch failed") is retried once on the SAME model: the Haiku fallback routes some
+        // messages differently (Sep 30: "I need an opus" -> other, twice in smoke, skipping the add-item confirm).
+        if (e0.name === 'AbortError' || !/fetch failed|ECONNRESET|socket|network/i.test(String(e0.message))) throw e0;
+        errs.push(model.split('-')[1] + ':' + e0.message + '(retried)');
+        j = await callClassifier(model, ms, user, key);
+      }
       const intent = INTENTS.includes(j.intent) ? j.intent : 'other';
       return { intent, ref: String(j.ref || ''), qty: parseInt(j.qty) || 0, confidence: Math.max(0, Math.min(1, parseFloat(j.confidence) || 0)), source: src + (errs.length ? '(' + errs.join(',') + ')' : '') };
     } catch (e) { errs.push(model.split('-')[1] + ':' + (e.name === 'AbortError' ? 'timeout' : e.message)); }

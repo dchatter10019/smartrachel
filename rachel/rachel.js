@@ -204,6 +204,24 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           const nf = sessionState && sessionState.lastNotFound;
           const normNF = x => String(x || '').toLowerCase().replace(/\s*[-—]?\s*\d+(\.\d+)?\s*(ml|l)\b.*$/i, '').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
           const fresh = nf && Array.isArray(nf.items) && nf.items.length && (Date.now() - (nf.at || 0)) < 60 * 60 * 1000;
+          // "use another pinot noir" while "La Crema Pinot Noir" is pending as not carried: alternatives for THAT item
+          // (same varietal, anchored to its price), not a plain search. Real bug (Sep 30, DC): product_query "Pinot Noir
+          // 750 mL" led with Goldeneye at $73.49 for a ~$25 La Crema.
+          {
+            const pendAll = [].concat((sessionState && sessionState.pendingSubstitutes) || [], fresh ? nf.items.map(x => x.name) : []);
+            const qs = Array.isArray(saInput.queries) ? saInput.queries : [];
+            if (['product_query', 'recommendation'].includes(saInput.intent) && pendAll.length && qs.length <= 1 && /\b(another|other|different|use|swap|replace|instead)\b/i.test(String(customerMessage || ''))) {
+              const { varietalOf: vOf } = (() => { try { return require('/home/ubuntu/store-agent/alternatives.js'); } catch (e) { return { varietalOf: () => '' }; } })();
+              const qv = vOf((qs[0] && (qs[0].name || qs[0].term)) || saInput.occasion || '') || vOf(customerMessage);
+              const hit = qv ? [...new Set(pendAll)].filter(pn => vOf(pn) === qv) : [];
+              if (hit.length === 1) {
+                console.log('[ShoppingAgent] ALTERNATIVES ROUTING: ' + saInput.intent + ' for ' + qv + ' -> alternatives for the not-carried ' + JSON.stringify(hit[0]));
+                ['queries', 'occasion', 'category', 'budget_per_bottle', 'min_price', 'max_price'].forEach(k => delete saInput[k]);
+                saInput.intent = 'alternatives';
+                saInput.originals = [{ name: hit[0], category: /^(bourbon|rye|scotch|tequila|mezcal|vodka|gin|rum|cognac|brandy)$/.test(qv) ? 'spirits' : 'wine' }];
+              }
+            }
+          }
           const ALT_RE = /\balt\w{0,3}nativ|\bsimilar\b|\bsubstitut|\bcomparable\b|\bequivalent|\bsomething (?:else )?like\b|\bclose to\b|\binstead\b|\blike (?:those|these|them|that|it)\b|\bnot even close\b|\bcloser\b/i;
           // A reprice of wines already in the basket ("find alternative wines around $20") is not an
           // alternatives search: those products ARE carried. Real bug (smoke, Sep 27): the LLM sent the
@@ -537,7 +555,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         // from conversation memory and confusing it with an unrelated item
         // discussed earlier (a real bug this was built to fix).
         if (result.success && onUnavailableItems && ['menu_build','custom_list','product_query'].includes(saInput.intent)) {
-          onUnavailableItems(result.unavailable || '');
+          onUnavailableItems(result.unavailable || '', result.unavailable_qty || '');
         }
         // product_query / recommendation return `products` (or `results[].products`), not
         // `line_items`. Report what was just shown via a SEPARATE callback (onProductDiscussed),
