@@ -43,7 +43,7 @@ const TYPE = STYLE;   // styleQuery uses the style words
 // Unit count of a pack: "30x12 OZ", "30 pack", "(30 cans per case)", "12pk", "8 pack".
 function packCount(s) {
   const t = String(s || '').toLowerCase();
-  const m = t.match(/\b(\d{1,2})\s*x\s*\d/) || t.match(/\b(\d{1,2})\s*-?\s*(?:pk|pack|ct|count)\b/) || t.match(/\b(\d{1,2})\s+(?:cans?|bottles?|btls?)\b/);
+  const m = t.match(/\b(\d{1,2})\s*x\s*\d/) || t.match(/\b(\d{1,2})\s*-?\s*(?:pk[cbs]?|pack|ct|count)\b/) || t.match(/\b(\d{1,2})\s+(?:cans?|bottles?|btls?)\b/);
   return m ? parseInt(m[1], 10) : 0;
 }
 

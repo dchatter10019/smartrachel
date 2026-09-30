@@ -324,8 +324,10 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             try {
               const prev = JSON.parse(eventParams.named_products) || [];
               const haveCats = new Set(saInput.named_products.map(n => String(n.category || '').toLowerCase()));
+              let mixR = {}; try { mixR = JSON.parse(eventParams.serving_mix || '{}') || {}; } catch (e) {}
               for (const pn of prev) {
                 const cat = String(pn.category || '').toLowerCase();
+                if (cat && mixR[cat] === 0) continue;   // the customer left that category out ("just beer + wine")
                 if (cat && !haveCats.has(cat)) { saInput.named_products.push(pn); filled.push('restored ' + cat + ':' + pn.name); }
               }
             } catch (e) {}
@@ -389,6 +391,42 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             }
           }
         }
+        // LISTED PRODUCTS SIZED FOR AN EVENT (server.js: the answer to "what will your guests drink most?" for a held
+        // product list + guest count). Real case (Sep 30, DC): a photo of 10 products + "create a menu for 100 people
+        // for a 3 hour event", then "take the same ones listed but change the quantities, the guests just want beer +
+        // wine" — the LLM rebuilt the photo's own quantities (qty_from_customer) with the vodka and gin still in.
+        // Here, in code: every listed line is sized by the event calculator, and lines of a category the customer
+        // left out are dropped (logged, and listed in the reply).
+        const ls = eventParams && eventParams.list_scale;
+        if (ls && saInput.intent === 'menu_build') {
+          console.log('[list-scale] REFUSED menu_build — the customer\'s listed products are sized with custom_list');
+          return { success: false, error: 'NOT_NEEDED: the customer wants THEIR LISTED products sized for the event. Build them with intent=custom_list (one call, every listed product, no qty) — the system sizes the quantities.' };
+        }
+        // The list was just built for the event: left-out lines stay out and stand-ins are already chosen. Real bug
+        // (QA replay of DC's case): after the build the LLM called confirm_substitute for the dropped vodka and gin
+        // and the not-carried Lillet, putting them back at 1 each.
+        if (ls && ls.built && (saInput.intent === 'confirm_substitute' || saInput.intent === 'update_quantity' || saInput.intent === 'custom_list')) {
+          console.log('[list-scale] REFUSED ' + saInput.intent + ' after the event build this turn' + (saInput.original_item ? ' (' + JSON.stringify(saInput.original_item) + ')' : ''));
+          return { success: false, error: 'NOT_NEEDED: the listed products were just sized for the event. Items of a category the customer left out stay out, and not-carried items already have a stand-in. Do not add, swap or re-size anything now — present the list as built and let the customer ask for changes.' };
+        }
+        if (ls && saInput.intent === 'custom_list' && Array.isArray(saInput.named_products)) {
+          if (!saInput.guests && ls.guests) saInput.guests = ls.guests;
+          if (!saInput.hours && !saInput.drinks_per_person && ls.hours) saInput.hours = ls.hours;
+          if (!saInput.serving_mix && eventParams.serving_mix) saInput.serving_mix = eventParams.serving_mix;
+          let mixL = {}; try { mixL = JSON.parse(eventParams.serving_mix || '{}') || {}; } catch (e) {}
+          const kept = [], dropped = [];
+          for (const np of saInput.named_products) {
+            const cat = String((np && np.category) || '').toLowerCase();
+            if (mixL[cat] === 0) { dropped.push(np.name); console.log('[list-scale] DROPPED ' + JSON.stringify(np.name) + ' (' + cat + ' — left out of the customer\'s serving mix)'); continue; }
+            if (np.qty) console.log('[list-scale] qty ' + np.qty + ' for ' + JSON.stringify(np.name) + ' -> sized by the event calculator (' + saInput.guests + ' guests)');
+            np.qty_from_customer = false; delete np.qty;
+            kept.push(np);
+          }
+          saInput.named_products = kept;
+          const inCats = Object.keys(mixL).filter(k => mixL[k] > 0).map(k => k === 'spirits' ? 'liquor' : k);
+          if (dropped.length && sessionState) sessionState.replyNote = 'Left out, since your guests will drink ' + inCats.join(' and ') + ' only: ' + dropped.join(', ') + '.';
+          console.log('[list-scale] custom_list: ' + kept.length + ' listed line(s) sized for ' + saInput.guests + ' guests / ' + (saInput.hours || '?') + 'h, mix ' + eventParams.serving_mix + (dropped.length ? ', ' + dropped.length + ' dropped' : ''));
+        }
         if ((saInput.intent === 'place_order' || saInput.intent === 'generate_proposal') && currentLineItems) {
           if (saInput.line_items && saInput.line_items !== currentLineItems) {
             console.log('[ShoppingAgent] overriding LLM-supplied line_items with authoritative current basket for', saInput.intent);
@@ -442,6 +480,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         const saData = JSON.parse(saLine.replace('data:', '').trim());
         const result = JSON.parse(saData.result.content[0].text);
         console.log('[ShoppingAgent] intent:', saInput.intent, 'channel:', saInput.channel, 'success:', result.success);
+        if (ls && saInput.intent === 'custom_list' && (result.success === true || result.success === 'true')) ls.built = true;   // [list-scale]: nothing re-added after this
         // Event log: what this tool call did (events.js keeps the strongest action of the turn).
         try {
           const EV = { product_query: 'searched', recommendation: 'searched', alternatives: 'searched', menu_build: 'built_basket', custom_list: 'built_basket',

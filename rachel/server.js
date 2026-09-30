@@ -100,6 +100,15 @@ const KITCHEN_TO_CLIENT = {
 
 const app = express();
 app.use(express.json({ limit: '25mb' }));   // base64 photos of order lists
+// In-flight chats, so a restart finishes them instead of cutting them off. Real case (Sep 30): a deploy restarted
+// rachel 11s into DC's Slack message ("Lillet Blanc -> find a sparkling wine...") and he got "I hit a snag".
+// precheck.sh waits for /internal/inflight to reach 0 before restarting; SIGTERM drains what is left.
+let INFLIGHT = 0, HTTP_SERVER = null;
+app.use((req, res, next) => {
+  if (req.path === '/chat') { INFLIGHT++; let done = false; const fin = () => { if (!done) { done = true; INFLIGHT--; } }; res.on('finish', fin); res.on('close', fin); }
+  next();
+});
+app.get('/internal/inflight', (req, res) => res.json({ inflight: INFLIGHT }));
 // QA sessions: tag every log line of the request with the session (rachel/log-tag.js), so the QA
 // runner can run scenarios in parallel and still assert on just its own log lines.
 const logTag = require('./log-tag.js'); logTag.install();
@@ -258,7 +267,17 @@ function scheduleChatSessionsSave() {
   chatSaveTimer = setTimeout(() => { chatSaveTimer = null; saveChatSessionsNow(); }, 500);
 }
 for (const sig of ['SIGTERM', 'SIGINT']) {
-  process.on(sig, () => { try { if (chatSaveTimer) clearTimeout(chatSaveTimer); saveChatSessionsNow(); saveFlowState(); console.log('[sessions] saved on ' + sig); } catch (e) {} process.exit(0); });
+  process.on(sig, () => {
+    const stop = () => { try { if (chatSaveTimer) clearTimeout(chatSaveTimer); saveChatSessionsNow(); saveFlowState(); console.log('[sessions] saved on ' + sig); } catch (e) {} process.exit(0); };
+    // Finish the chats already running (up to 80s — systemd kills at 90s), taking no new connections.
+    if (!INFLIGHT) return stop();
+    console.log('[shutdown] ' + sig + ' with ' + INFLIGHT + ' chat(s) in flight — finishing them first (max 80s)');
+    try { if (HTTP_SERVER) HTTP_SERVER.close(); } catch (e) {}
+    const t0 = Date.now();
+    const iv = setInterval(() => {
+      if (!INFLIGHT || Date.now() - t0 > 80000) { clearInterval(iv); console.log('[shutdown] ' + (INFLIGHT ? INFLIGHT + ' chat(s) still running after 80s — exiting anyway' : 'in-flight chats finished') + ' (' + Math.round((Date.now() - t0) / 1000) + 's)'); stop(); }
+    }, 250);
+  });
 }
 
 // ── Prompt ─────────────────────────────────────────────────────────────────
@@ -704,7 +723,25 @@ function eventDrinkCats(msg) {
 }
 // requireCue: in the ORIGINAL request the categories are just listed, so only a preference
 // word ("mostly wine") counts; in the ANSWER to our question, naming a category is enough.
+// "just / only beer + wine" and "no liquor" leave the other categories OUT (0%). Real case (Sep 30, DC):
+// "the guests just want beer + wine, more beer than wine" was read as wine 30 / beer 50 / liquor 20.
+const MIX_SRC = k => MIX_SYN[k].source.replace(/^\\b|\\b$/g, '');
 function parseServingMix(msg, cats, requireCue) {
+  const r = parseServingMix0(msg, cats, requireCue);
+  if (!r) return r;
+  const m = String(msg || '').toLowerCase();
+  const none = cats.filter(k => new RegExp('\\b(?:no|without|skip(?:ping)?|minus|not any|none of the)\\s+(?:\\w+\\s+)?' + MIX_SRC(k)).test(m));
+  const excl = /\b(?:just|only|nothing but|stick(?:ing)? (?:to|with)|strictly|exclusively)\b/.exec(m);
+  const named = excl ? cats.filter(k => !none.includes(k) && MIX_SYN[k].test(m.slice(excl.index))) : [];
+  const out = cats.filter(k => none.includes(k) || (named.length && !named.includes(k)));
+  if (!out.length || out.length === cats.length) return r;
+  out.forEach(k => { r.mix[k] = 0; });
+  const tot = cats.reduce((a, k) => a + r.mix[k], 0);
+  if (!tot) cats.filter(k => !out.includes(k)).forEach(k => { r.mix[k] = 1 / (cats.length - out.length); });
+  else cats.forEach(k => { r.mix[k] = r.mix[k] / tot; });
+  return { mix: r.mix, why: r.why + '; left out: ' + out.join('/'), excluded: out };
+}
+function parseServingMix0(msg, cats, requireCue) {
   const m = String(msg || '').toLowerCase();
   const out = {}; cats.forEach(k => { out[k] = 0; });
   // explicit percentages: "50% wine", "wine 50%"
@@ -1990,6 +2027,7 @@ app.post('/chat', async (req, res) => {
 
     // ── Event menu: ask what the guests will drink most ─────────────────────
     // (not isInternalMsg: that const is declared further down — referencing it here threw a TDZ ReferenceError on every turn)
+    if (state.eventParams && state.eventParams.list_scale) { delete state.eventParams.list_scale; saveFlowState(); }   // one turn only (rachel.js [list-scale])
     if (state.step === 'ready' && !state.orderStep && !state.proposalStep && !state.pendingQtyFor && !/^__/.test(message)) {
       if (state.pendingMenu) {
         const pm = state.pendingMenu;
@@ -1998,10 +2036,24 @@ app.post('/chat', async (req, res) => {
           state.eventParams = Object.assign({}, state.eventParams || {}, { serving_mix: JSON.stringify(got.mix) });
           state.pendingMenu = null; saveFlowState();
           console.log('[menu] serving mix (' + got.why + '): ' + mixText(got.mix) + ' — building the held request: ' + JSON.stringify(pm.message).slice(0, 80));
+          // A held PRODUCT LIST + a guest count: the answer asks for the listed products sized for the event
+          // (rachel.js [list-scale]: calculator quantities, left-out categories dropped) — unless it says to
+          // keep the quantities. Real case (Sep 30, DC): "take the same ones listed but change the quantities".
+          const lsGuests = (pm.message.match(/\b(\d{1,5})\s*(?:people|guests|persons|ppl|attendees|folks|pax)\b/i) || [])[1];
+          const lsHours = (pm.message.match(/\b(\d+(?:\.\d+)?)\s*-?\s*(?:hours?|hrs?)\b/i) || [])[1];
+          const listLines = pm.message.split('\n').filter(l => /^\s*\d+\s*(?:x|×)?\s+\S/i.test(l)).length;
+          const keepQty = /\b(keep|same|don'?t change|as listed|as is)\b[^.\n]{0,20}\bquantit/i.test(message) && !/\bchange\b[^.\n]{0,20}\bquantit/i.test(message);
+          if (lsGuests && listLines >= 2 && !keepQty) {
+            state.eventParams.list_scale = { guests: parseInt(lsGuests), hours: lsHours ? parseFloat(lsHours) : null };
+            saveFlowState();
+            console.log('[menu] held request is a ' + listLines + '-product list for ' + lsGuests + ' guests — listed products sized for the event' + (got.excluded ? ', ' + got.excluded.join('/') + ' left out' : ''));
+          }
           message = pm.message; msgLower = message.toLowerCase().trim();
           // No percentages in this note: given numbers, the LLM put them in category_splits and
           // switched the builder into SPLIT mode (spirits dropped, reviewer blocked the build).
-          context.order_change_note = 'The customer answered which drinks their guests will have most (' + JSON.stringify(message).slice(0, 80) + '). That preference is applied automatically by the system. Build the event package now with intent=menu_build exactly as you normally would — do NOT set category_splits. In one short line, mention the package leans toward what they said.';
+          context.order_change_note = state.eventParams.list_scale
+            ? 'The customer answered which drinks their guests will have most, and wants THEIR LISTED products sized for this event. The system applies the preference and sizes every quantity. Build now with ONE call: intent=custom_list, every listed product (name + category), guests and hours from the request, NO qty. Do not call menu_build. In one short line, say the quantities are sized for the event and lean toward what they said.'
+            : 'The customer answered which drinks their guests will have most (' + JSON.stringify(message).slice(0, 80) + '). That preference is applied automatically by the system. Build the event package now with intent=menu_build exactly as you normally would — do NOT set category_splits. In one short line, mention the package leans toward what they said.';
         } else if (!pm.reasked) {
           pm.reasked = true; saveFlowState();
           console.log('[menu] no serving preference in reply — asking once more: ' + JSON.stringify(message).slice(0, 60));
@@ -2021,7 +2073,10 @@ app.post('/chat', async (req, res) => {
             saveFlowState();
             console.log('[menu] serving mix stated in the request (' + stated.why + '): ' + mixText(stated.mix));
           } else {
-            const said = k => { const mm = message.match(MIX_SYN[k]); return mm ? mm[0].toLowerCase() : k; };
+            // Labels from the customer's own words — never from product names in a list (Sep 30: a photo list asked
+            // "red, hard seltzer or vodka?" from "Prisoner RED Blend", "HARD SELTZER Variety", "Tito's VODKA").
+            const own = message.split('\n').filter(l => !/^\s*\d+\s*(?:x|×)?\s+\S/i.test(l)).join('\n');
+            const said = k => { const mm = own.match(MIX_SYN[k]); return mm ? mm[0].toLowerCase() : (k === 'spirits' ? 'liquor' : k); };
             const labels = cats.map(k => k === 'spirits' ? (/\bcocktails?|mixed drinks?\b/i.test(message) ? 'cocktails' : said('spirits')) : said(k));
             state.pendingMenu = { message, cats, labels }; saveFlowState();
             console.log('[menu] mixed event (' + cats.join(' + ') + ') with no serving preference — asking what they\'ll drink most');
@@ -4826,7 +4881,7 @@ app.post('/internal/session-basket', async (req, res) => {
   res.json({ ok: true, lines: line_items.length, orderable: line_items.filter(li => !LR.needsLink(li)).length, resolve: resolveNote });
 });
 
-app.listen(PORT, '127.0.0.1', () => {
+HTTP_SERVER = app.listen(PORT, '127.0.0.1', () => {
   console.log(`[rachel] Server running on http://127.0.0.1:${PORT}`);
   console.log(`[rachel] Health: http://127.0.0.1:${PORT}/health`);
   console.log(`[rachel] Chat:   http://127.0.0.1:${PORT}/chat`);

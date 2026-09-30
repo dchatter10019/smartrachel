@@ -291,6 +291,17 @@ function scoreBuyer(profile) {
 
 const { coreFirst, spaceSize, stripDescriptors } = require('./core-first.js');
 
+const SEARCH_FAILURES = { n: 0, last: '' };
+// A build during which catalog searches failed: its "unavailable" items are an outage, not the store's stock.
+function catalogOutage(before, result) {
+  const failed = SEARCH_FAILURES.n - before;
+  if (!failed) return null;
+  let unav = [];
+  unav = Array.isArray(result.unavailable) ? result.unavailable : String(result.unavailable || '').split(', ').filter(Boolean);   // buildPackage returns them comma-joined
+  if (result.success === 'true' && !unav.length) return null;
+  console.log('[catalog] OUTAGE during build: ' + failed + ' search(es) failed (' + SEARCH_FAILURES.last + ')' + (unav.length ? ' — ' + unav.length + ' item(s) would have been called unavailable: ' + JSON.stringify(unav).slice(0, 200) : ''));
+  return { success: false, error: 'CATALOG_UNREACHABLE: the Bevvi catalog returned errors (' + SEARCH_FAILURES.last + ') during this build, so availability is unknown. Do NOT tell the customer any product is unavailable. Say the catalog is not responding right now and ask them to try again in a minute.' };
+}
 async function searchProducts(location, client, query, limit, minPrice, maxPrice) {
   try {
     let url;
@@ -303,8 +314,16 @@ async function searchProducts(location, client, query, limit, minPrice, maxPrice
     if (minPrice !== undefined && minPrice > 0) url += '&min=' + minPrice;
     if (maxPrice !== undefined && maxPrice < 10000) url += '&max=' + maxPrice;
     console.log('[searchProducts]', url);
-    const res = await fetch(url);
-    if (!res.ok) { console.log('[searchProducts] HTTP error:', res.status); return []; }
+    // Bevvi's search answers 503/429 in bursts (Sep 30: fast 503s mid-build). Retry twice with backoff; if it
+    // still fails, count it — a build that hit failures says the catalog was unreachable instead of calling
+    // the products "not available at this store" (SEARCH_FAILURES, checked around buildPackage).
+    let res = null, why = '';
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try { res = await fetch(url); why = res.ok ? '' : 'HTTP ' + res.status; } catch (e) { res = null; why = e.message; }
+      if (res && (res.ok || (res.status < 500 && res.status !== 429))) break;
+      if (attempt < 3) { console.log('[searchProducts] ' + why + ' — retry ' + attempt + '/2'); await new Promise(r => setTimeout(r, attempt * 600)); }
+    }
+    if (!res || !res.ok) { SEARCH_FAILURES.n++; SEARCH_FAILURES.last = why; console.log('[searchProducts] HTTP error:', why, '— gave up (catalog unreachable for ' + JSON.stringify(query) + ')'); return []; }
     const data = await res.json();
     console.log('[searchProducts] results:', Array.isArray(data) ? data.length : 'not array');
     // Every search path (query, recommendation, custom list, menu build) comes through here:
@@ -531,12 +550,14 @@ async function executeTool(name, input) {
     // + per-category brand allowlists + direct price targets, vs. the fixed
     // lookup table pkgType otherwise uses).
     const effectivePkgType = input.category_splits ? 'SPLIT' : pkgType;
+    const failBefore = SEARCH_FAILURES.n;
     const result = await buildPackage({
       guests: input.guests, hours: input.hours,
       drinks_per_person: input.drinks_per_person || 0,
       total_budget: input.budget || (input.category_splits ? 999999 : undefined),
       package_type: effectivePkgType,
       kitchen_location: loc.kitchen,
+      zip: input.zip || '',
       client_name: loc.client,
       category_splits: input.category_splits || '',
       serving_mix: input.serving_mix || '',   // customer's "what will they drink most" answer
@@ -546,6 +567,7 @@ async function executeTool(name, input) {
       seltzer_max_price: input.seltzer_max_price || 0,
       beer_pack_size: input.beer_pack_size || 0
     });
+    { const outage = catalogOutage(failBefore, result); if (outage) return outage; }
     if (result.success !== 'true') return { success: false, error: result.error };
 
     // Price scaling: upgrade products to fill budget
@@ -732,6 +754,7 @@ async function executeTool(name, input) {
       const prev = input.email ? await getPackage(input.email, input.channel || 'slack') : null;
       if (prev) priorLineItems = typeof prev === 'string' ? prev : JSON.stringify(prev);
     } catch(e) {}
+    const failBefore = SEARCH_FAILURES.n;
     const result = await buildPackage({
       prior_line_items: priorLineItems,
       guests: input.guests || 10,
@@ -745,9 +768,11 @@ async function executeTool(name, input) {
       package_type: 'CUSTOM',
       serving_mix: input.serving_mix || '',   // cocktail events are built here
       kitchen_location: loc.kitchen,
+      zip: input.zip || '',
       client_name: loc.client,
       named_products: JSON.stringify(input.named_products || [])
     });
+    { const outage = catalogOutage(failBefore, result); if (outage) return outage; }
     if (result.success !== 'true') return { success: false, error: result.error };
 
     // Price scaling: keep quantities, upgrade products to fill budget

@@ -8,7 +8,10 @@ turns:
   - send: "yes"
   - send: "425 W 53rd St, New York, NY 10019"
   - send: "need a kim crawford"
-  - send: "1"
+  # by name, not "1": the tip amounts below assume the Illuminate ($18.69) and the LLM's list order varies
+  # (Sep 30: listed Sauvignon Blanc first -> "1" = $16.42 -> 15% ($4.93), a false failure)
+  - send: "the Illuminate"
+    expect: {contains: ["Illuminate"]}
   - send: "2"
   - send: "place the order"
   - send: "QA Tester"

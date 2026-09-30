@@ -46,7 +46,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 1. Deploy rachel/shopping-agent/rachel-email ONLY via `/home/ubuntu/precheck.sh --deploy`: lint → restart the
    services whose files changed → smoke set against the new code. If the service doesn't come up or
    smoke fails, it stashes the uncommitted rachel/ + store-agent/ changes (`git stash pop` restores),
-   restarts on HEAD and re-smokes. Never a bare `systemctl restart`. Deploy BEFORE committing — a clean
+   restarts on HEAD and re-smokes. Never a bare `systemctl restart`. It waits for rachel's in-flight chats
+   (/internal/inflight) before restarting, and rachel finishes running chats on SIGTERM (max 80s). Deploy BEFORE committing — a clean
    tree has nothing to roll back. Plain `precheck.sh` = lint only; `--smoke` tests the live service.
 2. Ask DC before running anything that places a real order, sends a real email/message, or changes
    systemd units, nginx, or secrets.
@@ -97,6 +98,13 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   guest = rule of thumb (2 first hour + 1/hour). Quantities use real bottle sizes; a full bar (1 bottle per
   spirit type) is kept and stated (never an offer to trim). Packages spend the whole budget: no downsell,
   price-tier critic notes are dropped (rachel.js), prompt SPEND-THE-BUDGET rule. Every menu_build logs a supply check (OK/FAILED).
+  "just/only beer + wine", "no liquor" set the other categories to 0%. A held PRODUCT LIST + guest count answered
+  with the mix = the listed products sized for the event (eventParams.list_scale -> rachel.js [list-scale]:
+  calculator quantities, 0% categories dropped and listed in the reply, no re-adds that turn).
+- A not-carried product's stand-in is anchored to its web market price (buildPackage, ±30% first). An exact
+  product filed under another category (Lillet = Liquor/Aperitif) is kept. Pack size comes from the name ("6PKC").
+- Catalog 5xx/429: searchProducts retries twice; a build that still hit failures returns CATALOG_UNREACHABLE,
+  never "isn't available at this store".
 - A conversation expires after RACHEL_IDLE_HOURS (4) idle, except email threads; age is re-asked.
 - Edits to a quote the customer has (remove lines, "all beer in bottles", "only 1 case of X") are applied in
   code (quote-edits.js; email sessions or sessions with a proposal), listed back, PDF regenerated. An edit that

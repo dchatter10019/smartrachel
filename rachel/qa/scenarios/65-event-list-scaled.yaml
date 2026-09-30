@@ -1,0 +1,24 @@
+name: event-list-scaled
+# Real case (Sep 30, DC, Slack): a photo of 10 products + "create a menu for 100 people for a 3 hour event".
+# Rachel asked "red, hard seltzer or vodka?" (labels from product names), then "take the same ones listed but
+# change the quantities, the guests just want beer + wine, more beer than wine" kept the photo's quantities, the
+# vodka and the gin, and read the mix as 20% liquor. Correct: the question names the categories; the listed
+# beer + wine are sized for 100 guests x 3h leaning beer, the spirits are dropped and said so, and a
+# not-carried product's stand-in is priced like it (Lillet Blanc ~$28, not Ruinart $138).
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "332 Pine St, San Francisco, CA 94104"
+  - send: "5 x The Prisoner Red Blend 750 mL\n8 x Chandon Reserve Blanc de Blancs 750 mL\n2 x Fort Point Beer Co. KSA Kolsch Non-Alcoholic 6-pack 12 oz\n1 x Tito's Handmade Vodka 1.75 L\n1 x Lillet Blanc 750 mL\n1 x Hendrick's Gin 1.75 L\n2 x Stella Artois Premium Lager Beer 24 x 11 oz Bottles\n5 x Conundrum White 750 mL\ncan you create a menu for 100 people for a 3 hour event"
+    expect:
+      contains: ["drink most", "wine", "beer", "liquor"]
+      not_contains: ["red,", "vodka?", "Product total"]
+      log_contains: ["[menu] mixed event"]
+  - send: "you can take the same ones listed but change the quantities, the guests just wants beer + wine, more beer than wine"
+    expect:
+      contains: ["Product total", "Stella", "Left out", "Tito", "Hendrick"]
+      not_matches: "(?m)^\\s*\\d+x\\s+(Tito|Hendrick)"
+      not_contains: ["Ruinart", "Lillet Blanc 750 mL isn't in stock"]
+      # the NA Kolsch is a 6-pack ("6PKC"): ~125 beers need ~21 packs, not 11 counted as 12-packs
+      matches: "(?m)^\\s*(1[6-9]|2\\d)x Fort Point"
+      log_contains: ["left out: spirits", "[list-scale] custom_list:", "[list-scale] DROPPED", "custom_list supply check OK"]

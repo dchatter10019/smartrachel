@@ -978,7 +978,7 @@ async function buildPackage(iv) {
     // the search (the budget target per unit needs the category's unit count).
     function planQty(np) {
       var catN=(np.category||"").toLowerCase();
-      var dpu=catN==="wine"?5:catN==="spirits"?16:(parseInt(np.pack_size)||beerPackSize);
+      var dpu=catN==="wine"?5:catN==="spirits"?16:(parseInt(np.pack_size)||PM.packCount(np.name)||beerPackSize);   // "...Kolsch 6-pack" is 6 per unit, not the default 12
       // Use the blended per-category share (learned split + floor) instead of the
       // legacy even split, so this path agrees with menu_build.
       var catDrinks=(catShare[catN]!==undefined)?totalDrinks*catShare[catN]:drinksPerCat;
@@ -1087,7 +1087,14 @@ async function buildPackage(iv) {
       // Ready-to-drink cans are filed under beer OR spirits by Bevvi: an alternative for "margarita cans" may be either.
       function altSane(p){ return categorySane(p,catN) || (/\bcans?\b/i.test(np.name||'') && (catN==='beer'||catN==='spirits') && categorySane(p, catN==='beer'?'spirits':'beer')); }
       var reqForFit=(typeof expandBrandNicknames==='function'?expandBrandNicknames(np.name):np.name);   // "Sam Adams" -> "Samuel Adams", as the search does
-      var altNote='';
+      // The exact product IS carried but filed under another category than the request's: keep it — never
+      // "isn't in stock here". Real case (Sep 30): "Lillet Blanc 750 mL" asked as wine; Bevvi files it as
+      // Liquor / Aperitif, so the wine check rejected it and a Sauvignon Blanc stood in.
+      if (found.length===0) {
+        var exactX=results[n].filter(function(p){return !isMini(p)&&PM.verdict(reqForFit,p).kind==='exact';});
+        if (exactX.length) { found=exactX; console.log('[buildPackage] category: '+JSON.stringify(np.name)+' asked as '+catN+', the catalog files '+exactX[0].name+' as '+(exactX[0].category||'?')+(exactX[0].subCategory?' / '+exactX[0].subCategory:'')+' — exact product kept'); }
+      }
+      var altNote='', altRef0=0;
       if (found.length===0){
         // Not carried: recommend the closest style instead of dropping the line (DC, Sep 29: "if you can't
         // find something, send what you would recommend instead"). Style words only ("red ale", "margarita").
@@ -1096,6 +1103,24 @@ async function buildPackage(iv) {
         if (!alt0.length){console.log('[buildPackage] UNAVAILABLE (no search results'+(sq0?', no "'+sq0+'" alternative':', no style words to search')+'):', JSON.stringify(np.name));unavailable.push(np.name);continue;}
         found=alt0; altNote=PM.brandWords(reqForFit).length ? PM.displayName(np.name)+' isn\'t in stock here' : '';
         console.log('[buildPackage] ALTERNATIVE for '+JSON.stringify(np.name)+' (not carried): searching "'+sq0+'" — '+alt0.length+' candidate(s)');
+        // Anchored to the original's web market price (as the alternatives intent is), closest price first.
+        // Real bug (Sep 30, DC): "Lillet Blanc 750 mL" (~$28) -> searching "blanc" -> Ruinart Blanc de Blancs at
+        // $138.59, because the pick sorted by name words and then highest price.
+        try {
+          var CG=require('/home/ubuntu/store-agent/catalog-guard.js');
+          var zipA=String(iv.zip||'')||((kitchenLocation.match(/^zip:(\d{5})/)||[])[1]||'');
+          var szA=String(np.name||'').match(/\b(\d+(?:\.\d+)?)\s*(ml|l)\b/i);
+          var probeA={name:np.name, size:szA?szA[1]:'750', units:szA&&/^l$/i.test(szA[2])?'L':'ML'};
+          var cA=zipA?CG.cachedMarket(probeA, zipA):null;
+          if (cA&&cA.median) { altRef0=cA.median; if (cA.stale) CG.lookupMarket(probeA, zipA); }
+          else if (zipA) { var mA=await Promise.race([CG.lookupMarket(probeA, zipA), new Promise(function(r){setTimeout(function(){r(null);},35000);})]).catch(function(){return null;}); if (mA&&mA.median) altRef0=mA.median; }
+        } catch(e) { console.log('[buildPackage] market price lookup failed for '+JSON.stringify(np.name)+': '+e.message); }
+        if (altRef0) {
+          var inTier=found.filter(function(p){return p.price>=altRef0*0.7&&p.price<=altRef0*1.3;});
+          var near=found.filter(function(p){return p.price>=altRef0*0.5&&p.price<=altRef0*1.6;});
+          if (inTier.length) found=inTier; else if (near.length) found=near;
+          console.log('[buildPackage] ALTERNATIVE for '+JSON.stringify(np.name)+': anchored to web market price $'+altRef0.toFixed(2)+' — '+(inTier.length?inTier.length+' in tier (±30%)':near.length?near.length+' within 50-160%':'none near it, closest price wins'));
+        } else console.log('[buildPackage] ALTERNATIVE for '+JSON.stringify(np.name)+': no market price — ranked by name fit, then price');
       }
       var capMin=0,capMax=0;
       if (catN==="wine"){capMin=capWineMin;capMax=capWineMax;}
@@ -1124,7 +1149,7 @@ async function buildPackage(iv) {
         var plain=found.filter(function(p){ return !FLAV.test(String(p.name||'')) || FLAV.test(String(np.name||'')); });
         if (plain.length) { if (plain.length<found.length) console.log('[buildPackage] generic '+JSON.stringify(np.name)+': dropped '+(found.length-plain.length)+' flavoured match(es)'); found=plain; }
       }
-      var tgtP=0;
+      var tgtP=altRef0||0;   // an alternative: closest to the original's market price
       if (GENERIC_LINE.test(String(np.name||'')) && !plannedQty[n].mod && genTarget[catN] && !capMin && !capMax) {
         tgtP=genTarget[catN];
         var band=found.filter(function(p){return p.price>=tgtP*0.6&&p.price<=tgtP*1.4;});
@@ -1152,6 +1177,7 @@ async function buildPackage(iv) {
         var fa=PM.fit(reqForFit,a).score, fb=PM.fit(reqForFit,b).score; if(fa!==fb) return fb-fa;
         var ea=nameKey(a)===reqKey?1:0, eb=nameKey(b)===reqKey?1:0; if(ea!==eb) return eb-ea;
         function score(x){var s=0;var ln=x.name.toLowerCase();for(var t=0;t<terms.length;t++) if(ln.indexOf(terms[t])>=0) s++;return s;}
+        if(altRef0) return Math.abs(a.price-altRef0)-Math.abs(b.price-altRef0);   // an alternative: name words don't apply (brand not carried)
         var d=score(b)-score(a);if(d) return d;
         var pa=brandStatus(a.name)==="preferred"?1:0;
         var pb2=brandStatus(b.name)==="preferred"?1:0;
@@ -1170,7 +1196,7 @@ async function buildPackage(iv) {
       var best=found[0];
       // Not an exact fit: retry the search with just the request's distinctive words + pack count. Real bug:
       // "Bud Light 30 pack cans" returned the Platinum seltzer; "bud light 30" returns the lager 30-pack.
-      if (PM.verdict(reqForFit,best).kind!=='exact') {
+      if (PM.verdict(reqForFit,best).kind!=='exact' && !altRef0) {
         var sk=PM.searchKey(reqForFit);
         if (sk && sk!==String(np.name).toLowerCase()) {
           var seen={}; found.forEach(function(p){seen[p.product_id||p.name]=1;});
@@ -1242,7 +1268,7 @@ async function buildPackage(iv) {
       if (!pq.hasExplicitQty && !pq.mod && (catN==='wine'||catN==='beer'||catN==='spirits') && pq.servings>0) {
         var bTxt=String(best.name||'')+' '+String(best.sizeStr||'');   // name first: catalog size fields can be wrong
         var mlB=(function(t){ var m=t.toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l|cl)\b/); return m ? (m[2]==='l' ? +m[1]*1000 : m[2]==='cl' ? +m[1]*10 : +m[1]) : 750; })(bTxt);
-        var packB=(bTxt.toLowerCase().match(/(\d+)\s*x\s*\d/)||bTxt.toLowerCase().match(/(\d+)\s*(?:pk|pack)\b/)||[])[1];
+        var packB=(bTxt.toLowerCase().match(/(\d+)\s*x\s*\d/)||bTxt.toLowerCase().match(/(\d+)\s*-?\s*(?:pk|pack)[cbs]?\b/)||[])[1];   // "6PKC 12 OZ" (pack of cans) is a 6-pack
         var spuB=catN==='wine'?mlB/150:catN==='spirits'?mlB/46.875:(+packB||beerPackSize);
         var q2=Math.min(Math.max(1,Math.ceil(pq.servings/spuB)), catN==='beer'?Math.max(pq.cap,1):Math.max(pq.cap,Math.ceil(pq.servings/spuB)));
         if (q2!==qty) console.log('[buildPackage] qty from real size: '+best.name+' '+qty+' -> '+q2+' ('+Math.round(pq.servings)+' servings, '+Math.round(spuB*10)/10+' per unit)');
@@ -1691,7 +1717,7 @@ async function buildPackage(iv) {
 function supplyCheck(items, needs) {
   if (!needs) return { ok: true, skipped: true, text: 'supply check skipped (no category needs — named products / cocktails)' };
   var mlOf = function(t){ var m=String(t||'').toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l|cl)\b/); return m ? (m[2]==='l' ? +m[1]*1000 : m[2]==='cl' ? +m[1]*10 : +m[1]) : 0; };
-  var packOf = function(t){ var m=String(t||'').toLowerCase().match(/(\d+)\s*x\s*\d/) || String(t||'').toLowerCase().match(/(\d+)\s*(?:pk|pack)\b/); return m ? +m[1] : 0; };
+  var packOf = function(t){ var m=String(t||'').toLowerCase().match(/(\d+)\s*x\s*\d/) || String(t||'').toLowerCase().match(/(\d+)\s*-?\s*(?:pk|pack)[cbs]?\b/); return m ? +m[1] : 0; };   // "6PKC" = 6-pack of cans (Sep 30: counted as 12)
   var spu = function(it, cat){
     if (cat==='wine') { var w = mlOf(it.name) || mlOf(it.size) || 750; return w / 150; }   // name first: size fields can be wrong
     if (cat==='spirits') { var sM = mlOf(it.name) || mlOf(it.size) || 750; return sM / 46.875; }   // 16 drinks per 750 mL

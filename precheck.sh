@@ -75,6 +75,16 @@ up() {
 restart() {
   local svc ok=0
   for svc in "$@"; do
+    # Never cut off a customer mid-reply (Sep 30: a deploy restarted rachel during DC's Slack message -> "I hit a
+    # snag"). Wait up to 120s for rachel to be idle; rachel itself also drains what is left on SIGTERM.
+    if [ "$svc" = rachel ]; then
+      for i in $(seq 1 60); do
+        n=$(curl -s --max-time 2 http://127.0.0.1:3500/internal/inflight | sed -n 's/.*"inflight":\([0-9]*\).*/\1/p')
+        [ -z "$n" ] || [ "$n" = 0 ] && break
+        [ "$i" = 1 ] && echo "rachel has $n chat(s) in flight — waiting for them to finish..."
+        sleep 2
+      done
+    fi
     echo "Restarting $svc..."
     sudo systemctl restart "$svc"
     if up "$svc"; then echo "$svc is up"; else echo "$svc DID NOT COME UP (see /home/ubuntu/logs/)"; ok=1; fi
