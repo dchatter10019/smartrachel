@@ -3887,6 +3887,10 @@ app.post('/chat', async (req, res) => {
         // earlier proposal in this session, don't re-ask — reuse them and go straight
         // to generating. The customer can still say "change the client/date" to update.
         if (state.savedClientName && state.savedEventDate) {
+          // Falls through to the 'date' handler below. Real bug (Oct 1, DC): this fell into the single-item
+          // path after the if-block, which reset proposalStep to 'qty' and asked "How many bottles?" for a
+          // 15-line basket — every second proposal in a session.
+          console.log('[proposal] ' + existingItemCount + '-line basket, reusing client ' + JSON.stringify(state.savedClientName) + ' + date ' + JSON.stringify(state.savedEventDate));
           state.proposalData = { qty: null, client_name: state.savedClientName, event_date: state.savedEventDate };
           state.proposalStep = 'date';
           message = state.savedEventDate;
@@ -3900,19 +3904,21 @@ app.post('/chat', async (req, res) => {
           if (state.savedClientName) { state.proposalData.client_name = state.savedClientName; state.proposalStep = 'date'; }
           return res.json({ text: ask, response: ask });
         }
-      }
-      if (state.lastDetectedQty && state.lastDetectedQty > 0) {
-        state.proposalStep = 'client';
-        state.proposalData = { qty: state.lastDetectedQty };
+      } else {
+        if (state.lastDetectedQty && state.lastDetectedQty > 0) {
+          state.proposalStep = 'client';
+          state.proposalData = { qty: state.lastDetectedQty };
+          saveFlowState();
+          const ask = 'What is the client or company name?';
+          return res.json({ text: ask, response: ask });
+        }
+        console.log('[proposal] ' + existingItemCount + '-line basket — asking the bottle count');
+        state.proposalStep = 'qty';
+        state.proposalData = {};
         saveFlowState();
-        const ask = 'What is the client or company name?';
+        const ask = 'How many bottles would you like on the proposal?';
         return res.json({ text: ask, response: ask });
       }
-      state.proposalStep = 'qty';
-      state.proposalData = {};
-      saveFlowState();
-      const ask = 'How many bottles would you like on the proposal?';
-      return res.json({ text: ask, response: ask });
     }
     if (state.proposalStep === 'qty') {
       const qtyMatch = message.match(/\b(\d+)\b/);

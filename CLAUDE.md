@@ -120,6 +120,7 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   a 3+ line basket's follow-up offers order OR proposal. A price in a pick ("$24.14") is never a quantity.
 - Proposal requests: phrase list + "<verb> ... proposal/pdf" (not negated/a question). A basket proposal (2+ lines) is
   generated IN CODE from the basket after client + date, reply and link written in code; the LLM is only a fallback.
+  A repeat proposal in a session reuses the saved client + date and goes straight to the PDF (never a bottle count).
   Any LLM-generated proposal reply gets the real URL (rachel.js replaces a placeholder like "<url|...>").
 - A not-carried product's stand-in is the SAME TYPE (rachel/drink-type.js: aperitif / fortified / sparkling / rose / red /
   white / spirit type; non-alcoholic only for non-alcoholic), in buildPackage and the alternatives intent (originals[].type

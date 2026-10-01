@@ -1,0 +1,27 @@
+name: second-proposal-no-qty
+# Real case (Oct 1, DC, Slack, Foodie For All): after a first proposal (client + date given) and a basket change,
+# "send me the PDF propoesal" got "How many bottles would you like on the proposal?" for a 15-line basket and no
+# PDF. The reuse-saved-client+date branch fell through into the single-item path, which reset the step to 'qty'.
+# Correct: the second proposal reuses the client + date and is generated from the current basket in code.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "3 bottles Tito's vodka 750ml, 2 bottles Whispering Angel rosé 750ml"
+    expect: {contains: ["Product total"]}
+  - send: "send me a proposal"
+    expect: {matches: "client|company"}
+  - send: "QA Second Co"
+  - send: "10/6"
+    expect: {contains: ["proposal is ready"], pdf_contains: ["Tito"]}
+  - send: "add 1 Patron Silver 750ml"
+    expect: {contains: ["Patron"]}
+  # Two Patron Silver rows are listed (Silver, Roca Silver) — pick the plain one.
+  - send: "1"
+    expect: {contains: ["Patron Silver - 750 ML"]}
+  - send: "send me the PDF propoesal"
+    expect:
+      contains: ["proposal is ready", "QA Second Co"]
+      not_contains: ["How many bottles"]
+      log_contains: ["reusing client"]
+      pdf_contains: ["Patron", "Tito"]
