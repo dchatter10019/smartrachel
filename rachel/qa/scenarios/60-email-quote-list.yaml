@@ -15,3 +15,5 @@ turns:
       not_contains: ["Platinum", "delivering to 6", "100 Federal St #6", "Federal Street, 100 Federal", "Bon & Viv"]
       not_matches: "(?s)Sun Cruiser Iced Tea[^\\n]*\\n[^\\n]*Sun Cruiser Iced Tea"
       log_contains: ["[list-reply] composed in code", "[quote-pdf] email quote request -> proposal generated in code"]
+      # Oct 1: "Sun" in "2 x Sun Cruiser Ice tea" was read as the event date; every PDF said "Event Date(s): Sun".
+      log_not_contains: ["event Sun)", "event date read from the email"]

@@ -475,16 +475,7 @@ function getChannelNote(format) {
 // ── Rachel chat wrapper ────────────────────────────────────────────────────
 // Hoisted so BOTH the confirm_substitute tool path and the deterministic pick-list
 // handler (in the request handler, outside callRachel's scope) share one implementation.
-// The basket line an item name refers to: WHOLE words, most of them. Real bug (Sep 30): matched on the first word
-// as a substring, "La" (La Crema) hit "B-la-nc" — a swap for the never-added La Crema deleted 10x Chandon Reserve
-// Blanc de Blancs and gave its stand-in Chandon's quantity. -> index or -1
-function basketLineFor(items, itemName) {
-  const nrmW = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/['’]/g, '').replace(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/g, ' ').split(/[^a-z0-9]+/).filter(w => w.length >= 2 && !/^(the|of|and|de|du|la|le|el|by)$/.test(w));
-  const origW = nrmW(itemName);
-  if (!origW.length) return -1;
-  const need = Math.min(origW.length, Math.max(2, Math.ceil(origW.length * 0.6)));
-  return (items || []).findIndex(it => { const iw = new Set(nrmW(it.name || it.label)); return origW.filter(w => iw.has(w)).length >= need; });
-}
+const basketLineFor = require('./basket-line.js');   // the basket line an item name refers to (whole words)
 // The ONE not-carried item (still pending) that a picked product stands in for: same varietal, or the same drink type
 // when the last reply named that item. -> { name, qty } | null. Used by every pick path (numbered list, add-item by
 // name), so a pick REPLACES the missing line at its planned qty. Real bug (Sep 30, DC): fixed in the add-item path
@@ -1289,7 +1280,17 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
         console.log('[substitute-tracking] pending:', state.pendingSubstitutes.join(', '));
       }
     },
-    onProductDiscussed: (em, lineItems, fmt) => {
+    onProductDiscussed: (em, lineItems, fmt, groups) => {
+      // Options shown next to a basket ("two options for the prosecco, sauv blanc and rose"), kept for a proposal that
+      // asks to include them (proposal-options.js). The reply that showed them is added when it is sent.
+      try {
+        const stO = getState(sessionKey); let bk = []; try { bk = JSON.parse(stO.lastLineItems || '[]'); } catch (e) {}
+        if (Array.isArray(groups) && groups.length && bk.length) {
+          const want = require('./proposal-options.js').countAsked(message);
+          stO.shownOptions = { groups, want, reply: null, at: Date.now() };
+          console.log('[options] kept for a proposal: ' + groups.map(g => g.label + ' (' + g.products.length + ')').join(', ') + (want ? ' — ' + want + ' asked per item' : ''));
+        }
+      } catch (e) { console.log('[options] not kept: ' + e.message); }
       // Remember the products just SHOWN (real catalog names, ids, prices), separately from the
       // basket, so a pick from Rachel's list resolves to the product actually offered even when
       // the LLM displayed a tidied name ("Kendall-Jackson Vintner's Reserve Pinot Noir" for the
@@ -1543,6 +1544,8 @@ app.post('/chat', async (req, res) => {
         if (!lastRepliesBySession[sessionKey]) lastRepliesBySession[sessionKey] = [];
         lastRepliesBySession[sessionKey].push(outText);
         if (lastRepliesBySession[sessionKey].length > 6) lastRepliesBySession[sessionKey].shift();
+        const stR = flowState[sessionKey];
+        if (stR && stR.shownOptions && stR.shownOptions.reply == null) stR.shownOptions.reply = outText;   // what the customer saw
       }
       scheduleChatSessionsSave();   // the history is complete by now (recordTurn wraps outside this)
     } catch (e) {}
@@ -2446,7 +2449,8 @@ app.post('/chat', async (req, res) => {
                 const subj = String((context && context.email_subject) || '');
                 if ((/^email-/.test(sessionKey) || subj) && /\b(quote|proposal|pdf|estimate)\b/i.test(turnMsg + ' ' + subj) && !cL.blocks.length) {
                   const client = (subj.match(/\s[-–—|:]\s*([^-–—|:]{2,60})$/) || [])[1] || String((context && context.user_name) || '').trim() || '';
-                  const dm = String(turnMsg).match(cta.DATE_RE), eventDate = dm ? dm[0] : '';
+                  const eventDate = require('./event-date.js').findEventDateIn(turnMsg);   // not cta.DATE_RE: "Sun" Cruiser was a date
+                  if (eventDate) console.log('[quote-pdf] event date read from the email: ' + JSON.stringify(eventDate));
                   const lt = listText;
                   quotePdf(st, itL, client.trim(), eventDate, cL.inexact.length).then(url => {
                     payload.text = lt + (url ? '\n\nYour PDF proposal is attached' + (eventDate ? '' : ' — reply with the event date and I\'ll add it') + ': ' + url : '');
@@ -3855,10 +3859,18 @@ app.post('/chat', async (req, res) => {
     // regenerated through the date step below (event-date.js parseProposalFieldEdit). Real bug (Oct 1, Sean):
     // "remove the 'thanks Rache' from the date and send back an updated PDF" went to the LLM, which replied that no
     // PDF had been generated and asked for the client and date again.
+    // Options in the PDF (proposal-options.js): a proposal request that asks for them sets the flag for this session;
+    // "without the options" clears it. On a proposal already sent, "include the options in the pdf" regenerates it.
+    const PO = require('./proposal-options.js');
+    const asksOptions = (isProposalTrigger || /\b(?:proposal|pdf|quote)\b/i.test(message)) && PO.wantsOptions(message);
+    const dropOptions = state.proposalWithOptions && /\b(?:proposal|pdf|quote)\b/i.test(message) && PO.dropsOptions(message);
+    if (asksOptions && !state.proposalWithOptions) { state.proposalWithOptions = true; console.log('[options] the proposal will list the options shown' + (state.shownOptions ? ': ' + state.shownOptions.groups.map(g => g.label).join(', ') : ' (none shown yet)')); }
+    if (dropOptions) { state.proposalWithOptions = false; console.log('[options] options left out of the proposal (customer asked)'); }
     let pfHandled = false;   // the request words ("send back an updated PDF") must not restart the flow below
     if (state.lastProposalUrl && !state.proposalStep && !state.orderStep) {
       let pfLines = []; try { pfLines = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
-      const pf = pfLines.length > 1 ? require('./event-date.js').parseProposalFieldEdit(message, state.savedEventDate) : null;
+      let pf = pfLines.length > 1 ? require('./event-date.js').parseProposalFieldEdit(message, state.savedEventDate) : null;
+      if (!pf && pfLines.length > 1 && (asksOptions || dropOptions)) pf = {};   // same client + date, options added/removed
       if (pf) {
         console.log('[proposal] field edit on the sent proposal: ' + JSON.stringify(pf) + ' (was client ' + JSON.stringify(state.savedClientName || '') + ', date ' + JSON.stringify(state.savedEventDate || '') + ') — regenerating in code');
         if (pf.client) state.savedClientName = pf.client;
@@ -4022,10 +4034,12 @@ app.post('/chat', async (req, res) => {
         try {
           const po = (state.eventParams && state.eventParams.proposalOpts) || {};
           if (Object.keys(po).length) console.log('[proposal] options injected into generate_proposal (in code):', JSON.stringify(po));
+          const altOpts = state.proposalWithOptions ? PO.buildOptions(state.shownOptions, existingItemsForProposal, basketLineFor) : [];
+          if (state.proposalWithOptions) console.log('[options] ' + (altOpts.length ? 'listed in the PDF: ' + altOpts.map(o => o.label + ' -> ' + o.alternatives.map(a => a.name).join(' / ')).join(' | ') : 'asked for, but none were shown in this session — the reply says so'));
           const rrP = await fetch('http://127.0.0.1:8300/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
             body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'generate_proposal', arguments: Object.assign({
               line_items: JSON.stringify(existingItemsForProposal), client_name: pd.client_name || '', event_date: pd.event_date || '', email, channel: format || 'slack',
-              notes: state.address ? 'Delivery: ' + state.address + '.' : '' }, po.tax_exempt ? { tax_exempt: true } : {}, po.totals_only ? { totals_only: true } : {}, po.hide_subtotals ? { hide_subtotals: true } : {}) } }) });
+              notes: state.address ? 'Delivery: ' + state.address + '.' : '' }, altOpts.length ? { options: JSON.stringify(altOpts) } : {}, po.tax_exempt ? { tax_exempt: true } : {}, po.totals_only ? { totals_only: true } : {}, po.hide_subtotals ? { hide_subtotals: true } : {}) } }) });
           const rtP = await rrP.text(); const rlP = rtP.split('\n').find(l => l.startsWith('data:'));
           const rP = rlP ? JSON.parse(JSON.parse(rlP.replace('data:', '').trim()).result.content[0].text) : null;
           if (rP && rP.success && rP.download_url) {
@@ -4037,7 +4051,10 @@ app.post('/chat', async (req, res) => {
             const link = format === 'slack' ? '<' + rP.download_url + '|Download proposal>' : 'Download proposal: ' + rP.download_url;
             const sumP = 'Your proposal is ready!\n\n' + (format === 'slack' ? '*Client:* ' : 'Client: ') + (pd.client_name || '—') + '\n' + (format === 'slack' ? '*Event Date:* ' : 'Event date: ') + (pd.event_date || '—') + '\n\n' +
               existingItemsForProposal.map(li => { const q = li.qty || li.quantity || 1, pr = parseFloat(li.price) || 0; return q + 'x ' + String(li.name || li.label || '').replace(/ \*$/, '') + ' — $' + pr.toFixed(2) + ' ea = $' + (q * pr).toFixed(2); }).join('\n') +
-              '\n\nProduct total: $' + total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' (tax, service, tip and delivery are itemized in the PDF)\n\n' + link +
+              '\n\nProduct total: $' + total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' (tax, service, tip and delivery are itemized in the PDF)' +
+              (altOpts.length ? '\n\n' + PO.describe(altOpts) + ' The total is for the items above; each option shows how it changes it.'
+                : state.proposalWithOptions ? "\n\nI haven't shown you any options yet, so none are in the PDF — tell me which items you'd like options for and I'll add them." : '') +
+              '\n\n' + link +
               '\n\nWould you like me to email this to anyone, place the order, or make any changes?';
             return res.json({ text: sumP, response: sumP });
           }

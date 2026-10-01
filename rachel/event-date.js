@@ -77,4 +77,18 @@ function parseProposalFieldEdit(msg, savedDate, now = new Date()) {
   return isEdit ? out : null;
 }
 
-module.exports = { normalizeEventDate, parseProposalFieldEdit };
+// The event date stated in a quote email, or ''. Real bug (Oct 1, QA email-quote-list): cta.DATE_RE matched "Sun" in
+// "2 x Sun Cruiser Ice tea Variety pack" and every PDF of that quote said "Event Date(s): Sun". Item lines (a
+// quantity first) are skipped; a weekday counts only as a full name after on/this/next/for ("on Saturday").
+function findEventDateIn(text, now = new Date()) {
+  const lines = String(text || '').split(/\r?\n/).filter(l => !/^\s*(?:[-•*·]\s*)?\d+\s*(?:x\b|×|\s+[A-Za-z])/i.test(l));
+  for (const l of lines) {
+    if (!/\d/.test(l)) continue;
+    const d = normalizeEventDate(l, now);
+    if (d.date) return d.text;
+  }
+  const wd = lines.join('\n').match(/\b(?:on|this|next|for)\s+((?:mon|tues|wednes|thurs|fri|satur|sun)day)\b/i);
+  return wd ? wd[1][0].toUpperCase() + wd[1].slice(1).toLowerCase() : '';
+}
+
+module.exports = { normalizeEventDate, parseProposalFieldEdit, findEventDateIn };

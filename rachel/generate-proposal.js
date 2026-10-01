@@ -80,6 +80,7 @@ function groupByCategory(lineItems) {
 
 function generateHTML(proposal) {
   const { client_name, event_date, line_items, notes, tax_exempt, tax_rate, totals_only, hide_subtotals } = proposal;
+  let options = []; try { options = typeof proposal.options === 'string' ? JSON.parse(proposal.options) : (proposal.options || []); } catch (e) { console.log('[proposal] options not readable — left out: ' + e.message); }
   const items = typeof line_items === 'string' ? JSON.parse(line_items) : line_items;
   const groups = groupByCategory(items);
   
@@ -132,6 +133,39 @@ function generateHTML(proposal) {
       </div>`;
   });
 
+  // Options (Oct 1, Sean: "include the various prosecco, sauv blanc, and rose options separately"): per basket line, the
+  // alternatives shown, each at that line's quantity with the change to the product total. Totals stay on the basket.
+  const money = n => (n < 0 ? '-' : '+') + '$' + Math.abs(n).toFixed(2);
+  const optionSections = (options || []).filter(o => o && Array.isArray(o.alternatives) && o.alternatives.length).map(o => {
+    const sel = o.selected, q = (sel && sel.qty) || 1;
+    const rows = o.alternatives.map(a => {
+      const pr = parseFloat(a.price) || 0, diff = sel ? (pr - (parseFloat(sel.price) || 0)) * q : null;
+      return `
+      <tr>
+        <td>${a.name || ''}</td>
+        <td>${String(a.size || '').toUpperCase()}</td>
+        <td style="text-align:center">${q}</td>
+        <td style="text-align:right">$${pr.toFixed(2)}</td>
+        <td style="text-align:right">$${(pr * q).toFixed(2)}</td>
+        <td style="text-align:right">${diff == null ? '' : money(diff)}</td>
+      </tr>`;
+    }).join('');
+    return `
+      <div class="cat-section">
+      <table>
+      <colgroup><col style="width:44%"><col style="width:11%"><col style="width:6%"><col style="width:13%"><col style="width:13%"><col style="width:13%"></colgroup>
+      <tbody>
+      <tr class="opt-header"><td colspan="6">${String(o.label || '').toUpperCase()}${sel ? ` <span class="opt-sel">— in this proposal: ${sel.name}, ${q} × $${(parseFloat(sel.price) || 0).toFixed(2)}</span>` : ''}</td></tr>
+      <tr class="col-header">
+        <td>OPTION</td><td>SIZE</td><td style="text-align:center">QTY</td>
+        <td style="text-align:right">UNIT PRICE</td><td style="text-align:right">TOTAL</td><td style="text-align:right">CHANGE</td>
+      </tr>
+      ${rows}
+      </tbody>
+      </table>
+      </div>`;
+  }).join('');
+
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -162,6 +196,9 @@ function generateHTML(proposal) {
   .grand-total .amount { font-size: 18px; font-weight: bold; }
   .footer { margin-top: 8px; font-size: 9.5px; color: #888; font-style: italic; }
   .notes { margin-top: 8px; padding: 6px 10px; background: #fff8e1; border-left: 3px solid #ffc107; font-size: 10.5px; }
+  tr.opt-header td { background: #f1e4e5; color: ${BEVVI_DARK}; font-weight: bold; font-size: 10.5px; padding: 4px 8px; letter-spacing: .5px; }
+  .opt-sel { font-weight: normal; letter-spacing: 0; text-transform: none; color: #555; }
+  .opt-note { font-size: 10px; color: #666; margin: 2px 0 6px; }
   .totals { margin-top: 8px; padding: 6px 14px; background: #f9f9f9; border: 1px solid #eee; border-radius: 4px; font-size: 11.5px; }
   .totals div { display: flex; justify-content: space-between; padding: 2px 0; }
 </style>
@@ -179,6 +216,9 @@ function generateHTML(proposal) {
   </div>
   <h2>Beverage Selection</h2>
   ${categorySections}
+  ${optionSections ? `<h2 style="margin-top:10px">Options</h2>
+  <div class="opt-note">Alternatives to the selections above. The totals below are for the selections; CHANGE is how each option would change the product total.</div>
+  ${optionSections}` : ''}
   ${notes ? `<div class="notes">${notes}</div>` : ''}
   ${totals_only ? '' : `<div class="totals">
     <div><span>Product total</span><span>$${productTotal.toFixed(2)}</span></div>
@@ -225,9 +265,10 @@ async function generateProposal(proposal, outputPath) {
     const dir = path.join(path.dirname(outputPath), 'proposal-items');
     fs.mkdirSync(dir, { recursive: true });
     const items = typeof proposal.line_items === 'string' ? JSON.parse(proposal.line_items) : proposal.line_items;
+    let options = []; try { options = typeof proposal.options === 'string' ? JSON.parse(proposal.options) : (proposal.options || []); } catch (e) {}
     fs.writeFileSync(path.join(dir, path.basename(outputPath) + '.json'), JSON.stringify({
       pdf: path.basename(outputPath), at: new Date().toISOString(), client_name: proposal.client_name || '',
-      event_date: proposal.event_date || '', notes: proposal.notes || '', line_items: items }, null, 1));
+      event_date: proposal.event_date || '', notes: proposal.notes || '', line_items: items, options: options.length ? options : undefined }, null, 1));
   } catch (e) { console.log('[proposal] line items NOT saved for ' + outputPath + ': ' + e.message); }
   return outputPath;
 }

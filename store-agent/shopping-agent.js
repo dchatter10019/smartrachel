@@ -1069,6 +1069,7 @@ async function executeTool(name, input) {
       tax_exempt: input.tax_exempt || false,
       totals_only: input.totals_only || false,
       hide_subtotals: input.hide_subtotals || false,
+      options: input.options || null,   // alternatives listed per basket line (rachel/proposal-options.js)
       tax_rate: typeof input.tax_rate === 'number' ? input.tax_rate : undefined
     }, outputPath);
     return {

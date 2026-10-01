@@ -1,6 +1,6 @@
 // Unit tests for event-date.js — the event date printed on a proposal.
 // (precheck.sh runs qa/unit/*.test.js.)
-const { normalizeEventDate, parseProposalFieldEdit } = require('../../event-date.js');
+const { normalizeEventDate, parseProposalFieldEdit, findEventDateIn } = require('../../event-date.js');
 let failed = 0;
 function eq(label, got, want) {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -37,6 +37,14 @@ eq('already clean: still regenerated with the same date', pe('Can you please rem
   { date: 'October 6, 2026', why: 'cleaned the saved date "October 6, 2026"' });
 eq('"remove the date" = no date on the PDF', pe('please remove the date and resend', 'October 6, 2026'), { date: '', why: 'date removed' });
 eq('unrelated message', pe('add 2 more cases of Modelo'), null);
+
+const fd = m => findEventDateIn(m, now);
+const quoteList = 'Hi,\r\n\r\nI need an alcohol menu quote that includes the below items.\r\n\r\nI am 21 years old. The delivery address is 100 Federal Street, Floor 6\r\nBoston, MA 02110\r\n\r\nItem Request:\r\n\r\n2 x Budlight (30 cans per case)\r\n2 Casamigos Margaritas Cocktail Cans (8 pack)\r\n2 x Sun Cruiser Ice tea Variety pack (18 cans per case)\r\n1 Oyster Bay Sauvignon Blanc, 2023\r\n\r\nThanks!\r\nSean';
+eq('"Sun Cruiser" is not an event date (Oct 1, QA email-quote-list)', fd(quoteList), '');
+eq("Sean's Foodie email: the delivery date", fd('Can you please draft a menu?\n\n*Delivery date: *\nTuesday, October 6th\n\n3 x Jack Daniel\'s Mixed with Coca-Cola'), 'October 6, 2026');
+eq('a numeric date in a sentence', fd('Event is on 11/14, about 40 guests.'), 'November 14, 2026');
+eq('"on Saturday"', fd('We need it for the party on Saturday.'), 'Saturday');
+eq('a bare "Sat" is not a date', fd('Sat Bhai bottles'), '');
 
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');

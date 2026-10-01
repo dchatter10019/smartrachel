@@ -464,6 +464,12 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             saInput.notes = 'Delivery: ' + sessionState.address + '.' + (saInput.notes ? ' ' + saInput.notes : '');
             console.log('[proposal] delivery address added to the LLM proposal notes');
           }
+          // Options the customer asked to have in the PDF (proposal-options.js) — same as the in-code proposal.
+          if (saInput.intent === 'generate_proposal' && sessionState && sessionState.proposalWithOptions && !saInput.options) {
+            let bkO = []; try { bkO = JSON.parse(currentLineItems || '[]'); } catch (e) {}
+            const oO = require('./proposal-options.js').buildOptions(sessionState.shownOptions, bkO);
+            if (oO.length) { saInput.options = JSON.stringify(oO); console.log('[options] listed in the LLM proposal PDF: ' + oO.map(o => o.label).join(', ')); }
+          }
           // The customer-chosen tip rides in the server's place_order instruction; the LLM
           // may drop or change it (it used to be told never to show $0). Enforce it here.
           if (saInput.intent === 'place_order') {
@@ -605,7 +611,8 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
               establishmentId: p.establishmentId || '',
               category: p.category || ''
             }));
-            onProductDiscussed(saInput.email || '', JSON.stringify(asLineItems), saInput.channel);
+            // Grouped by query label ("Prosecco", "Sauvignon Blanc") for options listed in a later proposal PDF.
+            onProductDiscussed(saInput.email || '', JSON.stringify(asLineItems), saInput.channel, require('./proposal-options.js').groupsFromResult(saInput.queries, result));
           }
         }
         if (result.success && result.download_url && saInput.intent === 'generate_proposal' && onProposalGenerated) {

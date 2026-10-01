@@ -1,0 +1,30 @@
+name: proposal-alternatives
+# Real case (Oct 1, Sean, email, Foodie For All): "can you give two options for the prosecco, sauv blanc, and rose?"
+# listed them in the reply; "send a pdf proposal and include the various prosecco, sauv blanc, and rose options
+# separately" got a PDF with only the three basket wines. Correct: the PDF lists the options shown, per basket line,
+# at the line's quantity with the change to the total; the totals stay on the basket; "without the options" drops them.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "132 W 32nd St, New York, NY 10001"
+  - send: "3 x Kim Crawford Prosecco 750ml\n3 x Cloudy Bay Sauvignon Blanc 750ml\n3 x Rumor Provence Rose 750ml\n1 x Grey Goose Vodka 750ml"
+    expect: {contains: ["Product total"]}
+  - send: "Can you give two options for the prosecco, sauv blanc, and rose?"
+    expect:
+      log_contains: ["[options] kept for a proposal", "2 asked per item"]
+  - send: "can you please send a pdf proposal and include the various prosecco, sauv\nblanc, and rose options separately?"
+    expect:
+      matches: "client|company"
+      log_contains: ["the proposal will list the options shown"]
+  - send: "QA Options Co"
+  - send: "Oct 6th"
+    expect:
+      contains: ["proposal is ready", "Options listed in the PDF"]
+      log_contains: ["[options] listed in the PDF"]
+      pdf_contains: ["Options", "CHANGE", "in this proposal: Kim Crawford Prosecco"]
+  - send: "please send the proposal again without the options"
+    expect:
+      contains: ["proposal is ready"]
+      not_contains: ["Options listed in the PDF"]
+      log_contains: ["options left out of the proposal"]
+      pdf_not_contains: ["CHANGE"]

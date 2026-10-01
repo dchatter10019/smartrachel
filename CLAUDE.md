@@ -125,6 +125,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   A repeat proposal in a session reuses the saved client + date and goes straight to the PDF (never a bottle count).
   The event date is cleaned by rachel/event-date.js (date step AND shopping-agent generate_proposal, every path):
   "Oct 6th, thanks Rache" -> "October 6, 2026"; no year = next upcoming; a year already past -> next occurrence.
+  A quote email's date = findEventDateIn: item lines ("2 x Sun Cruiser") skipped; a weekday only as "on/this/next Saturday".
+  Options shown next to a basket ("two options for the prosecco...") are kept (state.shownOptions); a proposal request
+  that asks for the options/alternatives lists them in the PDF per basket line at its qty with the CHANGE to the total
+  (rachel/proposal-options.js, both the code and LLM paths); totals stay on the basket; "without the options" drops them.
   A change to the client/date of a sent proposal ("remove X from the date", "client should be Y", "date: Oct 7") is
   applied in code and the PDF regenerated (parseProposalFieldEdit). Turns answered in code are recorded in the LLM
   history (recordTurn llmRan=false) — else the LLM denies a PDF it never saw being sent.
