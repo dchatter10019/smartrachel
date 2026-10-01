@@ -1051,6 +1051,13 @@ async function executeTool(name, input) {
     if (input.line_items) {
       try { await saveBasket(input.email, input.line_items, '', input.channel || 'slack'); } catch(e) {}
     }
+    // Every caller (code path, LLM, quote edits) prints a clean date (rachel/event-date.js): Oct 1, the PDF read
+    // "Oct 6th, thanks Rache", then "October 6, 2025".
+    if (input.event_date) {
+      const ed = require('/home/ubuntu/rachel/event-date.js').normalizeEventDate(input.event_date);
+      if (ed.changed) console.log('[generate_proposal] event date ' + JSON.stringify(input.event_date) + ' -> ' + JSON.stringify(ed.text) + ' (' + ed.why + ')');
+      input.event_date = ed.text;
+    }
     const timestamp = Date.now();
     const filename = 'bevvi-proposal-' + timestamp + '.pdf';
     const outputPath = '/home/ubuntu/logs/' + filename;
@@ -1068,6 +1075,7 @@ async function executeTool(name, input) {
       success: true,
       filename,
       download_url: 'http://3.138.180.46/proposals/' + filename,
+      event_date: input.event_date || '',   // the date printed on the PDF — the reply must say this one (Oct 1: the LLM wrote "2025")
       download_text: 'Download proposal',
       message: 'Proposal generated for ' + input.client_name
     };

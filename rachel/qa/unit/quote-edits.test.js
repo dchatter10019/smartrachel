@@ -48,6 +48,9 @@ eq('reply lists the change and totals', /All Day IPA 15x12 oz Cans: 2 → 1/.tes
 
 console.log('other shapes');
 eq('inline removal', QE.parseEdits('Please remove the Josh Cellars Cabernet from the order, thanks').removes, ['Josh Cellars Cabernet']);
+eq('inline removal without "from the order" (Oct 1)', QE.parseEdits('Hi,\r\n\r\nCan you update the quote? Please remove the Oyster Bay.\r\n\r\nThanks').removes, ['Oyster Bay']);
+eq('a change to the proposal date is not a line removal (Oct 1, Sean)', QE.parseEdits('Can you please remove the "thanks Rache" from the date and send back and\nupdated PDF?').removes, []);
+eq('"remove the date" is not a line removal', QE.parseEdits('please remove the date').removes, []);
 eq('inline quantity', QE.parseEdits('We only need 2 cases of Bud Light.').setQty, [{ name: 'Bud Light', qty: 2 }]);
 eq('"no bottled beer"', QE.parseEdits('No bottled beer please').attrs, [{ category: 'beer', packaging: 'bottle' }]);
 eq('an add list is flagged (not handled in code)', QE.parseEdits('Please add the following:\n- Tito\'s 1.75L').adds, true);

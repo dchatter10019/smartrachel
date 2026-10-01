@@ -1340,7 +1340,19 @@ async function buildPackage(iv) {
           var hitB=(await doSearch(wB, catN)).filter(function(p){return !isMini(p)&&altSane(p)&&p.product_id!==best.product_id&&!PM.fit(wB,p).missing.length;});
           if (prefer750) hitB.sort(function(a,b){return (/\b750\s*ml\b/i.test(String(a.sizeStr||a.name))?0:1)-(/\b750\s*ml\b/i.test(String(b.sizeStr||b.name))?0:1);});
           console.log('[buildPackage] split request '+JSON.stringify(np.name)+': picked '+best.name+' lacks "'+wB+'" — '+(hitB.length?'"'+wB+'" IS in stock: '+hitB[0].name+' — said so':'"'+wB+'": none in stock'));
-          if (hitB.length) {
+          // Two brands' words, each product has one: the LATER word names the product — a maker/parent comes first
+          // ("Remy Cointreau" = Cointreau; "Moet Hennessy" = Hennessy). Real bug (Oct 1, Sean): Remy Martin 1738
+          // 375 mL was put on the quote and Cointreau, what he meant, was only a "say if you meant that".
+          var rw=PM.words(reqForFit), lastIx=function(ws){return Math.max.apply(null,ws.map(function(w){return rw.indexOf(w);}));};
+          var hitFit=hitB.length?PM.fit(reqForFit,hitB[0]):null, bestHas=bw.filter(function(w){return fB.missing.indexOf(w)<0;});
+          if (hitB.length && pq.hasExplicitQty && !altNote && hitFit.missing.length<=fB.missing.length && lastIx(missB)>lastIx(bestHas)) {
+            // Compared on missing words only: the brand's own descriptor ("Orange Liqueur" on Cointreau) is not a
+            // different drink here — the customer named that brand.
+            var was=best;
+            best=hitB[0];
+            match={kind:'closest',asked:np.name,note:was.name+' ($'+Number(was.price).toFixed(2)+') is in stock too — say if you meant that'};
+            console.log('[buildPackage] split request '+JSON.stringify(np.name)+': "'+wB+'" (the later word) names the product — picked '+best.name+' instead of '+was.name+' (kept in the note)');
+          } else if (hitB.length) {
             var still=fB.missing.filter(function(w){return missB.indexOf(w)<0;});
             var inNote=hitB[0].name+' ($'+Number(hitB[0].price).toFixed(2)+') is in stock too — say if you meant that';
             match.note=match.note.replace(/no [^;]+ in stock/, (still.length?'no '+still.join(' ')+' in stock; ':'')+inNote);

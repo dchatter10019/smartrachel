@@ -459,6 +459,11 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             console.log('[ShoppingAgent] overriding LLM-supplied line_items with authoritative current basket for', saInput.intent);
           }
           saInput.line_items = currentLineItems;
+          // Same delivery line as the in-code proposal. Real bug (Oct 1, Sean): the LLM-built PDF had no "Delivery:" line.
+          if (saInput.intent === 'generate_proposal' && sessionState && sessionState.address && !/\bdeliver/i.test(saInput.notes || '')) {
+            saInput.notes = 'Delivery: ' + sessionState.address + '.' + (saInput.notes ? ' ' + saInput.notes : '');
+            console.log('[proposal] delivery address added to the LLM proposal notes');
+          }
           // The customer-chosen tip rides in the server's place_order instruction; the LLM
           // may drop or change it (it used to be told never to show $0). Enforce it here.
           if (saInput.intent === 'place_order') {

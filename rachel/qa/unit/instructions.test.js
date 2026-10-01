@@ -90,5 +90,12 @@ console.log('descriptor words out of search text');
   t('one sentence claims the other swap, the next asks about this one: handled', unaddressed(['Rose from Provence -&gt; can we do whispering agnel?'], "*Cointreau Orange Liqueur - 750 ML* is swapped in. Just let me know which Whispering Angel size you'd like and I'll update the rosé too!", before, before), []);
   t('a swap applied in the basket is done', unaddressed(['Remy Cointreau -&gt; Cointreau 750 ML'], reply, before, [{ name: 'Cointreau Orange Liqueur - 750 ML', qty: 1 }]), []);
 }
+{
+  const sp = splitInstructions;
+  const t = (label, got, want) => { const ok = JSON.stringify(got) === JSON.stringify(want); if (!ok) failed++; console.log((ok ? '  ✓ ' : '  ✗ ') + label + (ok ? '' : '\n      got:  ' + JSON.stringify(got) + '\n      want: ' + JSON.stringify(want))); };
+  t('Sean (Oct 1): a sign-off is not an instruction', sp('ok have the client be: Foodie For All\nEvent Date: Oct 6th\n\nThanks!'), ['ok have the client be: Foodie For All', 'Event Date: Oct 6th']);
+  t('Sean (Oct 1): an email hard wrap is one instruction', sp('Can you please remove the "thanks Rache" from the date and send back and\nupdated PDF?'), []);
+  t('short list lines stay separate', sp('remove the modelo\nadd two coronas\nthanks so much!'), ['remove the modelo', 'add two coronas']);
+}
 console.log(failed ? '\ninstructions: ' + failed + ' FAILED' : '\ninstructions: all passed');
 process.exit(failed ? 1 : 0);

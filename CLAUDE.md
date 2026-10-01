@@ -69,7 +69,7 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 ## QA harness (rachel/qa/)
 - `qa/unit/*.test.js`: pure-logic unit tests on saved real replies (multi-pick resolver), run by every
   `precheck.sh` lint/deploy. Lint also enforces eslint no-use-before-define (runtime TDZ errors).
-- `./qa/run.py` every scenario in qa/scenarios/ (53 on Sep 29); `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
+- `./qa/run.py` every scenario in qa/scenarios/ (59 files on Oct 1); `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
 - Scenarios are YAML in qa/scenarios/. Assertions: contains / not_contains / matches / not_matches / log_contains / log_not_contains /
   pdf_contains / pdf_not_contains, plus a Haiku `judge` — prefer structural checks; the judge is
   unreliable on nuanced criteria. `transport: slack` (real DM as rachel_qa) and `transport: email`
@@ -114,13 +114,20 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   "A -> B" lines (Slack sends "-&gt;") are applied in code after the LLM turn when A is a basket line (name, label or
   what was first asked) and B is ONE product just shown (size-matched); else the LLM's question stands ([arrow-swap]).
   A reply that only SAYS a swap was made (basket untouched) is flagged "I haven't done this one yet" (instructions.js).
-  A list line whose pick has only part of the name ("Remy Cointreau" -> Remy Martin) searches the missing words and
-  says "<product> is in stock too" — never a false "no X in stock". A basket change after a proposal says the PDF is stale.
+  A list line whose pick has only part of the name searches the missing words and says "<product> is in stock too" —
+  never a false "no X in stock". Two brands' words, one product each: the LATER word wins ("Remy Cointreau" =
+  Cointreau, Remy Martin noted). A spirit-type word the brand implies is not missing ("Grey Goose Vodka" = Grey
+  Goose 750 ML) unless the product adds words of its own (Patron XO Cafe is not "Patron Tequila"). A basket change after a proposal says the PDF is stale.
   After ANY basket change the reply lists the whole basket (2+ lines; appended in the CTA layer if the reply didn't);
   a 3+ line basket's follow-up offers order OR proposal. A price in a pick ("$24.14") is never a quantity.
 - Proposal requests: phrase list + "<verb> ... proposal/pdf" (not negated/a question). A basket proposal (2+ lines) is
   generated IN CODE from the basket after client + date, reply and link written in code; the LLM is only a fallback.
   A repeat proposal in a session reuses the saved client + date and goes straight to the PDF (never a bottle count).
+  The event date is cleaned by rachel/event-date.js (date step AND shopping-agent generate_proposal, every path):
+  "Oct 6th, thanks Rache" -> "October 6, 2026"; no year = next upcoming; a year already past -> next occurrence.
+  A change to the client/date of a sent proposal ("remove X from the date", "client should be Y", "date: Oct 7") is
+  applied in code and the PDF regenerated (parseProposalFieldEdit). Turns answered in code are recorded in the LLM
+  history (recordTurn llmRan=false) — else the LLM denies a PDF it never saw being sent.
   Any LLM-generated proposal reply gets the real URL (rachel.js replaces a placeholder like "<url|...>").
 - A not-carried product's stand-in is the SAME TYPE (rachel/drink-type.js: aperitif / fortified / sparkling / rose / red /
   white / spirit type; non-alcoholic only for non-alcoholic), in buildPackage and the alternatives intent (originals[].type

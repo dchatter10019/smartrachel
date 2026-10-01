@@ -39,7 +39,8 @@ const CHANGERS = ['seltzer', 'hard', 'cider', 'tea', 'lemonade', 'margarita', 'c
   'alcoholic', 'na', 'shandy', 'radler', 'lemon', 'grapefruit', 'mango', 'peach', 'cherry', 'orange', 'pineapple', 'watermelon',
   'berry', 'strawberry', 'imperial', 'double', 'spiced', 'flavored', 'pumpkin',
   'octoberfest', 'winter', 'summer', 'holiday', 'rose', 'sparkling', 'stout', 'porter'];
-const TYPE = STYLE;   // styleQuery uses the style words
+const TYPE = STYLE;
+const SPIRIT_TYPE = new Set(['vodka', 'gin', 'rum', 'tequila', 'mezcal', 'whiskey', 'whisky', 'bourbon', 'scotch', 'rye', 'cognac', 'brandy', 'liqueur']);   // styleQuery uses the style words
 
 // Unit count of a pack: "30x12 OZ", "30 pack", "(30 cans per case)", "12pk", "8 pack".
 function packCount(s) {
@@ -53,7 +54,14 @@ function fit(request, product) {
   // A word counts when it starts a product word: "pumpkin" in "Pumpkinhead", "light" in "Light".
   const has = w => pn.includes(' ' + w + ' ') || (w.length >= 4 && pn.includes(' ' + w));
   const distinct = [...new Set(req.filter(w => !FILLER.has(w) && !/^\d/.test(w) && w.length >= 2))];
-  const missing = distinct.filter(w => !has(w));
+  // A spirit-type word the brand already implies is not missing: "Grey Goose Vodka 750ml" is Grey Goose - 750 ML.
+  // Real bug (Oct 1, Sean): it was "not an exact match" and Stolichnaya was offered as the vodka. Only when every
+  // other distinctive word is on the product (a "Patron Tequila" request is not met by any Patron).
+  // Not when the product's name adds words of its own: Patron XO Cafe is not "Patron Tequila", Le Citron not "Grey Goose Vodka".
+  const others = distinct.filter(w => !SPIRIT_TYPE.has(w));
+  const reqW = new Set(req), prodOwn = words(product && product.name).filter(w => !FILLER.has(w) && !/^\d/.test(w) && w.length >= 2 && !reqW.has(w));
+  const typeImplied = others.length && others.every(has) && !prodOwn.length;
+  const missing = distinct.filter(w => !has(w) && !(SPIRIT_TYPE.has(w) && typeImplied));
   const reqSet = new Set(req);
   const extra = CHANGERS.filter(w => pn.includes(' ' + w + ' ') && !reqSet.has(w));
   const want = packCount(request), got = packCount((product && product.name) + ' ' + (product && (product.sizeStr || product.size) || ''));
@@ -104,7 +112,7 @@ function searchKey(request) {
   return d.length ? d.join(' ') + (pk ? ' ' + pk : '') : '';
 }
 // Brand words = distinctive words that aren't style words. A request with none ("Pumpkin beer") is generic.
-const brandWords = request => words(request).filter(w => !FILLER.has(w) && !/^\d/.test(w) && w.length >= 2 && !STYLE.includes(w) && w !== 'variety' && w !== 'mix');
+const brandWords = request => words(request).filter(w => !FILLER.has(w) && !/^\d/.test(w) && w.length >= 2 && !STYLE.includes(w) && !SPIRIT_TYPE.has(w) && w !== 'variety' && w !== 'mix');
 // "Warsteiner Premium Pilsener 24 cans" -> "Warsteiner Premium Pilsener" (for "X isn't in stock here").
 const displayName = request => String(request || '').replace(/\(.*?\)/g, ' ').replace(/\b\d+\s*(?:x\s*\d+\s*oz|-?\s*(?:pk|pack|packs|cans?|bottles?|ct)\b(?:\s*per\s*case)?)/gi, ' ').replace(/\b(?:cans?|pack|per case)\b/gi, ' ').replace(/\s+/g, ' ').trim();
 

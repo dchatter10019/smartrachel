@@ -77,6 +77,14 @@ function parseEdits(text) {
   // Inline single edits: "remove the Catena Malbec from the order", "I only need 1 case of Founders All Day IPA".
   const inRm = /\b(?:please\s+)?(?:remove|take out|drop|delete)\s+(?:the\s+)?([^.,;:!?\n]{3,60}?)\s+from\s+(?:the|my|our|this)\s+(?:order|quote|list|basket|proposal|cart)\b/gi;
   while ((m = inRm.exec(flat))) { if (!/\b(?:all|any|following|items?|these|those|below)\b/i.test(m[1]) && !out.removes.includes(m[1].trim())) out.removes.push(m[1].trim()); }
+  // "Please remove the Oyster Bay." with no "from the order" (Oct 1, QA email-which-proposal: went to the LLM, which
+  // regenerated the PDF as client "Bevvi Quote"). Not a change to the proposal itself (date, client, PDF, link).
+  const inRm2 = /\b(?:please\s+)?(?:remove|take out|drop|delete)\s+(?:the\s+)?([^.,;:!?\n"“”]{3,60}?)\s*(?:[.!;\n]|$)/gim;
+  while ((m = inRm2.exec(flat))) {
+    const nm = m[1].trim();
+    if (/\b(?:from|all|any|following|items?|these|those|below|date|client|name|pdf|proposal|quote|link|order|it|that|this|them)\b/i.test(nm) || out.removes.includes(nm)) continue;
+    out.removes.push(nm);
+  }
   const inQ = new RegExp('\\b(?:only|just)\\s+(?:need|want)\\s+' + NUM_RE + '\\s+' + UNIT_RE + '\\s+of\\s+(?:the\\s+)?([^.,;:!?\\n]{3,60}?)(?=[.,;:!?\\n]|$)', 'gi');
   while ((m = inQ.exec(flat))) out.setQty.push({ name: m[2].trim(), qty: num(m[1]) });
   if (/\b(?:add|include)\b[^.]{0,60}\b(?:to the (?:order|quote|list)|as well)\b/i.test(flat)) out.adds = true;

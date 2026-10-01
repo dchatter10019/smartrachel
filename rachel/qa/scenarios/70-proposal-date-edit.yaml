@@ -1,0 +1,37 @@
+name: proposal-date-edit
+# Real case (Oct 1, Sean, email, Foodie For All): the date answer "Oct 6th, thanks Rache" was printed on the PDF as
+# the event date; "remove the 'thanks Rache' from the date and send back an updated PDF" went to the LLM, which had
+# no record of the in-code PDF ("it looks like one was never created") and asked for client + date again; its own
+# PDF then said "October 6, 2025". Same list: "Grey Goose Vodka 750ml" was "not an exact match" (Stoli offered) and
+# "Remy Cointreau" became Remy Martin 1738 375 mL. Correct: a clean date with the right year, the edit applied in
+# code with the PDF regenerated, Grey Goose exact, Cointreau picked.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "132 W 32nd St, New York, NY 10001"
+  - send: "3 x Kim Crawford Prosecco 750ml\n1 x Grey Goose Vodka 750ml\n1x Remy Cointreau"
+    expect:
+      contains: ["Product total", "Cointreau Orange Liqueur"]
+      not_contains: ["Stolichnaya"]
+      log_contains: ["the later word) names the product"]
+  - send: "can you please send a pdf proposal"
+    expect: {matches: "client|company"}
+  - send: "QA Foodie Co"
+  - send: "Oct 6th, thanks Rache"
+    expect:
+      contains: ["proposal is ready"]
+      not_contains: ["thanks Rache"]
+      pdf_contains: ["October 6, 20"]
+      pdf_not_contains: ["thanks Rache", "2025"]
+      log_contains: ["code-answered turn recorded"]
+  - send: "Can you please remove the \"thanks Rache\" from the date and send back and\nupdated PDF?"
+    expect:
+      contains: ["proposal is ready", "QA Foodie Co"]
+      not_contains: ["never created", "What name should I put", "haven't done this one yet"]
+      log_contains: ["field edit on the sent proposal"]
+      pdf_contains: ["October 6, 20", "Cointreau"]
+  - send: "ok have the client be: QA Foodie For All\nEvent Date: Oct 7th\n\nThanks!"
+    expect:
+      contains: ["QA Foodie For All"]
+      not_contains: ["haven't done this one yet"]
+      pdf_contains: ["QA Foodie For All", "October 7, 20"]

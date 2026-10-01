@@ -206,13 +206,22 @@ async function geocodeAddress(text) {
     return { formatted, zip: comp.postal_code, city: comp.locality || comp.sublocality || comp.neighborhood || '', state: comp.administrative_area_level_1 || '', lat: g.geometry.location.lat, lng: g.geometry.location.lng };
   } catch (e) { console.log('[geocode] error:', e.message); return null; }
 }
-function recordTurn(sessionKey, userText, replyText) {
+// llmRan = callRachel already wrote this turn into the history (it replaces sessions[sessionKey]). Real bug
+// (Oct 1, Sean / Foodie For All): this was inferred from "the last message is an assistant reply", so a turn
+// answered in code right after an LLM turn (proposal client -> date -> PDF) was never recorded; the next LLM
+// turn said "I don't have a previously generated PDF in this conversation" about a PDF sent 4 minutes earlier.
+function recordTurn(sessionKey, userText, replyText, llmRan) {
   try {
     if (!replyText || /^__/.test(String(userText || ''))) return;
     const hist = sessions[sessionKey] = sessions[sessionKey] || [];
     const textOf = m => Array.isArray(m.content) ? m.content.filter(b => b.type === 'text').map(b => b.text).join('') : String(m.content || '');
     const last = hist[hist.length - 1];
-    if (last && last.role === 'assistant') {
+    if (llmRan === false) {
+      if (last && last.role === 'user' && typeof last.content === 'string') last.content += '\n\n' + String(userText);
+      else hist.push({ role: 'user', content: String(userText) });
+      hist.push({ role: 'assistant', content: [{ type: 'text', text: replyText }] });
+      console.log('[history] code-answered turn recorded (' + hist.length + ' messages)');
+    } else if (last && last.role === 'assistant') {
       const hasTool = Array.isArray(last.content) && last.content.some(b => b.type === 'tool_use');
       if (!hasTool && textOf(last).trim().length < 40) last.content = [{ type: 'text', text: replyText }];
     } else {
@@ -2258,8 +2267,8 @@ app.post('/chat', async (req, res) => {
 
     // ── STATE: ready — pass to Rachel ──────────────────────────────────────
     console.log('[turn] state.step:', state.step, '| pendingSubstitutes:', JSON.stringify(state.pendingSubstitutes), '| message:', JSON.stringify(message).slice(0,80));
-    { const _turnMsg = message; const _json = res.json.bind(res);
-      res.json = (payload) => { try { recordTurn(sessionKey, _turnMsg, payload && (payload.text || payload.response)); } catch (e) {} return _json(payload); }; }
+    { const _turnMsg = message; const _json = res.json.bind(res); const _hist0 = sessions[sessionKey], _len0 = (_hist0 || []).length;
+      res.json = (payload) => { try { const h = sessions[sessionKey]; recordTurn(sessionKey, _turnMsg, payload && (payload.text || payload.response), h !== _hist0 || (h || []).length !== _len0); } catch (e) {} return _json(payload); }; }
     // ── QUOTE EDITS (quote-edits.js) ─────────────────────────────────────────────────────────────────
     // "Remove the following ... remove all beer in bottles ... I only need 1 case ... resend the updated
     // quote" against a quote the customer already has: parsed and applied in code, every change listed,
@@ -3842,13 +3851,31 @@ app.post('/chat', async (req, res) => {
     // that crashed mid-flow left proposalStep stuck (e.g. 'qty') and the customer's next
     // "generate a proposal" fell into the stale handler and asked "how many bottles?".
     // An unambiguous re-request should never be swallowed by leftover state.
-    if (isProposalTrigger && state.proposalStep) {
+    // A change to the client or event date of a proposal the customer already has: applied in code and the PDF
+    // regenerated through the date step below (event-date.js parseProposalFieldEdit). Real bug (Oct 1, Sean):
+    // "remove the 'thanks Rache' from the date and send back an updated PDF" went to the LLM, which replied that no
+    // PDF had been generated and asked for the client and date again.
+    let pfHandled = false;   // the request words ("send back an updated PDF") must not restart the flow below
+    if (state.lastProposalUrl && !state.proposalStep && !state.orderStep) {
+      let pfLines = []; try { pfLines = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+      const pf = pfLines.length > 1 ? require('./event-date.js').parseProposalFieldEdit(message, state.savedEventDate) : null;
+      if (pf) {
+        console.log('[proposal] field edit on the sent proposal: ' + JSON.stringify(pf) + ' (was client ' + JSON.stringify(state.savedClientName || '') + ', date ' + JSON.stringify(state.savedEventDate || '') + ') — regenerating in code');
+        if (pf.client) state.savedClientName = pf.client;
+        if (pf.date !== undefined) state.savedEventDate = pf.date;
+        state.proposalData = { qty: null, client_name: state.savedClientName || '', event_date: state.savedEventDate || '' };
+        state.proposalStep = 'date';
+        message = state.savedEventDate || 'skip';
+        pfHandled = true;
+      }
+    }
+    if (isProposalTrigger && !pfHandled && state.proposalStep) {
       console.log('[proposal] explicit re-request while proposalStep=' + state.proposalStep + ' — resetting stale flow');
       state.proposalStep = null;
       state.proposalData = null;
       saveFlowState();
     }
-    if (isProposalTrigger) {
+    if (isProposalTrigger && !pfHandled) {
       const caps = getCapabilities(format);
       if (!caps.can_generate_proposal) {
         // Capability disabled — never start the real proposal state machine. Let Rachel
@@ -3961,7 +3988,9 @@ app.post('/chat', async (req, res) => {
       if (isNonAnswer(message)) {
         state.proposalData.event_date = '';
       } else {
-        state.proposalData.event_date = message.trim();
+        const ed = require('./event-date.js').normalizeEventDate(message);
+        if (ed.changed) console.log('[proposal] event date ' + JSON.stringify(message.trim()) + ' -> ' + JSON.stringify(ed.text) + ' (' + ed.why + ')');
+        state.proposalData.event_date = ed.text;
         state.savedEventDate = state.proposalData.event_date;
       }
       state.proposalStep = 'generating';

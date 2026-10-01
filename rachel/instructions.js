@@ -10,8 +10,14 @@ const STOP = new Set(('the a an of for to and or with in on at it its is be as b
   'two three four five options option one both each all some more less number higher high end top shelf premium better nice good ' +
   'bottle bottles case cases pack packs ml oz liter litre have has get add remove swap keep use go do into from out up').split(' '));
 
+// A sign-off or pleasantry is not an instruction. Real bug (Oct 1, Sean): the reply ended "I haven't done this one
+// yet: • Thanks! Want me to go ahead?".
+const PLEASANTRY = /^(?:(?:ok(?:ay)?|great|perfect|awesome|sounds good|thanks?(?:\s+(?:you|so much|again|a lot))?|thx|ty|cheers|best(?:\s+regards)?|regards|much appreciated|appreciate it|hi|hello|hey|rachel|rache)[\s,.!-]*)+(?:[a-z]+)?[\s.!]*$/i;
 function splitInstructions(message) {
-  const lines = String(message || '').split(/\n+/).map(l => l.replace(/^\s*(?:[-•*·–]|\d+[.)])\s*/, '').replace(/\*/g, '').trim()).filter(l => l.length >= 4);
+  // An email hard wrap ("send back and\nupdated PDF?") joins back into one line: no sentence end, next line lower-case.
+  // Only a long line (>= 60 chars; Gmail wraps near 76) — short list lines ("remove the modelo") stay separate.
+  const text = String(message || '').replace(/^([^\n]{59,}[a-z,])[ \t]*\r?\n(?=[ \t]*[a-z])/gm, '$1 ');
+  const lines = text.split(/\n+/).map(l => l.replace(/^\s*(?:[-•*·–]|\d+[.)])\s*/, '').replace(/\*/g, '').trim()).filter(l => l.length >= 4 && !PLEASANTRY.test(l));
   return lines.length >= 2 && lines.length <= 12 ? lines : [];
 }
 

@@ -62,6 +62,10 @@ eq('displayName (per case)', displayName('Bud Light (30 cans per case)'), 'Bud L
 
 eq('an Oktoberfest from another brand beats Sam Adams Boston Lager', best('Samuel Adams Octoberfest 12 pack cans', [P('Samuel Adams Boston Lager 12x12 OZ Bottle'), P('Goose Island Seasonal - Oktoberfest 6pk 12 OZ Can')]), 'Goose Island Seasonal - Oktoberfest 6pk 12 OZ Can');
 eq('"Rose from Provence": "from" is not a missing brand word (Oct 1, DC: "no from in stock")', verdict('Rose from Provence', P('Rumor Organic Provence Rose - 750 ML')).note, '');
+eq('"Grey Goose Vodka 750ml" is Grey Goose - 750 ML (Oct 1, Sean: flagged, Stoli offered)', verdict('Grey Goose Vodka 750ml', P('Grey Goose - 750 ML')).kind, 'exact');
+eq('the brand implies the type only when the product adds no words: Patron XO Cafe is not "Patron Tequila"', verdict('Patron Tequila', P('Patron XO Cafe - 750 ML')).kind, 'closest');
+eq('...nor Grey Goose Le Citron "Grey Goose Vodka"', verdict('Grey Goose Vodka', P('Grey Goose Le Citron - 750 ML')).kind, 'closest');
+eq('another brand of the type is still not it', verdict("Tito's Vodka", P('Smirnoff Vodka - 750 ML')).note, 'no titos in stock');
 
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');
