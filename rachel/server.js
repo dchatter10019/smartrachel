@@ -3954,6 +3954,7 @@ app.post('/chat', async (req, res) => {
       if (isMultiItemProposal) {
         try {
           const po = (state.eventParams && state.eventParams.proposalOpts) || {};
+          if (Object.keys(po).length) console.log('[proposal] options injected into generate_proposal (in code):', JSON.stringify(po));
           const rrP = await fetch('http://127.0.0.1:8300/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
             body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'generate_proposal', arguments: Object.assign({
               line_items: JSON.stringify(existingItemsForProposal), client_name: pd.client_name || '', event_date: pd.event_date || '', email, channel: format || 'slack',

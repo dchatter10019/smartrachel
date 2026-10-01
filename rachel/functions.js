@@ -1036,6 +1036,10 @@ async function buildPackage(iv) {
       console.log('[buildPackage] custom_list generic-line price targets per unit: '+JSON.stringify(Object.keys(genTarget).reduce(function(o,c){o[c]=Math.round(genTarget[c]*100)/100;return o;},{})));
     }
     var results=await Promise.all(namedProducts.map(function(np){return doSearchWithFallbacks(np.name, np.category);}));
+    // One 35s budget for ALL the market-price waits of a build, not 35s per not-carried line. Real bug (Oct 1,
+    // nightly QA): Sean's 22-line email had 9 not-carried lines, each waited for its web price in turn -> 306s,
+    // past the email agent's 300s chat timeout (no reply at all). Out of budget = cached price or none (logged).
+    var marketWaitUntil=0;
     for (var n=0;n<namedProducts.length;n++) {
       var np=namedProducts[n];
       var catN=(np.category||"").toLowerCase();
@@ -1143,7 +1147,12 @@ async function buildPackage(iv) {
           var probeA={name:np.name, size:szA?szA[1]:'750', units:szA&&/^l$/i.test(szA[2])?'L':'ML'};
           var cA=zipA?CG.cachedMarket(probeA, zipA):null;
           if (cA&&cA.median) { altRef0=cA.median; if (cA.stale) CG.lookupMarket(probeA, zipA); }
-          else if (zipA) { var mA=await Promise.race([CG.lookupMarket(probeA, zipA), new Promise(function(r){setTimeout(function(){r(null);},35000);})]).catch(function(){return null;}); if (mA&&mA.median) altRef0=mA.median; }
+          else if (zipA) {
+            if (!marketWaitUntil) marketWaitUntil=Date.now()+35000;
+            var waitA=marketWaitUntil-Date.now();
+            if (waitA>0) { var mA=await Promise.race([CG.lookupMarket(probeA, zipA), new Promise(function(r){setTimeout(function(){r(null);},waitA);})]).catch(function(){return null;}); if (mA&&mA.median) altRef0=mA.median; }
+            else { CG.lookupMarket(probeA, zipA).catch(function(){}); console.log('[buildPackage] ALTERNATIVE for '+JSON.stringify(np.name)+': market-price wait budget (35s per build) used up — not waiting; lookup continues in the background for next time'); }
+          }
         } catch(e) { console.log('[buildPackage] market price lookup failed for '+JSON.stringify(np.name)+': '+e.message); }
         if (altRef0) {
           var inTier=found.filter(function(p){return p.price>=altRef0*0.7&&p.price<=altRef0*1.3;});

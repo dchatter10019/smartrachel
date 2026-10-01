@@ -11,9 +11,27 @@
 
 const CUE = /\b(?:delivery address|address|deliver(?:ed|y)?\s+(?:to|at)|ship(?:ped)?\s+to|send (?:it )?to)\b(?:\s+is)?\s*:?\s*$/i;
 
+// A mail client's hard wrap inside the street: "Deliver to 100\nFederal Street" / "100 Federal\nStreet". Joined
+// with a space, not ", ". Real bug (Oct 1, nightly QA email): Gmail wrapped the line after "100", the address
+// became "100, Federal Street, ..." and wasn't found — Rachel asked for an address the email already gave.
+// A unit number at a line end ("Floor 6\nBoston", "#6\nBoston") is a real break and stays ", ".
+const UNIT_WORD = /\b(?:floor|fl|suite|ste|apartment|apt|unit|room|rm|building|bldg|no)\.?\s*$/i;
+const STREET_SUFFIX = /^(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|place|pl|court|ct|way|square|sq|parkway|pkwy|terrace|highway|hwy)\b/i;
+function unwrap(t) {
+  const lines = t.split('\n');
+  let out = lines[0];
+  for (let i = 1; i < lines.length; i++) {
+    const prev = lines[i - 1].trimEnd(), next = lines[i].trimStart();
+    const streetNo = /(?:^|[^\w#])\d{1,6}$/.test(prev) && !UNIT_WORD.test(prev.replace(/\d+$/, '')) && /^[A-Z][a-z]/.test(next);
+    const suffix = /\b\d{1,6}\s+[A-Za-z][A-Za-z' ]*$/.test(prev) && STREET_SUFFIX.test(next);
+    out = (streetNo || suffix) ? out.trimEnd() + ' ' + next : out + '\n' + lines[i];
+  }
+  return out;
+}
+
 function findAddress(text) {
   // Lines joined with ", " — but a blank line (paragraph break) stays a hard stop.
-  const t = String(text || '').replace(/\r/g, '').replace(/\n\s*\n/g, ' ¶ ').replace(/\s*\n\s*/g, ', ').replace(/,\s*,/g, ',');
+  const t = unwrap(String(text || '').replace(/\r/g, '')).replace(/\n\s*\n/g, ' ¶ ').replace(/\s*\n\s*/g, ', ').replace(/,\s*,/g, ',');
   const RE = /\b(\d{1,6}\s+[A-Za-z0-9'#\- ]{2,60}?(?:\.(?=[A-Za-z,\s])(?![\s][A-Z][a-z]+\s+[a-z]))?(?:,\s*[A-Za-z0-9.'#\- ]{1,40}?){1,4},?\s+\d{5}(?:-\d{4})?)\b/g;
   const found = [];
   let m;

@@ -14,6 +14,10 @@ eq('suite', findAddress('Send it to 1800 Palm Beach Lakes Blvd, Suite 200, West 
 eq('multi-line block', findAddress('Address:\n11 Madison Ave\nNew York, NY 10010\nThanks'), '11 Madison Ave, New York, NY 10010');
 eq('an age sentence before it is not part of it', findAddress('I am 21 years old. My address is 11 Madison Ave, New York, NY 10010'), '11 Madison Ave, New York, NY 10010');
 eq('St. abbreviation', findAddress('deliver to 5 Main St., Boston, MA 02110'), '5 Main St., Boston, MA 02110');
+const wrapped = 'Hi,\r\n\r\nPlease send a quote for the items below. . Deliver to 100\r\nFederal Street, Boston, MA 02110.\r\n\r\n2 x Bud Light (30 cans per case)\r\n1 Oyster Bay Sauvignon Blanc\r\n\r\nThanks!';
+eq('Gmail hard wrap after the street number (Oct 1)', findAddress(wrapped), '100 Federal Street, Boston, MA 02110');
+eq('hard wrap before the street suffix', findAddress('Deliver to 100 Federal\nStreet, Boston, MA 02110'), '100 Federal Street, Boston, MA 02110');
+eq('"#6" at a line end is a unit, not a street number', findAddress('address is 100 Federal St #6\nBoston, MA 02110'), '100 Federal St #6, Boston, MA 02110');
 eq('no address', findAddress('need 2 cases of Bud Light for 30 people'), null);
 eq('a quantity list is not an address', findAddress('2 x Budlight (30 cans per case)\n2 x Carlsberg (12 cans per case)'), null);
 
