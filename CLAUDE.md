@@ -111,6 +111,11 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   planned qty (buildPackage unavailable_qty -> state.unavailableQty; else the qty in the customer's own list).
   Every pick path (numbered list, add-item by name) uses pendingSubFor to find the missing line it replaces.
   The basket line an item refers to = basketLineFor (whole words, most of them) — never a first-word substring.
+  "A -> B" lines (Slack sends "-&gt;") are applied in code after the LLM turn when A is a basket line (name, label or
+  what was first asked) and B is ONE product just shown (size-matched); else the LLM's question stands ([arrow-swap]).
+  A reply that only SAYS a swap was made (basket untouched) is flagged "I haven't done this one yet" (instructions.js).
+  A list line whose pick has only part of the name ("Remy Cointreau" -> Remy Martin) searches the missing words and
+  says "<product> is in stock too" — never a false "no X in stock". A basket change after a proposal says the PDF is stale.
   After ANY basket change the reply lists the whole basket (2+ lines; appended in the CTA layer if the reply didn't);
   a 3+ line basket's follow-up offers order OR proposal. A price in a pick ("$24.14") is never a quantity.
 - Proposal requests: phrase list + "<verb> ... proposal/pdf" (not negated/a question). A basket proposal (2+ lines) is

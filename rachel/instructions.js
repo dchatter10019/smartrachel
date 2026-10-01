@@ -41,6 +41,18 @@ function unaddressed(instrs, reply, before, after) {
       if ((after || []).some(it => matches(it) && q(it) === Number(num) && b.get(key(it)) !== q(it))) return false;
       return !(kw.some(w => has(r, w)) && has(r, num));
     }
+    // A swap ("X -> Y") is done when the basket changed, or asked about — a reply that only SAYS "replacing X"
+    // is not done. Real bug (Oct 1, DC): "✅ Cointreau — replacing the Remy Martin 1738" with the basket untouched;
+    // the mention of "cointreau" counted as handled and the proposal went out with the Remy Martin.
+    if (ARROW.test(String(instr)) && !APPROVAL_TO.test((String(instr).match(ARROW) || [])[2] || '')) {
+      if (changed.some(matches)) return false;
+      // Sentence by sentence: "Cointreau is swapped in. Just let me know which Whispering Angel size …!" claims the one
+      // and asks about the other (a QA reply, Oct 1).
+      const sents = String(reply || '').split(/\n+|(?<=[.!?])\s+/).filter(l => kw.some(w => has(norm(l), w)));
+      const claimed = sents.some(l => /\b(replac\w*|swapp?\w*|switched|updated|added|in your (?:order|basket))\b|✅|:white_check_mark:/i.test(l));
+      const asks = sents.some(l => /\?|\b(which|let me know|would you like|do you want|prefer)\b/i.test(l));
+      if (claimed && !asks) return true;   // said it was done, basket untouched: not done
+    }
     if (kw.some(w => has(r, w))) return false;
     return !changed.some(matches);
   });
@@ -76,4 +88,28 @@ function applyCountInstructions(instrs, items, log = console.log) {
   return out;
 }
 
-module.exports = { splitInstructions, unaddressed, keywords, applyCountInstructions };
+// "Remy Cointreau -> Cointreau 750 ML": one line per swap, the basket item on the left, what the customer wants on
+// the right. Slack sends the arrow HTML-escaped ("-&gt;"). An approval ("-> good") is not a swap. -> [{ from, to, line }]
+const ARROW = /^\s*(.+?)\s*(?:->|-&gt;|→|=>|=&gt;)\s*(.+?)\s*$/;
+const APPROVAL_TO = /^(?:good|ok(?:ay)?|fine|great|perfect|keep(?: it)?|approved|looks good|that'?s (?:good|fine)|yes|👍)\s*[.!]*$/i;
+function arrowSwaps(message) {
+  return String(message || '').split(/\n+/).map(l => l.replace(/^\s*(?:[-•*·–]|\d+[.)])\s*/, '').replace(/\*/g, '').trim())
+    .map(l => { const m = l.match(ARROW); return m && !APPROVAL_TO.test(m[2]) && m[1].length >= 3 && m[2].length >= 3 ? { from: m[1], to: m[2], line: l } : null; })
+    .filter(Boolean);
+}
+// The ONE product just shown that is what the right side names: every distinctive word of it on the product
+// (product-match fit), and its size when one is stated. Several fit (sizes to choose) or none -> null: the LLM asks.
+function uniqueProductFor(want, shown) {
+  const PM = require('./product-match.js');
+  const sz = x => { const m = String(x || '').toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l|oz|liter|litre)\b/); return m ? (+m[1]) + (m[2][0] === 'l' ? 'l' : m[2]) : ''; };
+  const wantSize = sz(want), wantName = want.replace(/(\d+(?:\.\d+)?)\s*(ml|l|oz|liter|litre)\b/ig, ' ');
+  const seen = new Set();
+  const fits = (shown || []).filter(p => {
+    const k = p.product_id || p.name; if (seen.has(k)) return false; seen.add(k);
+    if (PM.fit(wantName, { name: p.name }).missing.length) return false;
+    return !wantSize || sz(p.size || p.sizeStr || p.name) === wantSize || sz(p.name) === wantSize;
+  });
+  return fits.length === 1 ? fits[0] : null;
+}
+
+module.exports = { splitInstructions, unaddressed, keywords, applyCountInstructions, arrowSwaps, uniqueProductFor };

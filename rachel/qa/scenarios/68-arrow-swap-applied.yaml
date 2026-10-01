@@ -1,0 +1,33 @@
+name: arrow-swap-applied
+# Real case (Oct 1, DC, Slack, zip 10010): a 15-line list with "1x Remy Cointreau" came back as Remy Martin 1738
+# "(no cointreau in stock)" — false, Cointreau 750 mL is carried — and "Rose from Provence" said "(no from in stock)".
+# DC answered "Remy Cointreau -> Cointreau 750 ML": Rachel replied "✅ Cointreau … replacing the Remy Martin 1738" but
+# never applied it; the proposal PDF went out with the Remy Martin. Slack escapes the arrow ("-&gt;"), sent as such.
+# Correct: no false "no X in stock"; the swap is in the basket the same turn (in code when the LLM skips it); the
+# Whispering Angel size question stands; a change after the proposal says the PDF is out of date.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "11 Madison Ave, New York, NY 10010"
+  - send: "3 x Jack Daniel's Mixed with Coca-Cola Cocktail -\n10 OZ 4-Pack\nServes 4 each\n\n3 x Fresca Mixed Vodka Variety -\n12 OZ 8-Pack\nServes 8 each\n\n2 x Simply Spiked Bold Variety -\n12 OZ 12-Pack\nServes 12 each\n\n3 x Topo Chico Margarita Variety -\n12 OZ 6-Pack\nServes 6 each\n\n2 x Minute Maid Spiked Iced Tea Lemonade Cocktail -\n12 OZ 8-Pack\nServes 8 each\n\n1 x Modelo Especial 12x12 Oz Bottle -\nServes 12 each\n\n1 x Grey Goose Vodka (80 Proof) -\n750ml\nServes 1 each\n\n1 x Casamigos Blanco Tequila -\n1L\nServes 1 each\n\n1 x Angel's Envy Bourbon -\nServes 1 each\n\n1 x Corona Extra 12x12 Oz Bottle -\nServes 12 each\n\n1 x Guinness Extra Stout 12x12 Oz Bottle -\nServes 12 each\n\n3 x Rose from Provence - Please let us know what our options are\n3 x Prosecco - Please let us know what our options are\n3 x Sauvignon Blanc - Please let us know what our options are\n1x Remy Cointreau"
+    expect:
+      contains: ["Product total", "Grey Goose"]
+      not_contains: ["no cointreau in stock", "no from in stock"]
+  - send: "Rose from Provence -&gt; can we do whispering agnel?\nRemy Cointreau -&gt; Cointreau 750 ML"
+    expect:
+      contains: ["Whispering Angel"]
+      # Every way of reaching the basket: by the LLM's tool call or the arrow-swap in code. Never only narrated.
+      not_contains: ["I haven't done"]
+  - send: "show my basket"
+    expect:
+      matches: "(?m)^\\s*1x Cointreau Orange Liqueur - 750 ML"
+      not_matches: "(?m)^\\s*\\d+x Remy Martin"
+  - send: "send me a proposal"
+  - send: "Foodie QA"
+  - send: "10/6"
+    expect: {contains: ["proposal is ready"]}
+  - send: "add 1 Kim Crawford Sauvignon Blanc 750 ML"
+  - send: "1"
+    expect:
+      contains: ["doesn't include this change"]
+      log_contains: ["basket changed after a proposal was sent"]

@@ -1326,6 +1326,28 @@ async function buildPackage(iv) {
       }
       if (typeof packNote==='string' && packNote) vd.note=vd.note.replace(/\d+-pack, not \d+/, packNote);
       var match=altNote ? {kind:'alternative',asked:np.name,note:altNote+(vd.note&&/packs here/.test(vd.note)?'; '+packNote:'')} : vd.kind==='exact' ? {kind:'exact'} : {kind:'closest',asked:np.name,note:vd.note};
+      // The request names two brands' words and the pick has only one of them ("Remy Cointreau" -> Remy Martin
+      // 1738): the other word may be a product of its own. Real bug (Oct 1, DC): the note said "no cointreau in
+      // stock" while Cointreau Orange Liqueur 750 mL was on the shelf. Search the missing brand words and
+      // say what IS there instead of claiming it isn't.
+      if (match.kind==='closest') {
+        var bw=PM.brandWords(reqForFit), fB=PM.fit(reqForFit,best);
+        var missB=fB.missing.filter(function(w){return bw.indexOf(w)>=0;});
+        if (missB.length && bw.some(function(w){return fB.missing.indexOf(w)<0;})) {
+          // ONE search for the missing brand words together ("cointreau", "juice force"), a hit must have all of them —
+          // a word searched alone found unrelated rows ("juice" -> a juice mixer for Voodoo Ranger Juice Force).
+          var wB=missB.join(' ');
+          var hitB=(await doSearch(wB, catN)).filter(function(p){return !isMini(p)&&altSane(p)&&p.product_id!==best.product_id&&!PM.fit(wB,p).missing.length;});
+          if (prefer750) hitB.sort(function(a,b){return (/\b750\s*ml\b/i.test(String(a.sizeStr||a.name))?0:1)-(/\b750\s*ml\b/i.test(String(b.sizeStr||b.name))?0:1);});
+          console.log('[buildPackage] split request '+JSON.stringify(np.name)+': picked '+best.name+' lacks "'+wB+'" — '+(hitB.length?'"'+wB+'" IS in stock: '+hitB[0].name+' — said so':'"'+wB+'": none in stock'));
+          if (hitB.length) {
+            var still=fB.missing.filter(function(w){return missB.indexOf(w)<0;});
+            var inNote=hitB[0].name+' ($'+Number(hitB[0].price).toFixed(2)+') is in stock too — say if you meant that';
+            match.note=match.note.replace(/no [^;]+ in stock/, (still.length?'no '+still.join(' ')+' in stock; ':'')+inNote);
+            if (match.note.indexOf(inNote)<0) match.note=(match.note?match.note+'; ':'')+inNote;
+          }
+        }
+      }
       packNote='';
       if (match.kind!=='exact') console.log('[buildPackage] NOT EXACT ('+match.kind+'): '+JSON.stringify(np.name)+' -> '+best.name+' — '+match.note);
       lineItems.push({label:np.name,name:best.name,qty:qty,price:best.price,size:best.sizeStr,url:best.url,product_id:best.product_id,upc:best.upc||"",establishmentId:best.establishmentId||"",category:catN,role:pq.mod?"modifier":undefined,match:match});

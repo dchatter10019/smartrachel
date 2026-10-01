@@ -1424,6 +1424,29 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
   const out = scrubDisabledOffers(formatResponse(result.response, format), format);
   let numbered = require('./multipick.js').numberOptionLines(out);
   if (numbered !== out) console.log('[reply] numbered an unnumbered options list (LLM left it bare) so a "3" can pick from it');
+  // "A -> B" swaps applied in code (rule 6). Real bug (Oct 1, DC, Slack): "Remy Cointreau -> Cointreau 750 ML" — the LLM
+  // searched, replied "✅ Cointreau … replacing the Remy Martin 1738" and never called confirm_substitute; the basket and
+  // the proposal PDF kept the Remy Martin. A is a basket line (its product, or what the customer first asked for), B is
+  // the ONE product just shown that fits (several sizes -> the LLM's question stands). Every decision is logged.
+  try {
+    const IN = require('./instructions.js');
+    const swaps = IN.arrowSwaps(message);
+    if (swaps.length) {
+      const stA = getState(sessionKey);
+      const shownA = (stA.lastShownAt && Date.now() - stA.lastShownAt < 300000) ? JSON.parse(stA.lastShownProducts || '[]') : [];
+      for (const sw of swaps) {
+        let itemsA = []; try { itemsA = JSON.parse(stA.lastLineItems || '[]'); } catch (e) {}
+        const idx = itemsA.findIndex(it => [it.name, it.label, it.match && it.match.asked].some(n => n && basketLineFor([{ name: n }], sw.from) === 0));
+        if (idx < 0) { console.log('[arrow-swap] ' + JSON.stringify(sw.line) + ': no basket line for ' + JSON.stringify(sw.from) + ' — left to the LLM'); continue; }
+        const p = IN.uniqueProductFor(sw.to, shownA);
+        if (!p) { console.log('[arrow-swap] ' + JSON.stringify(sw.line) + ': ' + JSON.stringify(sw.to) + ' is not ONE of the ' + shownA.length + ' product(s) just shown — left to the LLM (its question stands)'); continue; }
+        if ((p.product_id && p.product_id === itemsA[idx].product_id) || p.name === itemsA[idx].name) { console.log('[arrow-swap] ' + JSON.stringify(sw.line) + ': already ' + p.name); continue; }
+        const r = await applyBasketSubstitute(sessionKey, email, itemsA[idx].name, p.name, parseFloat(p.price) || 0, p.size || p.sizeStr || '');
+        if (r && r.success) { events.action('updated_basket'); console.log('[arrow-swap] APPLIED in code: ' + JSON.stringify(sw.line) + ' -> ' + itemsA[idx].name + ' replaced by ' + p.name + ' (the LLM had not)'); }
+        else console.log('[arrow-swap] ' + JSON.stringify(sw.line) + ': substitute FAILED (' + ((r && r.error) || '?') + ') — left to the LLM');
+      }
+    }
+  } catch (e) { console.log('[arrow-swap] error (reply unchanged): ' + e.message); }
   if (instrs.length) {
     let basketAfter = []; try { basketAfter = JSON.parse(getState(sessionKey).lastLineItems || '[]'); } catch (e) {}
     const missed = require('./instructions.js').unaddressed(instrs, numbered, basketBefore, basketAfter);
@@ -2444,6 +2467,14 @@ app.post('/chat', async (req, res) => {
             if (turn.kind === 'basket_updated' && evL && evL.actions && evL.actions.includes('updated_basket') && !/Product total/i.test(t)) {
               const bk = basketAfterChange(st);
               if (bk) { t = t.trimEnd() + bk; console.log('[reply] basket changed, reply did not list it — full basket appended'); }
+            }
+            // The customer holds a proposal PDF that this change makes stale: say so. Real bug (Oct 1, DC): Cointreau went
+            // in after the Foodie For All PDF was sent; nothing said the PDF still had the Remy Martin.
+            // Changed = the basket's signature differs from the turn's start (every path: tool, pick-list, arrow-swap, add-item).
+            const chgP = !!(evL && evL.basket0 && events.basketOf(st).sig !== evL.basket0.sig);
+            if (st.lastProposalUrl && chgP && !(evL.actions || []).includes('generated_proposal') && !/proposal/i.test(t)) {
+              t = t.trimEnd() + '\n\nThe proposal PDF I sent earlier doesn\'t include this change — say "send the proposal" for an updated one.';
+              console.log('[reply] basket changed after a proposal was sent — told the customer the PDF is out of date (' + String(st.lastProposalUrl).split('/').pop() + ')');
             }
             if (turn.kind === 'item_unavailable' && !turn.substitute && turn.unmatchedName) {
               // sub.offer_named needs a real in-stock candidate: look it up, then send (the caller only returns res).

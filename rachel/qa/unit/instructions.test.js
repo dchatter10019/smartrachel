@@ -71,5 +71,24 @@ console.log('descriptor words out of search text');
   if (!ok) failed++;
   console.log((ok ? '  ✓ ' : '  ✗ ') + 'an approval ("-> good") is never flagged as not done' + (ok ? '' : ' got ' + JSON.stringify(got)));
 }
+// Oct 1, DC (Slack): "Remy Cointreau -> Cointreau 750 ML" narrated as done, never applied.
+{
+  const { arrowSwaps, uniqueProductFor, unaddressed } = require('../../instructions.js');
+  const t = (label, got, want) => { const ok = JSON.stringify(got) === JSON.stringify(want); if (!ok) failed++; console.log((ok ? '  ✓ ' : '  ✗ ') + label + (ok ? '' : '\n      got:  ' + JSON.stringify(got) + '\n      want: ' + JSON.stringify(want))); };
+  const msg = 'Rose from Provence -&gt; can we do whispering agnel?\nRemy Cointreau -&gt; Cointreau 750 ML';
+  t('Slack-escaped arrows parse into swaps', arrowSwaps(msg).map(s => [s.from, s.to]), [['Rose from Provence', 'can we do whispering agnel?'], ['Remy Cointreau', 'Cointreau 750 ML']]);
+  t('an approval arrow is not a swap', arrowSwaps('12x Fort Point KSA Kolsch -> good'), []);
+  const shown = [{ name: "Ch d'Esclans Whispering Angel Rose - 750 ML", size: '750 ML', product_id: 'a' }, { name: "Whispering Angel Chateau d'Esclans Rose - 1.5 L", size: '1.5 L', product_id: 'b' },
+    { name: 'Cointreau Orange Liqueur - 750 ML', size: '750 ML', product_id: 'c' }, { name: 'Cointreau Orange Liqueur - 1 L', size: '1 L', product_id: 'd' }];
+  t('"Cointreau 750 ML" = the one 750 mL Cointreau shown', (uniqueProductFor('Cointreau 750 ML', shown) || {}).name, 'Cointreau Orange Liqueur - 750 ML');
+  t('"Cointreau" with two sizes shown = not unique (ask)', uniqueProductFor('Cointreau', shown), null);
+  t('"can we do whispering agnel?" = not resolved in code (the LLM asks the size)', uniqueProductFor('can we do whispering agnel?', shown), null);
+  const before = [{ name: 'Remy Martin 1738 Accord Royal - 375 ML', qty: 1 }];
+  const reply = 'Whispering Angel Rosé — which size for the 3 bottles?\n✅ Cointreau Orange Liqueur - 750 ML — $43.96 — replacing the Remy Martin 1738';
+  t('a swap only NARRATED (basket unchanged) is not done', unaddressed(['Remy Cointreau -&gt; Cointreau 750 ML'], reply, before, before), ['Remy Cointreau -&gt; Cointreau 750 ML']);
+  t('a swap asked about in a question is handled', unaddressed(['Rose from Provence -&gt; can we do whispering agnel?'], reply, before, before), []);
+  t('one sentence claims the other swap, the next asks about this one: handled', unaddressed(['Rose from Provence -&gt; can we do whispering agnel?'], "*Cointreau Orange Liqueur - 750 ML* is swapped in. Just let me know which Whispering Angel size you'd like and I'll update the rosé too!", before, before), []);
+  t('a swap applied in the basket is done', unaddressed(['Remy Cointreau -&gt; Cointreau 750 ML'], reply, before, [{ name: 'Cointreau Orange Liqueur - 750 ML', qty: 1 }]), []);
+}
 console.log(failed ? '\ninstructions: ' + failed + ' FAILED' : '\ninstructions: all passed');
 process.exit(failed ? 1 : 0);

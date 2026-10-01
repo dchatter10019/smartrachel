@@ -61,6 +61,7 @@ eq('displayName', displayName('Warsteiner Premium Pilsener 24 cans'), 'Warsteine
 eq('displayName (per case)', displayName('Bud Light (30 cans per case)'), 'Bud Light');
 
 eq('an Oktoberfest from another brand beats Sam Adams Boston Lager', best('Samuel Adams Octoberfest 12 pack cans', [P('Samuel Adams Boston Lager 12x12 OZ Bottle'), P('Goose Island Seasonal - Oktoberfest 6pk 12 OZ Can')]), 'Goose Island Seasonal - Oktoberfest 6pk 12 OZ Can');
+eq('"Rose from Provence": "from" is not a missing brand word (Oct 1, DC: "no from in stock")', verdict('Rose from Provence', P('Rumor Organic Provence Rose - 750 ML')).note, '');
 
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');

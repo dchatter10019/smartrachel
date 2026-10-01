@@ -25,6 +25,7 @@ const words = s => norm(s).split(/\s+/).map(canon).join(' ').split(/\s+/).filter
 // ("hard seltzer", "cider") are here too — catalog names often leave them out ("High Noon Variety Pool Pack").
 const FILLER = new Set(('a an the of and or with per case cases pack packs pk can cans bottle bottles btl btls oz ml l liter litre ' +
   'x ct count only include including please each assorted premium hard seltzer cider cocktail ' +
+  'from for in on to by our some any options ' +   // "Rose from Provence" (Oct 1, DC): the note said "no from in stock"
   'beer beers wine wines 750 12 16 24 30 15 18 4 6 8 9 10 11 20 36 48').split(' '));
 // Style words: what kind of drink was asked for. Missing one costs more than a missing brand word — a
 // Sun Cruiser Iced Tea is not "Sun Cruiser Lemonade"; a lemonade from another brand is closer.
