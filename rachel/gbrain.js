@@ -173,7 +173,7 @@ async function saveBasket(userEmail, basket, total, channel) {
   if (!userEmail || !basket) return;
   try {
     const fs = require('fs');
-    const basketFile = '/home/ubuntu/logs/baskets.json';
+    const basketFile = require('./data-dir.js').file('baskets.json');
     let baskets = {};
     try { baskets = JSON.parse(fs.readFileSync(basketFile, 'utf8')); } catch(e) {}
     const key = userEmail + ':' + (channel || 'slack');
@@ -192,7 +192,7 @@ async function clearBasket(userEmail, channel) {
   if (!userEmail) return;
   try {
     const fs = require('fs');
-    const basketFile = '/home/ubuntu/logs/baskets.json';
+    const basketFile = require('./data-dir.js').file('baskets.json');
     let baskets = {};
     try { baskets = JSON.parse(fs.readFileSync(basketFile, 'utf8')); } catch(e) { return; }
     const key = userEmail + ':' + (channel || 'slack');
@@ -207,7 +207,7 @@ async function getPackage(userEmail, channel) {
   if (!userEmail) return null;
   try {
     const fs = require('fs');
-    const basketFile = '/home/ubuntu/logs/baskets.json';
+    const basketFile = require('./data-dir.js').file('baskets.json');
     const key = userEmail + ':' + (channel || 'slack');
     let baskets = {};
     try { baskets = JSON.parse(fs.readFileSync(basketFile, 'utf8')); } catch(e) {}

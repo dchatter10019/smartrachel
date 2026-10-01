@@ -7,7 +7,7 @@
 const fs = require('fs');
 const { AsyncLocalStorage } = require('async_hooks');
 const als = new AsyncLocalStorage();
-const FILE = process.env.RACHEL_EVENTS_FILE || '/home/ubuntu/logs/events.jsonl';
+const FILE = process.env.RACHEL_EVENTS_FILE || require('./data-dir.js').file('events.jsonl');
 
 // What Rachel did, strongest first: when several paths fire in one turn, the most consequential wins.
 const ACTION_RANK = ['placed_order', 'generated_proposal', 'started_order', 'built_basket', 'updated_basket', 'showed_basket',

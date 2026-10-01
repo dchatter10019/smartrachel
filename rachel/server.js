@@ -129,6 +129,7 @@ const events = require('./events.js');   // per-turn event record (events.jsonl)
 app.use('/chat', (req, res, next) => events.run(next));
 
 const PORT = process.env.RACHEL_PORT || 3500;
+const dataDir = require('./data-dir.js'); dataDir.assertSafe(PORT);   // staging never writes production's state files
 
 // ── Session stores ─────────────────────────────────────────────────────────
 const sessions = {};       // sessionKey -> messages[]
@@ -230,7 +231,7 @@ function recordTurn(sessionKey, userText, replyText) {
 const packageCache = {};   // cacheKey -> line_items (L1)
 
 // flowState persisted to disk
-const FLOW_STATE_PATH = '/home/ubuntu/logs/flow-state.json';
+const FLOW_STATE_PATH = dataDir.file('flow-state.json');
 const IDLE_HOURS = Number(process.env.RACHEL_IDLE_HOURS) || 4;   // silence after which the next message starts a fresh conversation
 const CONFIRM_ADD_PRICE = Number(process.env.RACHEL_CONFIRM_ADD_PRICE) || 200;   // a single search match at/above this per-bottle price is offered, not added (add-item)
 const usd = n => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -250,7 +251,7 @@ function saveFlowState() {
 // and multi-pick / substitute matching lost the list it resolves against. The basket and flow
 // state already survived (flow-state.json); now the conversation does too. Written atomically,
 // debounced after each reply, flushed on SIGTERM; pruned by the idle rule.
-const CHAT_SESSIONS_PATH = '/home/ubuntu/logs/chat-sessions.json';
+const CHAT_SESSIONS_PATH = dataDir.file('chat-sessions.json');
 try {
   const saved = JSON.parse(fs.readFileSync(CHAT_SESSIONS_PATH, 'utf8'));
   Object.assign(sessions, saved.messages || {});
@@ -4960,7 +4961,7 @@ app.post('/chat', async (req, res) => {
           }),
           final_response: finalOutput.slice(0, 500)
         };
-        fs2.appendFileSync('/home/ubuntu/logs/conversations.jsonl', JSON.stringify(convLog) + '\n');
+        fs2.appendFileSync(dataDir.file('conversations.jsonl'), JSON.stringify(convLog) + '\n');
         console.log('[conv] logged', convLog.outcome, 'for', email);
       } catch(e) { console.error('[conv] log error:', e.message); }
     }

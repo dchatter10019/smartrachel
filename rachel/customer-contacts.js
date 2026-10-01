@@ -4,7 +4,7 @@
 // Contact details are not compliance state (age is, and stays per session), so they persist here.
 // QA identities are never saved: their scenarios must see the same questions every run.
 const fs = require('fs');
-const FILE = '/home/ubuntu/logs/customer-contacts.json';
+const FILE = require('./data-dir.js').file('customer-contacts.json');
 const QA_RE = /^(qa-[^@]*|rachel_qa)@getbevvi\.com$/i;
 
 function readAll() { try { return JSON.parse(fs.readFileSync(FILE, 'utf8')); } catch (e) { return {}; } }

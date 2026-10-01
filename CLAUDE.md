@@ -35,6 +35,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   session: POST localhost:3500/internal/session-basket {session_id, from_proposal}). nginx /proposals/ serves
   ONLY bevvi-proposal*.pdf (sites rachel AND bevvi-support; until Sep 29 it served all of logs/). Address geocoding: Google Maps (geocodeAddress in server.js).
 - Logs: /home/ubuntu/logs/ (rachel.log, shopping-agent.log, ...). Journal is NOT where bots log.
+- Rachel's state (flow-state.json, chat-sessions.json, conversations.jsonl, baskets.json, customer-contacts.json,
+  events.jsonl) lives in RACHEL_DATA_DIR (rachel/data-dir.js; default /home/ubuntu/logs). A Rachel on any port but
+  3500 REFUSES to start on the production dir — a second instance would rewrite live sessions. Staging: RACHEL_PORT=3501
+  RACHEL_DATA_DIR=<own dir>. Proposal PDFs + proposal-items still come from the shared shopping-agent in logs/.
 
 ## Secrets (never print them)
 - /etc/rachel.env: Slack tokens, ANTHROPIC_API_KEY, GOOGLE_MAPS_API_KEY, QA_SLACK_CHANNEL, SLACK_QA_USER_TOKEN
