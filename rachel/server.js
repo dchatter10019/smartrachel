@@ -2554,7 +2554,7 @@ app.post('/chat', async (req, res) => {
         if (alsoOrder) { preText = txt; console.log('[quote-edits] the email also asks to create the order — continuing to the email order'); }
         else if (r.changes.length && r.items.length) {
           const subj = String(state.emailSubject || (context && context.email_subject) || '');
-          const client = state.savedClientName || (subj.match(/\s[-–—|:]\s*([^-–—|:]{2,60})$/) || [])[1] || String((context && context.user_name) || '').trim();
+          const client = state.savedClientName || require('./email-subject.js').clientFromSubject(subj) || String((context && context.user_name) || '').trim();
           try {
             const url = await quotePdf(state, r.items, String(client || '').trim(), state.savedEventDate || '', r.items.filter(li => li.match && li.match.kind && li.match.kind !== 'exact').length);
             txt += '\n\nYour updated PDF proposal is attached: ' + url;
@@ -2703,7 +2703,7 @@ app.post('/chat', async (req, res) => {
                 // "just send the proper proposal"). Real gap: Sean's quote request got a basket and no PDF.
                 const subj = String((context && context.email_subject) || '');
                 if ((/^email-/.test(sessionKey) || subj) && /\b(quote|proposal|pdf|estimate)\b/i.test(turnMsg + ' ' + subj) && !cL.blocks.length) {
-                  const client = (subj.match(/\s[-–—|:]\s*([^-–—|:]{2,60})$/) || [])[1] || String((context && context.user_name) || '').trim() || '';
+                  const client = st.savedClientName || require('./email-subject.js').clientFromSubject(st.emailSubject || subj) || String((context && context.user_name) || '').trim() || '';
                   const eventDate = require('./event-date.js').findEventDateIn(turnMsg);   // not cta.DATE_RE: "Sun" Cruiser was a date
                   if (eventDate) console.log('[quote-pdf] event date read from the email: ' + JSON.stringify(eventDate));
                   const lt = listText;
@@ -4103,7 +4103,15 @@ app.post('/chat', async (req, res) => {
     // phrase; the LLM generated it with an invented client name and replied "<url|Download proposal>" (no link).
     const PROPOSAL_ASK = /\b(?:generate|create|make|send|build|get|want|need|prepare|draft|give|share|email|do)\b[^.?!\n]{0,24}?\b(?:proposal|pdf)\b|^\W*(?:the\s+|a\s+)?(?:proposal|pdf)(?:\s+please)?\W*$/i;
     const PROPOSAL_NOT = /\b(?:don'?t|do not|no need|not yet|without|skip)\b[^.?!\n]{0,20}\b(?:proposal|pdf)\b/i;
-    const isProposalTrigger = proposalTriggers.some(t => msgLower.includes(t)) || (PROPOSAL_ASK.test(message) && !PROPOSAL_NOT.test(message) && !/\?\s*$/.test(message.replace(/\b(?:can|could|would) you\b.*$/i, '')));
+    let isProposalTrigger = proposalTriggers.some(t => msgLower.includes(t)) || (PROPOSAL_ASK.test(message) && !PROPOSAL_NOT.test(message) && !/\?\s*$/.test(message.replace(/\b(?:can|could|would) you\b.*$/i, '')));
+    // An EMAIL that carries its own item list ("send a revised proposal with what you can cover" under 10+ lines) is a
+    // quote request: the list is built and the PDF made in code with the client from the subject and the date from the
+    // email (the [quote-pdf] path) — never the step-by-step flow. Real bug (Oct 2, DC's Goody thread, after the age
+    // gate): the flow reloaded an older saved basket from gbrain and asked "client?" then "date?", both in the email.
+    // QA never hit it: QA identities have no saved basket, so they always took the list path.
+    const emailListAsk = (/^email-/.test(sessionKey) || !!(context && context.email_subject))
+      && String(message).split(/\n/).filter(l => /^\s*(?:[-•*·]|\d+\s*(?:x|×)\s+\S)/i.test(l)).length >= 3;
+    if (isProposalTrigger && emailListAsk && !state.proposalStep) { console.log('[proposal] email with its own item list — the quote path builds it (no step-by-step flow)'); isProposalTrigger = false; }
     if (isProposalTrigger && !proposalTriggers.some(t => msgLower.includes(t))) console.log('[proposal] request recognised: ' + JSON.stringify(message).slice(0, 80));
     // An explicit proposal request ALWAYS restarts the flow. Previously it was ignored
     // whenever a step was already in progress (`&& !state.proposalStep`), so a request
@@ -4180,6 +4188,16 @@ app.post('/chat', async (req, res) => {
         // Issue C fix: if client name AND event date were already collected for an
         // earlier proposal in this session, don't re-ask — reuse them and go straight
         // to generating. The customer can still say "change the client/date" to update.
+        // Fill what the customer already gave before asking (Oct 2, DC: "Goody alcohol order" + "ideally by Tue 10/6"
+        // in the first email, and Rachel asked "What is the client or company name?" then "What is the event date?").
+        if (!state.savedClientName) {
+          const subjC = require('./email-subject.js').clientFromSubject(state.emailSubject || (context && context.email_subject) || '');
+          if (subjC) { state.savedClientName = subjC; console.log('[proposal] client from the email subject: ' + JSON.stringify(subjC)); }
+        }
+        if (!state.savedEventDate && state.originalRequest) {
+          const dO = require('./event-date.js').findEventDateIn(state.originalRequest);
+          if (dO) { state.savedEventDate = dO; console.log('[proposal] event date from the original request: ' + JSON.stringify(dO)); }
+        }
         if (state.savedClientName && state.savedEventDate) {
           // Falls through to the 'date' handler below. Real bug (Oct 1, DC): this fell into the single-item
           // path after the if-block, which reset proposalStep to 'qty' and asked "How many bottles?" for a

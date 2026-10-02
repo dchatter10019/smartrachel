@@ -1,0 +1,22 @@
+name: email-goody-age-gate-quote
+fresh: true
+tags: [email]
+# Real case (Oct 2, DC's "Goody alcohol order"): the first email had no age statement. After "Yes" the held request was
+# replayed and its "send a revised proposal" started the step-by-step proposal flow, which reloaded an older saved basket
+# and asked "What is the client or company name?" then "What is the event date?" — both in the email (subject "Goody
+# alcohol order", "ideally by Tue 10/6"). An email with its own item list takes the quote path: client from the
+# subject, date from the email, PDF built in code.
+format: plain
+context: {email_subject: "Goody alcohol order", user_name: "Dipanjan Chatterjee"}
+turns:
+  - send: "Can you help me with this request\n\n\n**Spirits**\n\n\u2022 2 \u00d7 1.75L vodka\n\n\u2022 3 \u00d7 1.75L tequila (blanco)\n\n\u2022 3 \u00d7 1.75L bourbon\n\n\u2022 1 \u00d7 750ml orange liqueur\n\n\n**Wine** we have the below inventory from last time if you can please\nadjust the proposal accordingly.\n\n\n\n   - 2 bottles La Crema pinot noir\n   - 1 bottle the prisoner\n   - 2 bottles conundrum white\n\n\n**Beer/seltzer:** we have the below inventory from last time. we should be\ngood on this unless you have recommend any additions to top up stock?\n\n\n\n   - 22 high noon cans\n   - 31 surfside\n   - 29 bottles stella artois\n   - 33 modelo\n   - 20 cans hazy ipa\n\n\n**Mixers & N/A (if you carry them)**\n\n\u2022 4 \u00d7 4-packs Bundaberg ginger beer (or 1 \u00d7 12-pack Fever-Tree)\n\n\u2022 1L lime juice + 1L lemon juice (unsweetened)\n\n\u2022 2L simple syrup\n\n\u2022 3L mango pur\u00e9e\n\n\u2022 2 \u00d7 24-packs sparkling water\n\n\u2022 1 \u00d7 12-pack Athletic N/A beer\n\n\u2022 1 case bottled water\n\n\nDelivery to 332 Pine St, San Francisco 94104, ideally by Tue 10/6. Could\nyou send a revised proposal with what you can cover? Anything you don't\ncarry I'll grab on Instacart. Thank you!\n\n\nKatie Weeks assuming / planning that we'll get garnish (limes, jalape\u00f1os,\ncherries, cucumbers, Taj\u00edn) + ice day-of via Instacart!\n\n\n\n\nDipanjan Chatterjee\nCEO | Bevvi\n\n\ngetbevvi.com | @getbevvi"
+    expect:
+      matches: "(?i)21"
+  - send: "Yes\r\n\r\n\r\n\r\nDipanjan Chatterjee\r\nCEO | Bevvi\r\n\r\ngetbevvi.com | @getbevvi"
+    expect:
+      not_contains: ["What is the client", "client or company name", "What is the event date", "How many bottles"]
+      contains: ["proposal"]
+      log_contains: ["[quote-pdf] email quote request -> proposal generated in code for \"Goody\"", "event October 6, 2026"]
+      log_not_contains: ["[proposal] request recognised"]
+      pdf_contains: ["Goody", "October 6, 2026"]
+      pdf_not_contains: ["CEO |", "La Crema", "Conundrum", "Prisoner"]

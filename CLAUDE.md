@@ -26,6 +26,12 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   continuation the agent sends the thread's first non-Rachel email (context.thread_first_body); a session with no
   originalRequest takes it from there (threads older than the feature), and a later email never becomes the original.
   Replies are reply-all (To + Cc of the incoming email, minus rachelai@ and the sender).
+- The client an email subject names: email-subject.js clientFromSubject ("Goody alcohol order" -> Goody, "... - Gen II
+  Fund", "Bar order for Acme"), used by the quote PDF, quote edits and the proposal flow. An email that carries its own
+  item list (3+ item lines) never enters the step-by-step proposal flow — it takes the [quote-pdf] path (client from the
+  subject, date from the email). When the flow does run, it fills the client from the subject and the date from
+  state.originalRequest before asking. (Oct 2: after the age gate DC was asked both, and the flow reloaded an older
+  gbrain basket; QA identities have no saved basket, so QA never took that path.)
 - Email orders (email-order.js, server.js EMAIL ORDER): "create/place the order", "payment link" in an email
   places the order in code (shopping-agent place_order, no LLM) and replies with the payment link. Contact =
   the customer in the email (a forwarded customer's header + signature; the sender unless @getbevvi.com); all
@@ -73,7 +79,7 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 ## QA harness (rachel/qa/)
 - `qa/unit/*.test.js`: pure-logic unit tests on saved real replies (multi-pick resolver), run by every
   `precheck.sh` lint/deploy. Lint also enforces eslint no-use-before-define (runtime TDZ errors).
-- `./qa/run.py` every scenario in qa/scenarios/ (72 files on Oct 2); `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
+- `./qa/run.py` every scenario in qa/scenarios/ (73 files on Oct 2); `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
 - Scenarios are YAML in qa/scenarios/. Assertions: contains / not_contains / matches / not_matches / log_contains / log_not_contains /
   pdf_contains / pdf_not_contains, plus a Haiku `judge` — prefer structural checks; the judge is
   unreliable on nuanced criteria. `transport: slack` (real DM as rachel_qa) and `transport: email`
