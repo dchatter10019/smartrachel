@@ -21,5 +21,7 @@ turns:
       matches: "(?i)\\b(added|got it)\\b[^\\n]*{pick_re}"
       not_contains: ["I found a few options", "already in your"]
       log_contains: ["[add-item] listed-name"]
+  # The basket shows the CATALOG name; the list showed the LLM's wording of it (Oct 2: listed "Beringer Knights Valley
+  # Cabernet Sauvignon", catalog "Beringer Knights Valley Cabernet - 750 ML") — so the picked line's count, not its words.
   - send: "show my basket"
-    expect: {matches: "(?i){pick_re}"}
+    expect: {matches: "(?im)^\\s*1x \\S", not_contains: ["basket is empty"]}

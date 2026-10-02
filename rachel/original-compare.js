@@ -177,8 +177,14 @@ function applyNotBoth(items, note) {
 // "Lemon Juice 1L" -> UNAVAILABLE (size mismatch) with 375 mL on the shelf. A line with an amount and no count is an
 // amount of liquid (np.volume_ml: any bottle size, buildPackage sizes the qty); a counted line keeps its count.
 // -> [log lines]; namedProducts edited in place.
+// A request row that is an instruction or a question, not a product line. Real (Oct 2, DC's Goody change email):
+// "can we swap the ketel one for titos?", "remove the water case", "can we add back some wine?" were added as
+// products — Owen's Transfusion, Dr Pepper, San Pellegrino, and "remove the water case isn't available".
+const NOT_A_PRODUCT_LINE = /\?\s*$|^\s*(?:can|could|would|will|should|please|pls|remove|delete|drop|take|swap|switch|replace|change|add|include|make|keep|update|send|we|i|it|this|that|these|those|they|there|so|also|and|but|because|since|if|let'?s|ok|okay|thanks?)\b|\b(?:remove|swap|switch|replace|instead of|on hand|left\s*over|leftover|from last time)\b/i;
 function reconcileNamed(namedProducts, text) {
-  const rows = parseRequest(text, OH.parseOnHand(text));
+  const all = parseRequest(text, OH.parseOnHand(text));
+  const rows = all.filter(r => !NOT_A_PRODUCT_LINE.test(String(r.text || '')));
+  if (rows.length < all.length) console.log('[list-reconcile] not product lines (instructions / questions), ignored: ' + JSON.stringify(all.filter(r => !rows.includes(r)).map(r => r.text)));
   const log = [];
   if (rows.length < 3 || !Array.isArray(namedProducts)) return log;
   const covered = new Set();

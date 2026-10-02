@@ -136,6 +136,13 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         return await addToCart(toolInput);
 
       case 'SendEmail': {
+        // In an email thread the reply already goes to the sender (with the PDF): a SendEmail only to them is a second,
+        // duplicate email. Real (Oct 2, QA email-which-proposal): "please send a quote" -> the LLM emailed the sender.
+        const toS = [].concat(toolInput.to || []).map(x => String(x).trim().toLowerCase()).filter(Boolean);
+        if (sessionState && sessionState.emailSubject && requesterEmail && toS.length && toS.every(x => x === String(requesterEmail).toLowerCase())) {
+          console.log('[SendEmail] REFUSED — email thread, recipient is only the sender (the reply goes to them): ' + JSON.stringify(toS));
+          return { success: false, error: 'Not sent: this conversation IS an email thread with this customer — your reply is emailed to them automatically (with the PDF attached). Do not say an email was sent; just write the reply.' };
+        }
         if (eventParams && eventParams.qa) { console.log('[QA] SendEmail simulated:', JSON.stringify(toolInput.to), toolInput.subject); return { success: true, simulated: true, message: 'Email sent to ' + [].concat(toolInput.to).join(', ') + ' (QA simulated)' }; }
         if (!sendEmailFn) return { success: false, error: 'Email sending is not configured.' };
         const to = Array.isArray(toolInput.to) ? toolInput.to : [toolInput.to].filter(Boolean);
@@ -478,6 +485,15 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         if (saInput.intent === 'generate_proposal' && sessionState) {
           if (!saInput.event_date && sessionState.savedEventDate) { saInput.event_date = sessionState.savedEventDate; console.log('[proposal] saved event date added to the LLM proposal: ' + JSON.stringify(saInput.event_date)); }
           if (!saInput.client_name && sessionState.savedClientName) saInput.client_name = sessionState.savedClientName;
+          // No saved client: the one the email subject names beats the LLM's guess (unless the customer's own message names
+          // the LLM's). Real bug (Oct 2, QA email-which-proposal): "Drinks quote - Northwind QA" — the LLM billed "Bevvi"
+          // (the sender's domain), it was saved, and every later PDF and the "which proposal?" list said "Bevvi".
+          if (!sessionState.savedClientName) {
+            const subjC = require('./email-subject.js').clientFromSubject(sessionState.emailSubject || '');
+            const llmC = String(saInput.client_name || '').trim();
+            const ownWords = llmC && String(sessionState.currentUserMessage || '').toLowerCase().includes(llmC.toLowerCase());
+            if (subjC && llmC !== subjC && !ownWords) { console.log('[proposal] client from the email subject, not the LLM\'s ' + JSON.stringify(llmC) + ': ' + JSON.stringify(subjC)); saInput.client_name = subjC; }
+          }
         }
         if ((saInput.intent === 'place_order' || saInput.intent === 'generate_proposal') && currentLineItems) {
           if (saInput.line_items && saInput.line_items !== currentLineItems) {
@@ -573,7 +589,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             if (!words.length) continue;   // generic query ("Chardonnay", "red wine") — nothing to verify
             checked.push(qname);
             const key = words.slice(0, 2);
-            const hit = (r.products || []).some(p => { const pn = ' ' + normW(p.name) + ' '; return key.every(k => pn.includes(' ' + k + ' ') || pn.includes(' ' + k.replace(/'/g, '') + ' ')); });
+            const hit = (r.products || []).some(p => { const pn = ' ' + normW(p.name) + ' ', pn0 = pn.replace(/'/g, ''); return key.every(k => pn.includes(' ' + k + ' ') || pn0.includes(' ' + k.replace(/'/g, '') + ' ')); });   // "titos" = "Tito's" (Oct 2)
             if (!hit) {
               try { require('./events.js').unmatched(qname); } catch (e) {}
               console.log('[not-found] ' + JSON.stringify(qname) + ' — no result carries "' + key.join(' ') + '"; dropped ' + (r.products || []).length + ' unrelated result(s): ' + (r.products || []).map(p => p.name).join(' | '));

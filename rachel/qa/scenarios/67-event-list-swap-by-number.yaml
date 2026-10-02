@@ -23,6 +23,10 @@ turns:
       not_matches: "(?m)^\\s*1[.)]\\s*\\**Goldeneye"
   - send: "1"
     expect:
-      contains: ["in place of La Crema", "Your order now:", "Product total"]
+      # The pick takes La Crema's place at its planned 10x, whichever path: "in place of" when La Crema was not carried
+      # (pending), "(replacing La Crema ...)" when a stand-in La Crema was in the basket (Oct 2: SF now lists La Crema
+      # Monterey, so the build put it in and the not-carried path no longer runs). Never a new line beside La Crema.
+      matches: "(?i)Got it — 10x [^\\n]*(?:in place of|\\(replacing) La Crema"
+      not_matches: "(?im)^\\s*\\d+x La Crema"
+      contains: ["Your order now:", "Product total"]
       not_contains: ["How many bottles"]
-      log_contains: ["[pick-list] pick replaces the not-carried"]

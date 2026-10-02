@@ -382,6 +382,15 @@ async function searchWithFallbacks(location, client, name, limit, minPrice, maxP
   if (stripDescriptors(name0) !== name0) console.log('[search] descriptor words dropped from the search text: ' + JSON.stringify(name0) + ' -> ' + JSON.stringify(name));
   let products = await searchProducts(location, client, name, limit || 10, minPrice, maxPrice);
   if (products.length) return products;
+  // The catalog search needs the possessive apostrophe: "Titos Handmade Vodka 1.75L" -> nothing, "Tito's ..." -> found.
+  // Real (Oct 2, DC's Goody thread, SF 94104): "swap the ketel one for titos" -> "Tito's 1.75L isn't available", and a
+  // 750 mL Tito's went in instead. Each "<word>s" (no apostrophe) is tried as "<word>'s", up to 2 words.
+  const possessive = (String(name).match(/\b[A-Za-z]{3,}s\b/g) || []).filter(w => !/(?:ss|us|is)$/i.test(w)).slice(0, 2);
+  for (const w of possessive) {
+    const alt = String(name).replace(new RegExp('\\b' + w + '\\b'), w.slice(0, -1) + "'s");
+    products = await searchProducts(location, client, alt, limit || 10, minPrice, maxPrice);
+    if (products.length) { console.log('[searchWithFallbacks] apostrophe retry succeeded:', JSON.stringify(name), '->', JSON.stringify(alt)); return products; }
+  }
   // Try stripping size/pack wording BEFORE the more aggressive word-count fallbacks
   // below, since it preserves maximum specificity (e.g. keeps "Summer Ale", only
   // drops "6 pack") rather than discarding whole words that might matter for

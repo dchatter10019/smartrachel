@@ -204,7 +204,9 @@ def send(session, text, fmt, email, images=None, idle=False, ctx=None):
     if images: payload["images"] = images
     if idle: payload["simulate_idle"] = True   # server treats the session as idle past RACHEL_IDLE_HOURS
     t0 = time.time()
-    r = httpx.post(RACHEL, json=payload, timeout=240)
+    # Above the email agent's own wait (RACHEL_EMAIL_TIMEOUT 300s): a 22-line quote email takes ~3.5 min alone and passed
+    # 240s under the nightly's parallel load (Oct 2, email-quote-list: the reply was right, the harness had hung up).
+    r = httpx.post(RACHEL, json=payload, timeout=330)
     return r.json().get("text", ""), round(time.time() - t0, 1)
 
 LOGS = ["/home/ubuntu/logs/rachel.log", "/home/ubuntu/logs/shopping-agent.log"]   # log_contains searches both (the package builder runs in shopping-agent)

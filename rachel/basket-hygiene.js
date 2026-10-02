@@ -7,7 +7,7 @@
 //   never cleared, so Rachel offered vodkas and then called it "a system error"
 // - the PDF went out billed to "Goody Dipanjan Chatterjee CEO |" — a client saved before the signature fix
 //
-// check(state, { originalRequest, userName }) -> { items, onHand, droppedOnHand, pendingCleared, client } (pure)
+// check(state, { originalRequest, userName, message }) -> { items, onHand, released, droppedOnHand, pendingCleared, client } (pure)
 const OH = require('./on-hand.js');
 const pendingOriginalByType = require('./pending-original.js');
 
@@ -21,11 +21,14 @@ function check(state, opts) {
   let onHand = (state.onHand || []).slice();
   const src = opts.originalRequest || state.originalRequest;
   if (src) for (const o of OH.parseOnHand(src)) if (!onHand.some(p => p.name.toLowerCase() === o.name.toLowerCase())) onHand.push(o);
+  // On-hand products the customer chose later (this message or an earlier one) stay: OH.releasedBy.
+  const released = (state.onHandReleased || []).slice();
+  if (opts.message && opts.message !== src) for (const n of OH.releasedBy(opts.message, onHand)) if (!released.includes(n)) released.push(n);
   const droppedOnHand = [];
   if (onHand.length) {
     items = items.filter(li => {
       const o = OH.isOnHand(li && li.name, onHand);
-      if (o && !li.keepOnHand) { droppedOnHand.push({ name: li.name, qty: li.qty, price: li.price, onHand: o.name }); return false; }
+      if (o && !li.keepOnHand && !released.includes(o.name)) { droppedOnHand.push({ name: li.name, qty: li.qty, price: li.price, onHand: o.name }); return false; }
       return true;
     });
   }
@@ -41,7 +44,7 @@ function check(state, opts) {
     if (by) pendingCleared.push({ pending: pn, by: by.name });
   }
 
-  return { items, onHand, droppedOnHand, pendingCleared, client: cleanClient(state.savedClientName, opts.userName) };
+  return { items, onHand, released, droppedOnHand, pendingCleared, client: cleanClient(state.savedClientName, opts.userName) };
 }
 
 // A client name with the sender's signature glued on ("Goody Dipanjan Chatterjee CEO |") -> "Goody".

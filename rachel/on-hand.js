@@ -50,4 +50,25 @@ function isOnHand(productName, onHand) {
   return null;
 }
 
-module.exports = { parseOnHand, isOnHand };
+// On-hand products the customer CHOSE in a later message — ordered on top of what they have. Real case (Oct 2, DC's
+// Goody thread): "4x Conundrum White -> This is good" and "so 4 The Prisoner Red Blend" were dropped the next turn as
+// on-hand (he had 2 Conundrum / 1 Prisoner from last time) — the PDF would have gone out with only the vodka.
+// A line that names the product counts, unless it removes it or says they have it ("remove", "we have", "on hand").
+// The message itself must not be an on-hand statement (parseOnHand finds nothing in it).
+const NOT_A_CHOICE = /\b(?:remove|delete|drop|take\s+(?:it\s+)?(?:out|off)|no\s+more|don'?t|do\s+not|without|skip|we\s+(?:already\s+)?have|i\s+(?:already\s+)?have|already\s+have|on\s+hand|left\s*over|leftover|from\s+last\s+time|inventory)\b/i;
+function releasedBy(message, onHand) {
+  const m = String(message || '');
+  if (!m.trim() || !(onHand || []).length || parseOnHand(m).length) return [];
+  const out = [];
+  for (const line of m.replace(/\r/g, '').split('\n')) {
+    if (!line.trim() || NOT_A_CHOICE.test(line)) continue;
+    const lw = new Set(words(line));
+    for (const o of onHand) {
+      const ow = words(o.name);
+      if (ow.length && ow.every(w => lw.has(w)) && !out.includes(o.name)) out.push(o.name);
+    }
+  }
+  return out;
+}
+
+module.exports = { parseOnHand, isOnHand, releasedBy };

@@ -23,11 +23,14 @@ turns:
   # picked the way DC did: "<name> — 750 mL — $24.14 works" goes through the numbered-list path; the price is not a qty
   - send: "{pick_full} — 750 mL — $24.14 works"
     expect:
-      not_matches: "Got it — 2[0-9]x"
       # DC (Sep 30): after the swap show the WHOLE basket and offer the proposal, not only "ready to place the order?"
-      contains: ["in place of La Crema", "Your order now:", "Product total", "PDF proposal"]
+      # The pick takes La Crema's place at its planned 10x, whichever path: "in place of" when La Crema was not carried
+      # (pending), "(replacing La Crema ...)" when a stand-in La Crema was in the basket (Oct 2: SF now lists La Crema
+      # Monterey, so the build put it in and the not-carried path no longer runs). Never a new line beside La Crema.
+      matches: "(?i)Got it — 10x [^\\n]*(?:in place of|\\(replacing) La Crema"
+      not_matches: "(?im)Got it — 2[0-9]x|^\\s*\\d+x La Crema"
+      contains: ["Your order now:", "Product total", "PDF proposal"]
       not_contains: ["How many bottles"]
-      log_contains: ["pick replaces the not-carried"]
   # "no.. send me the proposal first" (a leading "no" and "send ME the proposal") starts the proposal flow in code;
   # the LLM generated it with an invented client and replied "<url|Download proposal>" — no link.
   - send: "no.. send me the proposal first"

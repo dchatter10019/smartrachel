@@ -36,7 +36,11 @@ function splitInstructions(message) {
   // Only a long line (>= 60 chars; Gmail wraps near 76) — short list lines ("remove the modelo") stay separate.
   const text = String(message || '').replace(/^([^\n]{59,}[a-z,])[ \t]*\r?\n(?=[ \t]*[a-z])/gm, '$1 ');
   const lines = text.split(/\n+/).map(l => l.replace(/^\s*(?:[-•*·–]|\d+[.)])\s*/, '').replace(/\*/g, '').trim()).filter(l => l.length >= 4 && !PLEASANTRY.test(l));
-  return lines.length >= 2 && lines.length <= 12 ? lines : [];
+  // A heading ("Couple of changes / questions:") or a reason ("we have some leftover titos on hand so it may make sense
+  // ...") is not an instruction — both came back as "I haven't done these yet" (Oct 2, DC).
+  const REQ = /\b(?:add|remove|take out|drop|delete|swap|switch|replace|change|need|want|send|include|increase|reduce|bump|order|update|should be|instead)\b|\b\d+\s*(?:x|bottles?|cases?|packs?|cans?)\b|\?\s*$|^\s*\d/i;
+  const kept = lines.filter(l => !/:\s*$/.test(l) && !(/^(?:we|i|it|this|that|because|since|as|so|they|there)\b/i.test(l) && !REQ.test(l.replace(/^(?:we|i)\s+(?:have|had)\b/i, ''))));
+  return kept.length >= 2 && kept.length <= 12 ? kept : [];
 }
 
 const norm = x => String(x || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');

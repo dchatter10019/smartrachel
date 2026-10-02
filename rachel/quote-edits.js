@@ -79,8 +79,11 @@ function parseEdits(text) {
   while ((m = inRm.exec(flat))) { if (!/\b(?:all|any|following|items?|these|those|below)\b/i.test(m[1]) && !out.removes.includes(m[1].trim())) out.removes.push(m[1].trim()); }
   // "Please remove the Oyster Bay." with no "from the order" (Oct 1, QA email-which-proposal: went to the LLM, which
   // regenerated the PDF as client "Bevvi Quote"). Not a change to the proposal itself (date, client, PDF, link).
-  const inRm2 = /\b(?:please\s+)?(?:remove|take out|drop|delete)\s+(?:the\s+)?([^.,;:!?\n"“”]{3,60}?)\s*(?:[.!;\n]|$)/gim;
-  while ((m = inRm2.exec(flat))) {
+  // Per LINE: on the flattened text two bullets ran together (Oct 2, DC: "- remove the water case\n- remove the
+  // sparkling water (we should have enough on hand!)" parsed as ONE remove and the water case was lost).
+  const inRm2 = /\b(?:please\s+)?(?:remove|take out|drop|delete)\s+(?:the\s+)?([^.,;:!?\n"“”(]{3,60}?)\s*(?:[.!;(\n]|$)/gim;
+  const perLine = t.split('\n').map(l => l.replace(BULLET, '$1').trim()).join('\n');
+  while ((m = inRm2.exec(perLine))) {
     const nm = m[1].trim();
     if (/\b(?:from|all|any|following|items?|these|those|below|date|client|name|pdf|proposal|quote|link|order|it|that|this|them)\b/i.test(nm) || out.removes.includes(nm)) continue;
     out.removes.push(nm);
@@ -88,6 +91,12 @@ function parseEdits(text) {
   const inQ = new RegExp('\\b(?:only|just)\\s+(?:need|want)\\s+' + NUM_RE + '\\s+' + UNIT_RE + '\\s+of\\s+(?:the\\s+)?([^.,;:!?\\n]{3,60}?)(?=[.,;:!?\\n]|$)', 'gi');
   while ((m = inQ.exec(flat))) out.setQty.push({ name: m[2].trim(), qty: num(m[1]) });
   if (/\b(?:add|include)\b[^.]{0,60}\b(?:to the (?:order|quote|list)|as well)\b/i.test(flat)) out.adds = true;
+  // "can we add back some wine?", "add 4 red" — an add anywhere (Oct 2, DC: it was missed and the reply said "Done").
+  if (/\b(?:add|add back|include|throw in|also (?:need|want))\b/i.test(flat) && !/\b(?:don'?t|do not|no need to)\s+add\b/i.test(flat)) out.adds = true;
+  // "swap the ketel one for titos", "replace X with Y", "X instead of Y" — a swap needs a catalog search: the LLM.
+  out.swaps = /\b(?:swap|switch|replace|substitute|change)\b[^.\n]{0,60}\b(?:for|with|to)\b|\binstead of\b/i.test(flat);
+  // Questions and requests on lines that no edit above covers ("can we ...?") — never answered as if all done.
+  out.questions = t.split('\n').map(l => l.replace(BULLET, '$1').trim()).filter(l => /\?\s*$/.test(l) || /^(?:can|could|would|will) (?:we|you)\b/i.test(l));
   out.wantsQuote = /\b(?:updated|revised|new|corrected)\s+(?:quote|proposal|pdf|invoice|estimate)\b|\bre-?send\b|\bsend\b[^.]{0,20}\b(?:updated|revised)\b/i.test(flat);
   out.count = out.removes.length + out.setQty.length + out.attrs.length;
   return out;
@@ -108,7 +117,19 @@ function lev(a, b) {
 // Sizes are not name words: "12", "12pk", "8x11.5", "750ml", "1.75l".
 const keyWords = s => [...new Set(PM.words(s).filter(w => !STOP.has(w) && !/^\d+(?:\.\d+)?(?:x\d+(?:\.\d+)?)?(?:pk|oz|ml|l)?$/.test(w)))];
 const tokEq = (a, b) => a === b || (a.length >= 5 && b.length >= 5 && lev(a, b) <= 1);
+// What a line IS when its name doesn't say it: "remove the sparkling water" = the San Pellegrino line (Oct 2, DC:
+// "Not in the quote" — the line's name has no "sparkling water"). Still water never matches a sparkling one.
+const SPARKLING_W = /\bpellegrino|perrier|la ?croix|topo chico|spindrift|bubly|nixie|polar seltzer|sparkling (?:natural )?(?:mineral )?water|seltzer water|club soda/i;
+const STILL_W = /\b(?:fiji|evian|voss|smartwater|dasani|aquafina|poland spring|essentia|core water|bottled water|spring water|natural artesian)\b/i;
+function kindScore(req, item) {
+  const nm = (item.name || '') + ' ' + (item.label || '');
+  if (/\bsparkling water|seltzer water|mineral water|soda water|club soda\b/i.test(req)) return SPARKLING_W.test(nm) ? 1 : 0;
+  if (/\bwater\b/i.test(req) && !/\bsparkling|seltzer|mineral|soda\b/i.test(req)) return STILL_W.test(nm) && !SPARKLING_W.test(nm) ? 1 : 0;
+  return 0;
+}
 function score(req, item) {
+  const k = kindScore(req, item);
+  if (k) return k;
   const rw = keyWords(req);
   if (!rw.length) return 0;
   const iw = PM.words(item.name || item.label || '');

@@ -79,7 +79,7 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 ## QA harness (rachel/qa/)
 - `qa/unit/*.test.js`: pure-logic unit tests on saved real replies (multi-pick resolver), run by every
   `precheck.sh` lint/deploy. Lint also enforces eslint no-use-before-define (runtime TDZ errors).
-- `./qa/run.py` every scenario in qa/scenarios/ (73 files on Oct 2); `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
+- `./qa/run.py` every scenario in qa/scenarios/ (74 files on Oct 2); `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
 - Scenarios are YAML in qa/scenarios/. Assertions: contains / not_contains / matches / not_matches / log_contains / log_not_contains /
   pdf_contains / pdf_not_contains, plus a Haiku `judge` — prefer structural checks; the judge is
   unreliable on nuanced criteria. `transport: slack` (real DM as rachel_qa) and `transport: email`
@@ -98,6 +98,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 ## Known-good facts
 - Search: api-client.getbevvi.com with client=bevvibot and zipcode=; the location= variant returns nothing.
   NYC 10019 store 5f4d1e12…, Boston 02110 689fa0c7…, SF 94104 679dadac….
+  The search needs the possessive apostrophe ("Titos" finds nothing, "Tito's" does): searchWithFallbacks retries
+  "<word>s" as "<word>'s" ([searchWithFallbacks] apostrophe retry); rachel.js [not-found] compares without apostrophes.
 - A customer-named product is never dropped for price caps; a stated size sorts first.
 - Multi-pick resolver only fires on a real numbered options list + a selection-shaped message.
 - A substantive first message (an order) is kept through the age gate (pendingIntent) and replayed.
@@ -164,11 +166,14 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - Every ready turn, before anything reads the basket (basket-hygiene.js, [basket-hygiene]): on-hand lines (state.onHand
   + the original request) are dropped and the customer told; a pending not-carried item whose same-kind line is in the
   basket is cleared (a line labeled with ANOTHER request item never counts); a saved client with the sender's
-  signature glued on is cleaned ("Goody Dipanjan Chatterjee CEO |" -> "Goody").
+  signature glued on is cleaned ("Goody Dipanjan Chatterjee CEO |" -> "Goody"). An on-hand product the customer CHOSE in
+  a later message ("4x Conundrum White -> This is good", "so 4 The Prisoner") is released (on-hand.js releasedBy ->
+  state.onHandReleased) and never dropped; "remove X" / "we have X" never release. A line with keepOnHand is kept too.
 - An email answering Rachel line by line ("<a line of her last reply> -> <answer>", annotated-reply.js, [annotated]):
   an acceptance ("this is good") of an option line is applied in code — product = brand + price among those just
   shown, line = the ALL-CAPS section it was offered under, qty = its "need Nx"; the replacement keeps the line's label.
-  Other pairs go to the LLM with what was done in its context; the reply opens with "Done — ..." + the basket in code.
+  A note on a BASKET line ("1x X ... -> Remove this" / "Make this 2 bottles" / "This is good") is applied in code too
+  (lineAction). Other pairs go to the LLM with what was done in its context; the reply opens with "Done — ..." + the basket.
 - "Compare with my original request" is answered IN CODE (original-compare.js, [original-compare]): each requested
   line vs the basket (one basket line per request line, volume or units; a pack size not in the catalog name is
   CHECK, never guessed), on-hand listed as not ordered, extras listed; quantity fixes offered and "make the changes"
@@ -181,7 +186,17 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   reconcileNamed, [list-reconcile]): a line with an amount and no count ("3L mango purée", "1L lemon juice") is
   np.volume_ml — any bottle size, buildPackage sizes the qty to cover it ([buildPackage] volume:) instead of
   UNAVAILABLE (size mismatch); a counted line keeps its count; a list line the LLM left out is added (on-hand lines
-  never). A pack request whose pick has no pack size in its name prefers a candidate that names it (Nixie -> Perrier 8pk).
+  never). Instruction / question lines ("can we swap X for Y?", "remove the water case") are never request rows. A pack
+  request whose pick has no pack size in its name prefers a candidate that names it (Nixie -> Perrier 8pk).
+- A custom_list build on an EDIT turn (add / swap / "add back" wording, not "new list" / "start over") MERGES into the
+  basket, never replaces it (basket-merge.js, [basket-merge]): same product = updated, else added; "swap X for Y" removes
+  X and Y takes X's qty. (Oct 2: "add back some wine? 4 red 4 white" replaced DC's 14-line Goody quote with the wine.)
+- Email quote turns: the L1 package cache (key sender+zip+request) is only injected into a session with a basket of its
+  own — a new thread builds fresh. The LLM's generate_proposal client = saved client, else the subject's client, else
+  the LLM's (Oct 2: "Bevvi" billed for "Drinks quote - Northwind QA"). SendEmail to only the sender inside an email
+  thread is refused (the reply already goes to them). A pick with no line to replace says "added", never "replaced null",
+  and takes a count typed right before the product ("so 4 The Prisoner"). A basket change on a question turn still
+  lists the basket (before the closing question).
 - The LLM's generate_proposal/place_order use the LIVE basket (state.lastLineItems after this turn's edits) and the
   saved event date/client when it omits them. In a client edit the LAST client statement wins ("it should be just Goody").
 - A placed order (API success only) leaves the cart → state.placedOrder; touching it asks reopen/new.

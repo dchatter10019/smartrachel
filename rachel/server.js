@@ -1166,7 +1166,9 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
   const stateForEmail = getState(sessionKey);
   // Several instructions in one message: tell the LLM the checklist, then check the reply (below).
   stateForEmail.currentUserMessage = message;   // read by applyBasketSubstitute's cross-type check (same-turn instructions)
-  const instrs = require('./instructions.js').splitInstructions(message);
+  // Lines code already handled this turn (quote-edit removes) are not the LLM's to do — or to be flagged as undone.
+  const doneNames = (stateForEmail.codeDoneThisTurn || []).map(d => String(d).toLowerCase());
+  const instrs = require('./instructions.js').splitInstructions(message).filter(l => !(/\b(?:remove|take out|drop|delete)\b/i.test(l) && doneNames.length && doneNames.some(d => /^removed /.test(d))));
   let basketBefore = []; try { basketBefore = JSON.parse(stateForEmail.lastLineItems || '[]'); } catch (e) {}
   if (instrs.length) {
     console.log('[instructions] ' + instrs.length + ' in one message: ' + JSON.stringify(instrs));
@@ -1273,6 +1275,19 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
         }
       } catch (e) {}
       const state = getState(sessionKey);
+      // An EDIT turn's custom_list adds to the basket, never replaces it (basket-merge.js). Real bug (Oct 2, DC's
+      // Goody thread): "can we add back some wine? 4 red 4 white" rebuilt the 14-line quote as just the wine.
+      if (saInput && saInput.intent === 'custom_list') {
+        try {
+          let prevB = []; try { prevB = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+          const mg = require('./basket-merge.js').mergeEdit(prevB, JSON.parse(lineItems), message);
+          if (mg) {
+            console.log('[basket-merge] edit turn — this build (' + JSON.parse(lineItems).length + ' line(s)) merged into the ' + prevB.length + '-line basket, not replacing it: ' + JSON.stringify(mg.log));
+            lineItems = JSON.stringify(mg.items);
+            state.builtTotals = null;   // the build's totals were for its own lines only
+          } else if (prevB.length >= 2) console.log('[basket-merge] not an edit turn — the ' + JSON.parse(lineItems).length + '-line build replaces the ' + prevB.length + '-line basket');
+        } catch (e) { console.log('[basket-merge] error (build kept as is): ' + e.message); }
+      }
       const key = makeCacheKey(em || email, state.zip, state.lastFingerprint);
       packageCache[key] = lineItems;
       state.lastLineItems = lineItems;
@@ -2347,7 +2362,11 @@ app.post('/chat', async (req, res) => {
     // basket, and the PDF was billed to "Goody Dipanjan Chatterjee CEO |".
     try {
       const BH = require('./basket-hygiene.js');
-      const h = BH.check(state, { userName: context && context.user_name });
+      const h = BH.check(state, { userName: context && context.user_name, message });
+      if (h.released.length && JSON.stringify(h.released) !== JSON.stringify(state.onHandReleased || [])) {
+        console.log('[basket-hygiene] on-hand product(s) the customer chose — ordered, never dropped as on-hand: ' + h.released.join(', '));
+        state.onHandReleased = h.released; saveFlowState();
+      }
       if (h.onHand.length && JSON.stringify(h.onHand) !== JSON.stringify(state.onHand || [])) {
         state.onHand = h.onHand;
         console.log('[basket-hygiene] on-hand list: ' + h.onHand.map(o => (o.qty ? o.qty + 'x ' : '') + o.name).join(', '));
@@ -2433,6 +2452,22 @@ app.post('/chat', async (req, res) => {
         const done = [], open = [];
         for (const p of pairs) {
           const tag = JSON.stringify(p.quote.slice(0, 60)) + ' -> ' + JSON.stringify(p.answer.slice(0, 40));
+          // A note on a BASKET line ("1x Owen's ... -> Remove this", "-> Make this 2 bottles", "-> This is good"): applied here.
+          const la = /^\s*(?:[-•*·]\s*)?\d+\s*x\s+/i.test(p.quote) ? AR.lineAction(p.answer) : null;
+          if (la) {
+            let itemsL = []; try { itemsL = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+            const qn = AR.quoteName(p.quote);
+            let li = itemsL.findIndex(x => String(x.name || '').trim().toLowerCase() === qn.toLowerCase());
+            if (li < 0) li = basketLineFor(itemsL, qn);
+            if (li < 0) { open.push(p); console.log('[annotated] ' + tag + ': no basket line ' + JSON.stringify(qn) + ' — left to the LLM'); continue; }
+            const ln = itemsL[li];
+            if (la.keep) { done.push('kept ' + (ln.qty || 1) + 'x ' + ln.name); console.log('[annotated] KEPT: ' + tag); continue; }
+            if (la.remove) { itemsL.splice(li, 1); done.push('removed ' + ln.name); }
+            else { const was = ln.qty || 1; ln.qty = la.qty; if (ln.quantity != null) ln.quantity = la.qty; done.push(ln.name + ' ' + was + ' -> ' + la.qty); }
+            state.lastLineItems = JSON.stringify(itemsL); saveFlowState();
+            console.log('[annotated] APPLIED: ' + tag + ' -> ' + (la.remove ? 'removed' : 'qty ' + la.qty) + ' (' + ln.name + ')');
+            continue;
+          }
           if (!p.accept) { open.push(p); console.log('[annotated] ' + tag + ': not an acceptance — left to the LLM'); continue; }
           let itemsAR = []; try { itemsAR = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
           const prod = AR.productFor(p.quote, shownAR);
@@ -2454,7 +2489,7 @@ app.post('/chat', async (req, res) => {
           done.push(q + 'x ' + prod.name + ' replaces ' + was.qty + 'x ' + was.name);
           console.log('[annotated] APPLIED: ' + tag + ' -> ' + was.name + ' replaced by ' + q + 'x ' + prod.name + ' (section ' + JSON.stringify(p.header) + ')');
         }
-        if (done.length) events.action('updated_basket');   // getState returns this same state object
+        if (done.some(d => !/^kept /.test(d))) events.action('updated_basket');   // getState returns this same state object
         if (done.length && !open.length) {
           let itemsD = []; try { itemsD = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
           const tot = itemsD.reduce((a, li) => a + (li.qty || li.quantity || 1) * (parseFloat(li.price) || 0), 0);
@@ -2538,7 +2573,30 @@ app.post('/chat', async (req, res) => {
     if (!state.orderStep && !state.proposalStep && (/^email-/.test(sessionKey) || (context && context.email_subject) || state.lastProposalUrl)) {
       let qItems = []; try { qItems = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
       const qe = qItems.length ? QE.parseEdits(message) : null;
-      if (qe && qe.count && qe.adds) console.log('[quote-edits] the request also adds items — left to the LLM (adds need a catalog search)');
+      // Removes / quantities are applied here; anything else in the same email (an add, a swap, a question) goes to the
+      // LLM, told what was done — never a code reply that answers only part of the email. Real bug (Oct 2, DC's Goody
+      // thread): "swap the ketel one for titos? / remove the water case / remove the sparkling water / add back some
+      // wine? 4 red 4 white" got "Done — Not in the quote, so nothing to change: sparkling water" and nothing else.
+      const qeRest = qe && qe.count && (qe.adds || qe.swaps || (qe.questions || []).some(l => !/\b(?:remove|take out|drop|delete)\b/i.test(l) && !/\b(?:quote|proposal|pdf|estimate|invoice)\b/i.test(l)));   // "could you resend an updated quote?" is done here
+      if (qeRest) {
+        const r = QE.applyEdits(qItems, qe);
+        console.log('[quote-edits] ' + qe.count + ' edit(s) applied in code -> ' + JSON.stringify(r.changes.map(c => c.kind + ': ' + c.name + (c.to != null ? ' ' + c.from + '->' + c.to : '')))
+          + (r.notFound.length ? ' | NOT FOUND: ' + JSON.stringify(r.notFound) : '') + (r.ambiguous.length ? ' | AMBIGUOUS: ' + JSON.stringify(r.ambiguous) : '')
+          + ' | the rest of the email (' + [qe.adds && 'add', qe.swaps && 'swap', (qe.questions || []).length && 'questions'].filter(Boolean).join(', ') + ') goes to the LLM');
+        const doneQ = r.changes.map(c => c.kind + ' ' + c.name + (c.to != null ? ' (' + c.from + ' -> ' + c.to + ')' : ''));
+        if (r.changes.length) {
+          state.lastLineItems = JSON.stringify(r.items);
+          packageCache[makeCacheKey(email, state.zip, state.lastFingerprint)] = state.lastLineItems;
+          state.pendingSubstitutes = []; state.lastCta = null;
+        }
+        const notQ = r.notFound.map(n => 'not in the quote: ' + n).concat(r.ambiguous.map(a => 'several lines match (ask which): ' + JSON.stringify(a)));
+        if (doneQ.length || notQ.length) {
+          state.codeDoneThisTurn = doneQ.concat(notQ);
+          saveFlowState();
+          const _jQ = res.json.bind(res);
+          res.json = (payload) => { try { const t0 = payload && (payload.text || payload.response); if (typeof t0 === 'string' && doneQ.length) { const t = 'Done — ' + doneQ.join('; ') + '.\n\n' + t0; payload.text = t; payload.response = t; } } catch (e) {} return _jQ(payload); };
+        }
+      }
       else if (qe && qe.count) {
         const r = QE.applyEdits(qItems, qe);
         console.log('[quote-edits] ' + qe.count + ' edit(s) -> ' + JSON.stringify(r.changes.map(c => c.kind + ': ' + c.name + (c.to != null ? ' ' + c.from + '->' + c.to : '') + (c.why && c.why !== 'asked' ? ' (' + c.why + ')' : '')))
@@ -2732,9 +2790,16 @@ app.post('/chat', async (req, res) => {
             const turn = ctaTurn(st, t, realQ, turnMsg, context);
             // The basket changed this turn but the reply doesn't list it: show it. DC (Sep 30): "after making the change
             // the basket still doesn't show up.. I needed to ask for it" — whichever path made the change.
-            if (turn.kind === 'basket_updated' && evL && evL.actions && evL.actions.includes('updated_basket') && !/Product total/i.test(t)) {
+            // Also on a question turn (Oct 2, DC: "Done! 4x Troublemaker swapped for 4x The Prisoner ... Shall I regenerate
+            // the proposal?" — no basket): the basket goes before the reply's closing question.
+            if ((turn.kind === 'basket_updated' || turn.question) && evL && evL.actions && evL.actions.includes('updated_basket') && !/Product total/i.test(t)) {
               const bk = basketAfterChange(st);
-              if (bk) { t = t.trimEnd() + bk; console.log('[reply] basket changed, reply did not list it — full basket appended'); }
+              if (bk) {
+                const paras = t.trimEnd().split(/\n\s*\n/);
+                if (paras.length > 1 && /\?\s*[*_)]*\s*$/.test(paras[paras.length - 1])) { const q = paras.pop(); t = paras.join('\n\n') + bk + '\n\n' + q; }
+                else t = t.trimEnd() + bk;
+                console.log('[reply] basket changed, reply did not list it — full basket ' + (turn.question ? 'put before the closing question' : 'appended'));
+              }
             }
             // The customer holds a proposal PDF that this change makes stale: say so. Real bug (Oct 1, DC): Cointreau went
             // in after the Foodie For All PDF was sent; nothing said the PDF still had the Remy Martin.
@@ -5080,7 +5145,14 @@ app.post('/chat', async (req, res) => {
               if (removeIdx >= 0) qtyToUse = items[removeIdx].qty || items[removeIdx].quantity || 1;
               else qtyToUse = (state.unavailableQty || {})[originalItemName] || requestedQtyFor(sessionKey, originalItemName) || 1;   // never in the basket (not carried)
             }
-            const subRes = await applyBasketSubstitute(sessionKey, email, hasOriginalToReplace ? originalItemName : '', matched.name + (matched.size ? ' - ' + matched.size : ''), matched.price, matched.size);
+            // A count the customer put right before the product ("so 4 The Prisoner Red Blend") — never a price ("$53.54").
+            // Real (Oct 2, DC): "I did ask for 4 reds.. so 4 The Prisoner Red Blend" added 1x.
+            if (!originalItemName) {
+              const lead = (String(matched.name).toLowerCase().replace(/^the\s+/, '').match(/[a-z0-9']{3,}/) || [''])[0];
+              const qm = lead && String(message || '').match(new RegExp('(?:^|[^$.\\d])\\b(\\d{1,3})\\s*(?:x\\s*)?(?:bottles?\\s+(?:of\\s+)?|cases?\\s+(?:of\\s+)?)?(?:the\\s+)?' + lead.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'i'));
+              if (qm && +qm[1] > 0) { qtyToUse = +qm[1]; console.log('[substitute-merge] quantity stated with the product: ' + qtyToUse); }
+            }
+            const subRes = await applyBasketSubstitute(sessionKey, email, originalItemName || '', matched.name + (matched.size ? ' - ' + matched.size : ''), matched.price, matched.size);
             if (subRes && subRes.success === false) {
               // Never claim a replacement that was refused (unresolved product).
               const rRef = 'I couldn\'t find "' + matched.name + '" in the catalog, so nothing was changed. Tell me the product you\'d like and I\'ll look it up.';
@@ -5095,17 +5167,18 @@ app.post('/chat', async (req, res) => {
               if (added && qtyToUse > 1) { added.qty = qtyToUse; added.quantity = qtyToUse; state.lastLineItems = JSON.stringify(itemsAfter); }
             } catch (e) {}
             const newLineItems = state.lastLineItems;
-            if (hasOriginalToReplace) state.pendingSubstitutes = state.pendingSubstitutes.filter(p => p !== originalItemName);
+            const replacing = !!(hasOriginalToReplace && originalItemName);   // never "has replaced null" (Oct 2, DC)
+            if (replacing) state.pendingSubstitutes = state.pendingSubstitutes.filter(p => p !== originalItemName);
             saveFlowState();
             try { saveBasket(email, newLineItems, '', format).catch(() => {}); } catch (e) {}
             // Mark this selection prompt as resolved so the gate won't re-open on it.
             state.resolvedSelectionPrompt = lastAssistantTextGate;
             saveFlowState();
-            console.log('[substitute-merge]', hasOriginalToReplace ? 'replaced' : 'added (ad-hoc, no original to replace)', hasOriginalToReplace ? JSON.stringify(originalItemName) + ' with' : '', JSON.stringify(matched.name), 'qty', qtyToUse);
+            console.log('[substitute-merge]', replacing ? 'replaced' : 'added (no original to replace)', replacing ? JSON.stringify(originalItemName) + ' with' : '', JSON.stringify(matched.name), 'qty', qtyToUse);
 
-            const stillPending = hasOriginalToReplace && state.pendingSubstitutes.length > 0;
+            const stillPending = replacing && state.pendingSubstitutes.length > 0;
             const confirmReply = 'Got it — ' + qtyToUse + 'x ' + matched.name + (matched.size ? ' (' + matched.size + ')' : '') +
-              ' at $' + matched.price.toFixed(2) + ' ea ' + (hasOriginalToReplace ? 'has replaced ' + originalItemName + ' in your order.' : 'has been added to your order.') +
+              ' at $' + matched.price.toFixed(2) + ' ea ' + (replacing ? 'has replaced ' + originalItemName + ' in your order.' : 'has been added to your order.') +
               basketAfterChange(state) +
               (stillPending ? ' Still need a substitute for: ' + state.pendingSubstitutes.join(', ') + '.' : ' Would you like to place the order, generate a PDF proposal, or make any changes?');
             return res.json({ text: confirmReply, response: confirmReply });
@@ -5152,10 +5225,14 @@ app.post('/chat', async (req, res) => {
 
     // Load cached package if available
     const cacheKey = makeCacheKey(email, state.zip, fp);
-    if (packageCache[cacheKey]) {
+    // Only into a session that has a basket of its own. The key is sender+zip+request, not the session: a NEW email
+    // thread with the same list got another thread's (edited) basket as its ACTIVE PACKAGE (Oct 2, QA email-which-
+    // proposal) — the LLM skipped the build, billed client "fooda", called SendEmail, and the quote reply wasn't built in code.
+    let ownBasket = []; try { ownBasket = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+    if (packageCache[cacheKey] && ownBasket.length) {
       context.saved_package = packageCache[cacheKey];
       console.log('[package] L1 cache hit:', cacheKey);
-    }
+    } else if (packageCache[cacheKey]) console.log('[package] L1 cache NOT used — this session has no basket of its own (a new session builds fresh): ' + cacheKey);
 
     // Build address rule for Rachel
     context.saved_zip = state.zip;

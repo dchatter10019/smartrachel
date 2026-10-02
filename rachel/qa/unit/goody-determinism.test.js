@@ -93,5 +93,33 @@ const nps2 = nps.filter(x => !x.name.startsWith('Mango'));
 const lg = C.reconcileNamed(nps2, fx.first);
 eq('a line the LLM left out is added (mango 3 L)', (nps2.find(x => /mango/i.test(x.name)) || {}).volume_ml, 3000);
 eq('on-hand lines are never added', nps2.some(x => /crema|prisoner|conundrum|high noon|modelo/i.test(x.name)), false);
+// Oct 2, 05:43: DC's change email — 4 requests, only one was parsed and the reply said "Done"
+const QE = require('../../quote-edits.js');
+const chg = 'Couple of changes / questions:\n\n   - can we swap the ketel one for titos?\n      - we have some leftover titos on hand so it may make sense to have\n      the same brand\n   - remove the water case\n   - remove the sparkling water (we should have enough on hand!)\n   - can we add back some wine?\n      - 4 red\n      - 4 white';
+const qe = QE.parseEdits(chg);
+eq('both removes parsed (per line, not run together)', qe.removes, ['water case', 'sparkling water']);
+eq('the add and the swap are seen (they go to the LLM)', [qe.adds, qe.swaps], [true, true]);
+const live = [{ name: 'FIJI Natural Artesian Bottled Water 16.9 OZ Btl', label: 'Bottled Water case', qty: 12, price: 3.14 }, { name: 'San Pellegrino Plastic (PET) - 500 ML', label: 'San Pellegrino 500 ML 12 - 500 ML', qty: 4, price: 19.94 }, { name: 'Ketel One - 1.75 L', qty: 2, price: 44.09 }];
+const ap = QE.applyEdits(live, qe);
+eq('"sparkling water" = San Pellegrino, "water case" = FIJI', ap.changes.map(c => c.name).sort(), ['FIJI Natural Artesian Bottled Water 16.9 OZ Btl', 'San Pellegrino Plastic (PET) - 500 ML']);
+eq('heading and reason lines are not instructions', IN.splitInstructions(chg).some(l => /^Couple|leftover titos/.test(l)), false);
+
+// Oct 2, 13:08-13:30: the change email wiped the quote; the wine he approved was dropped as on-hand; picks went in at 1x
+const BM = require('../../basket-merge.js');
+const quote = [{ name: 'Don Julio Blanco Tequila - 1.75 L', qty: 3, price: 137.01 }, { name: 'Flatboat Bourbon - 1.75 L', qty: 3, price: 52.49 }, { name: 'Ketel One - 1.75 L', qty: 2, price: 44.09 }, { name: 'Cointreau - 750 ML', qty: 1, price: 62.99 }, { name: 'Simply Squeeze Mango Puree 16.9 OZ', qty: 6, price: 9.12 }];
+const build = [{ name: 'Troublemaker Red Wine - 750 ML', qty: 4, price: 22 }, { name: 'Conundrum White - 750 ML', qty: 4, price: 17.84 }, { name: "Tito's Handmade Vodka - 1.75 L", qty: 1, price: 37.79 }];
+const mg = BM.mergeEdit(quote, build, chg);
+eq('an add on an edit turn MERGES into the quote (nothing lost)', mg.items.map(i => i.qty + 'x ' + i.name), ['3x Don Julio Blanco Tequila - 1.75 L', '3x Flatboat Bourbon - 1.75 L', '1x Cointreau - 750 ML', '6x Simply Squeeze Mango Puree 16.9 OZ', '4x Troublemaker Red Wine - 750 ML', '4x Conundrum White - 750 ML', "2x Tito's Handmade Vodka - 1.75 L"]);
+eq('a new list / start over is not an edit (the build replaces)', [BM.mergeEdit(quote, build, 'start over: 4 red, 4 white'), BM.mergeEdit(quote, build, 'Hi, here is my list\n4 red\n4 white')], [null, null]);
+const npsC = [{ name: 'red wine', category: 'wine', qty: 4 }, { name: 'white wine', category: 'wine', qty: 4 }];
+C.reconcileNamed(npsC, chg);
+eq('instruction / question lines are never added as products', npsC.map(n => n.name), ['red wine', 'white wine']);
+const OH = require('../../on-hand.js');
+const ohG = [{ name: 'La Crema pinot noir' }, { name: 'the prisoner' }, { name: 'conundrum white' }];
+eq('an on-hand product the customer chose later is released', [OH.releasedBy("4x Conundrum White - 750 ML — $17.84 ea = $71.36 -> This is good\n1x Owen's Transfusion -> Remove this", ohG), OH.releasedBy('so 4 The Prisoner Red Blend 750 ML — $53.54', ohG)], [['conundrum white'], ['the prisoner']]);
+eq('"remove" / "we have" never release', [OH.releasedBy('remove the conundrum white', ohG), OH.releasedBy('we have 2 bottles of conundrum white already', ohG)], [[], []]);
+const stR = { lastLineItems: JSON.stringify([{ name: 'The Prisoner Red Blend - 750 ML', qty: 4, price: 53.54 }, { name: 'Conundrum White - 750 ML', qty: 4, price: 17.84 }]), onHand: ohG, onHandReleased: ['the prisoner', 'conundrum white'] };
+eq('hygiene keeps released on-hand lines', H.check(stR, {}).droppedOnHand, []);
+eq('line notes: remove / qty / keep / a swap is not one', ['Remove this', 'Make this 2 bottles', 'This is good', 'switch to a Prisoner Red'].map(A.lineAction), [{ remove: true }, { qty: 2 }, { keep: true }, null]);
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');

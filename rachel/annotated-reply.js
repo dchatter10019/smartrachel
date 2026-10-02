@@ -85,4 +85,18 @@ function lineForHeader(header, items) {
   return hits.length === 1 ? hits[0] : -1;
 }
 
-module.exports = { parse, productFor, headerFor, lineForHeader };
+// An answer about a BASKET line, applied in code: "Remove this", "Make this 2 bottles", "This is good" (keep).
+// Real (Oct 2, DC's Goody thread): "1x Owen's Transfusion ... -> Remove this", "1x Tito's ... -> Make this 2
+// bottles", "4x Conundrum White ... -> This is good" all went to the LLM. -> { remove } | { qty } | { keep } | null
+function lineAction(answer) {
+  const a = String(answer || '').trim().replace(/[.!]+$/, '').trim();
+  if (/^(?:please\s+)?(?:remove|delete|drop|cut|take\s+(?:it|this|that)\s+(?:out|off))(?:\s+(?:this|it|that)(?:\s+one)?)?(?:\s+please)?$|^(?:not\s+needed|no\s+need|don'?t\s+need(?:\s+(?:this|it))?)$/i.test(a)) return { remove: true };
+  const q = a.match(/^(?:please\s+)?(?:(?:make|change|set|update|bump|increase|reduce|lower)\s+(?:this|it|that)?\s*(?:to\s+)?|just\s+|only\s+)?(\d{1,3})\s*(?:x|bottles?|cans?|packs?|cases?|units?|of\s+(?:this|these|them))?(?:\s+please)?$/i);
+  if (q && +q[1] > 0) return { qty: +q[1] };
+  if (/^(?:this|that|it)?\s*(?:is|looks|'s)?\s*(?:good|great|fine|perfect|ok(?:ay)?|correct|right)(?:\s+as\s+is)?$|^(?:keep(?:\s+(?:this|it))?(?:\s+as\s+is)?|leave\s+(?:it|this)(?:\s+as\s+is)?|no\s+change)$/i.test(a)) return { keep: true };
+  return null;
+}
+// The basket product a reply line names: "4x Troublemaker Red Wine - 750 ML — $22.00 ea = $88.00" -> "Troublemaker Red Wine - 750 ML"
+const quoteName = q => String(q || '').replace(/^\s*(?:[-•*·]\s*)?\d+\s*x\s+/i, '').replace(/\s+[—–-]\s+\$[\d,.]+.*$/, '').trim();
+
+module.exports = { parse, productFor, headerFor, lineForHeader, lineAction, quoteName };

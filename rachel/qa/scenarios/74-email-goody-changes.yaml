@@ -1,0 +1,30 @@
+name: email-goody-changes
+fresh: true
+tags: [email]
+# Real case (Oct 2, 13:08-13:30, DC's Goody thread): the change email below WIPED the 14-line quote — the LLM's
+# custom_list for "4 red / 4 white" replaced the basket (Don Julio, Flatboat, Cointreau, mango ... gone); his
+# sentences became products ("can we swap the ketel one for titos?" -> Owen's Transfusion, "can we add back some
+# wine?" -> Dr Pepper, "remove the water case" -> "isn't available at this store"); "titos" found no Tito's 1.75L
+# (the catalog search needs the apostrophe). Then the Conundrum / Prisoner he chose were dropped the next turn as
+# on-hand (he has 2 / 1 bottles from last time) and "so 4 The Prisoner" went in at 1x, "has replaced null".
+format: plain
+context: {email_subject: "Goody alcohol order", user_name: "Dipanjan Chatterjee"}
+turns:
+  - send: "Can you help me with this request\r\n\r\nI am 21 years old.\r\n\r\n**Spirits**\r\n\r\n\u2022 2 \u00d7 1.75L vodka\r\n\r\n\u2022 3 \u00d7 1.75L tequila (blanco)\r\n\r\n\u2022 1 \u00d7 750ml orange liqueur\r\n\r\n\r\n**Wine** we have the below inventory from last time if you can please\r\nadjust the proposal accordingly.\r\n\r\n\r\n\r\n   - 2 bottles La Crema pinot noir\r\n   - 1 bottle the prisoner\r\n   - 2 bottles conundrum white\r\n\r\n\r\n**Mixers & N/A (if you carry them)**\r\n\r\n\u2022 1 \u00d7 12-pack Athletic N/A beer\r\n\r\n\u2022 1 case bottled water\r\n\r\n\r\nDelivery to 332 Pine St, San Francisco 94104, ideally by Tue 10/6. Could\r\nyou send a revised proposal with what you can cover?\r\n\r\n\r\n\r\n\r\nDipanjan Chatterjee\r\nCEO | Bevvi\r\n\r\n\r\ngetbevvi.com | @getbevvi"
+    expect: {contains: ["Product total"]}
+  - send: "Couple of changes / questions:\r\n\r\n   - can we swap the ketel one for titos?\r\n      - we have some leftover titos on hand so it may make sense to have\r\n      the same brand\r\n   - remove the water case\r\n   - remove the sparkling water (we should have enough on hand!)\r\n   - can we add back some wine?\r\n      - 4 red\r\n      - 4 white"
+    expect:
+      # The quote is never wiped (turn 4 still has the first build's Cointreau); his sentences are never products;
+      # "titos" finds Tito's 1.75 L (apostrophe retry). The LLM may build or show wine options first — either is fine.
+      matches: "(?i)tito'?s[^\\n]*1\\.75"
+      not_contains: ["Owen", "Dr Pepper", "remove the water case", "add back some wine?", "isn't available at this store"]
+      log_not_contains: ["[list-reconcile] \"can we", "[list-reconcile] \"remove the"]
+  - send: "please add 4 Conundrum White 750 ML too"
+    expect:
+      matches: "4x Conundrum White"
+      log_contains: ["[basket-hygiene] on-hand product(s) the customer chose"]
+  - send: "show my basket"
+    expect:
+      matches: "(?m)^\\s*4x Conundrum White"
+      contains: ["Cointreau", "Product total"]
+      log_not_contains: ["on-hand DROPPED from the basket: 4x Conundrum"]
