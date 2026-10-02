@@ -155,6 +155,18 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   "a case" with no count = 24 units (a 12-pack is fine, DC); not wine/spirits. A smaller stand-in for a not-carried
   line makes up its volume (Lemon Juice 1L -> 3 x 375 mL). A pick replaces the pending not-carried line of the same
   kind (pending-original.js) — never pendingSubstitutes[0]. "N/A" = "NA" = non-alcoholic; "Brewing"/"Winery" are filler.
+- Every ready turn, before anything reads the basket (basket-hygiene.js, [basket-hygiene]): on-hand lines (state.onHand
+  + the original request) are dropped and the customer told; a pending not-carried item whose same-kind line is in the
+  basket is cleared (a line labeled with ANOTHER request item never counts); a saved client with the sender's
+  signature glued on is cleaned ("Goody Dipanjan Chatterjee CEO |" -> "Goody").
+- An email answering Rachel line by line ("<a line of her last reply> -> <answer>", annotated-reply.js, [annotated]):
+  an acceptance ("this is good") of an option line is applied in code — product = brand + price among those just
+  shown, line = the ALL-CAPS section it was offered under, qty = its "need Nx"; the replacement keeps the line's label.
+  Other pairs go to the LLM with what was done in its context; the reply opens with "Done — ..." + the basket in code.
+- "Compare with my original request" is answered IN CODE (original-compare.js, [original-compare]): each requested
+  line vs the basket (one basket line per request line, volume or units; a pack size not in the catalog name is
+  CHECK, never guessed), on-hand listed as not ordered, extras listed; quantity fixes offered and "make the changes"
+  applies exactly those. The LLM ignored the same table when given it as fact (Oct 2).
 - The LLM's generate_proposal/place_order use the LIVE basket (state.lastLineItems after this turn's edits) and the
   saved event date/client when it omits them. In a client edit the LAST client statement wins ("it should be just Goody").
 - A placed order (API success only) leaves the cart → state.placedOrder; touching it asks reopen/new.

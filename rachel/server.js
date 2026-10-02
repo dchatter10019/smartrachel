@@ -1177,6 +1177,21 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
   }
   if (/^email-/.test(String(sessionKey || ''))) channelNote += '\n\nCHANNEL: EMAIL. Your reply is sent as an email reply in the customer\'s thread, with any proposal PDF attached — never offer to email it.';
   if (stateForEmail.originalRequest) channelNote += '\n\n## THE CUSTOMER\'S ORIGINAL REQUEST (verbatim — the quantities and items they first asked for; use it when they refer to "my original/initial request")\n' + stateForEmail.originalRequest;
+  // "my original/initial request": the line-by-line comparison is computed in code (original-compare.js) and given
+  // as fact; the LLM explains it and offers the fixes, it does not work it out (Oct 2, DC's Goody thread).
+  if (stateForEmail.codeDoneThisTurn && stateForEmail.codeDoneThisTurn.length) {
+    channelNote += '\n\n## ALREADY DONE IN CODE THIS TURN (the basket already has these; the customer is told above your reply — do not redo, re-offer, re-ask or call a tool for them; answer only the customer\'s other notes)\n' + stateForEmail.codeDoneThisTurn.map(d => '- ' + d).join('\n');
+    delete stateForEmail.codeDoneThisTurn;
+  }
+  if (stateForEmail.originalRequest && /\b(?:original|initial|first|earlier)\s+(?:request|order|list|ask|email)\b|\bwhat i (?:asked|requested)\b|\bmatch(?:es)?\s+(?:my|the)\s+(?:request|list|order)\b/i.test(message)) {
+    try {
+      const OC = require('./original-compare.js');
+      const cmp = OC.compare(stateForEmail.originalRequest, basketBefore, stateForEmail.onHand || []);
+      const table = OC.render(cmp);
+      console.log('[original-compare] ' + cmp.rows.length + ' requested line(s): ' + cmp.rows.map(r => r.status).join(',') + (cmp.extra.length ? ' | extra: ' + cmp.extra.length : '') + '\n' + table);
+      channelNote += '\n\n## ORIGINAL REQUEST vs BASKET (computed in code from the basket — this is the answer; report every SHORT / NOT IN BASKET / extra line exactly as listed, do not re-derive or contradict it)\n' + table;
+    } catch (e) { console.log('[original-compare] error: ' + e.message); }
+  }
   if (stateForEmail.onHand && stateForEmail.onHand.length) channelNote += '\n\n## ALREADY ON HAND (the customer has these — NEVER add them to the basket or proposal)\n' + stateForEmail.onHand.map(o => '- ' + (o.qty ? o.qty + 'x ' : '') + o.name).join('\n');
   const result = await rachelChat({
     messages: [...messages, { role: 'user', content: message }],
@@ -2325,6 +2340,144 @@ app.post('/chat', async (req, res) => {
         return res.json({ text: rA, response: rA });
       }
     }
+
+    // ── BASKET HYGIENE (basket-hygiene.js): on-hand lines out, resolved substitutes cleared, client cleaned ──
+    // In code, every turn, before anything reads the basket. Real case (Oct 2, DC's Goody thread): the wine DC
+    // already has stayed on every PDF, "still need a substitute for Vodka" was repeated with Ketel One in the
+    // basket, and the PDF was billed to "Goody Dipanjan Chatterjee CEO |".
+    try {
+      const BH = require('./basket-hygiene.js');
+      const h = BH.check(state, { userName: context && context.user_name });
+      if (h.onHand.length && JSON.stringify(h.onHand) !== JSON.stringify(state.onHand || [])) {
+        state.onHand = h.onHand;
+        console.log('[basket-hygiene] on-hand list: ' + h.onHand.map(o => (o.qty ? o.qty + 'x ' : '') + o.name).join(', '));
+      }
+      if (h.droppedOnHand.length) {
+        state.lastLineItems = JSON.stringify(h.items);
+        if (state.zip) packageCache[makeCacheKey(email, state.zip, state.lastFingerprint)] = state.lastLineItems;
+        console.log('[basket-hygiene] on-hand DROPPED from the basket: ' + h.droppedOnHand.map(d => d.qty + 'x ' + d.name + ' (has "' + d.onHand + '")').join(', '));
+        const note = 'I took these off the quote — you said you already have them: ' + h.droppedOnHand.map(d => d.qty + 'x ' + d.name).join(', ') + '.';
+        const _jH = res.json.bind(res);
+        res.json = (payload) => { try { if (payload && typeof (payload.text || payload.response) === 'string') { const t = note + '\n\n' + (payload.text || payload.response); payload.text = t; payload.response = t; } } catch (e) {} return _jH(payload); };
+      }
+      if (h.pendingCleared.length) {
+        const gone = new Set(h.pendingCleared.map(c => c.pending));
+        state.pendingSubstitutes = (state.pendingSubstitutes || []).filter(p => !gone.has(p));
+        console.log('[basket-hygiene] pending substitute(s) already in the basket — cleared: ' + h.pendingCleared.map(c => c.pending + ' <- ' + c.by).join(', '));
+      }
+      if (h.client && state.savedClientName && h.client !== state.savedClientName) {
+        console.log('[basket-hygiene] saved client cleaned: ' + JSON.stringify(state.savedClientName) + ' -> ' + JSON.stringify(h.client));
+        state.savedClientName = h.client;
+      }
+      if (h.droppedOnHand.length || h.pendingCleared.length) saveFlowState();
+    } catch (e) { console.log('[basket-hygiene] error: ' + e.message); }
+
+    // ── ANNOTATED REPLY (annotated-reply.js): "<a line of Rachel's reply> -> <answer>", pair by pair, in code ──
+    // Real case (Oct 2, DC's Goody thread): "San Pellegrino 500 ML 12-pack — $19.94 (need 4x...) -> this is good"
+    // went in at 1x beside the sparkling water it was meant to replace, and the ginger beer question in the same
+    // email was dropped. Accepted options are applied here (the product = brand + price among those just shown,
+    // the line = the section it was offered under, qty = the "need Nx" it was offered at); the rest go to the LLM
+    // with what was already done, and the substitute heuristics are skipped for the turn.
+    let skipSubMerge = false;
+    try {
+      const AR = require('./annotated-reply.js');
+      const lastRA = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
+      const pairs = state.orderStep || state.proposalStep ? [] : AR.parse(message, lastRA);
+      if (pairs.length) {
+        skipSubMerge = true;
+        let shownAR = []; try { shownAR = JSON.parse(state.lastShownProducts || '[]'); } catch (e) {}
+        const done = [], open = [];
+        for (const p of pairs) {
+          const tag = JSON.stringify(p.quote.slice(0, 60)) + ' -> ' + JSON.stringify(p.answer.slice(0, 40));
+          if (!p.accept) { open.push(p); console.log('[annotated] ' + tag + ': not an acceptance — left to the LLM'); continue; }
+          let itemsAR = []; try { itemsAR = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+          const prod = AR.productFor(p.quote, shownAR);
+          const idx = AR.lineForHeader(p.header, itemsAR);
+          if (!prod) { open.push(p); console.log('[annotated] ' + tag + ': not ONE product just shown (brand + price) — left to the LLM'); continue; }
+          if (idx < 0) { open.push(p); console.log('[annotated] ' + tag + ': no single basket line for section ' + JSON.stringify(p.header) + ' — left to the LLM'); continue; }
+          const was = itemsAR[idx];
+          const r = await applyBasketSubstitute(sessionKey, email, was.name, prod.name, parseFloat(prod.price) || 0, prod.size || prod.sizeStr || '');
+          if (!(r && r.success)) { open.push(p); console.log('[annotated] ' + tag + ': substitute FAILED (' + ((r && r.error) || '?') + ') — left to the LLM'); continue; }
+          const stAR = getState(sessionKey);
+          let after = []; try { after = JSON.parse(stAR.lastLineItems || '[]'); } catch (e) {}
+          const li = after.find(x => x.name === prod.name || (prod.product_id && x.product_id === prod.product_id));
+          // The replacement keeps what the customer asked for (the label) — the original-request comparison and
+          // basketLineFor find the line by it (Oct 2 replay: San Pellegrino lost "Sparkling Water 24-pack").
+          if (li && was.label && li.label !== was.label) li.label = was.label;
+          if (li && p.qty && li.qty !== p.qty) { li.qty = p.qty; if (li.quantity != null) li.quantity = p.qty; }
+          if (li) { stAR.lastLineItems = JSON.stringify(after); saveFlowState(); }
+          const q = (li && li.qty) || p.qty || 1;
+          done.push(q + 'x ' + prod.name + ' replaces ' + was.qty + 'x ' + was.name);
+          console.log('[annotated] APPLIED: ' + tag + ' -> ' + was.name + ' replaced by ' + q + 'x ' + prod.name + ' (section ' + JSON.stringify(p.header) + ')');
+        }
+        if (done.length) events.action('updated_basket');   // getState returns this same state object
+        if (done.length && !open.length) {
+          let itemsD = []; try { itemsD = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+          const tot = itemsD.reduce((a, li) => a + (li.qty || li.quantity || 1) * (parseFloat(li.price) || 0), 0);
+          const txt = 'Done — ' + done.join('; ') + '.\n\nYour order now:\n' + itemsD.map(li => { const q = li.qty || li.quantity || 1, pr = parseFloat(li.price) || 0; return q + 'x ' + li.name + ' — $' + pr.toFixed(2) + ' ea = $' + (q * pr).toFixed(2); }).join('\n') + '\n\nProduct total: $' + tot.toFixed(2);
+          return res.json({ text: txt, response: txt });
+        }
+        if (done.length) {
+          // The LLM answers only the open pairs; what code did goes in its context (never in the customer's words —
+          // instructions.js would read it as an instruction), and the reply opens with it + the basket, in code.
+          message = open.map(p => p.quote + ' -> ' + p.answer).join('\n');
+          state.codeDoneThisTurn = done.slice();
+          const _jA = res.json.bind(res);
+          res.json = (payload) => {
+            try {
+              const t0 = payload && (payload.text || payload.response);
+              if (typeof t0 === 'string') {
+                let itemsD = []; try { itemsD = JSON.parse(getState(sessionKey).lastLineItems || '[]'); } catch (e) {}
+                const tot = itemsD.reduce((a, li) => a + (li.qty || li.quantity || 1) * (parseFloat(li.price) || 0), 0);
+                const list = /Product total/i.test(t0) ? '' : '\n\nYour order now:\n' + itemsD.map(li => { const q = li.qty || li.quantity || 1, pr = parseFloat(li.price) || 0; return q + 'x ' + li.name + ' — $' + pr.toFixed(2) + ' ea = $' + (q * pr).toFixed(2); }).join('\n') + '\n\nProduct total: $' + tot.toFixed(2);
+                const t = 'Done — ' + done.join('; ') + '.\n\n' + t0 + list;
+                payload.text = t; payload.response = t;
+              }
+            } catch (e) {}
+            return _jA(payload);
+          };
+        }
+      }
+    } catch (e) { console.log('[annotated] error (left to the LLM): ' + e.message); }
+
+    // ── ORIGINAL REQUEST vs QUOTE (original-compare.js): the comparison reply and its fixes, in code ──
+    // Real case (Oct 2, DC's Goody thread): given the computed table as fact, the LLM still said the on-hand wine was
+    // in the basket and San Pellegrino was 1x (it was 4x). The reply is now written here; "make the changes" applies
+    // the quantity fixes it listed (and nothing else); any other reply drops them.
+    try {
+      const OC = require('./original-compare.js');
+      const fixes = state.pendingCompareFixes;
+      if (fixes && fixes.length && !state.orderStep && !state.proposalStep && OC.isApplyAsk(message)) {
+        let itemsF = []; try { itemsF = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+        const applied = [];
+        for (const f of fixes) {
+          const li = itemsF.find(x => x.name === f.name);
+          if (!li) { console.log('[original-compare] fix skipped — ' + JSON.stringify(f.name) + ' is no longer in the basket'); continue; }
+          if ((li.qty || li.quantity || 1) !== f.from) { console.log('[original-compare] fix skipped — ' + f.name + ' is now ' + (li.qty || li.quantity) + 'x (was ' + f.from + 'x when offered)'); continue; }
+          li.qty = f.to; if (li.quantity != null) li.quantity = f.to;
+          applied.push(f.name + ' ' + f.from + 'x → ' + f.to + 'x');
+        }
+        delete state.pendingCompareFixes;
+        if (applied.length) {
+          state.lastLineItems = JSON.stringify(itemsF);
+          if (state.zip) packageCache[makeCacheKey(email, state.zip, state.lastFingerprint)] = state.lastLineItems;
+          saveFlowState(); events.action('updated_basket');
+          console.log('[original-compare] APPLIED the offered fixes: ' + applied.join('; '));
+          const tot = itemsF.reduce((a, li) => a + (li.qty || li.quantity || 1) * (parseFloat(li.price) || 0), 0);
+          const txt = 'Done — ' + applied.join('; ') + '.\n\nYour order now:\n' + itemsF.map(li => { const q = li.qty || li.quantity || 1, pr = parseFloat(li.price) || 0; return q + 'x ' + li.name + ' — $' + pr.toFixed(2) + ' ea = $' + (q * pr).toFixed(2); }).join('\n') + '\n\nProduct total: $' + tot.toFixed(2);
+          return res.json({ text: txt, response: txt });
+        }
+      } else if (fixes) delete state.pendingCompareFixes;
+      if (state.originalRequest && !state.orderStep && !state.proposalStep && OC.isCompareAsk(message)) {
+        let itemsC = []; try { itemsC = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+        const cmp = OC.compare(state.originalRequest, itemsC, state.onHand || []);
+        const r = OC.reply(cmp, state.onHand || []);
+        console.log('[original-compare] reply written in code: ' + cmp.rows.map(x => x.status).join(',') + (cmp.extra.length ? ' | extra: ' + JSON.stringify(cmp.extra) : '') + (r.fixes.length ? ' | fixes offered: ' + JSON.stringify(r.fixes) : ''));
+        if (r.fixes.length) state.pendingCompareFixes = r.fixes;
+        saveFlowState();
+        return res.json({ text: r.text, response: r.text });
+      }
+    } catch (e) { console.log('[original-compare] error (left to the LLM): ' + e.message); }
 
     // ── STATE: ready — pass to Rachel ──────────────────────────────────────
     console.log('[turn] state.step:', state.step, '| pendingSubstitutes:', JSON.stringify(state.pendingSubstitutes), '| message:', JSON.stringify(message).slice(0,80));
@@ -4599,7 +4752,8 @@ app.post('/chat', async (req, res) => {
     // (real session: "Alamos Malbec" -> stray 1x; "replace Yellow Tail with Alamos" ->
     // added the item being REMOVED). Voluntary swaps and list selections now go to the
     // LLM's confirm_substitute, which resolves the real product and the right quantity.
-    if (hasPendingSub) {
+    if (hasPendingSub && skipSubMerge) console.log('[substitute-merge] skipped — the annotated reply was read pair by pair this turn');
+    if (hasPendingSub && !skipSubMerge) {
       console.log('[substitute-merge] gate: hasPendingSub:', hasPendingSub, '| looksLikeSelectionPrompt:', looksLikeSelectionPrompt, '| message:', JSON.stringify(message).slice(0, 100));
       // Real gap found tonight: options are sometimes offered several turns apart
       // (e.g. gin options in one turn, triple sec options several turns earlier),
