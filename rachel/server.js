@@ -2372,6 +2372,50 @@ app.post('/chat', async (req, res) => {
       if (h.droppedOnHand.length || h.pendingCleared.length) saveFlowState();
     } catch (e) { console.log('[basket-hygiene] error: ' + e.message); }
 
+    // ── NOTES ON THE CUSTOMER'S OWN REQUEST (original-compare.js requestNotes) ──
+    // "• <a line of their original request> -> not both / doesn't look right". Real case (Oct 2, DC's Goody thread):
+    // the LLM asked about each one, acted on none, and the wrapped "doesn;t look rith" came back as an instruction.
+    // "A (or B) -> not both" keeps A (their first choice) and removes B; "doesn't look right" shows that line's
+    // comparison from code; the reply is the code comparison. A note that is neither goes to the LLM (what was
+    // done is in its context).
+    if (state.originalRequest && !state.orderStep && !state.proposalStep) {
+      try {
+        const OC = require('./original-compare.js');
+        const notes = OC.requestNotes(message, state.originalRequest, state.onHand || []);
+        if (notes.length) {
+          let itemsN = []; try { itemsN = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+          const done = [];
+          for (const nt of notes.filter(x => x.kind === 'not_both')) {
+            const r = OC.applyNotBoth(itemsN, nt);
+            if (r.removed.length) { itemsN = r.items; done.push('removed ' + r.removed.join(', ') + ' — you asked for ' + r.main + ' or ' + r.alt + ', not both; I kept your first choice (' + r.main + '). Say so if you\'d rather have ' + r.alt + ' instead'); }
+            console.log('[request-notes] not both: ' + JSON.stringify(nt.quote.slice(0, 60)) + (r.removed.length ? ' -> removed ' + JSON.stringify(r.removed) : ' -> nothing to remove (' + (r.why || 'only one of them is in the basket') + ')'));
+          }
+          if (done.length) {
+            state.lastLineItems = JSON.stringify(itemsN);
+            if (state.zip) packageCache[makeCacheKey(email, state.zip, state.lastFingerprint)] = state.lastLineItems;
+            saveFlowState(); events.action('updated_basket');
+          }
+          const other = notes.filter(x => x.kind === 'other');
+          console.log('[request-notes] ' + notes.length + ' note(s): ' + notes.map(x => x.kind).join(',') + (other.length ? ' — ' + other.length + ' left to the LLM' : ' — reply written in code'));
+          if (!other.length) {
+            const cmp = OC.compare(state.originalRequest, itemsN, state.onHand || []);
+            const rep = OC.reply(cmp, state.onHand || []);
+            const tag = { ok: 'matches', short: 'SHORT', over: 'more than asked', missing: 'NOT IN THE QUOTE', unclear: 'the catalog name doesn\'t give the pack size — please check' };
+            const flagged = notes.filter(x => x.kind === 'wrong').map(nt => nt.rows.map(rw => { const c = cmp.rows.find(z => z.asked === rw.text.replace(/\s+/g, ' ').trim()); return '- ' + rw.text + ' — ' + (c ? tag[c.status] + (c.have ? ': ' + c.have : '') + (c.fix ? ' → I\'d change it to ' + c.fix.to + 'x' : '') : 'not found'); }).join('\n'));
+            if (rep.fixes.length) state.pendingCompareFixes = rep.fixes;
+            saveFlowState();
+            const txt = (done.length ? 'Done — ' + done.join('; ') + '.\n\n' : '') + (flagged.length ? 'The lines you flagged, as the quote has them now:\n' + flagged.join('\n') + '\n\n' : '') + rep.text;
+            return res.json({ text: txt, response: txt });
+          }
+          if (done.length) {
+            state.codeDoneThisTurn = done.slice();
+            const _jN = res.json.bind(res);
+            res.json = (payload) => { try { const t0 = payload && (payload.text || payload.response); if (typeof t0 === 'string') { const t = 'Done — ' + done.join('; ') + '.\n\n' + t0; payload.text = t; payload.response = t; } } catch (e) {} return _jN(payload); };
+          }
+        }
+      } catch (e) { console.log('[request-notes] error (left to the LLM): ' + e.message); }
+    }
+
     // ── ANNOTATED REPLY (annotated-reply.js): "<a line of Rachel's reply> -> <answer>", pair by pair, in code ──
     // Real case (Oct 2, DC's Goody thread): "San Pellegrino 500 ML 12-pack — $19.94 (need 4x...) -> this is good"
     // went in at 1x beside the sparkling water it was meant to replace, and the ginger beer question in the same

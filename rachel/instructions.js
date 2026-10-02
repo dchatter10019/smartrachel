@@ -13,7 +13,25 @@ const STOP = new Set(('the a an of for to and or with in on at it its is be as b
 // A sign-off or pleasantry is not an instruction. Real bug (Oct 1, Sean): the reply ended "I haven't done this one
 // yet: • Thanks! Want me to go ahead?".
 const PLEASANTRY = /^(?:(?:ok(?:ay)?|great|perfect|awesome|sounds good|thanks?(?:\s+(?:you|so much|again|a lot))?|thx|ty|cheers|best(?:\s+regards)?|regards|much appreciated|appreciate it|hi|hello|hey|rachel|rache)[\s,.!-]*)+(?:[a-z]+)?[\s.!]*$/i;
+// "<line> -> <answer>" whose answer wraps onto the next line (no bullet, no arrow of its own) is ONE line. Real case
+// (Oct 2, DC): "• 2 × 24-packs sparkling water -> Nixie Wtrmln Mint Sparkling Water - 12 OZ\ndoesn;t look rith" —
+// the wrapped "doesn;t look rith" came back as "I haven't done this one yet: • doesn;t look rith".
+const BULLET = /^\s*(?:[-•*·–]|\d+[.)])\s+/;
+function joinArrowWraps(message) {
+  const lines = String(message || '').replace(/\r/g, '').replace(/-&gt;/g, '->').split('\n');
+  const out = [];
+  for (const l of lines) {
+    const prev = out.length ? out[out.length - 1] : null;
+    if (prev != null && /->|→/.test(prev) && l.trim() && !BULLET.test(l) && !/->|→/.test(l) && !/[?.!]\s*$/.test(prev.replace(/->\s*$/, ''))) out[out.length - 1] = prev.trimEnd() + ' ' + l.trim();
+    else out.push(l);
+  }
+  return out.join('\n');
+}
+// The right side is a verdict on the line, not a product to swap in ("doesn't look right", "not both", "wrong").
+const VERDICT = /\b(?:doesn'?;?t|does not|don'?t|not)\s+(?:look|seem|sound)\b|\bwrong\b|\bnot both\b|\bnot right\b|\bincorrect\b|\bmissing\b/i;
+
 function splitInstructions(message) {
+  message = joinArrowWraps(message);
   // An email hard wrap ("send back and\nupdated PDF?") joins back into one line: no sentence end, next line lower-case.
   // Only a long line (>= 60 chars; Gmail wraps near 76) — short list lines ("remove the modelo") stay separate.
   const text = String(message || '').replace(/^([^\n]{59,}[a-z,])[ \t]*\r?\n(?=[ \t]*[a-z])/gm, '$1 ');
@@ -99,8 +117,8 @@ function applyCountInstructions(instrs, items, log = console.log) {
 const ARROW = /^\s*(.+?)\s*(?:->|-&gt;|→|=>|=&gt;)\s*(.+?)\s*$/;
 const APPROVAL_TO = /^(?:good|ok(?:ay)?|fine|great|perfect|keep(?: it)?|approved|looks good|that'?s (?:good|fine)|yes|👍)\s*[.!]*$/i;
 function arrowSwaps(message) {
-  return String(message || '').split(/\n+/).map(l => l.replace(/^\s*(?:[-•*·–]|\d+[.)])\s*/, '').replace(/\*/g, '').trim())
-    .map(l => { const m = l.match(ARROW); return m && !APPROVAL_TO.test(m[2]) && m[1].length >= 3 && m[2].length >= 3 ? { from: m[1], to: m[2], line: l } : null; })
+  return joinArrowWraps(message).split(/\n+/).map(l => l.replace(/^\s*(?:[-•*·–]|\d+[.)])\s*/, '').replace(/\*/g, '').trim())
+    .map(l => { const m = l.match(ARROW); return m && !APPROVAL_TO.test(m[2]) && !VERDICT.test(m[2]) && m[1].length >= 3 && m[2].length >= 3 ? { from: m[1], to: m[2], line: l } : null; })
     .filter(Boolean);
 }
 // The ONE product just shown that is what the right side names: every distinctive word of it on the product
@@ -118,4 +136,4 @@ function uniqueProductFor(want, shown) {
   return fits.length === 1 ? fits[0] : null;
 }
 
-module.exports = { splitInstructions, unaddressed, keywords, applyCountInstructions, arrowSwaps, uniqueProductFor };
+module.exports = { joinArrowWraps, VERDICT, splitInstructions, unaddressed, keywords, applyCountInstructions, arrowSwaps, uniqueProductFor };

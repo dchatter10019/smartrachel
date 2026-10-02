@@ -166,7 +166,11 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - "Compare with my original request" is answered IN CODE (original-compare.js, [original-compare]): each requested
   line vs the basket (one basket line per request line, volume or units; a pack size not in the catalog name is
   CHECK, never guessed), on-hand listed as not ordered, extras listed; quantity fixes offered and "make the changes"
-  applies exactly those. The LLM ignored the same table when given it as fact (Oct 2).
+  applies exactly those. The LLM ignored the same table when given it as fact (Oct 2). Notes on the customer's OWN
+  request lines ("• <request line> -> not both / doesn't look right", requestNotes, [request-notes]) are answered in
+  code too: "A (or B) -> not both" keeps A (their first choice) and removes B, flagged lines shown first, then the
+  comparison. An "-> answer" that wraps onto the next line is one line (instructions.js joinArrowWraps); a verdict
+  ("doesn't look right", "not both", "wrong") is never read as a swap.
 - The LLM's generate_proposal/place_order use the LIVE basket (state.lastLineItems after this turn's edits) and the
   saved event date/client when it omits them. In a client edit the LAST client statement wins ("it should be just Goody").
 - A placed order (API success only) leaves the cart → state.placedOrder; touching it asks reopen/new.

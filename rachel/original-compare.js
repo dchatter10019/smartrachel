@@ -134,4 +134,42 @@ const isApplyAsk = m => String(m || '').trim().split(/\s+/).length <= 14
   && /\b(?:make|apply|do)\s+(?:the|these|those|both|all|all the|your)?\s*(?:changes|updates|fixes|recommendations)\b|^\s*(?:yes|yep|yeah|ok|okay|sure|please do|go ahead|do it|sounds good)\b/i.test(m)
   && !/\b(?:but|except|not|instead)\b/i.test(m);
 
-module.exports = { parseRequest, compare, render, reply, isCompareAsk, isApplyAsk };
+// Notes on the customer's OWN request lines: "• <line of the original request> -> <verdict>". Real case (Oct 2, DC):
+//   • 4 × 4-packs Bundaberg ginger beer (or 1 × 12-pack Fever-Tree) -> Bundaberg ginger beer or Fever-Tree not both
+//   • 2 × 24-packs sparkling water -> Nixie Wtrmln Mint Sparkling Water - 12 OZ doesn;t look rith
+//   • 1 case bottled water -> San Pellegrino Plastic (PET) - 500 ML doesn't look right
+// -> [{ quote, answer, kind: 'not_both' | 'wrong' | 'other', rows: [request rows it quotes] }]
+const NB = /\bnot both\b|\bonly one\b|\bone or the other\b|\beither\b/i;
+function requestNotes(message, originalRequest, onHand) {
+  const IN = require('./instructions.js');
+  const req = parseRequest(originalRequest, onHand);
+  const n = x => norm(x).replace(/[^a-z0-9]+/g, ' ').trim();
+  const out = [];
+  for (const raw of IN.joinArrowWraps(message).split('\n')) {
+    const l = raw.replace(/^\s*(?:[-•*·–]|\d+[.)])\s*/, '').replace(/\*/g, '').trim();
+    const a = l.indexOf('->');
+    if (a < 0) continue;
+    const quote = l.slice(0, a).trim(), answer = l.slice(a + 2).trim();
+    const nq = n(quote);
+    if (nq.length < 5 || n(originalRequest).indexOf(nq) < 0) continue;            // not a line of THEIR request
+    const rows = req.filter(r => nq.indexOf(n(r.text)) >= 0 || n(r.text).indexOf(nq) >= 0);
+    if (!rows.length) continue;
+    const kind = NB.test(answer) ? 'not_both' : IN.VERDICT.test(answer) ? 'wrong' : 'other';
+    out.push({ quote, answer, kind, rows });
+  }
+  return out;
+}
+// "A (or B) -> not both": keep A (the customer's first choice), remove the basket lines that are B and not A.
+function applyNotBoth(items, note) {
+  const removed = [];
+  const r = note.rows.find(x => x.names.length > 1);
+  if (!r) return { items, removed, why: 'the line has no "(or ...)" alternative' };
+  const keep = (items || []).filter(li => {
+    const isAlt = matchScore(r.names[1], li) >= 1, isMain = matchScore(r.names[0], li) >= 1;
+    if (isAlt && !isMain) { removed.push((li.qty || li.quantity || 1) + 'x ' + li.name); return false; }
+    return true;
+  });
+  return { items: keep, removed, main: r.names[0].replace(/^\s*\d+\s*[x×]\s*/i, '').replace(/^\d+-?packs?\s+/i, '').trim(), alt: r.names[1].trim() };
+}
+
+module.exports = { parseRequest, compare, render, reply, isCompareAsk, isApplyAsk, requestNotes, applyNotBoth };

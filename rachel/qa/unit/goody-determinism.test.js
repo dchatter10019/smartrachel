@@ -67,5 +67,15 @@ for (const label of ['Sparkling Water 24-pack', 'San Pellegrino 500 ML 12 - 500 
   const c2 = C.compare(fx.first, its, h.onHand);
   eq('one-to-one (' + label + '): only fix is FIJI 12 -> 24', C.reply(c2, h.onHand).fixes, [{ name: 'FIJI Natural Artesian Bottled Water 16.9 OZ Btl', from: 12, to: 24 }]);
 }
+// Oct 2, 03:05: DC's notes on his own request lines (answers wrapped onto the next line)
+const IN = require('../../instructions.js');
+const notesMsg = '• 4 × 4-packs Bundaberg ginger beer (or 1 × 12-pack Fever-Tree) ->\nBundaberg ginger beer or Fever-Tree not both\n• 1L lime juice + 1L lemon juice (unsweetened)\n• 2L simple syrup\n• 3L mango purée\n• 2 × 24-packs sparkling water -> Nixie Wtrmln Mint Sparkling Water - 12 OZ\ndoesn;t look rith\n• 1 × 12-pack Athletic N/A beer\n• 1 case bottled water -> San Pellegrino Plastic (PET) - 500 ML doesn\'t\nlook right';
+eq('wrapped answers join their line (no "doesn;t look rith" instruction)', IN.splitInstructions(notesMsg).some(l => /^doesn|^look right/.test(l)), false);
+eq('a verdict is never a swap', IN.arrowSwaps(notesMsg), []);
+const ns = C.requestNotes(notesMsg, fx.first, h.onHand);
+eq('three notes: not both, wrong, wrong', ns.map(x => x.kind), ['not_both', 'wrong', 'wrong']);
+const nb = C.applyNotBoth(h.items, ns[0]);
+eq('not both: Fever Tree removed, Bundaberg kept', [nb.removed, nb.items.some(x => /Bundaberg/.test(x.name))], [['3x Fever Tree Ginger Beer - 6.8 OZ'], true]);
+eq('a note on a line that is not in the request is ignored', C.requestNotes('• 2 cases Corona -> not both', fx.first, h.onHand), []);
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');
