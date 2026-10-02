@@ -1324,6 +1324,20 @@ async function buildPackage(iv) {
       if (requestedSizeMatch && best.sizeStr) {
         var reqSizeNorm = requestedSizeMatch[0].toLowerCase().replace(/\s+/g, '');
         var foundSizeNorm = String(best.sizeStr).toLowerCase().replace(/\s+/g, '');
+        // The pick is a different brand word's product ("Remy Cointreau 750ml" -> Remy Martin 375 mL): the size is not
+        // the problem — search the request's brand words the pick lacks ("cointreau") at the requested size first. Real
+        // (Oct 2 QA, proposal-date-edit): "Remy Cointreau 750ml" was UNAVAILABLE while Cointreau 750 mL was in stock.
+        if (reqSizeNorm !== foundSizeNorm) {
+          var bwS=PM.brandWords(reqForFit), missS=PM.fit(reqForFit,best).missing.filter(function(w){return bwS.indexOf(w)>=0;});
+          if (missS.length) {
+            var wS=missS.join(' ');
+            var hitS=(await doSearch(wS+' '+requestedSizeMatch[0], catN)).concat(await doSearch(wS, catN)).filter(function(p){return !isMini(p)&&altSane(p)&&!PM.fit(wS,p).missing.length&&String(p.sizeStr||'').toLowerCase().replace(/\s+/g,'')===reqSizeNorm;});
+            if (hitS.length) {
+              console.log('[buildPackage] size mismatch on '+best.name+' — the request\'s brand word "'+wS+'" names the product: '+hitS[0].name+' (requested size)');
+              best=hitS[0]; foundSizeNorm=reqSizeNorm;   // the match note below is computed from this pick
+            }
+          }
+        }
         if (reqSizeNorm !== foundSizeNorm) {
           console.log('[buildPackage] UNAVAILABLE (size mismatch):', JSON.stringify(np.name), 'best match:', JSON.stringify(best && best.name));
           unavailable.push(np.name);

@@ -26,7 +26,11 @@ function pickBlocks(text) {
     if (!/^\s*1[.)]\s/.test(L[i])) continue;
     let j = i; const run = [];
     while (j < L.length && /^\s*\d{1,2}[.)]\s/.test(L[j])) run.push(L[j++]);
-    if (run.filter(l => /\$\s?\d/.test(l)).length >= 2) {
+    // A numbered list of QUESTIONS is not an options list (Oct 2 QA, email-goody-age-gate-quote: "1. Ginger beer — keep
+    // the Bundaberg Diet, or swap to Fever-Tree? 2. Athletic N/A beer — keep the 24-pack at $12.59, or skip it?" was
+    // kept as options, and the email quote went out without its PDF). Options are products; most lines don't ask.
+    const asks = run.filter(l => /\?\s*[*_)]*\s*$/.test(l) || /\b(?:keep|skip|swap|stick with|want|would you|should i|or)\b[^$]*\?/i.test(l)).length;
+    if (run.filter(l => /\$\s?\d/.test(l)).length >= 2 && asks * 2 < run.length) {
       let k = i - 1; while (k >= 0 && !L[k].trim()) k--;
       const intro = k >= 0 && !/^\s*(?:-{3,}|\d+[.)]\s)/.test(L[k]) && !/\$\s?\d/.test(L[k]) ? L[k].trim() : '';
       blocks.push({ intro, lines: run });

@@ -3,6 +3,7 @@
  * Express API wrapping Claude Sonnet with tool use
  */
 
+const STAGING = require('./staging.js');   // QA_MODE (staging) guards; the shopping-agent URL
 const Anthropic = require('@anthropic-ai/sdk');
 const { addToCart } = require('./functions.js');
 const fetch = (url, opts) => import('node-fetch').then(({default: f}) => f(url, require('./log-tag.js').withQAHeader(url, opts)));   // QA turns tag shopping-agent's log lines too
@@ -548,10 +549,10 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             return { success: false, order_id: '', payment_url: '', error: 'Order placement blocked: no explicit customer confirmation detected for this turn.', action_required: 'Ask the customer to explicitly confirm (e.g. "yes, place the order") before calling place_order again.' };
           }
         }
-        const saRes = await fetch('http://127.0.0.1:8300/mcp', {
+        const saRes = await fetch(STAGING.SA_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: saInput.intent, arguments: saInput } })
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: saInput.intent, arguments: STAGING.guardTool(saInput.intent, saInput) } })
         });
         const saText = await saRes.text();
         const saLine = saText.split('\n').find(l => l.startsWith('data:'));

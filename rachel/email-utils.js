@@ -10,6 +10,8 @@ const RACHEL_SENDER_EMAIL = 'rachelai@getbevvi.com';
 const SUPPORT_EMAIL = 'bevvi-support@getbevvi.com';
 
 async function sendEmail(toList, subject, bodyText) {
+  // Staging (QA_MODE=1) never sends: logged instead (ops/staging.sh).
+  if (process.env.QA_MODE === '1') { console.log('[staging] QA_MODE — email NOT sent: to ' + JSON.stringify(toList) + ' | ' + subject); return; }
   const auth = new google.auth.GoogleAuth({
     keyFile: GMAIL_SERVICE_ACCOUNT_FILE,
     scopes: ['https://www.googleapis.com/auth/gmail.send'],

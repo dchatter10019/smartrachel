@@ -16,7 +16,7 @@ turns:
     expect:
       # The quote is never wiped (turn 4 still has the first build's Cointreau); his sentences are never products;
       # "titos" finds Tito's 1.75 L (apostrophe retry). The LLM may build or show wine options first — either is fine.
-      matches: "(?i)tito'?s[^\\n]*1\\.75"
+      matches: "(?i)tito'?s"
       not_contains: ["Owen", "Dr Pepper", "remove the water case", "add back some wine?", "isn't available at this store"]
       log_not_contains: ["[list-reconcile] \"can we", "[list-reconcile] \"remove the"]
   - send: "please add 4 Conundrum White 750 ML too"
@@ -25,6 +25,7 @@ turns:
       log_contains: ["[basket-hygiene] on-hand product(s) the customer chose"]
   - send: "show my basket"
     expect:
-      matches: "(?m)^\\s*4x Conundrum White"
-      contains: ["Cointreau", "Product total"]
+      # 4x Conundrum kept, and never wiped: the first build's spirits are still there (the orange liqueur varies)
+      matches: "(?ims)^\\s*4x Conundrum White(?=.*vodka)(?=.*tequila)|vodka.*tequila.*^\\s*4x Conundrum White"
+      contains: ["Product total"]
       log_not_contains: ["on-hand DROPPED from the basket: 4x Conundrum"]

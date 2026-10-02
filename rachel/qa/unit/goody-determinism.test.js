@@ -121,5 +121,7 @@ eq('"remove" / "we have" never release', [OH.releasedBy('remove the conundrum wh
 const stR = { lastLineItems: JSON.stringify([{ name: 'The Prisoner Red Blend - 750 ML', qty: 4, price: 53.54 }, { name: 'Conundrum White - 750 ML', qty: 4, price: 17.84 }]), onHand: ohG, onHandReleased: ['the prisoner', 'conundrum white'] };
 eq('hygiene keeps released on-hand lines', H.check(stR, {}).droppedOnHand, []);
 eq('line notes: remove / qty / keep / a swap is not one', ['Remove this', 'Make this 2 bottles', 'This is good', 'switch to a Prisoner Red'].map(A.lineAction), [{ remove: true }, { qty: 2 }, { keep: true }, null]);
+const LRp = require('../../list-reply.js');
+eq('a numbered list of QUESTIONS is not an options list (the quote PDF still goes out)', [LRp.pickBlocks('Quick questions:\n1. Ginger beer — keep the Bundaberg Diet, or swap to Fever-Tree ($7.34)?\n2. Athletic N/A beer — keep the 24-pack at $12.59, or skip it?').length, LRp.pickBlocks('Options:\n1. *Whitehaven Sauvignon Blanc* — 750 ML — $21.44\n2. *Decoy Sauvignon Blanc* — 750 ML — $19.80').length], [0, 1]);
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');

@@ -5,13 +5,16 @@
 const http = require('http');
 const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
 
-const PORT = 8300;
+const PORT = Number(process.env.SHOPPING_AGENT_PORT) || 8300;   // staging: 8301 (ops/staging.sh --with-shopping-agent)
 const GBRAIN_URL = 'http://127.0.0.1:7700';
 const GBRAIN_TOKEN = process.env.GBRAIN_TOKEN || '';  // /etc/gbrain.env
 const BEVVI_API = 'https://api-client.getbevvi.com';
 const { guardAsync: guardCatalog } = require('./catalog-guard.js');
-const packageModel = require('/home/ubuntu/rachel/package-model.js');
-const { classifyProduct } = require('/home/ubuntu/rachel/brand-lists.js');
+// Rachel's modules from THIS tree's rachel/ (production: /home/ubuntu/rachel) — a staging shopping-agent run from a
+// worktree must load the worktree's code, not production's.
+const RACHEL_DIR = require('path').join(__dirname, '..', 'rachel');
+const packageModel = require(RACHEL_DIR + '/package-model.js');
+const { classifyProduct } = require(RACHEL_DIR + '/brand-lists.js');
 
 const ZIP_MAP = {
   '07608':'Teterboro - NJ','07631':'Teterboro - NJ','07652':'Teterboro - NJ',
@@ -511,7 +514,7 @@ async function executeTool(name, input) {
     // silently destroy the rest of the customer's order.
     if (results.length > 0 && results[0].products && results[0].products.length > 0 && input.email) {
       try {
-        const { saveBasket, getPackage } = require('/home/ubuntu/rachel/gbrain.js');
+        const { saveBasket, getPackage } = require(RACHEL_DIR + '/gbrain.js');
         let existingCount = 0;
         try {
           const existing = await getPackage(input.email, input.channel || 'slack');
@@ -552,7 +555,7 @@ async function executeTool(name, input) {
       else if (hasB) pkgType = '2';
       else if (hasW) pkgType = '3';
     }
-    const { buildPackage } = require('/home/ubuntu/rachel/functions.js');
+    const { buildPackage } = require(RACHEL_DIR + '/functions.js');
     // A customer-driven category percentage split (e.g. "20% wine, 30% beer,
     // 50% hard seltzer") overrides the auto-detected package_type entirely —
     // it's a fundamentally different allocation mode (arbitrary user percentages
@@ -711,7 +714,7 @@ async function executeTool(name, input) {
     // product for a different bottle size at the same quantity.
     let supply = { ok: true, text: 'supply check skipped' };
     try {
-      const { supplyCheck } = require('/home/ubuntu/rachel/functions.js');
+      const { supplyCheck } = require(RACHEL_DIR + '/functions.js');
       supply = supplyCheck(JSON.parse(result.line_items || '[]'), result.category_needs ? JSON.parse(result.category_needs) : null);
       console.log('[buildPackage] ' + supply.text + ' (' + input.guests + ' guests, ' + (input.hours || '?') + 'h, total drinks ' + result.total_drinks + ')');
     } catch (e) { console.error('[buildPackage] supply check error:', e.message); }
@@ -724,7 +727,7 @@ async function executeTool(name, input) {
 
     // Save package to GBrain
     try {
-      const { saveBasket } = require('/home/ubuntu/rachel/gbrain.js');
+      const { saveBasket } = require(RACHEL_DIR + '/gbrain.js');
       await saveBasket(input.email, result.line_items, '', input.channel || 'slack');
     } catch(e) { console.error('[shopping-agent] savePackage error:', e.message); }
     return {
@@ -754,13 +757,13 @@ async function executeTool(name, input) {
   if (name === 'custom_list') {
     const loc = resolveLocation(input.zip || '');
     if (!loc.kitchen) return { success: false, error: 'No store for zip ' + input.zip };
-    const { buildPackage } = require('/home/ubuntu/rachel/functions.js');
+    const { buildPackage } = require(RACHEL_DIR + '/functions.js');
     // Stability: load the previously-saved package so buildPackage can prefer to keep
     // already-chosen products per slot on a rebuild (e.g. adding a cocktail shouldn't
     // silently change the customer's wine).
     let priorLineItems = '';
     try {
-      const { getPackage } = require('/home/ubuntu/rachel/gbrain.js');
+      const { getPackage } = require(RACHEL_DIR + '/gbrain.js');
       const prev = input.email ? await getPackage(input.email, input.channel || 'slack') : null;
       if (prev) priorLineItems = typeof prev === 'string' ? prev : JSON.stringify(prev);
     } catch(e) {}
@@ -873,14 +876,14 @@ async function executeTool(name, input) {
     // cocktail event — logged nothing, so a 1-bottle-per-spirit under-supply went unseen).
     let supply2 = { ok: true, text: 'supply check skipped' };
     try {
-      const { supplyCheck } = require('/home/ubuntu/rachel/functions.js');
+      const { supplyCheck } = require(RACHEL_DIR + '/functions.js');
       supply2 = supplyCheck(finalItems2, result.category_needs ? JSON.parse(result.category_needs) : null);
       console.log('[buildPackage] custom_list ' + supply2.text + ' (' + input.guests + ' guests, ' + (input.hours || '?') + 'h)');
     } catch (e) { console.error('[buildPackage] supply check error:', e.message); }
 
     // Save package to GBrain
     try {
-      const { saveBasket } = require('/home/ubuntu/rachel/gbrain.js');
+      const { saveBasket } = require(RACHEL_DIR + '/gbrain.js');
       await saveBasket(input.email, result.line_items, '', input.channel || 'slack');
     } catch(e) { console.error('[shopping-agent] savePackage error:', e.message); }
     return {
@@ -908,7 +911,7 @@ async function executeTool(name, input) {
     const loc = resolveLocation(input.zip || '');
     if (!loc.kitchen) return { success: false, error: 'No store for zip ' + input.zip };
     const { rankAlternatives, varietalOf, regionOf } = require('./alternatives.js');
-    const DT = require('/home/ubuntu/rachel/drink-type.js');
+    const DT = require(RACHEL_DIR + '/drink-type.js');
     const { lookupMarket, cachedMarket } = require('./catalog-guard.js');
     const originals = (Array.isArray(input.originals) ? input.originals : []).filter(o => o && o.name).slice(0, 6);
     if (!originals.length) return { success: false, error: 'originals required: [{name, category}]' };
@@ -1052,8 +1055,8 @@ async function executeTool(name, input) {
 
   if (name === 'generate_proposal') {
     console.log('[generate_proposal] line_items:', JSON.stringify(input.line_items || 'none').slice(0,200));
-    const { getPackage, saveBasket } = require('/home/ubuntu/rachel/gbrain.js');
-    const { generateProposal } = require('/home/ubuntu/rachel/generate-proposal.js');
+    const { getPackage, saveBasket } = require(RACHEL_DIR + '/gbrain.js');
+    const { generateProposal } = require(RACHEL_DIR + '/generate-proposal.js');
     let lineItems = input.line_items || null;
     if (!lineItems) lineItems = await getPackage(input.email, input.channel || 'slack');
     if (!lineItems) return { success: false, error: 'No active package. Provide line_items.' };
@@ -1063,7 +1066,7 @@ async function executeTool(name, input) {
     // Every caller (code path, LLM, quote edits) prints a clean date (rachel/event-date.js): Oct 1, the PDF read
     // "Oct 6th, thanks Rache", then "October 6, 2025".
     if (input.event_date) {
-      const ed = require('/home/ubuntu/rachel/event-date.js').normalizeEventDate(input.event_date);
+      const ed = require(RACHEL_DIR + '/event-date.js').normalizeEventDate(input.event_date);
       if (ed.changed) console.log('[generate_proposal] event date ' + JSON.stringify(input.event_date) + ' -> ' + JSON.stringify(ed.text) + ' (' + ed.why + ')');
       input.event_date = ed.text;
     }
@@ -1323,7 +1326,7 @@ const TOOLS = [
 function sendSSE(res, data) { res.write('data: ' + JSON.stringify(data) + '\n\n'); }
 
 // QA log tagging (see rachel/log-tag.js): a request carrying x-qa-session logs with that tag.
-const logTag = require('/home/ubuntu/rachel/log-tag.js'); logTag.install();
+const logTag = require(RACHEL_DIR + '/log-tag.js'); logTag.install();
 const server = http.createServer(function(req, res) { return logTag.runTagged(req.headers[logTag.HEADER], () => handleRequest(req, res)); });
 async function handleRequest(req, res) {
   if (req.method === 'GET' && req.url === '/health') {

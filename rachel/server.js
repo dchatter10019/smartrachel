@@ -129,6 +129,7 @@ const events = require('./events.js');   // per-turn event record (events.jsonl)
 app.use('/chat', (req, res, next) => events.run(next));
 
 const PORT = process.env.RACHEL_PORT || 3500;
+const STAGING = require('./staging.js');   // QA_MODE (staging): dry-run everything; the shopping-agent URL
 const dataDir = require('./data-dir.js'); dataDir.assertSafe(PORT);   // staging never writes production's state files
 
 // ── Session stores ─────────────────────────────────────────────────────────
@@ -321,8 +322,8 @@ fs.watch(RACHEL_PROMPT_PATH, () => {
 // ── Cache helpers ──────────────────────────────────────────────────────────
 // A shopping-agent MCP tool, called from code (no LLM): the parsed result object.
 async function callShoppingTool(name, args) {
-  const rr = await fetch('http://127.0.0.1:8300/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
-    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) });
+  const rr = await fetch(STAGING.SA_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+    body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: STAGING.guardTool(name, args) } }) });
   const rt = await rr.text(); const rl = rt.split('\n').find(l => l.startsWith('data:'));
   return rl ? JSON.parse(JSON.parse(rl.replace('data:', '').trim()).result.content[0].text) : null;
 }
@@ -628,7 +629,7 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
           }
         } catch (e) {}
         if (!resolved) try {
-          const rr = await fetch('http://127.0.0.1:8300/mcp', {
+          const rr = await fetch(STAGING.SA_URL, {
             method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
             body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: replacementName, limit: 8 }], zip: state.zip || '', email: email } } })
           });
@@ -1145,7 +1146,7 @@ async function findSubstitute(name, zip, email) {
   const q = String(name).replace(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz|cl)\b/gi, ' ').replace(/^\s*\d{1,3}\s*(?:x\s*)?/, '').replace(/\s+/g, ' ').trim();
   const ctrl = new AbortController(); const tm = setTimeout(() => ctrl.abort(), 5000);
   try {
-    const rr = await fetch('http://127.0.0.1:8300/mcp', { method: 'POST', signal: ctrl.signal, headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+    const rr = await fetch(STAGING.SA_URL, { method: 'POST', signal: ctrl.signal, headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: q, limit: 3 }], zip, email } } }) });
     const rt = await rr.text(); const rl = rt.split('\n').find(l => l.startsWith('data:'));
     const res = rl ? JSON.parse(JSON.parse(rl.replace('data:', '').trim()).result.content[0].text) : null;
@@ -1529,7 +1530,7 @@ app.post('/chat', async (req, res) => {
   // QA DRY-RUN: a session id starting with 'qa-' (or qa:true) never places real orders
   // or sends real email — place_order and SendEmail simulate success. Everything else
   // (search, builds, proposals) runs for real so tests exercise the actual catalog.
-  const isQA = !!(req.body.qa) || /^qa-/i.test(String(session_id || '')) || /^(qa-[^@]*|rachel_qa)@getbevvi\.com$/i.test(String((context && context.user_email) || ''));   // QA identities are dry-run on EVERY channel
+  const isQA = STAGING.QA_MODE || !!(req.body.qa) || /^qa-/i.test(String(session_id || '')) || /^(qa-[^@]*|rachel_qa)@getbevvi\.com$/i.test(String((context && context.user_email) || ''));   // QA identities are dry-run on EVERY channel
   // IDEMPOTENT RETRY: a caller's request_id (email: the Gmail message id) runs ONCE per session. Real bug
   // (Sep 29): Sean's email timed out on the agent's side while Rachel finished; the retry fed the same email
   // into the session again and Rachel replied to it as edits ("couldn't find 1x Oyster Bay"). A repeat gets
@@ -2836,7 +2837,7 @@ app.post('/chat', async (req, res) => {
     }
     // The quote PDF for an email list request: generate_proposal on the real basket (no LLM), logged.
     async function quotePdf(st, items, client, eventDate, inexactCount) {
-      const rr = await fetch('http://127.0.0.1:8300/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+      const rr = await fetch(STAGING.SA_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'generate_proposal', arguments: {
           line_items: JSON.stringify(items), client_name: client, event_date: eventDate, email, channel: format || 'plain',
           notes: (st.address ? 'Delivery: ' + st.address + '.' : '') + (inexactCount ? ' Some items are recommended alternatives to what was asked (see email).' : '')
@@ -3258,7 +3259,7 @@ app.post('/chat', async (req, res) => {
         if (listedM) console.log('[add-item] listed-name ' + JSON.stringify(clsRef) + ': ' + listedM.matches.length + ' of ' + listedM.listSize + ' listed options fit' + (listed ? ' -> ' + JSON.stringify(listed.map(p => p.name)) : ' — searching the catalog'));
         let prods = listed;
         if (!prods) {
-          const rr = await fetch('http://127.0.0.1:8300/mcp', {
+          const rr = await fetch(STAGING.SA_URL, {
             method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
             body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: clsRef.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim(), limit: 8 }], zip: state.zip || '', email: email } } })
           });
@@ -3284,7 +3285,7 @@ app.post('/chat', async (req, res) => {
           // and merge before filtering.
           try {
             const seen = new Set(prods.map(pr => pr.product_id || pr.id || pr.name));
-            const rrS = await fetch('http://127.0.0.1:8300/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+            const rrS = await fetch(STAGING.SA_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
               body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: syns.slice(0, 3).map(sy => ({ name: sy, limit: 6 })), zip: state.zip || '', email: email } } }) });
             const rtS = await rrS.text(); const rlS = rtS.split('\n').find(l => l.startsWith('data:'));
             const rdS = rlS ? JSON.parse(rlS.replace('data:', '').trim()) : null;
@@ -4383,7 +4384,7 @@ app.post('/chat', async (req, res) => {
           if (Object.keys(po).length) console.log('[proposal] options injected into generate_proposal (in code):', JSON.stringify(po));
           const altOpts = state.proposalWithOptions ? PO.buildOptions(state.shownOptions, existingItemsForProposal, basketLineFor) : [];
           if (state.proposalWithOptions) console.log('[options] ' + (altOpts.length ? 'listed in the PDF: ' + altOpts.map(o => o.label + ' -> ' + o.alternatives.map(a => a.name).join(' / ')).join(' | ') : 'asked for, but none were shown in this session — the reply says so'));
-          const rrP = await fetch('http://127.0.0.1:8300/mcp', { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+          const rrP = await fetch(STAGING.SA_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
             body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'generate_proposal', arguments: Object.assign({
               line_items: JSON.stringify(existingItemsForProposal), client_name: pd.client_name || '', event_date: pd.event_date || '', email, channel: format || 'slack',
               notes: state.address ? 'Delivery: ' + state.address + '.' : '' }, altOpts.length ? { options: JSON.stringify(altOpts) } : {}, po.tax_exempt ? { tax_exempt: true } : {}, po.totals_only ? { totals_only: true } : {}, po.hide_subtotals ? { hide_subtotals: true } : {}) } }) });
@@ -4559,7 +4560,7 @@ app.post('/chat', async (req, res) => {
         const substituteSearchTerm = matchedType || itemToSubstitute;
         console.log('[substitute-deterministic] searching real replacement for:', itemToSubstitute, '| search term:', substituteSearchTerm);
         try {
-          const subRes = await fetch('http://127.0.0.1:8300/mcp', {
+          const subRes = await fetch(STAGING.SA_URL, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: substituteSearchTerm, limit: 5 }], zip: state.zip || '', email: email } } })

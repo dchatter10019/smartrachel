@@ -85,7 +85,7 @@ const isOddSize = (n, size, wantMl) => /\bbox\b|\btetra\b/.test(norm(n)) || ((ml
 // Rank store candidates for one original. refPrice may be null (no anchor: region then price desc).
 // The candidate must be the original's TYPE (drink-type.js) — or original.type when the customer asked for another.
 // Real complaint (DC, Sep 30): Lillet Blanc (an aperitif) got Malbec, Cabernet and Sauvignon Blanc here.
-const { typeOf, isNA } = require('/home/ubuntu/rachel/drink-type.js');
+const { typeOf, isNA } = require(require('path').join(__dirname, '..', 'rachel', 'drink-type.js'));
 function rankAlternatives(original, candidates, refPrice, opts) {
   const o = Object.assign({ band: 0.30, perOriginal: 3 }, opts || {});
   const otype = original.type || typeOf({ name: original.name });

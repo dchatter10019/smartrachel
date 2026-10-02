@@ -35,7 +35,7 @@ const ZIP_LOC = { '10019': { city: 'New York', region: 'New York', timezone: 'Am
 let _anthropic = null;
 function anthropic() {
   if (!_anthropic) {
-    const sdk = require('/home/ubuntu/rachel/node_modules/@anthropic-ai/sdk');
+    const sdk = require(require('path').join(__dirname, '..', 'rachel', 'node_modules', '@anthropic-ai', 'sdk'));
     _anthropic = new (sdk.Anthropic || sdk)({ apiKey: process.env.ANTHROPIC_API_KEY || env.ANTHROPIC_API_KEY, timeout: 120000, maxRetries: 1 });
   }
   return _anthropic;
@@ -248,6 +248,7 @@ function alertSlack(hidden, query, zip) {
   });
   if (!fresh.length) return;
   try { fs.writeFileSync(ALERT_FILE, JSON.stringify(seen)); } catch (e) {}
+  if (process.env.QA_MODE === '1') { console.log('[catalog-guard] staging (QA_MODE) — alert logged only, not posted'); return; }
   if (!SLACK_TOKEN || !SLACK_CHANNEL) { console.log('[catalog-guard] Slack not configured — alert logged only'); return; }
   const lines = fresh.map(h => '• *' + h.product.name + '* — $' + price(h.product).toFixed(2) + ' — ' + h.reason +
     '\n   id `' + (h.product.id || '?') + '` · UPC `' + (h.product.upc || '?') + '` · store `' + (h.product.establishmentId || '?') + '`');

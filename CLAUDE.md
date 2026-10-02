@@ -50,8 +50,16 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - Logs: /home/ubuntu/logs/ (rachel.log, shopping-agent.log, ...). Journal is NOT where bots log.
 - Rachel's state (flow-state.json, chat-sessions.json, conversations.jsonl, baskets.json, customer-contacts.json,
   events.jsonl) lives in RACHEL_DATA_DIR (rachel/data-dir.js; default /home/ubuntu/logs). A Rachel on any port but
-  3500 REFUSES to start on the production dir — a second instance would rewrite live sessions. Staging: RACHEL_PORT=3501
-  RACHEL_DATA_DIR=<own dir>. Proposal PDFs + proposal-items still come from the shared shopping-agent in logs/.
+  3500 REFUSES to start on the production dir — a second instance would rewrite live sessions.
+- Staging (ops/staging.sh start [tree] [--with-shopping-agent] | stop | status): the tree's rachel on :3501 with QA_MODE=1
+  (rachel/staging.js: every session dry-run, sendEmail logs instead of sending, place_order always dry_run, catalog-guard
+  alerts not posted), RACHEL_DATA_DIR=/home/ubuntu/staging/data (wiped on start), no channel bots, the production units'
+  env read via `systemctl show` (never printed; no sudo needed). Shopping-agent: production's :8300, or with
+  --with-shopping-agent the tree's own on :8301 (SHOPPING_AGENT_URL / SHOPPING_AGENT_PORT; store-agent loads rachel/
+  modules relative to its own tree). Logs: logs/staging-rachel.log, logs/staging-shopping-agent.log. Proposal PDFs and
+  proposal-items are still written to the shared logs/. `qa/run.py --url http://127.0.0.1:3501` tests it (staging logs +
+  staging events.jsonl, channel-transport scenarios skipped, runs in qa/runs-staging/). ops/tests/staging_test.sh =
+  acceptance test (smoke passes on staging, nothing sent, production never restarted).
 
 ## Secrets (never print them)
 - /etc/rachel.env: Slack tokens, ANTHROPIC_API_KEY, GOOGLE_MAPS_API_KEY, QA_SLACK_CHANNEL, SLACK_QA_USER_TOKEN
@@ -66,11 +74,14 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
    restarts on HEAD and re-smokes. Never a bare `systemctl restart`. It waits for rachel's in-flight chats
    (/internal/inflight) before restarting, and rachel finishes running chats on SIGTERM (max 80s). Deploy BEFORE committing — a clean
    tree has nothing to roll back. Plain `precheck.sh` = lint only; `--smoke` tests the live service.
+   `precheck.sh --deploy --stage-first` (the default to use): smoke on staging from the working tree FIRST — a change
+   that fails there never restarts production. DC (Oct 2): deploy without asking, then run the FULL suite
+   (`./qa/run.py`) against production, fix/revert anything newly failing, then commit + push.
 2. Ask DC before running anything that places a real order, sends a real email/message, or changes
    systemd units, nginx, or secrets.
 3. Commit with a message that names the real bug and the fix; `git push` after. Commit scope: rachel/,
-   store-agent/, precheck.sh and CLAUDE.md (update it in the same commit when a fact here changes).
-   qa/runs/ is gitignored.
+   store-agent/, ops/, precheck.sh, .gitignore and CLAUDE.md (update it in the same commit when a fact here changes).
+   qa/runs/, qa/runs-staging/ and staging/ are gitignored.
 4. Compliance: age verification is per session, never inherited from a saved profile. Never weaken it.
 5. QA identities are dry-run on every channel: session ids starting `qa-`, and emails qa-*@getbevvi.com
    / rachel_qa@getbevvi.com (server.js isQA). They never train the price profile (gbrain.saveBasket).

@@ -32,7 +32,8 @@ function install() {
 // (first deploy of the tagging: those calls went out untagged and every [buildPackage] line was lost).
 function withQAHeader(url, opts) {
   const st = als.getStore();
-  if (!(st && st.tag && /^https?:\/\/(127\.0\.0\.1|localhost):8300\//.test(String(url)))) return opts;
+  // 8300 = production's shopping-agent, 8301 = staging's (ops/staging.sh --with-shopping-agent)
+  if (!(st && st.tag && /^https?:\/\/(127\.0\.0\.1|localhost):830[01]\//.test(String(url)))) return opts;
   opts = Object.assign({}, opts || {}); opts.headers = Object.assign({}, opts.headers || {}, { [HEADER]: st.tag });
   return opts;
 }

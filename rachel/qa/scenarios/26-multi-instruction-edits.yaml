@@ -23,7 +23,8 @@ turns:
       matches: "(?i)5\\s*x[^\\n]*Mount Gay"
   - send: "make it 6 bottles of Mount Gay Black Barrel"
     expect:
-      matches: "(?i)mount gay[^\\n]*\\b6\\b|\\b6\\b[^\\n]*mount gay"
+      # "6x *Mount Gay ..." (Oct 2): no word boundary between "6" and "x" — the old \\b6\\b missed a correct reply
+      matches: "(?i)mount gay[^\\n]*\\b6\\b|\\b6(?:x|\\s)[^\\n]*mount gay"
       not_contains: ["Want to change the quantity"]
   - send: "show my basket"
     expect: {matches: "(?i)6\\s*x[^\\n]*Mount Gay"}

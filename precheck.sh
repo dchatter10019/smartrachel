@@ -7,6 +7,10 @@
 #                            fails, the uncommitted changes under rachel/ and store-agent/ are
 #                            stashed (never discarded), the service is restarted on HEAD and the
 #                            smoke set re-run to show whether HEAD is healthy.
+#   ./precheck.sh --deploy --stage-first
+#                            lint → start a staging Rachel (ops/staging.sh, :3501, QA_MODE) from the working tree →
+#                            smoke there → only if it passes: restart production → smoke → rollback on failure.
+#                            A change that fails on staging never restarts production.
 # DEPLOY_FORCE_SMOKE_FAIL=1 ./precheck.sh --deploy  exercises the rollback path.
 #
 # node --check only catches syntax errors; it CANNOT catch reassigning a const
@@ -118,6 +122,21 @@ rollback() {
   exit 1
 }
 
+# stage_first <services...>: the working tree on staging (its own shopping-agent when shopping-agent is in the
+# services), smoke against it, staging stopped either way. 0 = passed.
+stage_first() {
+  local log="/home/ubuntu/logs/deploy-$STAMP-staging.log" rc sa=""
+  [[ " $* " == *" shopping-agent "* ]] && sa=--with-shopping-agent
+  echo "Staging first: the working tree on :3501 ${sa:+(+ its own shopping-agent)}..."
+  ops/staging.sh stop >/dev/null 2>&1
+  ops/staging.sh start /home/ubuntu $sa || { echo "staging did not start"; ops/staging.sh stop >/dev/null; return 1; }
+  echo "Running QA smoke set (staging)... full output: $log"
+  (cd /home/ubuntu/rachel && ./qa/run.py --smoke --url http://127.0.0.1:3501) > "$log" 2>&1; rc=$?
+  grep -v "^       " "$log" | tail -6
+  ops/staging.sh stop >/dev/null
+  return $rc
+}
+
 deploy() {
   local svcs=()
   DIRTY=$(git status --porcelain -- $SCOPE)
@@ -132,6 +151,7 @@ deploy() {
   echo "Deploy $STAMP: HEAD $(git rev-parse --short HEAD), services: ${svcs[*]}"
   if [ -n "$DIRTY" ]; then echo "Uncommitted changes being deployed:"; echo "$DIRTY"; else echo "Working tree clean under $SCOPE (deploying HEAD)."; fi
   lint || { echo "=== DEPLOY ABORTED: lint failed, nothing restarted ==="; exit 1; }
+  if [ "${STAGE_FIRST:-0}" = 1 ]; then stage_first "${svcs[@]}" || { echo "=== DEPLOY ABORTED: the change failed on staging — production untouched ==="; exit 1; }; fi
   restart "${svcs[@]}" || rollback "${svcs[@]}"
   smoke deploy || rollback "${svcs[@]}"
   echo "=== DEPLOY OK: ${svcs[*]} restarted and smoke passed ==="
@@ -140,10 +160,10 @@ deploy() {
 # Everything runs inside main so bash has parsed the whole file before a rollback touches the tree.
 main() {
   case "${1:-}" in
-    --deploy) deploy ;;
+    --deploy) [ "${2:-}" = --stage-first ] && STAGE_FIRST=1; deploy ;;
     --smoke)  lint || exit 1; smoke live || { echo "SMOKE FAILED against the live service"; exit 1; } ;;
     "")       lint || exit 1 ;;
-    *)        echo "usage: $0 [--smoke|--deploy]"; exit 2 ;;
+    *)        echo "usage: $0 [--smoke|--deploy [--stage-first]]"; exit 2 ;;
   esac
 }
 main "$@"; exit $?

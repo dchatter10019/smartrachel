@@ -209,6 +209,7 @@ def send(session, text, fmt, email, images=None, idle=False, ctx=None):
     r = httpx.post(RACHEL, json=payload, timeout=330)
     return r.json().get("text", ""), round(time.time() - t0, 1)
 
+EVENTS_FILE = "/home/ubuntu/logs/events.jsonl"   # staging (--url): its own data dir's events.jsonl
 LOGS = ["/home/ubuntu/logs/rachel.log", "/home/ubuntu/logs/shopping-agent.log"]   # log_contains searches both (the package builder runs in shopping-agent)
 def _log_size():
     out = {}
@@ -238,7 +239,7 @@ def check_events(session, spec, wait=3.0):
         if "count" in spec and len(evs) < spec["count"]: return False
         return all(any(sub(e, w) for e in evs) for w in spec.get("any", []))
     while True:
-        evs = E.load(session=session, include_qa=True)
+        evs = E.load(path=EVENTS_FILE, session=session, include_qa=True)
         if done(evs) or time.time() > t_end: break
         time.sleep(0.2)
     if "count" in spec and len(evs) != spec["count"]: fails.append(f"events: {len(evs)} lines, want {spec['count']}")
@@ -362,12 +363,27 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--only", default=""); ap.add_argument("--smoke", action="store_true"); ap.add_argument("-v", action="store_true")
     ap.add_argument("-j", type=int, default=int(os.environ.get("QA_JOBS", "6")))
     ap.add_argument("--skip-tag", action="append", default=[], help="leave out scenarios with this tag (e.g. channel: real Slack/email sends)")
+    ap.add_argument("--url", default="", help="a Rachel other than production, e.g. http://127.0.0.1:3501 (ops/staging.sh)")
     a = ap.parse_args()
+    global RACHEL, LOGS, EVENTS_FILE
+    staging = bool(a.url) and not a.url.rstrip("/").endswith(":3500")
+    if a.url:
+        RACHEL = a.url.rstrip("/") + "/chat"
+    if staging:
+        # log_contains reads the staging logs; staging's shopping-agent is its own (8301) or production's (8300).
+        LOGS = ["/home/ubuntu/logs/staging-rachel.log",
+                "/home/ubuntu/logs/staging-shopping-agent.log" if os.path.exists("/home/ubuntu/staging/shopping-agent.pid") else "/home/ubuntu/logs/shopping-agent.log"]
+        EVENTS_FILE = "/home/ubuntu/staging/data/events.jsonl"
+        print(f"Rachel under test: {RACHEL} (staging) — logs {LOGS}, events {EVENTS_FILE}")
     files = sorted(glob.glob(os.path.join(HERE, "scenarios", "*.yaml")))
     scs = [yaml.safe_load(open(f)) for f in files]
     scs = [s for s in scs if (a.only.lower() in s["name"].lower()) and (not a.smoke or "smoke" in s.get("tags", []))]
     scs = [s for s in scs if not set(a.skip_tag) & set(s.get("tags", []))]
-    stamp = time.strftime("%Y%m%d-%H%M%S"); outdir = os.path.join(HERE, "runs", stamp); os.makedirs(outdir, exist_ok=True)
+    if staging:   # no channel bots on staging: slack / email / whatsapp scenarios test transport, and run nightly on production
+        skipped = [s["name"] for s in scs if s.get("transport", "http") != "http"]
+        scs = [s for s in scs if s.get("transport", "http") == "http"]
+        if skipped: print(f"skipped on staging (channel transport): {', '.join(skipped)}")
+    stamp = time.strftime("%Y%m%d-%H%M%S"); outdir = os.path.join(HERE, "runs-staging" if staging else "runs", stamp); os.makedirs(outdir, exist_ok=True)
     results = []; t0 = time.time(); out_lock = threading.Lock()
     def one(sc, parallel):
         _out.buf = [] if parallel else None
