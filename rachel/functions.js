@@ -1195,6 +1195,17 @@ async function buildPackage(iv) {
         if (band.length) found=band;
         else console.log('[buildPackage] no match for', JSON.stringify(np.name), 'within 60-140% of target $'+tgtP.toFixed(2), '— closest price wins');
       }
+      // A generic line with no budget target ("3 x 1.75L tequila (blanco)" in a customer's list) gets a MID-priced
+      // product, not the priciest (DC, Oct 2). Real case (Oct 1, Goody): Don Julio Blanco at $137.01 x 3 = $411.
+      var npBare=String(np.name||'').replace(/\(([^)]*)\)/g,' $1 ').replace(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/ig,' ').replace(/\s+/g,' ').trim();
+      if (!tgtP && GENERIC_LINE.test(npBare) && found.length>2) {
+        var szM=(String(np.name||'').match(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/i)||[''])[0].toLowerCase().replace(/\s+/g,'');
+        var pool=found.filter(function(p){return !szM||String(p.sizeStr||'').toLowerCase().replace(/\s+/g,'')===szM;});
+        if (pool.length<3) pool=found;
+        var ps=pool.map(function(p){return +p.price||0;}).filter(function(x){return x>0;}).sort(function(a,b){return a-b;});
+        if (ps.length) { tgtP=ps[Math.floor((ps.length-1)/2)]; console.log('[buildPackage] generic '+JSON.stringify(np.name)+': mid-priced pick — median of '+ps.length+' is $'+tgtP.toFixed(2)+' (range $'+ps[0].toFixed(2)+'-$'+ps[ps.length-1].toFixed(2)+')');
+          var midBand=found.filter(function(p){return p.price>=tgtP*0.75&&p.price<=tgtP*1.25;}); if (midBand.length) found=midBand; }
+      }
       var terms=np.name.toLowerCase().split(/\s+/);
       // Exact-name preference: a candidate whose size-stripped name equals the request
       // beats a superset name. "Ruffino Prosecco Rosé" ties "Ruffino Prosecco" on term
@@ -1243,7 +1254,12 @@ async function buildPackage(iv) {
           if (more.length) {
             var fb0=PM.fit(reqForFit,best).score;
             more.sort(function(a,b){return PM.fit(reqForFit,b).score-PM.fit(reqForFit,a).score;});
-            if (PM.fit(reqForFit,more[0]).score>fb0) { console.log('[buildPackage] better fit for '+JSON.stringify(np.name)+' from "'+sk+'": '+more[0].name+' (was '+best.name+')'); found=more.concat(found); best=more[0]; }
+            // Never trade away the size the customer stated. Real bug (Oct 1, DC): "Vodka 1.75L" had Svedka 1.75L,
+            // the retry swapped in Ciroc 750 mL, and the size check then said "couldn't find a match for Vodka 1.75L".
+            var szR=(String(np.name||'').match(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/i)||[''])[0].toLowerCase().replace(/\s+/g,'');
+            var szOk=function(p){return !szR||String(p.sizeStr||'').toLowerCase().replace(/\s+/g,'')===szR;};
+            if (szR && szOk(best)) { var sized=more.filter(szOk); if (sized.length<more.length) console.log('[buildPackage] better-fit retry for '+JSON.stringify(np.name)+': '+(more.length-sized.length)+' candidate(s) of another size skipped'); more=sized; }
+            if (more.length && PM.fit(reqForFit,more[0]).score>fb0) { console.log('[buildPackage] better fit for '+JSON.stringify(np.name)+' from "'+sk+'": '+more[0].name+' (was '+best.name+')'); found=more.concat(found); best=more[0]; }
           }
         }
       }
@@ -1323,6 +1339,13 @@ async function buildPackage(iv) {
         console.log('[buildPackage] pack size: '+JSON.stringify(np.name)+' asked '+qty+' x '+fw.pack.want+' = '+(qty*fw.pack.want)+' units; '+best.name+' is a '+fw.pack.got+'-pack -> '+q3);
         var packNote=fw.pack.got+'-packs here: '+q3+' = '+(q3*fw.pack.got)+' cans'+(q3*fw.pack.got===qty*fw.pack.want?', as asked':' (you asked for '+(qty*fw.pack.want)+')');
         qty=q3;
+      }
+      // "a case" with no count = 24 units; a 12-pack is fine when that is what the store has (DC, Oct 2). Real case
+      // (Oct 1, Goody): "1 case bottled water" -> 1 single FIJI bottle. Not wine/spirits (a wine case is 12 bottles).
+      if (catN!=='wine'&&catN!=='spirits'&&/\bcases?\b/i.test(String(np.name||''))&&!PM.packCount(np.name)) {
+        var gotP=PM.packCount(best.name)||PM.packCount(best.sizeStr)||1, cases=qty||1;
+        var perCase=gotP>=12?1:Math.ceil(24/gotP), q4=cases*perCase;
+        if (q4!==qty) { console.log('[buildPackage] case: '+JSON.stringify(np.name)+' = '+cases+' case(s); '+best.name+' is '+(gotP>1?'a '+gotP+'-pack':'a single')+' -> qty '+q4+' ('+(q4*gotP)+' units)'); qty=q4; }
       }
       if (typeof packNote==='string' && packNote) vd.note=vd.note.replace(/\d+-pack, not \d+/, packNote);
       var match=altNote ? {kind:'alternative',asked:np.name,note:altNote+(vd.note&&/packs here/.test(vd.note)?'; '+packNote:'')} : vd.kind==='exact' ? {kind:'exact'} : {kind:'closest',asked:np.name,note:vd.note};

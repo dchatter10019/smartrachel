@@ -496,6 +496,7 @@ function pendingSubFor(state, sessionKey, pickedName, lastReply) {
   if (hits.length !== 1) return null;
   return { name: hits[0], qty: (state.unavailableQty || {})[hits[0]] || requestedQtyFor(sessionKey, hits[0]) || 0 };
 }
+const pendingOriginalByType = require('./pending-original.js');   // the not-carried item a product stands in for, by kind
 // The whole basket after a change, so the customer sees what they now have. DC (Sep 30): "Got it — 10x Navigator ...
 // has replaced La Crema" showed one line of a 7-line event basket. Only for 2+ lines (a single line IS the reply).
 function basketAfterChange(state) {
@@ -548,6 +549,10 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
             const cands = t ? items.filter(it => spiritType(it.name || it.label) === t && nk0(it.name).indexOf(nk0(replacementName).slice(0, 10)) < 0 && !(it.subst_at && Date.now() - it.subst_at < 30 * 60 * 1000)) : [];
             if (cands.length === 1) { originalItem = cands[0].name; console.log('[confirm-substitute] no original given — ' + replacementName + ' replaces the only other ' + t + ' in the basket: ' + originalItem + ' (qty ' + (cands[0].qty || cands[0].quantity || 1) + ')'); }
             else if (t) console.log('[confirm-substitute] no original given — ' + cands.length + ' other ' + t + ' line(s) ' + JSON.stringify(cands.map(c => c.name)) + ', adding as a new line');
+            if (!originalItem && !cands.length) {
+              const po = pendingOriginalByType(state.pendingSubstitutes, replacementName);
+              if (po) { originalItem = po; console.log('[confirm-substitute] no original given — ' + replacementName + ' stands in for the not-carried ' + JSON.stringify(po) + ' (same kind)'); }
+            }
           } catch (e) {}
         }
         // A cross-type original must come from the customer. Real bug (Sep 29 QA, scenario 26): for
@@ -589,6 +594,15 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
           } else {
             const rq = (opts && opts.qty) || ((getState(sessionKey).unavailableQty || {})[originalItem]) || requestedQtyFor(sessionKey, originalItem);
             if (rq) { qtyToUse = rq; console.log('[confirm-substitute] ' + JSON.stringify(originalItem) + ' was never in the basket (not carried) — its requested qty ' + rq + ' goes to ' + replacementName); }
+            // A smaller bottle makes up the volume asked for (DC, Oct 1: "smaller bottles are fine but they should add
+            // up to 1 L"). "Lemon Juice 1L" x1 -> Master of Mixes 375 mL x3.
+            const vol = x => { const m = String(x || '').toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l|liter|litre|oz)\b/); return m ? +m[1] * (m[2] === 'ml' ? 1 : m[2] === 'oz' ? 29.5735 : 1000) : 0; };
+            const vO = vol(originalItem), vR = vol(replacementSize) || vol(replacementName);
+            if (vO && vR && vR < vO * 0.9) {
+              const qv = Math.ceil(((qtyToUse || 1) * vO) / vR - 0.02);
+              console.log('[confirm-substitute] volume: ' + (qtyToUse || 1) + ' x ' + JSON.stringify(originalItem) + ' = ' + Math.round((qtyToUse || 1) * vO) + ' mL -> ' + qv + ' x ' + Math.round(vR) + ' mL of ' + replacementName);
+              qtyToUse = qv;
+            }
           }
         }
         // Resolve the replacement to a REAL catalog product. Real bug: the LLM called
@@ -1161,6 +1175,9 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
     if (done.length) { stateForEmail.lastLineItems = JSON.stringify(work); saveFlowState(); try { saveBasket(email, stateForEmail.lastLineItems, '', format || 'slack').catch(() => {}); } catch (e) {} }
     channelNote += '\n\nThe customer\'s message has ' + instrs.length + ' separate instructions:\n' + instrs.map((x, i) => { const d = done.find(z => z.instr === x); return (i + 1) + '. ' + x + (d ? '  [You just changed this in the basket: ' + d.name + ' from ' + d.from + ' to ' + d.to + '. Tell the customer you updated it from ' + d.from + ' to ' + d.to + ' (never "already set" or "no change needed"); do not change it again]' : ''); }).join('\n') + '\nHandle EVERY one this turn — apply it, or ask the question you need to apply it. Never skip one.';
   }
+  if (/^email-/.test(String(sessionKey || ''))) channelNote += '\n\nCHANNEL: EMAIL. Your reply is sent as an email reply in the customer\'s thread, with any proposal PDF attached — never offer to email it.';
+  if (stateForEmail.originalRequest) channelNote += '\n\n## THE CUSTOMER\'S ORIGINAL REQUEST (verbatim — the quantities and items they first asked for; use it when they refer to "my original/initial request")\n' + stateForEmail.originalRequest;
+  if (stateForEmail.onHand && stateForEmail.onHand.length) channelNote += '\n\n## ALREADY ON HAND (the customer has these — NEVER add them to the basket or proposal)\n' + stateForEmail.onHand.map(o => '- ' + (o.qty ? o.qty + 'x ' : '') + o.name).join('\n');
   const result = await rachelChat({
     messages: [...messages, { role: 'user', content: message }],
     context,
@@ -1526,6 +1543,8 @@ app.post('/chat', async (req, res) => {
   if (/^email-/.test(String(session_id || '')) || (context && context.email_subject)) {
     const eb = require('./email-body.js').latest(message);
     if (eb.trimmed) { console.log('[email-body] ' + (eb.forwarded ? 'forwarded message kept, ' : '') + 'quoted history cut: ' + String(message).length + ' -> ' + eb.text.length + ' chars'); message = eb.text; }
+    const sig = require('./email-body.js').stripSignature(message, context && context.user_name);
+    if (sig.cut) { console.log('[email-body] signature cut: ' + JSON.stringify(sig.cut.slice(0, 80))); message = sig.text; }
   }
 
   if (context && context.kitchen_location && KITCHEN_TO_CLIENT[context.kitchen_location]) {
@@ -1619,6 +1638,45 @@ app.post('/chat', async (req, res) => {
     }
     getState(sessionKey).lastActive = Date.now(); saveFlowState();
   }
+  // Stock the customer already has ("we have the below inventory from last time") is never ordered (on-hand.js).
+  try {
+    const oh = require('./on-hand.js').parseOnHand(message);
+    if (oh.length) {
+      const stOH = getState(sessionKey);
+      const prev = stOH.onHand || [];
+      stOH.onHand = prev.concat(oh.filter(o => !prev.some(p => p.name.toLowerCase() === o.name.toLowerCase())));
+      console.log('[on-hand] customer already has: ' + oh.map(o => (o.qty ? o.qty + 'x ' : '') + o.name).join(', ') + ' — not ordered');
+      saveFlowState();
+    }
+  } catch (e) { console.log('[on-hand] parse error: ' + e.message); }
+  // The customer's first real request (a list / a long ask), kept for the whole session and shown to the LLM every
+  // turn. Real bug (Oct 1, DC's Goody quote): 20+ emails in, "use the amount I asked in my initial request" got
+  // "I don't have your original request visible" — the 40-message history had dropped it.
+  try {
+    const stOR = getState(sessionKey);
+    const itemLines = String(message || '').split(/\n/).filter(l => /^\s*(?:[-•*·]|\d+\s*(?:x|×)?\s+\S)/i.test(l)).length;
+    // An email thread's first email comes from the email agent on every continuation (context.thread_first_body),
+    // cleaned like any email. Real miss (Oct 2, Goody): a thread started before this existed had no originalRequest
+    // and its first email was long gone from the history — "take my original request" got "could you paste it here".
+    const isEmailSess = /^email-/.test(String(sessionKey)) || !!(context && context.email_subject);
+    if (!stOR.originalRequest && isEmailSess && context && context.thread_first_body) {
+      const EB = require('./email-body.js');
+      let first = EB.latest(String(context.thread_first_body)).text;
+      first = EB.stripSignature(first, context.user_name).text;
+      if (first.trim()) {
+        stOR.originalRequest = first.slice(0, 6000);
+        console.log('[original-request] taken from the thread\'s first email (' + first.length + ' chars)');
+        saveFlowState();
+      }
+    }
+    // Otherwise only an email thread's FIRST turn counts (a long later email is not the original request).
+    const firstEmailTurn = !isEmailSess || !(sessions[sessionKey] || []).some(m => m && m.role === 'user');
+    if (!stOR.originalRequest && firstEmailTurn && !/^__/.test(String(message || '')) && (itemLines >= 3 || String(message || '').length >= 300)) {
+      stOR.originalRequest = String(message).slice(0, 6000);
+      console.log('[original-request] kept for the session (' + itemLines + ' item line(s), ' + String(message).length + ' chars)');
+      saveFlowState();
+    }
+  } catch (e) { console.log('[original-request] error: ' + e.message); }
   // EVENT LOG (events.js): one line per turn to logs/events.jsonl. Installed before the other reply
   // wrappers so it sees the final text; state_in is taken after the idle reset.
   {
@@ -4784,14 +4842,17 @@ app.post('/chat', async (req, res) => {
             const hasOriginalToReplace = state.pendingSubstitutes && state.pendingSubstitutes.length > 0;
             let originalItemName = null;
             if (hasOriginalToReplace) {
-              if (matchedCandidateType) {
-                originalItemName = state.pendingSubstitutes.find(p => p.toLowerCase().includes(matchedCandidateType)) || state.pendingSubstitutes[0];
-              } else {
-                originalItemName = state.pendingSubstitutes[0];
-              }
+              originalItemName = (matchedCandidateType && state.pendingSubstitutes.find(p => p.toLowerCase().includes(matchedCandidateType))) || pendingOriginalByType(state.pendingSubstitutes, matched.name);
+              if (!originalItemName) console.log('[substitute-merge] ' + JSON.stringify(matched.name) + ' is not the same kind as any pending item ' + JSON.stringify(state.pendingSubstitutes) + ' — added, nothing replaced');
             }
             let items = [];
             try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+            // Already a basket line: the message is about that line (a quantity, "update for Fiji water"), not a pick.
+            // Real bug (Oct 1, DC): it answered "I couldn't find FIJI water in the catalog, so nothing was changed".
+            if (basketLineFor(items, matched.name) >= 0) {
+              console.log('[substitute-merge] SKIPPED — ' + JSON.stringify(matched.name) + ' is already a basket line; left to the LLM');
+              throw { skipMerge: true };
+            }
             let qtyToUse = 1;
             // Route through applyBasketSubstitute so the item is RESOLVED to a real catalog
             // product (productId/upc/establishmentId). This block used to hand-build the
@@ -4833,7 +4894,7 @@ app.post('/chat', async (req, res) => {
               (stillPending ? ' Still need a substitute for: ' + state.pendingSubstitutes.join(', ') + '.' : ' Would you like to place the order, generate a PDF proposal, or make any changes?');
             return res.json({ text: confirmReply, response: confirmReply });
           } catch (e) {
-            console.error('[substitute-merge] error:', e.message);
+            if (!(e && e.skipMerge)) console.error('[substitute-merge] error:', e.message);
             // Fall through to the normal LLM path on error rather than failing the turn.
           }
         }

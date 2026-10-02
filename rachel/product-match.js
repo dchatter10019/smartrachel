@@ -12,7 +12,11 @@
 // verdict(request, product) -> { kind: 'exact' | 'closest', note } — the note says what differs.
 
 const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
-  .replace(/['’`]/g, '').replace(/[^a-z0-9.]+/g, ' ').trim();
+  .replace(/['’`]/g, '')
+  // "N/A", "non-alcoholic", "non alcoholic" are one word: "na". Real bug (Oct 1, DC): "Athletic NA Beer" -> the pick
+  // "Athletic N/A Upside Dawn" "lacked na" (it read "n a"), so O'Doul's NA was put on the quote instead.
+  .replace(/\bn\s*\/\s*a\b|\bnon[\s-]*alcoholic\b/g, 'na')
+  .replace(/[^a-z0-9.]+/g, ' ').trim();
 
 // Spelling variants that must count as the same word.
 const SYN = { oktoberfest: 'octoberfest', pilsner: 'pilsener', pils: 'pilsener', cran: 'cranberry', margaritas: 'margarita',
@@ -25,7 +29,8 @@ const words = s => norm(s).split(/\s+/).map(canon).join(' ').split(/\s+/).filter
 // ("hard seltzer", "cider") are here too — catalog names often leave them out ("High Noon Variety Pool Pack").
 const FILLER = new Set(('a an the of and or with per case cases pack packs pk can cans bottle bottles btl btls oz ml l liter litre ' +
   'x ct count only include including please each assorted premium hard seltzer cider cocktail ' +
-  'from for in on to by our some any options ' +   // "Rose from Provence" (Oct 1, DC): the note said "no from in stock"
+  'from for in on to by our some any options ' +
+  'brewing brewery brewers company co winery cellars distillery ' +   // a maker's suffix: "Athletic Brewing" is "Athletic N/A ..." (Oct 1, DC)   // "Rose from Provence" (Oct 1, DC): the note said "no from in stock"
   'beer beers wine wines 750 12 16 24 30 15 18 4 6 8 9 10 11 20 36 48').split(' '));
 // Style words: what kind of drink was asked for. Missing one costs more than a missing brand word — a
 // Sun Cruiser Iced Tea is not "Sun Cruiser Lemonade"; a lemonade from another brand is closer.
@@ -38,7 +43,8 @@ const STYLE = ['seltzer', 'cider', 'tea', 'lemonade', 'margarita', 'cocktail', '
 const CHANGERS = ['seltzer', 'hard', 'cider', 'tea', 'lemonade', 'margarita', 'cocktail', 'platinum', 'lime', 'zero', 'non',
   'alcoholic', 'na', 'shandy', 'radler', 'lemon', 'grapefruit', 'mango', 'peach', 'cherry', 'orange', 'pineapple', 'watermelon',
   'berry', 'strawberry', 'imperial', 'double', 'spiced', 'flavored', 'pumpkin',
-  'octoberfest', 'winter', 'summer', 'holiday', 'rose', 'sparkling', 'stout', 'porter'];
+  'octoberfest', 'winter', 'summer', 'holiday', 'rose', 'sparkling', 'stout', 'porter',
+  'paloma', 'mule', 'spritz', 'mojito', 'daiquiri', 'sangria'];   // a mocktail/cocktail is not the beer (Athletic Paloma for "Athletic NA beer")
 const TYPE = STYLE;
 const SPIRIT_TYPE = new Set(['vodka', 'gin', 'rum', 'tequila', 'mezcal', 'whiskey', 'whisky', 'bourbon', 'scotch', 'rye', 'cognac', 'brandy', 'liqueur']);   // styleQuery uses the style words
 

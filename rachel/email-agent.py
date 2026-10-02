@@ -111,7 +111,20 @@ def reply_all_cc(email, sender_email):
             seen.add(a); out.append(a)
     return out
 
-def chat_with_rachel(message, session_id, sender_email, sender_name='', subject='', request_id=''):
+# The thread's first email not from Rachel = the customer's original request. Sent with every continuation so a
+# long thread never loses it (Oct 2, Goody: "take my original request" — Rachel no longer had it and asked to paste it).
+def thread_first_body(service, thread_id):
+    try:
+        t = service.users().threads().get(userId='me', id=thread_id, format='minimal').execute()
+        for m in t.get('messages', []):
+            e = get_email(service, m['id'])
+            if RACHEL_EMAIL.lower() not in e['from'].lower() and e['body']:
+                return e['body'][:20000]
+    except Exception as ex:
+        log.error(f'thread first email fetch failed ({thread_id[:8]}): {ex}')
+    return ''
+
+def chat_with_rachel(message, session_id, sender_email, sender_name='', subject='', request_id='', first_body=''):
     try:
         r = requests.post('http://127.0.0.1:3500/chat', json={
             'message': message,
@@ -124,6 +137,7 @@ def chat_with_rachel(message, session_id, sender_email, sender_name='', subject=
                 'user_email': sender_email,
                 'user_name': sender_name,      # From display name: the quote PDF's client fallback
                 'email_subject': subject,      # "... - Gen II Fund" names the client; "quote"/"proposal" asks for the PDF
+                'thread_first_body': first_body,   # the thread's first customer email (server keeps it as the original request)
                 'age_verified': True
             },
             'request_id': request_id           # the Gmail message id: a retry gets the SAME reply, never a second run
@@ -205,7 +219,7 @@ def chat_following_relink(email, session_id, sender_email, sender_name):
     # One email's reply, following a relink: the thread was asked "which proposal should I update?" and this
     # email answered it. The held email is replayed on the chosen quote's session, and the thread is mapped
     # there from now on. -> (reply text or None, the session the thread belongs to)
-    reply = chat_with_rachel(email['body'], session_id, sender_email, sender_name, email['subject'], email['id'])
+    reply = chat_with_rachel(email['body'], session_id, sender_email, sender_name, email['subject'], email['id'], email.get('first_body', ''))
     rl = LAST_RELINK
     if reply is None or not rl or not rl.get('session_id'):
         return reply, session_id
@@ -247,6 +261,7 @@ def process(service, email):
     # Check if this is a continuation of an existing thread
     if thread_id in THREAD_SESSIONS:
         session_id = THREAD_SESSIONS[thread_id]
+        email['first_body'] = thread_first_body(service, thread_id)
         rachel_response, linked = chat_following_relink(email, session_id, sender_email, sender_name)
         if not rachel_response:
             return _failed(service, email, sender_email, 'continuation')

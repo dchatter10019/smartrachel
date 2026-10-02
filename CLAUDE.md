@@ -20,7 +20,11 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   whose event date / venue / total matches, or the sender's only quote in 14 days). Several possible: the new
   thread asks "which proposal?" (numbered), holds the email, and the answer relinks the thread to that quote
   and replays it there (state.pendingLink; `relink` in the /chat reply). Replies attach the PDF by its real name. Server-side, email bodies are cut to
-  the new text + a forwarded message (email-body.js); quoted history never reaches Rachel.
+  the new text + a forwarded message (email-body.js); quoted history never reaches Rachel. The sender's signature is
+  cut too (stripSignature: "-- ", a line that is the From name, or a trailing contact block). The first real request
+  (a list) is kept as state.originalRequest and shown to the LLM every turn, with state.onHand. On every
+  continuation the agent sends the thread's first non-Rachel email (context.thread_first_body); a session with no
+  originalRequest takes it from there (threads older than the feature), and a later email never becomes the original.
   Replies are reply-all (To + Cc of the incoming email, minus rachelai@ and the sender).
 - Email orders (email-order.js, server.js EMAIL ORDER): "create/place the order", "payment link" in an email
   places the order in code (shopping-agent place_order, no LLM) and replies with the payment link. Contact =
@@ -69,7 +73,7 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 ## QA harness (rachel/qa/)
 - `qa/unit/*.test.js`: pure-logic unit tests on saved real replies (multi-pick resolver), run by every
   `precheck.sh` lint/deploy. Lint also enforces eslint no-use-before-define (runtime TDZ errors).
-- `./qa/run.py` every scenario in qa/scenarios/ (59 files on Oct 1); `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
+- `./qa/run.py` every scenario in qa/scenarios/ (72 files on Oct 2); `--smoke` pre-deploy subset (~3 min); `--only <name>`; `-v`.
 - Scenarios are YAML in qa/scenarios/. Assertions: contains / not_contains / matches / not_matches / log_contains / log_not_contains /
   pdf_contains / pdf_not_contains, plus a Haiku `judge` — prefer structural checks; the judge is
   unreliable on nuanced criteria. `transport: slack` (real DM as rachel_qa) and `transport: email`
@@ -145,6 +149,14 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - Edits to a quote the customer has (remove lines, "all beer in bottles", "only 1 case of X") are applied in
   code (quote-edits.js; email sessions or sessions with a proposal), listed back, PDF regenerated. An edit that
   also ADDS items goes to the LLM. An email quote request's reply + PDF are always built in code.
+- Stock the customer says they already have ("we have the below inventory from last time") is never ordered:
+  on-hand.js -> state.onHand, dropped from custom_list/menu_build in rachel.js ([on-hand] DROPPED) + noted (DC).
+  A generic type+size line ("tequila blanco 1.75L") gets a MID-priced product (median of the size matches, DC);
+  "a case" with no count = 24 units (a 12-pack is fine, DC); not wine/spirits. A smaller stand-in for a not-carried
+  line makes up its volume (Lemon Juice 1L -> 3 x 375 mL). A pick replaces the pending not-carried line of the same
+  kind (pending-original.js) — never pendingSubstitutes[0]. "N/A" = "NA" = non-alcoholic; "Brewing"/"Winery" are filler.
+- The LLM's generate_proposal/place_order use the LIVE basket (state.lastLineItems after this turn's edits) and the
+  saved event date/client when it omits them. In a client edit the LAST client statement wins ("it should be just Goody").
 - A placed order (API success only) leaves the cart → state.placedOrder; touching it asks reopen/new.
   Bevvi has no cancel API: a re-placed reopened order leaves the earlier one unpaid (logged).
 

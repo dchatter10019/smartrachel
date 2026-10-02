@@ -67,5 +67,12 @@ eq('the brand implies the type only when the product adds no words: Patron XO Ca
 eq('...nor Grey Goose Le Citron "Grey Goose Vodka"', verdict('Grey Goose Vodka', P('Grey Goose Le Citron - 750 ML')).kind, 'closest');
 eq('another brand of the type is still not it', verdict("Tito's Vodka", P('Smirnoff Vodka - 750 ML')).note, 'no titos in stock');
 
+// "N/A" = "NA" = non-alcoholic (Oct 1, DC): Athletic N/A was passed over for O'Doul's NA.
+eq('Athletic N/A is "Athletic NA Beer"', verdict('Athletic NA Beer 12-pack', P('Athletic N/A Upside Dawn Golden 12x12 OZ Can')).kind, 'exact');
+eq('non-alcoholic = NA', verdict('Heineken non-alcoholic', P('Heineken 0.0 N/A 6pk')).kind, 'exact');
+
+eq('"Athletic Brewing" = Athletic', verdict('Athletic Brewing Non-Alcoholic Beer', P('Athletic N/A Upside Dawn Golden 12x12 OZ Can')).kind, 'exact');
+eq('an Athletic Paloma is not the NA beer', verdict('Athletic Brewing Non-Alcoholic Beer', P('Athletic Non-Alcoholic Paloma 4pk 12oz Can')).kind, 'closest');
+
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');

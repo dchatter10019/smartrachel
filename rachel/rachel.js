@@ -364,6 +364,17 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             return { success: false, error: 'NEED_DURATION: the customer has not said how long the event is. Do NOT assume or default the hours. Ask exactly one question: "How long is the event? (e.g. 3 hours)" — then build with their answer.' };
           }
         }
+        // Stock the customer already has is not ordered (on-hand.js; DC, Oct 2) — the LLM put DC's on-hand wine in the list.
+        if ((saInput.intent === 'custom_list' || saInput.intent === 'menu_build') && Array.isArray(saInput.named_products) && sessionState && sessionState.onHand && sessionState.onHand.length) {
+          const OH = require('./on-hand.js');
+          const left = [];
+          saInput.named_products = saInput.named_products.filter(np => {
+            const o = OH.isOnHand(np && np.name, sessionState.onHand);
+            if (o) { left.push((o.qty ? o.qty + 'x ' : '') + o.name); console.log('[on-hand] DROPPED ' + JSON.stringify(np.name) + ' (customer already has ' + JSON.stringify(o.name) + ')'); }
+            return !o;
+          });
+          if (left.length) sessionState.replyNote = 'Not ordered — you already have: ' + left.join(', ') + '.';
+        }
         if (saInput.intent === 'custom_list' && Array.isArray(saInput.named_products)) {
           const splitMergedNamedProducts = (list) => {
             const out = [];
@@ -454,6 +465,19 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           if (dropped.length && sessionState) sessionState.replyNote = 'Left out, since your guests will drink ' + inCats.join(' and ') + ' only: ' + dropped.join(', ') + '.';
           console.log('[list-scale] custom_list: ' + kept.length + ' listed line(s) sized for ' + saInput.guests + ' guests / ' + (saInput.hours || '?') + 'h, mix ' + eventParams.serving_mix + (dropped.length ? ', ' + dropped.length + ' dropped' : ''));
         }
+        // The LIVE basket, not the one this turn started with. Real bug (Oct 1, DC's Goody quote): one LLM
+        // turn added lemon juice + simple syrup, then generated the proposal — the PDF had the turn-start
+        // basket (14 lines, $1,056.50) while the reply listed 16 lines, $1,123.22.
+        if (sessionState && sessionState.lastLineItems && sessionState.lastLineItems !== currentLineItems) {
+          console.log('[ShoppingAgent] basket changed earlier this turn — ' + saInput.intent + ' uses the live basket');
+          currentLineItems = sessionState.lastLineItems;
+        }
+        // The saved event date / client, as the in-code proposal reuses them. Same session: the LLM's
+        // generate_proposal sent no event_date and the PDF said "Event Date(s): —".
+        if (saInput.intent === 'generate_proposal' && sessionState) {
+          if (!saInput.event_date && sessionState.savedEventDate) { saInput.event_date = sessionState.savedEventDate; console.log('[proposal] saved event date added to the LLM proposal: ' + JSON.stringify(saInput.event_date)); }
+          if (!saInput.client_name && sessionState.savedClientName) saInput.client_name = sessionState.savedClientName;
+        }
         if ((saInput.intent === 'place_order' || saInput.intent === 'generate_proposal') && currentLineItems) {
           if (saInput.line_items && saInput.line_items !== currentLineItems) {
             console.log('[ShoppingAgent] overriding LLM-supplied line_items with authoritative current basket for', saInput.intent);
@@ -539,7 +563,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         // unrelated results are dropped (never presented as the product) and the original is kept on
         // the session, so "show me alternatives" can anchor to it (ALTERNATIVES ROUTING above).
         if (result.success && saInput.intent === 'product_query' && Array.isArray(result.results)) {
-          const GENERICW = /^(the|and|of|de|du|la|le|wine|wines|red|white|rose|rosé|sparkling|vineyard|vineyards|valley|estate|reserve|bottle|bottles|ml|l|oz|pack|case|chardonnay|cabernet|sauvignon|blanc|pinot|noir|grigio|gris|merlot|malbec|zinfandel|syrah|shiraz|riesling|champagne|prosecco|brut|vodka|gin|rum|tequila|whiskey|whisky|bourbon|scotch|beer|lager|ipa|seltzer|blanco|reposado|anejo|añejo|high|higher|end|top|shelf|premium|luxury|upscale|fancy|nice|good|best|great|cheap|budget|affordable|mid|quality|expensive|smooth|popular|regular|standard|classic|something|some|any)$/i;   // descriptors are not a producer: "high end whiskey" was flagged not-found (Sep 29) and hijacked every later search
+          const GENERICW = /^(the|and|of|de|du|la|le|wine|wines|red|white|rose|rosé|sparkling|vineyard|vineyards|valley|estate|reserve|bottle|bottles|ml|l|oz|pack|case|chardonnay|cabernet|sauvignon|blanc|pinot|noir|grigio|gris|merlot|malbec|zinfandel|syrah|shiraz|riesling|champagne|prosecco|brut|vodka|gin|rum|tequila|whiskey|whisky|bourbon|scotch|beer|lager|ipa|seltzer|blanco|reposado|anejo|añejo|high|higher|end|top|shelf|premium|luxury|upscale|fancy|nice|good|best|great|cheap|budget|affordable|mid|quality|expensive|smooth|popular|regular|standard|classic|something|some|any|brewing|brewery|breweries|brewers|brewer|company|winery|wineries|cellars|cellar|distillery|distillers|distilling|non|alcoholic|nonalcoholic)$/i;   // company suffixes too: "Athletic Brewing" was flagged not-found 3x (Oct 1, DC) — the catalog says "Athletic N/A ..."; descriptors are not a producer: "high end whiskey" was flagged not-found (Sep 29) and hijacked every later search
           const normW = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9' ]+/g, ' ');
           const notFound = [], checked = [];
           for (const r of result.results) {
@@ -614,6 +638,11 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             // Grouped by query label ("Prosecco", "Sauvignon Blanc") for options listed in a later proposal PDF.
             onProductDiscussed(saInput.email || '', JSON.stringify(asLineItems), saInput.channel, require('./proposal-options.js').groupsFromResult(saInput.queries, result));
           }
+        }
+        if (result.success && result.download_url && saInput.intent === 'generate_proposal' && sessionState) {
+          // The next proposal (in code) reuses what this PDF was billed to and dated.
+          if (saInput.client_name) sessionState.savedClientName = saInput.client_name;
+          if (result.event_date || saInput.event_date) sessionState.savedEventDate = result.event_date || saInput.event_date;
         }
         if (result.success && result.download_url && saInput.intent === 'generate_proposal' && onProposalGenerated) {
           onProposalGenerated(result.download_url);

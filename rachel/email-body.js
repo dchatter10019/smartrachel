@@ -39,4 +39,49 @@ function latest(body) {
   return { text, trimmed: j < lines.length, forwarded: true };
 }
 
-module.exports = { latest };
+// The sender's signature at the end of the new text. Real case (Oct 1, DC's Goody quote): every reply ended
+// "Dipanjan Chatterjee / CEO | Bevvi / getbevvi.com | @getbevvi" — it became part of the client name on two
+// PDFs ("Goody Dipanjan Chatterjee CEO |"), ~8 replies listed it as "I haven't done these yet", and picks
+// ("Ketel one") were read as 4-part messages.
+// Cut from: a "-- " marker; a line that is just the sender's name (from the From header) in the last
+// lines; else a short trailing contact block (url / phone / "|" / @handle) after a blank-line gap.
+// Never cuts the whole message.
+// stripSignature(text, senderName) -> { text, cut: '' | the removed block }
+const CONTACT = /(?:\b[a-z0-9-]+\.(?:com|io|co|net|org|ai)\b|https?:\/\/|\s\|\s|^\|| @\w|^@\w|\+?\d[\d\s().-]{8,}\d|^sent from my\b)/i;
+function stripSignature(text, senderName) {
+  const src = String(text || '');
+  const lines = src.replace(/\r/g, '').split('\n');
+  let end = lines.length; while (end > 0 && !lines[end - 1].trim()) end--;
+  if (!end) return { text: src, cut: '' };
+  let at = -1;
+  // 1. "-- " signature marker
+  for (let i = 1; i < end; i++) if (/^--\s*$/.test(lines[i])) { at = i; break; }
+  // 2. the sender's name alone on a line, within the last 8 non-empty lines
+  const nm = s => String(s || '').toLowerCase().replace(/[^a-z\s]/g, ' ').replace(/\s+/g, ' ').trim();
+  const name = nm(senderName);
+  if (at < 0 && name && name.split(' ').length >= 2) {
+    let seen = 0;
+    for (let i = end - 1; i > 0 && seen < 8; i--) {
+      if (!lines[i].trim()) continue; seen++;
+      if (nm(lines[i]) === name) { at = i; break; }
+    }
+  }
+  // 3. no name: a trailing block of <= 5 short lines, after 2+ blank lines, with a contact line in it
+  if (at < 0) {
+    let i = end - 1, n = 0;
+    while (i > 0 && n <= 6) {
+      if (!lines[i].trim()) { if (!lines[i - 1].trim()) break; i--; continue; }
+      n++; i--;
+    }
+    const start = i + 1, block = lines.slice(start, end).filter(l => l.trim());
+    const gap = i > 0 && !lines[i].trim() && !lines[i - 1].trim();
+    if (gap && block.length && block.length <= 5 && block.every(l => l.trim().length <= 60) && block.some(l => CONTACT.test(l.trim()))
+        && !block.some(l => /\b\d+\s*(?:x|×)\s|\bbottles?\b|\bcases?\b|\bpacks?\b/i.test(l))) at = start;
+  }
+  if (at <= 0) return { text: src, cut: '' };
+  const kept = lines.slice(0, at).join('\n').replace(/\s+$/, '');
+  if (!kept.trim()) return { text: src, cut: '' };
+  return { text: kept, cut: lines.slice(at, end).join('\n').trim() };
+}
+
+module.exports = { latest, stripSignature };

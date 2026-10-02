@@ -37,6 +37,9 @@ eq('already clean: still regenerated with the same date', pe('Can you please rem
   { date: 'October 6, 2026', why: 'cleaned the saved date "October 6, 2026"' });
 eq('"remove the date" = no date on the PDF', pe('please remove the date and resend', 'October 6, 2026'), { date: '', why: 'date removed' });
 eq('unrelated message', pe('add 2 more cases of Modelo'), null);
+eq('DC (Oct 1): pasted wrong Billed To + "it should be just Goody"', pe('Billed To:\nGoody Dipanjan Chatterjee CEO |\nBevvi getbevvi.com | @getbevvi\n\nit should be just Goody'), { client: 'Goody' });
+eq('pasted label line alone still read', pe('Billed To: Goody Inc\nplease fix'), { client: 'Goody Inc' });
+eq('"just X" with no client/bill-to word is not a client edit', pe('it should be just 2 bottles'), null);
 
 const fd = m => findEventDateIn(m, now);
 const quoteList = 'Hi,\r\n\r\nI need an alcohol menu quote that includes the below items.\r\n\r\nI am 21 years old. The delivery address is 100 Federal Street, Floor 6\r\nBoston, MA 02110\r\n\r\nItem Request:\r\n\r\n2 x Budlight (30 cans per case)\r\n2 Casamigos Margaritas Cocktail Cans (8 pack)\r\n2 x Sun Cruiser Ice tea Variety pack (18 cans per case)\r\n1 Oyster Bay Sauvignon Blanc, 2023\r\n\r\nThanks!\r\nSean';

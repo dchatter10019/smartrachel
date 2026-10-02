@@ -1,0 +1,20 @@
+name: email-goody-quote
+fresh: true
+tags: [email]
+# Real case (Oct 1, DC's "Goody alcohol order" email thread, 23 replies):
+# - the email signature ("Dipanjan Chatterjee / CEO | Bevvi / getbevvi.com") was read as part of every message: the
+#   PDF was billed to "Goody Dipanjan Chatterjee CEO |", replies said "I haven't done these yet: • CEO | Bevvi"
+# - the wine DC said they ALREADY HAVE ("we have the below inventory from last time") was charged on every PDF
+# - "Athletic N/A beer" became O'Doul's ("na" read as a second brand); Athletic was later called "not carried"
+# - "1 case bottled water" became 1 bottle (a case = 24, DC Oct 2); "tequila (blanco)" got $137 Don Julio (mid-priced now)
+format: plain
+context: {email_subject: "Goody alcohol order", user_name: "Dipanjan Chatterjee"}
+turns:
+  - send: "Can you help me with this request\r\n\r\nI am 21 years old.\r\n\r\n**Spirits**\r\n\r\n• 2 × 1.75L vodka\r\n\r\n• 3 × 1.75L tequila (blanco)\r\n\r\n• 1 × 750ml orange liqueur\r\n\r\n\r\n**Wine** we have the below inventory from last time if you can please\r\nadjust the proposal accordingly.\r\n\r\n\r\n\r\n   - 2 bottles La Crema pinot noir\r\n   - 1 bottle the prisoner\r\n   - 2 bottles conundrum white\r\n\r\n\r\n**Mixers & N/A (if you carry them)**\r\n\r\n• 1 × 12-pack Athletic N/A beer\r\n\r\n• 1 case bottled water\r\n\r\n\r\nDelivery to 332 Pine St, San Francisco 94104, ideally by Tue 10/6. Could\r\nyou send a revised proposal with what you can cover?\r\n\r\n\r\n\r\n\r\nDipanjan Chatterjee\r\nCEO | Bevvi\r\n\r\n\r\ngetbevvi.com | @getbevvi"
+    expect:
+      contains: ["24x FIJI"]
+      matches: "\\dx Athletic (?:N/A )?Upside Dawn"
+      not_contains: ["La Crema Pinot Noir Willamette", "Conundrum White -", "O'Doul", "Paloma", "CEO | Bevvi", "haven't done these yet"]
+      pdf_not_contains: ["CEO |", "getbevvi.com", "La Crema", "Conundrum", "Prisoner"]
+      log_contains: ["[email-body] signature cut", "[on-hand] customer already has: 2x La Crema pinot noir, 1x the prisoner, 2x conundrum white"]
+      log_not_contains: ["[not-found] \"Athletic"]

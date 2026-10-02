@@ -55,9 +55,22 @@ function normalizeEventDate(raw, now = new Date()) {
 function parseProposalFieldEdit(msg, savedDate, now = new Date()) {
   const s = String(msg || '');
   const out = {};
-  const cm = s.match(/\b(?:client(?:\s+name)?|company(?:\s+name)?|bill(?:ed)?\s+to)\b\s*(?:(?:should\s+(?:say|be)|to\s+be|be|is|as|to)\s*[:=-]?|[:=-])\s*["“']?([^\n"”]+?)["”']?\s*(?:[.;!]|,\s*(?:and|event|date)|\n|$)/i);
-  if (cm && !/^(?:changed?|updated?|the same|wrong|right)\b/i.test(cm[1].trim())) {
-    const c = cm[1].replace(SIGNOFF, '').trim();
+  // Every client statement; the LAST one wins. Real bug (Oct 1, DC's Goody quote): DC pasted the PDF's wrong
+  // "Billed To:\nGoody Dipanjan Chatterjee CEO |" and wrote "it should be just Goody" under it — the pasted
+  // line was taken as the new client and the PDF regenerated with it again.
+  const cands = [];
+  const LABEL = /\b(?:client(?:\s+name)?|company(?:\s+name)?|bill(?:ed)?\s+to)\b[ \t]*(?:(?:should\s+(?:say|be)|to\s+be|be|is|as|to)[ \t]*[:=-]?|[:=-])\s*["“']?([^\n"”]+?)["”']?\s*(?:[.;!]|,\s*(?:and|event|date)|\n|$)/gi;
+  let cm;
+  while ((cm = LABEL.exec(s))) cands.push({ at: cm.index, v: cm[1] });
+  // "it should be just Goody" — a correction of a client already named in the message
+  if (cands.length || /\b(?:client|company|bill(?:ed)?\s+to)\b/i.test(s)) {
+    const CORR = /\b(?:it|that|this|name|should)\s+(?:should\s+)?(?:just\s+)?(?:be|say|read)\s+(?:just|only|simply)\s+["“']?([^\n"”]+?)["”']?\s*(?:[.;!]|\n|$)/gi;
+    while ((cm = CORR.exec(s))) cands.push({ at: cm.index, v: cm[1] });
+  }
+  cands.sort((a, b) => a.at - b.at);
+  const last = cands.filter(x => !/^(?:changed?|updated?|the same|wrong|right)\b/i.test(x.v.trim())).pop();
+  if (last) {
+    const c = last.v.replace(SIGNOFF, '').trim();
     if (c && c.length <= 80) out.client = c;
   }
   if (/\b(?:event\s+)?dates?\b/i.test(s)) {
