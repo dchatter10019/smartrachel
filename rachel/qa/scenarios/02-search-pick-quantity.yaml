@@ -1,5 +1,5 @@
 name: search-pick-quantity
-tags: [smoke]
+tags: [smoke, prodcheck]
 turns:
   - send: reset
   - send: "yes"

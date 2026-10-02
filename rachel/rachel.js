@@ -775,9 +775,29 @@ RULES:
   // context.order_change_note (set by server.js for this turn) was never injected anywhere —
   // the "changed at confirm" instruction was silently dropped. It now reaches the model.
   const orderNote = context && context.order_change_note ? '\n\n## THIS TURN\n' + context.order_change_note : '';
-  const fullSystem = address_rule + (gbrain_context
-    ? systemPrompt + '\n\n## CUSTOMER CONTEXT FROM MEMORY\n' + gbrain_context + channelNote
-    : systemPrompt + channelNote) + orderNote;
+  // Prompt caching (Oct 2, DC: "how can we reduce token usage"): the ~13k-token prompt was re-sent uncached on every
+  // call, several per turn. Block 1 = the prompt + channel notes — the same for this customer on every call — is cached;
+  // block 2 = what changes per turn (address/basket rules, memory, this turn's note) follows it uncached.
+  // A list of 2+ quantity-led products in the customer's message is built with custom_list — not looked up one by one.
+  // Real (Oct 2 QA, cta-sub-named): "2 Grey Goose Vodka 3.5 L / 3 Tito's 750ml" got two product_query calls and an
+  // LLM-written reply, so the in-code list reply (sizes, substitutes, totals) never ran.
+  const listLines = String(customerMessage || '').split(/\r?\n/).filter(l => /^\s*(?:[-•*·]\s*)?\d{1,3}\s*(?:x|×)?\s+[A-Za-z]/i.test(l));
+  const listNote = listLines.length >= 2 ? '## THIS TURN — A PRODUCT LIST\nThe customer listed ' + listLines.length + ' products with quantities. Call ShoppingAgent intent="custom_list" with ALL of them in named_products (each with its qty) — not product_query per item.' : '';
+  if (listNote) console.log('[list-note] ' + listLines.length + ' quantity-led lines — the LLM is told to use custom_list');
+  const systemBlocks = [
+    { type: 'text', text: systemPrompt + channelNote, cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: [address_rule, gbrain_context ? '## CUSTOMER CONTEXT FROM MEMORY\n' + gbrain_context : '', orderNote, listNote].filter(x => String(x || '').trim()).join('\n\n') || '(no session notes)' }
+  ];
+  // The conversation so far is cached too: each tool-loop iteration re-sends it plus one tool result.
+  const withHistoryCache = msgs => {
+    if (!msgs.length) return msgs;
+    const out = msgs.slice(), last = Object.assign({}, out[out.length - 1]);
+    const c = typeof last.content === 'string' ? [{ type: 'text', text: last.content }] : (Array.isArray(last.content) ? last.content.map(b => Object.assign({}, b)) : null);
+    if (!c || !c.length) return msgs;
+    c[c.length - 1] = Object.assign({}, c[c.length - 1], { cache_control: { type: 'ephemeral' } });
+    last.content = c; out[out.length - 1] = last;
+    return out;
+  };
 
   let claudeMessages = [...messages];
   // Everything the customer has said this conversation (tool guards check stated facts against it, e.g. event hours).
@@ -795,12 +815,16 @@ RULES:
       model: 'claude-sonnet-4-6',
       max_tokens: 4096,
       temperature: 0.3,
-      system: fullSystem,
+      system: systemBlocks,
       tools,
-      messages: claudeMessages
+      messages: withHistoryCache(claudeMessages)
     });
 
     console.log(`[rachel] iteration ${iterations} stop_reason: ${response.stop_reason}`);
+    try {
+      const u = response.usage || {};
+      console.log('[usage] rachel iteration ' + iterations + ': input ' + (u.input_tokens || 0) + ', cache read ' + (u.cache_read_input_tokens || 0) + ', cache write ' + (u.cache_creation_input_tokens || 0) + ', output ' + (u.output_tokens || 0));
+    } catch (e) {}
 
     if (response.stop_reason === 'end_turn') {
       const textBlock = response.content.find(b => b.type === 'text');

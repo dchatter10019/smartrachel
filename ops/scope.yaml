@@ -1,0 +1,41 @@
+# Debug-and-fix loop — what the fixer may FIX (on a branch, still needs DC's ✅ to deploy) vs only DIAGNOSE.
+# DC edits this file. Nothing moves from diagnose to fix without a commit here. Anything not clearly fixable = diagnose.
+
+# Finding detectors the fixer may try to fix (the rest are posted as diagnoses with their evidence)
+fix_detectors: [crash, stuck_turn, unmatched_spike, resolver_miss, qa_fail, stuck_session, upstream_error]
+diagnose_detectors: [llm_error, latency, slow_turn, escalation_request, watchdog_alert]
+
+# Kinds of change it may make (the prompt tells the fixer; the diff check below enforces the paths)
+may_fix:
+  - "Product matching: synonyms, brand spellings, size/pack parsing, the multi-pick resolver, catalog-name normalisation"
+  - "Crash and error handling: unhandled exceptions, missing null checks, timeouts, non-JSON responses from Bevvi's API"
+  - "Deterministic routing bugs where a QA scenario shows the wrong path was taken"
+  - "Harness and scenario problems: flaky assertions, a judge criterion that should be structural, log-capture gaps"
+  - "Channel-bot plumbing: chunking, formatting, media download, retry logic"
+  - "Performance: an obviously slow path with a measurable fix"
+diagnose_only:
+  - "Anything in prompt.md"
+  - "The age gate, address coverage rules, order placement, payment, proposal pricing"
+  - "CTA wording, or any text that mentions price, discounts or drinks per person"
+  - "Changes to /etc, systemd units, nginx, secrets, or third-party account settings"
+  - "A fix that would change what more than 3 existing scenarios expect"
+
+# A fix branch whose diff touches any of these is REFUSED (ops/fixer.sh and ops/deploy-fix.sh check git diff --name-only)
+protected_paths:
+  - rachel/prompt.md
+  - rachel/email-order.js          # order placement by email
+  - rachel/staging.js              # staging's dry-run guards
+  - rachel/email-utils.js          # sending email
+  - rachel/data-dir.js             # production state location
+  - precheck.sh
+  - ops/
+  - .gitignore
+  - CLAUDE.md
+# Regions inside otherwise-fixable files: a diff hunk touching a line that matches one of these is refused
+protected_patterns:
+  - "parseAgeAnswer"
+  - "ageVerified|age_verified|AGE GATE|age gate"
+  - "place_order|createCorpOrder|payment_url|payByLink|dry_run"
+  - "isQA"
+
+max_scenarios_changed: 3

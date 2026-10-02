@@ -26,6 +26,6 @@ turns:
   - send: "show my basket"
     expect:
       # 4x Conundrum kept, and never wiped: the first build's spirits are still there (the orange liqueur varies)
-      matches: "(?ims)^\\s*4x Conundrum White(?=.*vodka)(?=.*tequila)|vodka.*tequila.*^\\s*4x Conundrum White"
+      matches: "(?ims)\\A(?=.*vodka)(?=.*tequila)(?=.*^\\s*4x Conundrum White)"
       contains: ["Product total"]
       log_not_contains: ["on-hand DROPPED from the basket: 4x Conundrum"]

@@ -1,0 +1,27 @@
+# Rachel monitor (ops/monitor.py) — detector thresholds. Debug-and-Fix Loop spec, Part A.
+# Tune with: ops/monitor.py --replay <logfile>   (DC edits this file; changes take effect on the monitor's next start)
+
+poll_seconds: 30
+dedupe_days: 7            # a repeat within this many days updates count/last_seen on the open finding
+evidence_lines: 40        # cap per finding
+
+services: [rachel, shopping-agent, rachel-email, rachel-slack, rachel-whatsapp, rachel-mcp]
+deploy_grace_minutes: 15  # a restart within this long of a precheck.sh deploy log is expected, not a crash
+
+detectors:
+  crash:               {severity: critical}
+  upstream_error:      {severity: high,   count: 3, window_minutes: 10}
+  llm_error:           {severity: high,   count: 3, window_minutes: 10}
+  stuck_turn:          {severity: high}                                   # Rachel's [stuck-turn] watchdog: a turn running 120s+ with no reply
+  slow_turn:           {severity: high,   seconds: 60}                     # one customer turn over this (QA excluded)
+  unmatched_spike:     {severity: medium, count: 5, window_hours: 24}      # same product string unavailable (customers only)
+  resolver_miss:       {severity: medium, count: 3, window_hours: 24}
+  stuck_session:       {severity: medium, same_state_turns: 4, repeat_message: 2}
+  latency:             {severity: medium, median_seconds: 20, window_minutes: 60, min_turns: 5}
+  qa_fail:             {severity: high}
+  escalation_request:  {severity: info}
+  watchdog_alert:      {severity: high}   # the 03:15 nightly-watchdog.js reported a failed check
+
+# Slack: critical findings post immediately once these are set in /etc/rachel.env (DC provides the channel):
+#   OPS_SLACK_CHANNEL (+ the existing SLACK_BOT_TOKEN). Until then alerts are logged only.
+critical_immediate: true

@@ -6,7 +6,9 @@ GBrain lookup: email first, then display name, then Slack user ID
 """
 
 import os
+import re
 import json
+import subprocess
 import logging
 import threading
 import httpx
@@ -319,6 +321,57 @@ def handle_message(event, say, client, ack=None):
     if channel == RACHEL_CHANNEL_ID:
         handle(event, say, client)
         return
+
+
+# ── DEBUG-AND-FIX LOOP: ✅ / ❌ on a fixer post in #rachel-ops (spec Part D) ───────────────────────────────────
+# Inactive until /etc/rachel.env has OPS_SLACK_CHANNEL and OPS_APPROVERS (comma-separated Slack user ids), and the
+# Slack app subscribes to reaction_added (reactions:read). ✅ by an approver runs ops/deploy-fix.sh <id> (staging-first
+# deploy, rollback on failure) and replies in the thread; ❌ discards the branch. Anyone else gets "only approvers can
+# deploy." Thread replies are for people — the fixer does not converse. The post's finding id is read from its text.
+OPS_CHANNEL   = os.environ.get("OPS_SLACK_CHANNEL", "")
+OPS_TEST      = os.environ.get("OPS_TEST_CHANNEL", "")
+OPS_APPROVERS = {u.strip() for u in os.environ.get("OPS_APPROVERS", "").split(",") if u.strip()}
+_fix_runs = set()
+
+@app.event("reaction_added")
+def handle_reaction(event, client, ack=None):
+    if ack:
+        ack()
+    item = event.get("item") or {}
+    ch, ts, user, name = item.get("channel", ""), item.get("ts", ""), event.get("user", ""), event.get("reaction", "")
+    if not OPS_CHANNEL or ch not in (OPS_CHANNEL, OPS_TEST) or name not in ("white_check_mark", "heavy_check_mark", "x"):
+        return
+    try:
+        msg = client.conversations_history(channel=ch, latest=ts, inclusive=True, limit=1)["messages"][0]
+    except Exception as e:
+        log.warning(f"[fix-review] could not read the reacted message: {e}"); return
+    m = re.search(r"(?:Fix ready|Needs a decision) — (F-\d{4})", msg.get("text", ""))
+    if not m or "Fix ready" not in msg.get("text", ""):
+        return
+    fid = m.group(1)
+    if user not in OPS_APPROVERS:
+        client.chat_postMessage(channel=ch, thread_ts=ts, text="Only approvers can deploy or discard a fix.")
+        log.info(f"[fix-review] {fid}: :{name}: by {user} — not an approver"); return
+    if fid in _fix_runs:
+        return
+    _fix_runs.add(fid)
+    def run():
+        try:
+            if name == "x":
+                r = subprocess.run(["bash", "-c", f"cd /home/ubuntu && git worktree remove --force work/{fid} 2>/dev/null; git branch -D fix/{fid} && python3 -c \"import sys;sys.path.insert(0,'ops');import monitor as M;s=M.Store();[f.update(status='discarded') for f in s.items if f['id']=='{fid}'];s._save()\""], capture_output=True, text=True, timeout=60)
+                out = f"🗑️ Discarded {fid} — branch removed." if r.returncode == 0 else f"⚠️ Discard of {fid} hit a problem: {(r.stderr or r.stdout)[-200:]}"
+            else:
+                client.chat_postMessage(channel=ch, thread_ts=ts, text=f"Deploying {fid} — staging first, then production (≈5 min)…")
+                r = subprocess.run(["/home/ubuntu/ops/deploy-fix.sh", fid], capture_output=True, text=True, timeout=1800)
+                out = (r.stdout.strip().split("\n") or ["(no output)"])[-1]
+            client.chat_postMessage(channel=ch, thread_ts=ts, text=out)
+            log.info(f"[fix-review] {fid}: :{name}: by {user} -> {out[:160]}")
+        except Exception as e:
+            log.warning(f"[fix-review] {fid} failed: {e}")
+            client.chat_postMessage(channel=ch, thread_ts=ts, text=f"⛔ {fid}: {e}")
+        finally:
+            _fix_runs.discard(fid)
+    threading.Thread(target=run, daemon=True).start()
 
 
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────

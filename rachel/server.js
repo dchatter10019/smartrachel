@@ -115,11 +115,28 @@ app.use(express.json({ limit: '25mb' }));   // base64 photos of order lists
 // In-flight chats, so a restart finishes them instead of cutting them off. Real case (Sep 30): a deploy restarted
 // rachel 11s into DC's Slack message ("Lillet Blanc -> find a sparkling wine...") and he got "I hit a snag".
 // precheck.sh waits for /internal/inflight to reach 0 before restarting; SIGTERM drains what is left.
-let INFLIGHT = 0, HTTP_SERVER = null;
+let INFLIGHT = 0, HTTP_SERVER = null;   // TURNS / TURN_SEQ (the stuck-turn watchdog) are declared just below
 app.use((req, res, next) => {
-  if (req.path === '/chat') { INFLIGHT++; let done = false; const fin = () => { if (!done) { done = true; INFLIGHT--; } }; res.on('finish', fin); res.on('close', fin); }
+  if (req.path === '/chat') {
+    INFLIGHT++; let done = false; const id = ++TURN_SEQ;
+    TURNS.set(id, { t0: Date.now(), session: String((req.body && req.body.session_id) || '?'), msg: String((req.body && req.body.message) || '').slice(0, 80) });
+    const fin = () => { if (!done) { done = true; INFLIGHT--; TURNS.delete(id); } }; res.on('finish', fin); res.on('close', fin);
+  }
   next();
 });
+// A turn that hangs leaves no trace — no reply, no event (Oct 2 QA, already-in-basket: "let's go with Tito's 750 ml"
+// logged its classification and then nothing for 5+ minutes). Every 30s: a turn running over 120s is logged ONCE as
+// [stuck-turn] (the monitor turns it into a finding). Logging only — the turn itself is left to finish or fail.
+const TURNS = new Map(); let TURN_SEQ = 0;
+setInterval(() => {
+  const now = Date.now();
+  for (const [, t] of TURNS) {
+    if (!t.flagged && now - t.t0 > 120000) {
+      t.flagged = true;
+      console.log('[stuck-turn] ' + t.session + ' running ' + Math.round((now - t.t0) / 1000) + 's, no reply yet: ' + JSON.stringify(t.msg) + (/^qa-/i.test(t.session) ? ' «' + t.session + '»' : ''));
+    }
+  }
+}, 30000).unref();
 app.get('/internal/inflight', (req, res) => res.json({ inflight: INFLIGHT }));
 // QA sessions: tag every log line of the request with the session (rachel/log-tag.js), so the QA
 // runner can run scenarios in parallel and still assert on just its own log lines.
@@ -2810,6 +2827,13 @@ app.post('/chat', async (req, res) => {
                 else t = t.trimEnd() + bk;
                 console.log('[reply] basket changed, reply did not list it — full basket ' + (turn.question ? 'put before the closing question' : 'appended'));
               }
+            }
+            // An order placed this turn: the reply MUST carry its payment link — never left to the LLM. Real (Oct 2 QA,
+            // order-flow): "Your order is placed! 🎉 ... Cheers!" with no link; the customer had no way to pay.
+            if (turn.kind === 'order_placed' && st.placedOrder && st.placedOrder.payment_url && t.indexOf(st.placedOrder.payment_url) < 0) {
+              const pu = st.placedOrder.payment_url;
+              t = t.trimEnd() + '\n\nPayment link: ' + (format === 'slack' ? '<' + pu + '|pay here>' : pu) + ' — the order is confirmed once it\'s paid.';
+              console.log('[order] placed-order reply had no payment link — added in code (' + st.placedOrder.order_id + ')');
             }
             // The customer holds a proposal PDF that this change makes stale: say so. Real bug (Oct 1, DC): Cointreau went
             // in after the Foodie For All PDF was sent; nothing said the PDF still had the Remy Martin.

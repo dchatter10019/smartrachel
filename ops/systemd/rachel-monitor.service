@@ -1,0 +1,21 @@
+# Rachel monitor (ops/monitor.py) — debug-and-fix loop, Part A. Pure detection: reads logs/, events.jsonl, QA results
+# and service state; writes logs/findings.jsonl; posts critical findings to OPS_SLACK_CHANNEL once it is set.
+# Install (DC): sudo cp /home/ubuntu/ops/systemd/rachel-monitor.service /etc/systemd/system/ &&
+#               sudo systemctl daemon-reload && sudo systemctl enable --now rachel-monitor
+# Stop findings: sudo systemctl stop rachel-monitor   (Rachel is unaffected either way)
+[Unit]
+Description=Rachel monitor (findings from logs, events, QA, services)
+After=network.target rachel.service
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu
+ExecStart=/usr/bin/python3 /home/ubuntu/ops/monitor.py
+Restart=on-failure
+RestartSec=30
+StandardOutput=append:/home/ubuntu/logs/monitor.log
+StandardError=append:/home/ubuntu/logs/monitor.log
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

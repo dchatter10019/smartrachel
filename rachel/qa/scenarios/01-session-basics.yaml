@@ -1,5 +1,5 @@
 name: session-basics
-tags: [smoke]
+tags: [smoke, prodcheck]
 fresh: true
 turns:
   - send: reset

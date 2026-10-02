@@ -48,6 +48,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   session: POST localhost:3500/internal/session-basket {session_id, from_proposal}). nginx /proposals/ serves
   ONLY bevvi-proposal*.pdf (sites rachel AND bevvi-support; until Sep 29 it served all of logs/). Address geocoding: Google Maps (geocodeAddress in server.js).
 - Logs: /home/ubuntu/logs/ (rachel.log, shopping-agent.log, ...). Journal is NOT where bots log.
+- Token use: Rachel's main call caches its system prompt (block 1 = prompt.md + channel notes, cached; block 2 =
+  address/basket rules, memory, this turn's note) and the conversation (last message). Every call logs
+  `[usage] rachel iteration N: input, cache read, cache write, output`. The classifier prompt is too small to cache.
 - Rachel's state (flow-state.json, chat-sessions.json, conversations.jsonl, baskets.json, customer-contacts.json,
   events.jsonl) lives in RACHEL_DATA_DIR (rachel/data-dir.js; default /home/ubuntu/logs). A Rachel on any port but
   3500 REFUSES to start on the production dir — a second instance would rewrite live sessions.
@@ -74,9 +77,11 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
    restarts on HEAD and re-smokes. Never a bare `systemctl restart`. It waits for rachel's in-flight chats
    (/internal/inflight) before restarting, and rachel finishes running chats on SIGTERM (max 80s). Deploy BEFORE committing — a clean
    tree has nothing to roll back. Plain `precheck.sh` = lint only; `--smoke` tests the live service.
-   `precheck.sh --deploy --stage-first` (the default to use): smoke on staging from the working tree FIRST — a change
-   that fails there never restarts production. DC (Oct 2): deploy without asking, then run the FULL suite
-   (`./qa/run.py`) against production, fix/revert anything newly failing, then commit + push.
+   `precheck.sh --deploy --stage-first` (the default to use): the 22-scenario smoke set on staging from the working tree
+   FIRST — a change that fails there never restarts production; production then gets only the 4-scenario `prodcheck`
+   set (tag prodcheck; `qa/run.py --tag <t>`). DC (Oct 2): deploy without asking; run the FULL suite (`./qa/run.py`)
+   once per BATCH of deploys (not after each one — token cost), fix/revert anything newly failing, then commit + push.
+   Don't run staging and a production full suite at the same time (shared box; turns time out).
 2. Ask DC before running anything that places a real order, sends a real email/message, or changes
    systemd units, nginx, or secrets.
 3. Commit with a message that names the real bug and the fix; `git push` after. Commit scope: rachel/,
@@ -89,6 +94,15 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
    picks), handle it in code and log the decision. The LLM narrates; it does not decide.
 7. Log the reason for every discard/refusal (e.g. '[buildPackage] UNAVAILABLE (size mismatch)').
    A silent drop is a bug.
+
+## Debug-and-fix loop (spec: "Rachel — Automated Debug-and-Fix Loop", Sep 29)
+- Step 1 staging: done (see Staging above). Step 2 monitor: ops/monitor.py (thresholds ops/monitor.yaml) reads the logs,
+  events.jsonl, qa/runs/*/summary.json, the watchdog log and the six services' state; appends findings to
+  logs/findings.jsonl (deduped 7 days; evidence redacted). `ops/monitor.py --status` lists open findings, `--replay <log>`
+  tunes thresholds, `--once` one pass. Customer-facing detectors skip QA (tag «qa-», events qa:true, qa- session ids).
+  Runs as rachel-monitor (unit in ops/systemd/, installed by DC). Critical findings post to OPS_SLACK_CHANNEL once set.
+  ops/tests/monitor_test.py runs in the nightly QA. Interactive sessions: check `ops/monitor.py --status` first.
+- Steps 3 (fixer) and 4 (Slack review/deploy): not built yet.
 
 ## QA harness (rachel/qa/)
 - `qa/unit/*.test.js`: pure-logic unit tests on saved real replies (multi-pick resolver), run by every

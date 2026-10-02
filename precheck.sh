@@ -27,6 +27,9 @@ lint() {
     node --check "$f" 2>/dev/null || { echo "SYNTAX ERROR: $f"; fail=1; }
   done
   python3 -m py_compile rachel/email-agent.py 2>/dev/null || { echo "SYNTAX ERROR: rachel/email-agent.py"; fail=1; }
+  python3 -m py_compile rachel/rachel_slack_bot.py 2>/dev/null || { echo "SYNTAX ERROR: rachel/rachel_slack_bot.py"; fail=1; }
+  python3 -m py_compile ops/monitor.py ops/fixer.py 2>/dev/null || { echo "SYNTAX ERROR: ops/*.py"; fail=1; }
+  python3 ops/tests/monitor_test.py >/dev/null 2>&1 || { echo "UNIT TEST FAILED: ops/tests/monitor_test.py"; fail=1; }
   out=$(npx --yes eslint@8 --no-eslintrc --parser-options=ecmaVersion:2022 --env node,es2022 \
     --rule '{"no-const-assign":"error","no-dupe-keys":"error","no-undef":"error","no-use-before-define":["error",{"functions":false,"classes":false,"variables":false}]}' $FILES 2>&1 | grep -E "no-const-assign|no-dupe-keys|no-undef|no-use-before-define")
   # no-use-before-define: a const/let read before its declaration throws at RUNTIME only
@@ -47,11 +50,14 @@ lint() {
   return $fail
 }
 
-# smoke <label>: QA smoke set against the live service; full output kept in logs/.
+# smoke <label>: QA smoke set against the live service; full output kept in logs/. After the change already passed the
+# full smoke set on staging (--stage-first), production only gets the short prodcheck set (4 scenarios, ~1 min):
+# the code was proven on staging; production needs "did it come up and do the basics work" (DC, Oct 2: token cost).
 smoke() {
-  local log="/home/ubuntu/logs/deploy-$STAMP-$1.log" rc
-  echo "Running QA smoke set ($1)... full output: $log"
-  (cd /home/ubuntu/rachel && ./qa/run.py --smoke) > "$log" 2>&1; rc=$?
+  local log="/home/ubuntu/logs/deploy-$STAMP-$1.log" rc sel="--smoke" what="smoke set"
+  if [ "$1" = deploy ] && [ "${STAGED_OK:-0}" = 1 ]; then sel="--tag prodcheck"; what="prodcheck set (smoke already passed on staging)"; fi
+  echo "Running QA $what ($1)... full output: $log"
+  (cd /home/ubuntu/rachel && ./qa/run.py $sel) > "$log" 2>&1; rc=$?
   grep -v "^       " "$log" | tail -6
   if [ "${DEPLOY_FORCE_SMOKE_FAIL:-}" = "1" ] && [ "$1" = "deploy" ]; then
     echo "(DEPLOY_FORCE_SMOKE_FAIL=1: treating this smoke run as failed)"; rc=1
@@ -63,7 +69,7 @@ smoke() {
 up() {
   local svc=$1 url i
   # rachel-email has no HTTP port: up = still active 10 s after the restart (catches a crash at startup).
-  if [ "$svc" = rachel-email ]; then sleep 10; systemctl is-active --quiet "$svc"; return $?; fi
+  if [ "$svc" = rachel-email ] || [ "$svc" = rachel-slack ]; then sleep 10; systemctl is-active --quiet "$svc"; return $?; fi
   case $svc in rachel) url=http://127.0.0.1:3500/health ;; shopping-agent) url=http://127.0.0.1:8300/ ;; esac
   for i in $(seq 1 30); do
     if [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "$url")" != "000" ]; then
@@ -147,11 +153,13 @@ deploy() {
   echo "$DIRTY" | grep -qE " store-agent/| rachel/(functions|package-model|brand-lists|generate-proposal|product-match)\.js" && svcs+=(shopping-agent)
   # The email agent (rachel/email-agent.py) is its own service.
   echo "$DIRTY" | grep -q " rachel/email-agent\.py" && svcs+=(rachel-email)
+  # The Slack bot (rachel/rachel_slack_bot.py) is its own service too.
+  echo "$DIRTY" | grep -q " rachel/rachel_slack_bot\.py" && svcs+=(rachel-slack)
   [ ${#svcs[@]} -eq 0 ] && svcs=(rachel)
   echo "Deploy $STAMP: HEAD $(git rev-parse --short HEAD), services: ${svcs[*]}"
   if [ -n "$DIRTY" ]; then echo "Uncommitted changes being deployed:"; echo "$DIRTY"; else echo "Working tree clean under $SCOPE (deploying HEAD)."; fi
   lint || { echo "=== DEPLOY ABORTED: lint failed, nothing restarted ==="; exit 1; }
-  if [ "${STAGE_FIRST:-0}" = 1 ]; then stage_first "${svcs[@]}" || { echo "=== DEPLOY ABORTED: the change failed on staging — production untouched ==="; exit 1; }; fi
+  if [ "${STAGE_FIRST:-0}" = 1 ]; then stage_first "${svcs[@]}" || { echo "=== DEPLOY ABORTED: the change failed on staging — production untouched ==="; exit 1; }; STAGED_OK=1; fi
   restart "${svcs[@]}" || rollback "${svcs[@]}"
   smoke deploy || rollback "${svcs[@]}"
   echo "=== DEPLOY OK: ${svcs[*]} restarted and smoke passed ==="

@@ -1,0 +1,64 @@
+#!/usr/bin/env python3
+"""Monitor detectors on canned lines (Debug-and-Fix Loop spec, "Testing the loop"): every detector produces its finding,
+repeats dedupe, QA traffic never trips a customer-facing detector, evidence is redacted. Writes nothing outside /tmp."""
+import json, os, sys, tempfile, yaml
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+import monitor as M
+
+cfg = yaml.safe_load(open(os.path.join(os.path.dirname(__file__), '..', 'monitor.yaml')))
+tmp = tempfile.mktemp(suffix='.jsonl')
+store = M.Store(path=tmp)
+mon = M.Monitor(cfg, store)
+fails = 0
+def check(label, cond):
+    global fails
+    print(('  ✓ ' if cond else '  ✗ ') + label); fails += 0 if cond else 1
+def found(det): return [f for f in store.items if f['detector'] == det]
+T = 1_800_000_000
+
+# crash: one finding for the same error in two sessions; count 2
+mon.text_line('rachel', "[rachel] error: TypeError: Cannot read properties of undefined (reading 'qty') «qa-a-1»", T)
+mon.text_line('rachel', "[rachel] error: TypeError: Cannot read properties of undefined (reading 'qty')", T + 5)
+check('crash: a stack/TypeError line is a critical finding', len(found('crash')) == 1 and found('crash')[0]['severity'] == 'critical')
+check('crash: the same error again dedupes (count 2, one finding)', found('crash')[0]['count'] == 2)
+# upstream: 3 Bevvi 503s in 10 min
+for i in range(3): mon.text_line('shopping-agent', '[searchProducts] HTTP 503 — retry 1/2', T + i * 60)
+check('upstream_error: 3 Bevvi 503s in 10 min', len(found('upstream_error')) == 1)
+# 2 503s spread over an hour: nothing new
+for i in range(2): mon.text_line('shopping-agent', '[searchProducts] HTTP 503 — retry 1/2', T + 4000 + i * 1800)
+check('upstream_error: 2 in an hour do not trip it', found('upstream_error')[0]['count'] == 1)
+# llm
+for i in range(3): mon.text_line('rachel', '[classify] other (0.7) [llm(sonnet:fetch failed(retried))] | "hi"', T + i)
+check('llm_error: 3 API errors in 10 min', len(found('llm_error')) == 1)
+# slow turn + latency, customers only
+mon.event({'session': 'slack-x', 'channel': 'slack', 'qa': False, 'latency_ms': 75000, 'state_out': 'ready'}, T)
+mon.event({'session': 'qa-y', 'channel': 'slack', 'qa': True, 'latency_ms': 300000, 'state_out': 'ready'}, T)
+check('slow_turn: a customer turn over 60 s; a QA turn never', len(found('slow_turn')) == 1 and 'qa-y' not in found('slow_turn')[0]['sessions'])
+for i in range(5): mon.event({'session': 'email-z', 'channel': 'email', 'qa': False, 'latency_ms': 25000, 'state_out': 'ready'}, T + i * 60)
+check('latency: email median over 20 s for 5+ turns', len(found('latency')) == 1)
+# unmatched: same product 5x for customers, QA ignored
+for i in range(5): mon.event({'session': 's%d' % i, 'channel': 'email', 'qa': False, 'unmatched': ['Casamigos Blanco'], 'state_out': 'ready'}, T + i)
+for i in range(9): mon.event({'session': 'q%d' % i, 'channel': 'email', 'qa': True, 'unmatched': ['Paul Hobbs'], 'state_out': 'ready'}, T + i)
+check('unmatched_spike: a product unavailable 5x for customers', len(found('unmatched_spike')) == 1 and 'casamigos blanco' in found('unmatched_spike')[0]['summary'])
+check('unmatched_spike: QA unavailable products never count', not any('paul hobbs' in f['summary'] for f in found('unmatched_spike')))
+# stuck session: same non-ready state 4 turns; a repeated message
+for i in range(4): mon.event({'session': 'wa-1', 'channel': 'whatsapp', 'qa': False, 'state_out': 'age_gate', 'latency_ms': 1000}, T + i)
+mon.text_line('rachel', '[rachel] chat — session: email-abc-sean messages: 4 — "can you send the link"', T)
+mon.text_line('rachel', '[rachel] chat — session: email-abc-sean messages: 6 — "can you send the link"', T + 30)
+check('stuck_session: 4 turns in age_gate, and a repeated message', len(found('stuck_session')) == 2)
+mon.text_line('rachel', '[rachel] chat — session: qa-loop-1 messages: 4 — "same"', T); mon.text_line('rachel', '[rachel] chat — session: qa-loop-1 messages: 6 — "same"', T)
+check('stuck_session: a QA session repeating never counts', len(found('stuck_session')) == 2)
+# escalation, watchdog, qa summary
+mon.text_line('rachel', '[rachel] chat — session: whatsapp-+15550001234 messages: 2 — "can I talk to a human please"', T)
+check('escalation_request: "talk to a human" (info)', len(found('escalation_request')) == 1 and found('escalation_request')[0]['severity'] == 'info')
+check('evidence: phone numbers redacted', '0001234' not in json.dumps(found('escalation_request')[0]['evidence']) and '1234' in json.dumps(found('escalation_request')[0]['evidence']))
+mon.text_line('watchdog', '[2026-10-03T03:15:01Z] ISSUES FOUND: GBrain unreachable', T)
+check('watchdog_alert: the nightly watchdog reported an issue', len(found('watchdog_alert')) == 1)
+d = tempfile.mkdtemp(); p = os.path.join(d, 'summary.json'); json.dump({'stamp': 'x', 'passed': 60, 'failed': ['order-flow']}, open(p, 'w'))
+mon.qa_summary(p, T)
+check('qa_fail: a QA run with failures', len(found('qa_fail')) == 1 and 'order-flow' in found('qa_fail')[0]['summary'])
+check('redact: tokens and webhook URLs', M.redact('x xoxb-123-abc https://hooks.slack.com/services/T/B/C') == 'x <redacted-token> https://hooks.slack.com/<redacted>')
+check('findings file written', sum(1 for _ in open(tmp)) == len(store.items))
+os.remove(tmp)
+print('monitor test: ' + ('all passed' if not fails else '%d FAILED' % fails))
+sys.exit(1 if fails else 0)

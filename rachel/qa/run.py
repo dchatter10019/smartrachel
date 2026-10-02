@@ -363,6 +363,7 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--only", default=""); ap.add_argument("--smoke", action="store_true"); ap.add_argument("-v", action="store_true")
     ap.add_argument("-j", type=int, default=int(os.environ.get("QA_JOBS", "6")))
     ap.add_argument("--skip-tag", action="append", default=[], help="leave out scenarios with this tag (e.g. channel: real Slack/email sends)")
+    ap.add_argument("--tag", default="", help="only scenarios with this tag (e.g. prodcheck: the short production check after staging passed)")
     ap.add_argument("--url", default="", help="a Rachel other than production, e.g. http://127.0.0.1:3501 (ops/staging.sh)")
     a = ap.parse_args()
     global RACHEL, LOGS, EVENTS_FILE
@@ -379,6 +380,7 @@ def main():
     scs = [yaml.safe_load(open(f)) for f in files]
     scs = [s for s in scs if (a.only.lower() in s["name"].lower()) and (not a.smoke or "smoke" in s.get("tags", []))]
     scs = [s for s in scs if not set(a.skip_tag) & set(s.get("tags", []))]
+    if a.tag: scs = [s for s in scs if a.tag in s.get("tags", [])]
     if staging:   # no channel bots on staging: slack / email / whatsapp scenarios test transport, and run nightly on production
         skipped = [s["name"] for s in scs if s.get("transport", "http") != "http"]
         scs = [s for s in scs if s.get("transport", "http") == "http"]

@@ -74,6 +74,13 @@ function unaddressed(instrs, reply, before, after) {
     // the mention of "cointreau" counted as handled and the proposal went out with the Remy Martin.
     if (ARROW.test(String(instr)) && !APPROVAL_TO.test((String(instr).match(ARROW) || [])[2] || '')) {
       if (changed.some(matches)) return false;
+      // Already the case: B is a basket line and nothing of A is left (Oct 2 QA, arrow-swap-applied: "Remy Cointreau ->
+      // Cointreau 750 ML" with Cointreau already in the basket got "I haven't done this one yet"). The Oct 1 case below
+      // (basket still has the Remy Martin) is still not done — A's line is still there.
+      const mA = String(instr).match(ARROW) || [];
+      const kwL = keywords(mA[1] || ''), kwR = keywords(mA[2] || '');
+      const bLine = kwR.length ? (after || []).find(it => kwR.every(w => has(key(it), w))) : null;
+      if (bLine && !(after || []).some(it => it !== bLine && kwL.some(w => has(key(it), w)))) return false;
       // Sentence by sentence: "Cointreau is swapped in. Just let me know which Whispering Angel size …!" claims the one
       // and asks about the other (a QA reply, Oct 1).
       const sents = String(reply || '').split(/\n+|(?<=[.!?])\s+/).filter(l => kw.some(w => has(norm(l), w)));

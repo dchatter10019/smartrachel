@@ -1,6 +1,6 @@
 name: order-name-prefilled
 fresh: true
-tags: [smoke]
+tags: [smoke, prodcheck]
 # Real complaint (DC, Sep 29, Slack): a known customer was asked "What is your full name?" at checkout.
 # The channel profile name (Slack real_name -> context.user_name) is stated instead, and a correction
 # at the next step replaces it — never taken as the recipient email.
