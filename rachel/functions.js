@@ -1276,6 +1276,15 @@ async function buildPackage(iv) {
           }
         }
       }
+      // A pack request ("Sparkling Water 24-pack") whose pick doesn't say its pack size ("Nixie ... - 12 OZ" at $7.34)
+      // can't be counted: prefer a candidate whose name gives the pack (Spindrift 8pk) so the units are right. (Oct 2)
+      var fwP=PM.fit(reqForFit,best);
+      if (fwP.pack && fwP.pack.want && !fwP.pack.got && !PM.packCount(best.name) && !PM.packCount(best.sizeStr)) {
+        var withPack=found.filter(function(p){ return p.product_id!==best.product_id && (PM.packCount(p.name)||PM.packCount(p.sizeStr))>1 && !isMini(p) && altSane(p) && categorySane(p,catN)
+          && PM.fit(reqForFit,p).missing.length<=fwP.missing.length && !lineItems.some(function(li){return li.product_id===p.product_id;}); });
+        if (withPack.length) { console.log('[buildPackage] pack size unknown: '+best.name+' (no pack in its name) for '+JSON.stringify(np.name)+' — using '+withPack[0].name+' (pack in its name)'); best=withPack[0]; }
+        else console.log('[buildPackage] pack size unknown: '+best.name+' for '+JSON.stringify(np.name)+' — no candidate names its pack; kept (flagged)');
+      }
       // Two requests never silently become the same product. Real bug: "Sun Cruiser Iced Tea" and "Sun Cruiser
       // Lemonade" were both the Iced Tea pack. Next best unused candidate; flagged either way.
       var dupOf=lineItems.find(function(li){return li.product_id&&li.product_id===best.product_id;});
@@ -1308,6 +1317,10 @@ async function buildPackage(iv) {
         var reqPK = packKey(np.name), foundPK = packKey(best.sizeStr) || packKey(best.name);
         if (reqPK && foundPK && reqPK !== foundPK) { console.log('[buildPackage] UNAVAILABLE (pack mismatch):', JSON.stringify(np.name), 'wanted', reqPK, 'found', foundPK); unavailable.push(np.name); continue; }
       }
+      // An amount of liquid ("3L mango purée", "1L lemon juice": np.volume_ml, set in code from the customer's own line)
+      // takes any bottle size — the quantity covers the amount below. Real bug (Oct 2, DC's Goody list): "Lemon Juice 1L"
+      // was UNAVAILABLE (size mismatch) with 375 mL on the shelf, and "3L mango" became 3 x 16.9 oz.
+      if (np.volume_ml) requestedSizeMatch = null;
       if (requestedSizeMatch && best.sizeStr) {
         var reqSizeNorm = requestedSizeMatch[0].toLowerCase().replace(/\s+/g, '');
         var foundSizeNorm = String(best.sizeStr).toLowerCase().replace(/\s+/g, '');
@@ -1346,6 +1359,17 @@ async function buildPackage(iv) {
         var gotP=PM.packCount(best.name)||PM.packCount(best.sizeStr)||1, cases=qty||1;
         var perCase=gotP>=12?1:Math.ceil(24/gotP), q4=cases*perCase;
         if (q4!==qty) { console.log('[buildPackage] case: '+JSON.stringify(np.name)+' = '+cases+' case(s); '+best.name+' is '+(gotP>1?'a '+gotP+'-pack':'a single')+' -> qty '+q4+' ('+(q4*gotP)+' units)'); qty=q4; }
+      }
+      if (np.volume_ml) {
+        var vT=String(best.name||'')+' '+String(best.sizeStr||'');
+        var vm=vT.toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l|liter|litre|oz|fl\.?\s*oz)\b/);
+        var unitMl=vm ? (/^m/.test(vm[2]) ? +vm[1] : /oz/.test(vm[2]) ? +vm[1]*29.5735 : +vm[1]*1000) : 0;
+        unitMl*= (PM.packCount(best.name)||PM.packCount(best.sizeStr)||1);
+        if (unitMl>0) {
+          var q5=Math.max(1,Math.ceil(np.volume_ml/unitMl-0.02));   // 6 x 16.9 oz = 2.998 L covers "3L"
+          console.log('[buildPackage] volume: '+JSON.stringify(np.name)+' asked '+np.volume_ml+' mL; '+best.name+' is '+Math.round(unitMl)+' mL -> qty '+q5+' ('+Math.round(q5*unitMl)+' mL)');
+          qty=q5;
+        } else console.log('[buildPackage] volume: '+JSON.stringify(np.name)+' asked '+np.volume_ml+' mL; '+best.name+' has no readable size — qty '+qty+' kept (flagged)');
       }
       if (typeof packNote==='string' && packNote) vd.note=vd.note.replace(/\d+-pack, not \d+/, packNote);
       var match=altNote ? {kind:'alternative',asked:np.name,note:altNote+(vd.note&&/packs here/.test(vd.note)?'; '+packNote:'')} : vd.kind==='exact' ? {kind:'exact'} : {kind:'closest',asked:np.name,note:vd.note};

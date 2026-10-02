@@ -77,5 +77,21 @@ eq('three notes: not both, wrong, wrong', ns.map(x => x.kind), ['not_both', 'wro
 const nb = C.applyNotBoth(h.items, ns[0]);
 eq('not both: Fever Tree removed, Bundaberg kept', [nb.removed, nb.items.some(x => /Bundaberg/.test(x.name))], [['3x Fever Tree Ginger Beer - 6.8 OZ'], true]);
 eq('a note on a line that is not in the request is ignored', C.requestNotes('• 2 cases Corona -> not both', fx.first, h.onHand), []);
+// Oct 2 first build: the LLM's named_products vs DC's own lines
+const nps = [{ name: 'Vodka 1.75L', qty: 2 }, { name: 'Lime Juice 1L', qty: 1 }, { name: 'Lemon Juice 1L', qty: 1 }, { name: 'Simple Syrup 2L', qty: 1 },
+  { name: 'Mango Puree', qty: 3 }, { name: 'Sparkling Water 24-pack', qty: 2 }, { name: 'Bottled Water case', qty: 1 }, { name: 'Tequila Blanco 1.75L', qty: 2 }];
+C.reconcileNamed(nps, fx.first);
+const pick = n => nps.find(x => x.name.startsWith(n));
+eq('"3L mango purée" is 3000 mL, not 3 bottles', [pick('Mango').volume_ml, pick('Mango').qty], [3000, 1]);
+eq('"1L lemon juice" is an amount: any bottle size', [pick('Lemon Juice').name, pick('Lemon Juice').volume_ml], ['Lemon Juice', 1000]);
+eq('"2L simple syrup" -> 2000 mL', pick('Simple Syrup').volume_ml, 2000);
+eq('a counted line keeps its count (vodka 2)', [pick('Vodka').qty, pick('Vodka').volume_ml], [2, undefined]);
+eq('the LLM\'s wrong count is corrected (tequila 2 -> 3)', pick('Tequila').qty, 3);
+eq('packs are not volumes (sparkling water 2 x 24-packs)', [pick('Sparkling').qty, pick('Sparkling').volume_ml], [2, undefined]);
+eq('a case is not a volume', pick('Bottled Water').volume_ml, undefined);
+const nps2 = nps.filter(x => !x.name.startsWith('Mango'));
+const lg = C.reconcileNamed(nps2, fx.first);
+eq('a line the LLM left out is added (mango 3 L)', (nps2.find(x => /mango/i.test(x.name)) || {}).volume_ml, 3000);
+eq('on-hand lines are never added', nps2.some(x => /crema|prisoner|conundrum|high noon|modelo/i.test(x.name)), false);
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');

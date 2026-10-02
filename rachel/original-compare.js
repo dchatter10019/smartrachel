@@ -42,7 +42,7 @@ function parseRequest(text, onHand) {
       if (qty == null) qty = 1;
       const pack = /\b(\d+)\s*-?\s*packs?\b/i.test(rest) ? +rest.match(/\b(\d+)\s*-?\s*packs?\b/i)[1] : (isCase ? 24 : 1);
       const ml = sizeMl(rest);
-      out.push({ text: part.replace(/\s+/g, ' ').trim(), qty, units: qty * pack, ml: ml ? ml * qty * (pack > 1 ? pack : 1) : null, names: [rest].concat(orAlt ? [orAlt] : []) });
+      out.push({ text: part.replace(/\s+/g, ' ').trim(), qty, counted: !!qm, pack, units: qty * pack, ml: ml ? ml * qty * (pack > 1 ? pack : 1) : null, names: [rest].concat(orAlt ? [orAlt] : []) });
     }
   }
   return out;
@@ -172,4 +172,61 @@ function applyNotBoth(items, note) {
   return { items: keep, removed, main: r.names[0].replace(/^\s*\d+\s*[x×]\s*/i, '').replace(/^\d+-?packs?\s+/i, '').trim(), alt: r.names[1].trim() };
 }
 
-module.exports = { parseRequest, compare, render, reply, isCompareAsk, isApplyAsk, requestNotes, applyNotBoth };
+// The LLM's named_products checked against the customer's own lines, in code (rule 6). Real bugs (Oct 2, DC's Goody
+// list, first build): "3L mango purée" -> {name: "Mango Puree", qty: 3} (3 bottles, 1.5 L); "1L lemon juice" ->
+// "Lemon Juice 1L" -> UNAVAILABLE (size mismatch) with 375 mL on the shelf. A line with an amount and no count is an
+// amount of liquid (np.volume_ml: any bottle size, buildPackage sizes the qty); a counted line keeps its count.
+// -> [log lines]; namedProducts edited in place.
+function reconcileNamed(namedProducts, text) {
+  const rows = parseRequest(text, OH.parseOnHand(text));
+  const log = [];
+  if (rows.length < 3 || !Array.isArray(namedProducts)) return log;
+  const covered = new Set();
+  for (const np of namedProducts) {
+    if (!np || !np.name) continue;
+    let best = null, bs = 0;
+    for (const r of rows) { const sc = Math.max(...r.names.map(n => matchScore(n, { name: np.name }))); if (sc > bs) { bs = sc; best = r; } }
+    if (!best || bs < 1) continue;
+    covered.add(best);
+    if (!best.counted && best.ml && best.pack === 1) {
+      const was = JSON.stringify({ name: np.name, qty: np.qty });
+      np.volume_ml = Math.round(best.ml);
+      np.name = String(np.name).replace(/\s*\b\d+(?:\.\d+)?\s*(?:ml|l|liters?|litres?|oz)\b/ig, '').trim();
+      np.qty = 1; np.qty_from_customer = true;
+      log.push(JSON.stringify(best.text) + ' is an amount (' + np.volume_ml + ' mL), not a count: ' + was + ' -> ' + JSON.stringify({ name: np.name, volume_ml: np.volume_ml }));
+    } else if (best.counted && np.qty != null && +np.qty !== best.qty) {
+      log.push(JSON.stringify(best.text) + ' asks for ' + best.qty + ': ' + np.name + ' qty ' + np.qty + ' -> ' + best.qty);
+      np.qty = best.qty; np.qty_from_customer = true;
+    }
+  }
+  // A line of the customer's list the LLM left out is added here — never a silent drop (Oct 2: "3L mango purée"
+  // was missing from the LLM's list on one run, and nothing said so).
+  const llmItems = namedProducts.slice();   // only the LLM's own items say a line is covered — never one added here
+  for (const r of rows) {
+    if (covered.has(r)) continue;
+    const part = llmItems.find(np => np && Math.max(...r.names.map(n => matchScore(n, { name: np.name }))) > 0.5);
+    if (part) { log.push(JSON.stringify(r.text) + ' partly matches ' + JSON.stringify(part.name) + ' — taken as that line'); continue; }
+    const isVol = !r.counted && r.ml && r.pack === 1;
+    let base = r.names[0].replace(/^\s*\d+\s*[x×]\s*/i, '').replace(/^\s*(?:\d+|a|one)\s+(cases?)\s+(.+)$/i, '$2 $1');   // "1 case bottled water" -> "bottled water case"
+    const packM = base.match(/\b(\d+)\s*-?\s*packs?\b/i);
+    base = base.replace(/\b\d+\s*-?\s*packs?\b/ig, '');
+    if (isVol) base = base.replace(/\b\d+(?:\.\d+)?\s*(?:ml|l|liters?|litres?|oz)\b/ig, '');
+    base = base.replace(/\s+/g, ' ').trim();
+    if (!base) continue;
+    const sizeM = isVol ? null : base.match(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/i);
+    let name = sizeM ? (base.replace(sizeM[0], '').replace(/\s+/g, ' ').trim() + ' ' + sizeM[0].replace(/\s+/g, '')) : base;
+    if (packM) name += ' ' + packM[1] + '-pack';
+    const t = DT.typeOf({ name: base });
+    const category = /\b(?:water|juice|syrup|pur[eé]e|soda|tonic|ginger beer|ginger ale|club soda|seltzer water|bitters|mixer|n\/?a|non[- ]?alc\w*)\b/i.test(base) ? 'mixer'
+      : /\b(?:liqueur|triple sec|vermouth|cointreau|amaretto|schnapps)\b/i.test(base) ? 'spirits'
+      : /\b(?:beer|lager|ipa|ale|stout|seltzer|cider)\b/i.test(base) ? 'beer'
+      : ['red', 'white', 'rose', 'sparkling', 'fortified', 'aperitif'].indexOf(t) >= 0 ? 'wine' : t ? 'spirits' : 'mixer';
+    const np = { name, category, qty: r.counted ? r.qty : 1, qty_from_customer: true };
+    if (isVol) np.volume_ml = Math.round(r.ml);
+    namedProducts.push(np);
+    log.push(JSON.stringify(r.text) + ' was missing from the list — added ' + JSON.stringify(np));
+  }
+  return log;
+}
+
+module.exports = { reconcileNamed, parseRequest, compare, render, reply, isCompareAsk, isApplyAsk, requestNotes, applyNotBoth };

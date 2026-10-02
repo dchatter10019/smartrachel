@@ -177,6 +177,11 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   code too: "A (or B) -> not both" keeps A (their first choice) and removes B, flagged lines shown first, then the
   comparison. An "-> answer" that wraps onto the next line is one line (instructions.js joinArrowWraps); a verdict
   ("doesn't look right", "not both", "wrong") is never read as a swap.
+- custom_list named_products are checked against the customer's own list lines in code (original-compare.js
+  reconcileNamed, [list-reconcile]): a line with an amount and no count ("3L mango purée", "1L lemon juice") is
+  np.volume_ml — any bottle size, buildPackage sizes the qty to cover it ([buildPackage] volume:) instead of
+  UNAVAILABLE (size mismatch); a counted line keeps its count; a list line the LLM left out is added (on-hand lines
+  never). A pack request whose pick has no pack size in its name prefers a candidate that names it (Nixie -> Perrier 8pk).
 - The LLM's generate_proposal/place_order use the LIVE basket (state.lastLineItems after this turn's edits) and the
   saved event date/client when it omits them. In a client edit the LAST client statement wins ("it should be just Goody").
 - A placed order (API success only) leaves the cart → state.placedOrder; touching it asks reopen/new.

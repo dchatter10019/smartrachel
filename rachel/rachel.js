@@ -399,6 +399,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             return out;
           };
           saInput.named_products = splitMergedNamedProducts(saInput.named_products);
+          try { for (const l of require('./original-compare.js').reconcileNamed(saInput.named_products, customerMessage)) console.log('[list-reconcile] ' + l); } catch (e) { console.log('[list-reconcile] error: ' + e.message); }
           // A quantity the customer SAID in words is theirs, not the calculator's. Real bug:
           // "2 bottles of Tito's 750ml and a Whispering Angel" — the LLM omitted qty for the
           // rosé and the system sized it to 3. Only for non-event lists (no guests), and only

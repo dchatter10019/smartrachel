@@ -5,7 +5,8 @@ tags: [email]
 # replayed and its "send a revised proposal" started the step-by-step proposal flow, which reloaded an older saved basket
 # and asked "What is the client or company name?" then "What is the event date?" — both in the email (subject "Goody
 # alcohol order", "ideally by Tue 10/6"). An email with its own item list takes the quote path: client from the
-# subject, date from the email, PDF built in code.
+# subject, date from the email, PDF built in code. Same build: "3L mango purée" was 3 x 16.9 oz and "1L lemon juice" /
+# "2L simple syrup" were "not available" (375 mL / 24.5 oz on the shelf) — amounts of liquid now take any bottle size.
 format: plain
 context: {email_subject: "Goody alcohol order", user_name: "Dipanjan Chatterjee"}
 turns:
@@ -14,9 +15,9 @@ turns:
       matches: "(?i)21"
   - send: "Yes\r\n\r\n\r\n\r\nDipanjan Chatterjee\r\nCEO | Bevvi\r\n\r\ngetbevvi.com | @getbevvi"
     expect:
-      not_contains: ["What is the client", "client or company name", "What is the event date", "How many bottles"]
+      not_contains: ["isn't available at this store", "What is the client", "client or company name", "What is the event date", "How many bottles"]
       contains: ["proposal"]
-      log_contains: ["[quote-pdf] email quote request -> proposal generated in code for \"Goody\"", "event October 6, 2026"]
-      log_not_contains: ["[proposal] request recognised"]
+      log_contains: ["[quote-pdf] email quote request -> proposal generated in code for \"Goody\"", "event October 6, 2026", "[list-reconcile] \"3L mango", "asked 3000 mL"]
+      log_not_contains: ["[proposal] request recognised", "UNAVAILABLE (size mismatch): \"Lemon Juice", "UNAVAILABLE (size mismatch): \"Simple Syrup"]
       pdf_contains: ["Goody", "October 6, 2026"]
       pdf_not_contains: ["CEO |", "La Crema", "Conundrum", "Prisoner"]
