@@ -2654,6 +2654,13 @@ app.post('/chat', async (req, res) => {
         // A date alone is kept; a time alone joins the kept date (Sep 29, Gen II: "the delivery date is Monday,
         // October 5th" was ignored and the date+time asked for again).
         if (!x.when && x.date) { od.delivery_date = x.date; od.delivery_ok = false; }
+        // No date anywhere yet: the event's date (subject / saved) is the delivery date to offer windows on. Real (Oct 2,
+        // Sean, "Foodie For All Event - Oct 6th": "please let us know what time we should expect the delivery") — he was
+        // asked for "the delivery date and time" instead of the Oct 6 windows.
+        if (!x.when && !x.date && !od.delivery_date && !od.delivery_ok) {
+          const evD = require('./event-date.js').normalizeEventDate(state.savedEventDate || require('./event-date.js').findEventDateIn(String(state.emailSubject || '')) || '', new Date());
+          if (evD && evD.date) { od.delivery_date = evD.text; console.log('[email-order] no delivery date given — the event date is used: ' + JSON.stringify(evD.text)); }
+        }
         const whenPhrase = x.when || (x.time && od.delivery_date ? od.delivery_date + ' at ' + x.time : '');
         if (!whenPhrase && od.delivery_date && !od.delivery_ok) {
           const w = await deliveryWindowsOn(state, od.delivery_date);
@@ -2690,7 +2697,9 @@ app.post('/chat', async (req, res) => {
         if (miss.length) {
           state.emailOrder = od; saveFlowState();
           const t = (preText ? preText + '\n\n' : '') + EO.askText(miss, od, problem);
-          return res.json({ text: t, response: t, email_cc: od.link_to || [] });
+          // The questions go to the sender only; the payment-link recipient gets the email with the link (Oct 2: Sean
+          // is Bevvi staff working out the details — the customer shouldn't get "what's Mara's last name?").
+          return res.json({ text: t, response: t, email_cc: [] });
         }
         const pt = QE.total(oItems);
         const tipAmt = od.tip ? (od.tip.amount != null ? od.tip.amount : Math.round(pt * od.tip.pct) / 100) : Math.round(pt * 5) / 100;

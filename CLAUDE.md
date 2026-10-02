@@ -34,8 +34,11 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   gbrain basket; QA identities have no saved basket, so QA never took that path.)
 - Email orders (email-order.js, server.js EMAIL ORDER): "create/place the order", "payment link" in an email
   places the order in code (shopping-agent place_order, no LLM) and replies with the payment link. Contact =
-  the customer in the email (a forwarded customer's header + signature; the sender unless @getbevvi.com); all
-  missing fields (name, email, phone, delivery date+time checked against real windows) asked in ONE reply,
+  the customer in the email (a forwarded customer's header + signature; the sender unless @getbevvi.com; from a
+  @getbevvi.com sender: the on-site contact "Main POC is Mara (862) ..." = name + phone, and the address the payment
+  link "should be sent to" = email); a "delivery instructions:" paragraph is kept (Gmail link clutter cut); no date
+  given = the event date, with its real windows offered; a first name alone asks only for the last name; all
+  missing fields (name, email, phone, delivery date+time checked against real windows) asked in ONE reply (sender only, no cc),
   kept in state.emailOrder until the answer places it. Tip 5% unless stated. A repeat re-sends the link.
 - Basket lines with no catalog link (a hand-built quote) are linked by line-resolve.js — same price AND name
   fits, exact only, else asked — on /internal/session-basket loads, when checkout starts on any channel (the

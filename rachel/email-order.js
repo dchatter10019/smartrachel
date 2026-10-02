@@ -103,7 +103,7 @@ const findWhen = (lines, now) => timing(lines, now).when;
 function linkRecipients(text) {
   const out = [];
   for (const sent of String(text || '').replace(/\s*\n\s*/g, ' ').split(/(?<=[.!?])\s+/)) {
-    if (!/\bpay(?:ment)?\s*link\b|\blink\b[^.]{0,20}\bpay/i.test(sent) || !/\b(?:send|email|forward|share)\b/i.test(sent)) continue;
+    if (!/\bpay(?:ment)?\s*link\b|\blink\b[^.]{0,20}\bpay/i.test(sent) || !/\b(?:send|sent|email(?:ed)?|forward(?:ed)?|share(?:d)?|go(?:es)?\s+to|to\s*:)\b/i.test(sent)) continue;
     for (const m of sent.match(new RegExp(EMAIL.source, 'g')) || []) { const a = m.toLowerCase().replace(/[.,;:]+$/, ''); if (!/^rachelai@/.test(a) && !out.includes(a)) out.push(a); }
   }
   return out;
@@ -118,15 +118,56 @@ function tipIn(text) {
   return null;
 }
 
+// Gmail's plain-text decorations: "<(862)%20252-5077>", "<https://www.google.com/maps/...>", "<a@b.com>" after the same
+// address, "*bold*" markers. Real (Oct 2, Sean's Foodie For All payment-link email): none of it was read.
+function cleanGmail(text) {
+  return String(text || '').replace(/<(?:https?:\/\/|mailto:|tel:)[^>\s]*>/gi, ' ').replace(/<\(?\d{3}\)?%20[\d%-]+>/g, ' ')
+    .replace(/([\w.+-]+@[\w-]+(?:\.[\w-]+)+)\s*<\1>/gi, '$1')
+    .replace(/(^|\s)\*+(?=\S)|(?<=\S)\*+(?=\s|$)/gm, '$1').replace(/(^|\s)\*+(?=\s|$)/gm, '$1').replace(/\u00a0/g, ' ').replace(/[ \t]{2,}/g, ' ');
+}
+// The on-site contact: "Main POC is Mara (862) 252-5077", "Point of contact: Mara Lee, 862-252-5077", "contact Mara at 862...".
+function pocIn(lines) {
+  const KW = /\b(?:main\s+|primary\s+|on-?site\s+)?(?:poc|point\s+of\s+contact|contact(?:\s+person)?|on-?site\s+contact)\b\s*(?:is|will\s+be|:|-)?\s*/i;
+  for (const l of lines || []) {
+    const k = l.match(KW);
+    if (!k) continue;
+    const rest = l.slice(k.index + k[0].length);
+    const m = rest.match(/^([A-Z][a-z'’-]+(?:\s+[A-Z][a-z'’-]+)?)\b/);
+    if (!m || /^(?:Is|At|The|Our|Will|Please|Me|Us)$/.test(m[1])) continue;
+    const ph = rest.slice(m[0].length, m[0].length + 30).match(PHONE);   // "Mara (862) 252-5077", "Mara Lee, 862-252-5077"
+    return { name: m[1].trim(), phone: ph ? fmtPhone(ph) : '' };
+  }
+  return null;
+}
+// "here are the delivery instructions for the order:" + the paragraph(s) after it, up to the sign-off.
+function instructionsBlock(lines) {
+  const i = (lines || []).findIndex(l => /\b(?:delivery|driver)\s+(?:instructions?|notes?|details)\b[^\n]*:\s*$/i.test(l));
+  if (i < 0) return '';
+  const out = [];
+  for (const l of lines.slice(i + 1)) {
+    if (/^\s*(?:thanks|thank you|best|regards|cheers|sincerely)\b/i.test(l) || /^\s*On\s.+wrote:\s*$/.test(l) || HEADER.test(l)) break;
+    if (l.trim()) out.push(l.trim());
+  }
+  return out.join(' ').replace(/\s{2,}/g, ' ').trim().slice(0, 700);
+}
+
 function extract(text, sender, now) {
   const s = sender || {};
-  const { top, fwd } = splitForward(text);
+  const { top, fwd } = splitForward(cleanGmail(text));
   const all = top.concat(fwd || []);
   const out = { name: '', email: '', phone: '', when: '', tip: tipIn(all.join('\n')), instructions: '', source: '' };
   // The customer: a forwarded customer, else the sender unless the sender is Bevvi staff.
   const fh = fwd ? fromHeader(fwd) : null;
   if (fh && !isStaff(fh.email)) { out.name = fh.name; out.email = fh.email; out.phone = phoneIn(fwd); out.source = 'forwarded customer'; }
   else if (!isStaff(s.email)) { out.name = String(s.name || '').trim(); out.email = String(s.email || '').toLowerCase(); out.phone = phoneIn(top); out.source = 'sender'; }
+  // Bevvi staff sending for a customer, nothing forwarded: the on-site contact (name + phone) and the address the
+  // payment link goes to are the customer (Oct 2, Sean: "Payment link should be sent to: inge@...", "Main POC is Mara (862) ...").
+  if (!out.source) {
+    const poc = pocIn(top);
+    if (poc) { out.name = poc.name; if (poc.phone) out.phone = poc.phone; out.source = 'contact in the email'; }
+    const lt = linkRecipients(top.join('\n')).filter(a => !isStaff(a));
+    if (lt.length) { out.email = lt[0]; out.source = out.source || 'payment-link recipient'; }
+  }
   // Typed fields win (either part of the email).
   const n = field(all, /^\s*\*?(?:name|contact(?: name)?|recipient|order (?:name|for))\*?\s*:\s*([^\n<]{3,60})$/i);
   if (n) { out.name = n.replace(PHONE, '').replace(EMAIL, '').replace(/[,;|]+\s*$/, '').trim(); out.source = out.source || 'typed'; }
@@ -140,14 +181,14 @@ function extract(text, sender, now) {
   const tm = timing(all, now);
   out.when = tm.when; out.date = tm.date; out.time = tm.time;
   out.link_to = linkRecipients(top.join('\n'));
-  out.instructions = field(all, /^\s*\*?(?:delivery |driver )?(?:instructions?|notes? for (?:the )?driver)\*?\s*:\s*(.+)$/i);
+  out.instructions = field(all, /^\s*\*?(?:delivery |driver )?(?:instructions?|notes? for (?:the )?driver)\*?\s*:\s*(.+)$/i) || instructionsBlock(top);
   return out;
 }
 
 const fullName = n => String(n || '').trim().split(/\s+/).filter(Boolean).length >= 2;
 function missing(od) {
   const m = [];
-  if (!fullName(od.name)) m.push("the customer's full name (first and last)");
+  if (!fullName(od.name)) m.push(String(od.name || '').trim() ? String(od.name).trim() + "'s last name" : "the customer's full name (first and last)");
   if (!od.email) m.push("the customer's email");
   if (!od.phone) m.push("the customer's phone number");
   if (!od.delivery_ok) m.push(od.delivery_date ? 'the delivery time on ' + (od.delivery_date_label || od.delivery_date) : 'the delivery date and time');
@@ -155,9 +196,10 @@ function missing(od) {
 }
 function askText(miss, od, problem) {
   const have = [];
-  if (fullName(od.name)) have.push('name: ' + od.name);
+  if (String(od.name || '').trim()) have.push('name: ' + od.name);
   if (od.email) have.push('email: ' + od.email);
   if (od.phone) have.push('phone: ' + od.phone);
+  if (od.instructions) have.push('delivery instructions: noted');
   if (od.delivery_ok && od.delivery_label) have.push('delivery: ' + od.delivery_label);
   else if (od.delivery_date) have.push('delivery date: ' + (od.delivery_date_label || od.delivery_date));
   return "I'll create the order and send the payment link as soon as I have " + (miss.length > 1 ? miss.slice(0, -1).join(', ') + ' and ' + miss[miss.length - 1] : miss[0]) + '.' +
@@ -166,4 +208,4 @@ function askText(miss, od, problem) {
     '\n\nPlease reply with ' + (miss.length > 1 ? 'all of these' : 'this') + ' in one email (e.g. "Natalia Diaz, 617-555-0100, natalia@company.com, Thursday Oct 1 at 2pm").';
 }
 
-module.exports = { isOrderCommand, extract, missing, askText, isStaff, tipIn, findWhen, timing, linkRecipients, normalizeTimes };
+module.exports = { cleanGmail, pocIn, instructionsBlock, isOrderCommand, extract, missing, askText, isStaff, tipIn, findWhen, timing, linkRecipients, normalizeTimes };
