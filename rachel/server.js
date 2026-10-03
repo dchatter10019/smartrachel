@@ -2682,7 +2682,7 @@ app.post('/chat', async (req, res) => {
       const provided = !!(x.name || x.phone || x.when || x.date || x.time || x.instructions || x.tip);   // a bare "2pm" answers the time question
       if (!oItems.length && cmd) {
         const t = poE && poE.payment_url
-          ? 'Happy to help — this order was already created (order #' + poE.order_id + '), so here\'s the payment link again: ' + poE.payment_url + '\n\nIf anything should change before it\'s paid, just reply with the change and I\'ll put together an updated order.\n\nWarmly,\nRachel\nYour personal mixologist at Bevvi'
+          ? 'Happy to help — this order was already created (order #' + poE.order_id + '). Here is your Payment Link again: ' + poE.payment_url + '\n\nIf anything should change before it\'s paid, just reply with the change and I\'ll put together an updated order.\n\nWarmly,\nRachel\nYour personal mixologist at Bevvi'
           : 'There\'s no quote on this thread to order yet — send the list of items (and the delivery address) and I\'ll put it together.';
         console.log('[email-order] command with an empty basket — ' + (poE && poE.payment_url ? 'already placed ' + poE.order_id + ', link re-sent' : 'nothing to order, asked for the list'));
         return res.json({ text: t, response: t, email_cc: x.link_to || [], email_to: poE && poE.payment_url ? (x.link_to || []).filter(a => !EO.isStaff(a)) : [] });
@@ -2797,7 +2797,7 @@ app.post('/chat', async (req, res) => {
         const lines = oItems.map(li => { const q = li.qty || li.quantity || 1, p = parseFloat(li.price) || 0; return q + 'x ' + li.name + ' — ' + m2(p) + ' ea = ' + m2(p * q); }).join('\n');
         const t = (preText ? preText + '\n\n' : '') + 'Hi ' + first + ',\n\n' +
           'Wonderful news — your order' + forWhom + ' is all set, and I\'m so glad to be part of it!' + (r.dry_run ? ' (QA dry run — order #' + r.order_id + '.)' : '') +
-          '\n\nPayment link: ' + r.payment_url + '\nYour order is confirmed as soon as it\'s paid.' +
+          '\n\nHere is your Payment Link: ' + r.payment_url + '\nYour order is confirmed as soon as it\'s paid.' +   // the email's HTML part shows "Here is your Payment Link." with the link on "Payment Link" (DC, Oct 3)
           '\n\nHere\'s what\'s coming your way:\n' + lines +
           '\n\nProduct total: ' + m2(pt) + '\nEstimated tax: ' + m2(tax) + '\nService charge (10%): ' + m2(svc) + '\n' + tipLabel + ': ' + m2(tipAmt) + '\nEstimated delivery: ' + m2(25) + '\nEstimated total: ' + m2(grand) +
           '\n\nDelivery: ' + od.delivery_label + '\n' + state.address + (od.instructions ? '\nNotes for our driver: ' + od.instructions : '') +

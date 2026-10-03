@@ -192,7 +192,8 @@ def to_html(body):
     # other links stay clickable. The plain-text part (full URLs) stays as the fallback.
     import html, re
     h = html.escape(body or '', quote=False)
-    h = re.sub(r'(?im)^(\s*)payment link:\s*(' + PAY_URL + r')', lambda m: m.group(1) + '<a href="' + m.group(2) + '">Payment Link</a>', h)
+    # "Here is your Payment Link: <url>" -> "Here is your Payment Link." with the link on the words (DC, Oct 3)
+    h = re.sub(r'(?i)\bpayment link( again)?:\s*(' + PAY_URL + r')([ \t]*$)?', lambda m: '<a href="' + m.group(2) + '">Payment Link</a>' + (m.group(1) or '') + ('.' if m.group(3) is not None else ''), h, flags=re.M)
     h = re.sub(r'(?<!href=")(' + PAY_URL + r')', r'<a href="\1">Payment Link</a>', h)
     h = re.sub(r'(?<!href=")(?<!">)(https?://[^\s<>"]+)', r'<a href="\1">\1</a>', h)
     return '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5">' + h.replace('\n', '<br>\n') + '</div>'
