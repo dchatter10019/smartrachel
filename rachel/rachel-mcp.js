@@ -4,6 +4,8 @@
  */
 
 const http = require('http');
+const fs = require('fs');
+const crypto = require('crypto');
 const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
 
 const PORT = 3600;
@@ -62,7 +64,8 @@ const TOOLS = [
         guests:     { type: 'number', description: 'Number of guests' },
         hours:      { type: 'number', description: 'Event duration in hours' },
         budget:     { type: 'number', description: 'Total budget in USD' },
-        categories: { type: 'array', description: 'Categories: beer, wine, spirits, champagne', items: { type: 'string' } },
+        categories: { type: 'array', description: 'Categories to include: beer, wine, spirits (all three if omitted)', items: { type: 'string' } },
+        serving_mix:{ type: 'string', description: 'Optional: what guests will drink most, e.g. "mostly wine", "50% beer 30% wine 20% spirits"' },
         zip:        { type: 'string', description: 'Delivery zip code' },
         email:      { type: 'string', description: 'Customer email' }
       },
@@ -181,15 +184,30 @@ async function callShoppingAgent(intent, args) {
 // Age is verified per CONNECTION (API key), held in memory for 4 hours idle — never saved to the customer's profile
 // (CLAUDE.md rule 4: per session, never inherited). Until Oct 3 it was written to gbrain and trusted forever.
 const AGE_TTL_MS = 4 * 3600e3;
-const ageOk = new Map();   // api key -> last use
+// Kept on disk by a hash of the key so a deploy doesn't re-ask everyone (Oct 3: three restarts -> asked 3 times in
+// one claude.ai conversation). Still per connection and 4h idle, never on the customer's profile.
+const AGE_FILE = require('./data-dir.js').file('mcp-age.json');
+const keyHash = k => crypto.createHash('sha256').update(String(k)).digest('hex');
+const ageOk = new Map();   // hashed api key -> last use
+try { Object.entries(JSON.parse(fs.readFileSync(AGE_FILE, 'utf8'))).forEach(([h, t]) => { if (Date.now() - t <= AGE_TTL_MS) ageOk.set(h, t); }); } catch (e) {}
+let ageSaveTimer = null;
+function saveAge() {
+  if (ageSaveTimer) return;
+  ageSaveTimer = setTimeout(() => {
+    ageSaveTimer = null;
+    for (const [h, t] of ageOk) if (Date.now() - t > AGE_TTL_MS) ageOk.delete(h);
+    try { fs.writeFileSync(AGE_FILE + '.tmp', JSON.stringify(Object.fromEntries(ageOk))); fs.renameSync(AGE_FILE + '.tmp', AGE_FILE); }
+    catch (e) { console.log('[rachel-mcp] age file not saved: ' + e.message); }
+  }, 2000);
+}
+function markAgeVerified(key) { ageOk.set(keyHash(key), Date.now()); saveAge(); }
 function ageVerified(key) {
-  const t = ageOk.get(key);
-  if (!t || Date.now() - t > AGE_TTL_MS) { ageOk.delete(key); return false; }
-  ageOk.set(key, Date.now()); return true;
+  const h = keyHash(key), t = ageOk.get(h);
+  if (!t || Date.now() - t > AGE_TTL_MS) { ageOk.delete(h); return false; }
+  ageOk.set(h, Date.now()); saveAge(); return true;
 }
 
 // Two-step order: prepared orders waiting for rachel_confirm_order (code -> { key, payload, summary, expires }).
-const crypto = require('crypto');
 const pendingOrders = new Map();
 const ORDER_CODE_TTL_MS = 15 * 60e3;
 const QA_RE = /^(qa-[^@]*|rachel_qa)@getbevvi\.com$/i;
@@ -238,7 +256,7 @@ async function runTool(name, input, callerEmail, apiKey) {
     if (!input.confirmed) {
       return { verified: false, message: 'Customer must confirm they are 21 or older to proceed.' };
     }
-    ageOk.set(apiKey, Date.now());
+    markAgeVerified(apiKey);
     console.log('[rachel-mcp] age verified for this connection (' + callerEmail + ') — not saved to the profile');
     return { verified: true, message: 'Age verified for this session. Customer is confirmed 21 or older.' };
   }
@@ -284,14 +302,23 @@ async function runTool(name, input, callerEmail, apiKey) {
   }
 
   if (name === 'rachel_build_package') {
-    const result = await callShoppingAgent('custom_list', {
-      named_products: (input.categories || ['beer', 'wine', 'spirits']).map(c => ({ name: c, category: c })),
+    // menu_build = the event builder Slack/email use (full bar, still + sparkling wine, spends the budget). Until Oct 3
+    // this sent custom_list with the category words as products: one bourbon as "spirits", a Champagne as the wine,
+    // a third of a $2,000 budget (DC).
+    const result = await callShoppingAgent('menu_build', {
       guests: input.guests,
       hours: input.hours,
-      budget: input.budget || 999999,
+      budget: input.budget || undefined,
+      categories: input.categories && input.categories.length ? input.categories : undefined,
+      serving_mix: input.serving_mix || '',
       zip: input.zip,
       email: input.email || ''
     });
+    // Internal fields stay internal: the reviewer's price-tier note and tier warning invite price commentary
+    // (rachel.js drops them for Slack/email too), the rest is store plumbing.
+    ['kitchen', 'client', 'buyer_discount', 'review_note', 'review_layer', 'tier_warning', 'preferred_brands', 'swaps', 'unavailable_qty']
+      .forEach(k => delete result[k]);
+    (result.line_items || []).forEach(li => { delete li.establishmentId; delete li.product_id; });
     return result;
   }
 
