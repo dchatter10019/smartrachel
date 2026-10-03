@@ -26,6 +26,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   continuation the agent sends the thread's first non-Rachel email (context.thread_first_body); a session with no
   originalRequest takes it from there (threads older than the feature), and a later email never becomes the original.
   Replies are reply-all (To + Cc of the incoming email, minus rachelai@ and the sender).
+  A payment-link reply for a customer ("send the link to inge@... and copy Sean and me") goes To the customer, Cc the sender
+  + the thread (server email_to -> email-agent recipients()). Every email opens "Hi <first name>," and ends "Warmly, Rachel /
+  Your personal mixologist at Bevvi" (email-agent dress(); DC Oct 3: cordial, Rachel is their personal mixologist); the
+  plain/email channel note tells the LLM that voice and not to add its own greeting/sign-off.
 - The client an email subject names: email-subject.js clientFromSubject ("Goody alcohol order" -> Goody, "... - Gen II
   Fund", "Bar order for Acme"), used by the quote PDF, quote edits and the proposal flow. An email that carries its own
   item list (3+ item lines) never enters the step-by-step proposal flow — it takes the [quote-pdf] path (client from the

@@ -99,6 +99,7 @@ def get_email(service, msg_id):
             'to': headers.get('to', ''), 'cc': headers.get('cc', ''), 'attachments': attachments}
 
 LAST_EXTRA_CC = []
+LAST_EXTRA_TO = []   # the payment link's customer: the reply's To; the sender + the thread go in Cc (DC, Oct 3)
 LAST_RELINK = None   # {session_id, message}: the "which proposal?" answer — replay the held email on that session
 def reply_all_cc(email, sender_email):
     # Reply-all (DC, Sep 29): everyone on the email's To and Cc gets Rachel's reply, except Rachel and the
@@ -110,6 +111,30 @@ def reply_all_cc(email, sender_email):
         if '@' in a and a not in seen:
             seen.add(a); out.append(a)
     return out
+
+SIGN_OFF = '\n\nWarmly,\nRachel\nYour personal mixologist at Bevvi'
+def dress(body, to_name):
+    # Every email Rachel sends opens with a greeting and closes with her sign-off (DC, Oct 3: "very cordial — Rachel is
+    # the personal mixologist"), whether the LLM or the code wrote it. Text that already has them is left alone.
+    import re
+    b = (body or '').strip()
+    if not re.match(r'^(hi|hello|hey|dear|good (morning|afternoon|evening))\b', b, re.I):
+        first = (to_name or '').replace('"', '').split(',')[0].strip().split(' ')[0] if to_name else ''
+        b = f'Hi {first},\n\n{b}' if first and '@' not in first else f'Hi there,\n\n{b}'
+    if 'Rachel' not in b[-160:]:
+        b += SIGN_OFF
+    return b
+
+def recipients(email, sender_email):
+    # -> (To, Cc). Normally To = the sender, Cc = reply-all. When Rachel's reply carries a payment link for a customer
+    # ("send the payment link to inge@... and copy Sean and me"), the customer is the To and the sender is copied.
+    cc = reply_all_cc(email, sender_email)
+    to = [a.lower() for a in LAST_EXTRA_TO if '@' in a]
+    if not to:
+        return sender_email, cc
+    cc = [sender_email.lower()] + [a for a in cc if a not in to and a != sender_email.lower()]
+    log.info(f'[recipients] payment link: To {", ".join(to)} | Cc {", ".join(cc)}')
+    return ', '.join(to), cc
 
 # The thread's first email not from Rachel = the customer's original request. Sent with every continuation so a
 # long thread never loses it (Oct 2, Goody: "take my original request" — Rachel no longer had it and asked to paste it).
@@ -145,8 +170,9 @@ def chat_with_rachel(message, session_id, sender_email, sender_name='', subject=
         j = r.json()
         # Addresses the email asked to receive the payment link ("send dipanjan@... a payment link") — added to
         # this reply's Cc by reply_all_cc (Sep 29: they were only copied if they already were).
-        global LAST_EXTRA_CC, LAST_RELINK
+        global LAST_EXTRA_CC, LAST_EXTRA_TO, LAST_RELINK
         LAST_EXTRA_CC = [a for a in (j.get('email_cc') or []) if isinstance(a, str) and '@' in a]
+        LAST_EXTRA_TO = [a for a in (j.get('email_to') or []) if isinstance(a, str) and '@' in a]
         LAST_RELINK = j.get('relink') if isinstance(j.get('relink'), dict) else None
         return j.get('text', '') or ('' if LAST_RELINK else None)   # an empty reply is a failure, never sent (unless relinked)
     except Exception as e:
@@ -242,8 +268,9 @@ def linked_session(sender_email, subject, body, new_session_id='', attachments=N
         return None
 
 def process(service, email):
-    global LAST_EXTRA_CC
+    global LAST_EXTRA_CC, LAST_EXTRA_TO
     LAST_EXTRA_CC = []
+    LAST_EXTRA_TO = []
     log.info(f"Processing: {email['from']} | {email['subject']}" + ('' if email.get('unread', True) else ' (already marked read in Gmail — picked up anyway)'))
     sender = email['from']
     sender_email = sender.split('<')[1].strip('>') if '<' in sender else sender.strip()
@@ -267,7 +294,9 @@ def process(service, email):
             return _failed(service, email, sender_email, 'continuation')
         if linked != session_id:
             THREAD_SESSIONS[thread_id] = linked; _persist_threads()
-        send_reply(service, thread_id, sender_email, email['subject'], rachel_response, pdf_path=proposal_pdf(rachel_response), in_reply_to=email.get('message_id'), references=email.get('references'), cc=reply_all_cc(email, sender_email))
+        to_addr, cc_addrs = recipients(email, sender_email)
+        rachel_response = dress(rachel_response, sender_name if to_addr == sender_email else '')
+        send_reply(service, thread_id, to_addr, email['subject'], rachel_response, pdf_path=proposal_pdf(rachel_response), in_reply_to=email.get('message_id'), references=email.get('references'), cc=cc_addrs)
         log.info(f'Continuation reply sent for thread {thread_id[:8]}...')
         service.users().messages().modify(userId='me',id=email['id'],body={'removeLabelIds':['UNREAD']}).execute()
         FAILED_ATTEMPTS.pop(email['id'], None)
@@ -285,7 +314,9 @@ def process(service, email):
     rachel_response, session_id = chat_following_relink(email, session_id, sender_email, sender_name)
     if not rachel_response:
         return _failed(service, email, sender_email, 'new thread')   # thread not mapped: the retry gets the same reply (request_id)
-    send_reply(service, thread_id, sender_email, email['subject'], rachel_response, pdf_path=proposal_pdf(rachel_response), in_reply_to=email.get('message_id'), references=email.get('references'), cc=reply_all_cc(email, sender_email))
+    to_addr, cc_addrs = recipients(email, sender_email)
+    rachel_response = dress(rachel_response, sender_name if to_addr == sender_email else '')
+    send_reply(service, thread_id, to_addr, email['subject'], rachel_response, pdf_path=proposal_pdf(rachel_response), in_reply_to=email.get('message_id'), references=email.get('references'), cc=cc_addrs)
     log.info('Initial reply sent via Rachel chat')
     save_to_gbrain(sender_email, thread_id)
     FAILED_ATTEMPTS.pop(email['id'], None)

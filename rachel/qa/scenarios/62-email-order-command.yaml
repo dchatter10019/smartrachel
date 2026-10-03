@@ -25,7 +25,7 @@ turns:
       log_contains: ["date only \"next Tuesday\" (time asked)", "link also to: qa-link-copy@getbevvi.com"]
   - send: "2pm please"
     expect:
-      contains: ["Your order is created", "QA dry run", "Payment link: https://corporate.getbevvi.com/direct-checkout?token=QA_DRY_RUN", "Jane Roe", "(617) 555-0142", "Tip (5% — standard"]
+      contains: ["Hi Jane", "is all set", "QA dry run", "Payment link: https://corporate.getbevvi.com/direct-checkout?token=QA_DRY_RUN", "Jane Roe", "(617) 555-0142", "Tip (5%)", "Your personal mixologist at Bevvi"]
       log_contains: ["[email-order] details reply", "complete -> placing", "[QA] place_order dry run"]
   - send: "Can you create the order please?"
     expect:

@@ -235,10 +235,10 @@ function askText(miss, od, problem) {
   if (od.instructions) have.push('delivery instructions: noted');
   if (od.delivery_ok && od.delivery_label) have.push('delivery: ' + od.delivery_label);
   else if (od.delivery_date) have.push('delivery date: ' + (od.delivery_date_label || od.delivery_date));
-  return "I'll create the order and send the payment link as soon as I have " + (miss.length > 1 ? miss.slice(0, -1).join(', ') + ' and ' + miss[miss.length - 1] : miss[0]) + '.' +
+  return "Happy to get this order going! I'll create it and send the payment link as soon as I have " + (miss.length > 1 ? miss.slice(0, -1).join(', ') + ' and ' + miss[miss.length - 1] : miss[0]) + '.' +
     (problem ? '\n\n' + problem : '') +
     (have.length ? '\n\nWhat I have so far — ' + have.join('; ') + '.' : '') +
-    '\n\nPlease reply with ' + (miss.length > 1 ? 'all of these' : 'this') + ' in one email (e.g. "Natalia Diaz, 617-555-0100, natalia@company.com, Thursday Oct 1 at 2pm").';
+    '\n\nJust reply with ' + (miss.length > 1 ? 'these' : 'this') + ' in one email (e.g. "Natalia Diaz, 617-555-0100, natalia@company.com, Thursday Oct 1 at 2pm") and I\'ll take it from there. Thank you!';
 }
 
 // "Mara is not the customer", "Mara isn't the customer" -> ['Mara']

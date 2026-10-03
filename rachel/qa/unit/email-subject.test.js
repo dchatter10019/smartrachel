@@ -12,5 +12,7 @@ eq('a reply keeps it', clientFromSubject('Re: Goody alcohol order'), 'Goody');
 eq('after a separator (Sean)', clientFromSubject('Drinks quote - Gen II Fund'), 'Gen II Fund');
 eq('"for <Client>"', clientFromSubject('Bar order for Acme Corp'), 'Acme Corp');
 for (const s of ['Drinks order', 'Quote request', 'Fwd: Holiday party drinks', 'Re: Proposal', 'Changes 1790906102']) eq('names no one: ' + s, clientFromSubject(s), '');
+eq('a date part is not the client; "Event" dropped (Oct 3)', clientFromSubject('Re: Menu Request - Foodie For All Event - Oct 6th'), 'Foodie For All');
+eq('a date alone after the separator names no one', clientFromSubject('Quote - 10/6'), '');
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');

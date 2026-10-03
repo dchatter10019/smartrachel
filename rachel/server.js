@@ -2669,10 +2669,10 @@ app.post('/chat', async (req, res) => {
       const provided = !!(x.name || x.phone || x.when || x.date || x.time || x.instructions || x.tip);   // a bare "2pm" answers the time question
       if (!oItems.length && cmd) {
         const t = poE && poE.payment_url
-          ? 'This order was already created — order #' + poE.order_id + '. Payment link: ' + poE.payment_url + '\n\nIf something needs to change before paying, reply with the change and I\'ll create an updated order.'
+          ? 'Happy to help — this order was already created (order #' + poE.order_id + '), so here\'s the payment link again: ' + poE.payment_url + '\n\nIf anything should change before it\'s paid, just reply with the change and I\'ll put together an updated order.\n\nWarmly,\nRachel\nYour personal mixologist at Bevvi'
           : 'There\'s no quote on this thread to order yet — send the list of items (and the delivery address) and I\'ll put it together.';
         console.log('[email-order] command with an empty basket — ' + (poE && poE.payment_url ? 'already placed ' + poE.order_id + ', link re-sent' : 'nothing to order, asked for the list'));
-        return res.json({ text: t, response: t, email_cc: x.link_to || [] });
+        return res.json({ text: t, response: t, email_cc: x.link_to || [], email_to: poE && poE.payment_url ? (x.link_to || []).filter(a => !EO.isStaff(a)) : [] });
       }
       if (oItems.length && (cmd || provided)) {
         const od = Object.assign({}, state.emailOrder || {});
@@ -2755,7 +2755,7 @@ app.post('/chat', async (req, res) => {
         }
         const pt = QE.total(oItems);
         const tipAmt = od.tip ? (od.tip.amount != null ? od.tip.amount : Math.round(pt * od.tip.pct) / 100) : Math.round(pt * 5) / 100;
-        const tipLabel = od.tip ? (od.tip.amount != null ? 'Tip' : 'Tip (' + od.tip.pct + '%)') : 'Tip (5% — standard, since none was given)';
+        const tipLabel = od.tip ? (od.tip.amount != null ? 'Tip' : 'Tip (' + od.tip.pct + '%)') : 'Tip (5%)';
         const nm = String(od.name).trim().split(/\s+/);
         let r = null;
         try {
@@ -2777,13 +2777,23 @@ app.post('/chat', async (req, res) => {
         state.emailOrder = null; saveFlowState();
         const tax = Math.round(pt * 10) / 100, svc = Math.round(pt * 10) / 100, grand = Math.round((pt + tax + svc + tipAmt + 25) * 100) / 100;
         const m2 = n => QE.money(n);
-        const t = (preText ? preText + '\n\n' : '') + 'Your order is created — order #' + r.order_id + (r.dry_run ? ' (QA dry run)' : '') + '.\n\nPayment link: ' + r.payment_url +
-          '\n\nOrder for: ' + od.name + ', ' + od.phone + ', ' + od.email +
-          '\nDelivery: ' + state.address + ' — ' + od.delivery_label + (od.instructions ? '\nInstructions: ' + od.instructions : '') +
-          '\n\n' + oItems.length + ' item line(s). Product total ' + m2(pt) + '; estimated tax ' + m2(tax) + '; service charge (10%) ' + m2(svc) + '; ' + tipLabel + ' ' + m2(tipAmt) + '; estimated delivery ' + m2(25) + '. Estimated total ' + m2(grand) + '.' +
-          '\n\nThe order is confirmed once the payment link is paid.';
-        console.log('[email-order] placed ' + r.order_id + (r.dry_run ? ' (QA dry run)' : '') + ' — payment link sent: ' + r.payment_url + (od.link_to ? ' (also to ' + od.link_to.join(', ') + ')' : ''));
-        return res.json({ text: t, response: t, email_cc: od.link_to || [] });
+        // Written to the CUSTOMER (they are the To — DC, Oct 3), in Rachel's voice: a personal mixologist, warm, never a log line.
+        const first = String(od.name || '').trim().split(/\s+/)[0] || 'there';
+        const forWhom = state.savedClientName ? ' for ' + state.savedClientName : '';
+        const lines = oItems.map(li => { const q = li.qty || li.quantity || 1, p = parseFloat(li.price) || 0; return q + 'x ' + li.name + ' — ' + m2(p) + ' ea = ' + m2(p * q); }).join('\n');
+        const t = (preText ? preText + '\n\n' : '') + 'Hi ' + first + ',\n\n' +
+          'Wonderful news — your order' + forWhom + ' is all set, and I\'m so glad to be part of it!' + (r.dry_run ? ' (QA dry run — order #' + r.order_id + '.)' : '') +
+          '\n\nPayment link: ' + r.payment_url + '\nYour order is confirmed as soon as it\'s paid.' +
+          '\n\nHere\'s what\'s coming your way:\n' + lines +
+          '\n\nProduct total: ' + m2(pt) + '\nEstimated tax: ' + m2(tax) + '\nService charge (10%): ' + m2(svc) + '\n' + tipLabel + ': ' + m2(tipAmt) + '\nEstimated delivery: ' + m2(25) + '\nEstimated total: ' + m2(grand) +
+          '\n\nDelivery: ' + od.delivery_label + '\n' + state.address + (od.instructions ? '\nNotes for our driver: ' + od.instructions : '') +
+          '\nOrder for: ' + od.name + ', ' + od.phone + ', ' + od.email + (r.dry_run ? '' : '\nOrder #' + r.order_id) +
+          '\n\nIf anything needs a little tweak before the big day, just reply to this email and I\'ll take care of it. Cheers to a wonderful event!' +
+          '\n\nWarmly,\nRachel\nYour personal mixologist at Bevvi';
+        // "send the payment link to <customer> and copy Sean and me" (DC, Oct 3): the customer is the To, the thread is copied.
+        const linkTo = (od.link_to || []).filter(a => !EO.isStaff(a));
+        console.log('[email-order] placed ' + r.order_id + (r.dry_run ? ' (QA dry run)' : '') + ' — payment link sent: ' + r.payment_url + (linkTo.length ? ' — To: ' + linkTo.join(', ') + ', the sender and the thread in Cc' : od.link_to ? ' (also to ' + od.link_to.join(', ') + ')' : ''));
+        return res.json({ text: t, response: t, email_cc: od.link_to || [], email_to: linkTo });
       }
     }
     // ── NEXT-BEST-ACTION (cta.js; Learning Phase 1, Part B) ──────────────────────────────────────────

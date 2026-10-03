@@ -16,8 +16,18 @@ function clientFromSubject(subject) {
     if (!w.length || w.length > 5 || w.every(x => GENERIC.test(x))) return '';
     return c;
   };
-  let m = s.match(/\s[-–—|:]\s*([^-–—|:]{2,60})$/);
-  if (m && clean(m[1])) return clean(m[1]);
+  // The last " - " part that is not a date: "Menu Request - Foodie For All Event - Oct 6th" -> Foodie For All (Oct 3: the
+  // payment-link email said "your order for Oct 6th"). A trailing "Event" is not part of the client's name.
+  const DATEISH = /^(?:(?:mon|tue|wed|thu|fri|sat|sun)\w*,?\s*)?(?:(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s*\d{4})?|\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*|\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|(?:mon|tue|wed|thu|fri|sat|sun)\w*)$/i;
+  const parts = s.split(/\s[-–—|:]\s*/);
+  for (let i = parts.length - 1; i >= 1; i--) {
+    const p = parts[i].trim();
+    if (!p || p.length > 60 || DATEISH.test(p)) continue;
+    const c = clean(p.replace(/\s+event$/i, ''));
+    if (c) return c;
+    break;
+  }
+  let m;
   m = s.match(new RegExp('\\bfor\\s+(?:the\\s+)?([A-Z][\\w&\'.]*(?:\\s+[A-Z0-9][\\w&\'.]*){0,4})', ''));
   if (m && clean(m[1])) return clean(m[1]);
   m = s.match(new RegExp('^(.{2,40}?)\\s+' + ORDER_WORDS + '\\b', 'i'));
