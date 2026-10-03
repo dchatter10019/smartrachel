@@ -55,6 +55,14 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   message (next turn reuses the whole earlier conversation), the last tool result. Before: the customer's details were in
   the cached block -> 138/146 conversations rebuilt ~20k tokens; after: 0 cold starts, $0.036 -> $0.017 per call. Every
   call logs `[usage] rachel iteration N: input, cache read, cache write, output`. The classifier prompt is too small to cache.
+- Model choice, measured Oct 3 (DC: cost). Main call stays claude-sonnet-4-6: on the 22-scenario smoke set Sonnet 5.5 cost
+  $0.90 (medium, 21/22) / $0.70 (low, 19/22, order placement broke) vs 4.6 $0.86 22/22 — 5.5's tokenizer uses ~40% more
+  tokens, cancelling its price. Re-test: `RACHEL_MODEL=claude-sonnet-5-5 RACHEL_EFFORT=medium ops/staging.sh start ...`
+  (rachel.js sends between_tools thinking + effort + server-side fallback for 5.x, temperature 0.3 for 4.6). Classifier
+  stays Sonnet 4.6: on 228 real customer turns (qa/eval-classifier.js) Haiku routed 14% differently, mostly wrongly ("set
+  tax to 0" -> change_instructions); Sonnet 5.5 is less confident and sends more turns to the (dearer) main LLM. The
+  SHADOW classifier call (a paid call per message, label only logged) was removed. catalog-guard web prices: Opus 5.5
+  (was Opus 5; same tokenizer, 20% cheaper).
 - Rachel's state (flow-state.json, chat-sessions.json, conversations.jsonl, baskets.json, customer-contacts.json,
   events.jsonl) lives in RACHEL_DATA_DIR (rachel/data-dir.js; default /home/ubuntu/logs). A Rachel on any port but
   3500 REFUSES to start on the production dir — a second instance would rewrite live sessions.

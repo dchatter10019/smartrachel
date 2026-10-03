@@ -47,7 +47,7 @@ async function webMarketPrice(name, ml, zip) {
     'Find up to 5 prices from different retailers. Answer with ONLY a JSON object, no other text: {"prices":[{"price":<number>,"store":"<retailer>","url":"<page url>"}]}. If you find none, answer {"prices":[]}.';
   const loc = ZIP_LOC[zip] || {};
   const base = {
-    model: 'claude-opus-5', max_tokens: 4000, output_config: { effort: 'low' },
+    model: 'claude-opus-5-5', max_tokens: 4000, output_config: { effort: 'low' },   // Oct 3: was claude-opus-5 ($5/$25 -> $4/$20)
     betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
     tools: [{ type: 'web_search_20260209', name: 'web_search', max_uses: 5, user_location: Object.assign({ type: 'approximate', country: 'US' }, loc) }]
   };

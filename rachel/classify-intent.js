@@ -83,7 +83,11 @@ async function callClassifier(model, timeoutMs, user, key) {
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST', signal: ctrl.signal,
       headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model, max_tokens: 400, system: SYSTEM, messages: [{ role: 'user', content: user }] })
+      // Sonnet 5.5 (Oct 3, cost): no extended thinking (between_tools = its lowest setting; 'disabled' is a 400 there), low
+      // effort, and the ~640-token prompt is cached (its minimum is 512; Sonnet 4.6's was above this prompt's size).
+      body: JSON.stringify(/^claude-sonnet-5/.test(model)
+        ? { model, max_tokens: 400, thinking: { type: 'between_tools' }, output_config: { effort: 'low' }, system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }], messages: [{ role: 'user', content: user }] }
+        : { model, max_tokens: 400, system: SYSTEM, messages: [{ role: 'user', content: user }] })
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error.type || 'api_error');
@@ -116,4 +120,4 @@ async function classifyIntent(message, ctx = {}) {
   }
   return { intent: 'other', ref: '', qty: 0, confidence: 0, source: 'error:' + errs.join(',') };
 }
-module.exports = { firstJson, classifyIntent, ruleIntent, groundedRef, INTENTS };
+module.exports = { firstJson, classifyIntent, ruleIntent, groundedRef, INTENTS, SYSTEM, callClassifier };   // SYSTEM + callClassifier: model evals (qa/eval-classifier.js)

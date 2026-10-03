@@ -74,8 +74,9 @@ start() {
     http_up http://127.0.0.1:$SAPORT/ || { echo "staging shopping-agent did not come up — see $SALOG"; stop; return 1; }
     sa_url=http://127.0.0.1:$SAPORT/mcp
   fi
+  # RACHEL_MODEL / RACHEL_EFFORT from the caller's env reach staging only (model A/B: RACHEL_MODEL=claude-sonnet-4-6 ops/staging.sh start)
   (cd "$tree/rachel" && launch rachel "$LOG" "$BASE/rachel.pid" RACHEL_PORT=$PORT RACHEL_DATA_DIR=$DATA SHOPPING_AGENT_URL=$sa_url \
-    -- node "$tree/rachel/server.js")
+    ${RACHEL_MODEL:+RACHEL_MODEL=$RACHEL_MODEL} ${RACHEL_EFFORT:+RACHEL_EFFORT=$RACHEL_EFFORT} -- node "$tree/rachel/server.js")
   echo "$tree" > "$BASE/tree"
   for i in $(seq 1 45); do http_up http://127.0.0.1:$PORT/health && break; sleep 1; done
   if ! http_up http://127.0.0.1:$PORT/health; then echo "staging rachel did not come up — see $LOG"; tail -5 "$LOG"; stop; return 1; fi

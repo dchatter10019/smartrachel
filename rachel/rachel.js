@@ -762,6 +762,11 @@ function getTools(channel_format, context) {
 // ─── RACHEL CHAT ──────────────────────────────────────────────────────────────
 
 const MAX_ITERATIONS = 10;
+// Oct 3 A/B on the staging smoke set (22 conversations): Sonnet 4.6 $0.86 22/22 · Sonnet 5.5 medium $0.90 21/22 · Sonnet 5.5
+// low $0.70 19/22 (order placement failed). 5.5's tokenizer uses ~40% more tokens for the same text, cancelling its lower
+// price — 4.6 stays. RACHEL_MODEL=claude-sonnet-5-5 (+ RACHEL_EFFORT) re-runs the A/B (ops/staging.sh passes both through).
+const RACHEL_MODEL = process.env.RACHEL_MODEL || 'claude-sonnet-4-6';
+const RACHEL_EFFORT = process.env.RACHEL_EFFORT || 'medium';
 
 async function rachelChat({ messages, context, rachelPrompt, gbrain_context = '', channel_format = 'voiceflow', address_rule = '', onPackageBuilt = null, onProposalGenerated = null, sendEmailFn = null, lastProposalUrl = '', customerMessage = '', alreadyConfirmed = false, onUnavailableItems = null, onProductDiscussed = null, onSubstituteConfirmed = null, currentLineItems = '', onShowBasket = null, eventParams = null, onUpdateQuantity = null, onOrderPlaced = null, sessionState = null }) {
   const channelNotes = {
@@ -843,7 +848,14 @@ RULES:
   // here, so the whole earlier conversation is a cache read); and the last tool result within this turn's tool loop.
   const withHistoryCache = msgs => {
     if (!msgs.length) return msgs;
-    const out = msgs.slice();
+    // Earlier turns' thinking blocks (Sonnet 5.5's between-tools notes) are dropped from the request: those turns' customer
+    // messages carried that turn's notes when the blocks were made, so replaying them would be an edited history (a 400 on
+    // accounts with preserved-thinking enforcement). This turn's blocks stay exactly as returned.
+    const out = msgs.map((m, i) => {   // indexes unchanged (turnMsgIdx below)
+      if (!(i < turnMsgIdx && m.role === 'assistant' && Array.isArray(m.content))) return m;
+      const kept = m.content.filter(b => b && b.type !== 'thinking' && b.type !== 'redacted_thinking');
+      return kept.length && kept.length < m.content.length ? Object.assign({}, m, { content: kept }) : m;
+    });
     if (turnMsgIdx >= 0 && turnMsgIdx < out.length) {
       const c = toBlocks(out[turnMsgIdx].content);
       if (c && c.length) {
@@ -875,14 +887,19 @@ RULES:
   while (iterations < MAX_ITERATIONS) {
     iterations++;
 
-    const response = await client.messages.create({
-      model: 'claude-sonnet-4-6',
+    // Sonnet 5.5 (Oct 3, DC: cost) — $2/$10 vs Sonnet 4.6's $3/$15. No temperature (a 400 there). Thinking 'between_tools'
+    // = no extended thinking (the closest to how 4.6 ran; 'disabled' is a 400). RACHEL_EFFORT tunes effort (default medium).
+    // A refusal on a cyber/frontier category is re-run on Sonnet 5 by the API (server-side fallback).
+    const response = await client.beta.messages.create(Object.assign({
+      model: RACHEL_MODEL,
       max_tokens: 4096,
-      temperature: 0.3,
       system: systemBlocks,
       tools,
       messages: withHistoryCache(claudeMessages)
-    });
+    }, /^claude-sonnet-5/.test(RACHEL_MODEL)
+      ? { thinking: { type: 'between_tools' }, output_config: { effort: RACHEL_EFFORT }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' }
+      : { temperature: 0.3 }));   // Sonnet 4.6 (RACHEL_MODEL=claude-sonnet-4-6): exactly as before Oct 3
+    if (response.stop_reason === 'refusal') console.log('[rachel] REFUSED by the model (' + ((response.stop_details && response.stop_details.category) || '?') + ') — the customer gets the fallback reply');
 
     console.log(`[rachel] iteration ${iterations} stop_reason: ${response.stop_reason}`);
     try {

@@ -21,7 +21,7 @@
 
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY || '';
-const REVIEW_MODEL = 'claude-sonnet-4-6';
+const REVIEW_MODEL = 'claude-sonnet-4-6';   // Oct 3: stays — Sonnet 5.5's tokenizer cancelled its lower price on Rachel's main call
 
 function extractLineItems(result) {
   if (!result) return [];
@@ -174,7 +174,7 @@ async function runLlmCritic(intent, result, request, customerProfile) {
       })
     });
     const data = await res.json();
-    const rawText = (data.content && data.content[0] && data.content[0].text) || '{}';
+    const rawText = ((data.content || []).find(b => b && b.type === 'text') || {}).text || '{}';   // by type: Sonnet 5.5 may lead with a thinking block
     const cleaned = rawText.replace(/^```(json)?/i, '').replace(/```$/, '').trim();
     const parsed = JSON.parse(cleaned);
     return { approved: parsed.approved !== false, reason: parsed.reason || '' };

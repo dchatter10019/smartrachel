@@ -2947,20 +2947,9 @@ app.post('/chat', async (req, res) => {
         }
       }
     }
-    // SHADOW classify: label every turn with the LLM classifier and log it beside what
-    // the regex/state-machine path does — acting on NOTHING yet. Once real traffic shows
-    // agreement (or shows where the classifier is better), it takes over routing.
+    // Internal sentinels / replayed delivery windows are never classified. (Until Oct 3 a SHADOW classifier call ran here on
+    // every message — a paid Sonnet call whose label only went to the log; the routing call below already logs its label.)
     const isInternalMsg = /^__/.test(message) || /^\d{1,2}:\d{2}\s*[AP]M\s*-\s*\d{1,2}:\d{2}\s*[AP]M/i.test(message) || (state.orderData && message === state.orderData.delivery_datetime);
-    if (!isInternalMsg) try {   // skip internal sentinels / replayed windows
-      const { classifyIntent } = require('./classify-intent.js');
-      const lastR = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
-      // numbered_list = a PRICED option list; "1. How long is the event? 2. What's your budget?" is questions, not picks.
-      const lastKind = /how many/i.test(lastR) ? 'how_many' : /^\s*1[\.\)]\s[^\n]*\$\s?\d/m.test(lastR) ? 'numbered_list' : /shall i (go ahead|place)|\(yes\/no\)/i.test(lastR) ? 'yes_no' : /full name|phone number|email/i.test(lastR) ? 'contact_question' : /date and time|what time/i.test(lastR) ? 'time_question' : 'other';
-      let bsz = 0; try { bsz = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
-      classifyIntent(message, { lastKind, orderStep: state.orderStep, basketSize: bsz, lastQuestion: lastR.slice(0, 160) }).then(c => {
-        console.log('[classify] ' + c.intent + ' (' + c.confidence.toFixed(2) + (c.ref ? ', ref=' + JSON.stringify(c.ref) : '') + (c.qty ? ', qty=' + c.qty : '') + ') [' + c.source + '] lastKind=' + lastKind + ' step=' + (state.orderStep || '-') + ' | ' + JSON.stringify(message).slice(0, 60));
-      }).catch(() => {});
-    } catch (e) {}
     if (state.step !== 'ready') {
       // Shouldn\'t happen but fallback
       const ask = 'What is your delivery address? (Include street, city, state, and zip)';
