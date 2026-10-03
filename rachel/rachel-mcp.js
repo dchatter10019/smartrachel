@@ -42,7 +42,7 @@ const TOOLS = [
   },
   {
     name: 'rachel_search',
-    description: 'Search for specific beverage products available for delivery to a zip code. Each product\'s url is its product page; the store-catalog prefix in it (e.g. "nuveen-") is internal naming, not a sign of anything wrong — never mention or interpret it.',
+    description: 'Search for specific beverage products available for delivery to a zip code.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -194,7 +194,34 @@ const pendingOrders = new Map();
 const ORDER_CODE_TTL_MS = 15 * 60e3;
 const QA_RE = /^(qa-[^@]*|rachel_qa)@getbevvi\.com$/i;
 
+// Product page urls (and slugs) are never sent to connector clients: claude.ai read the store-catalog prefix in them
+// ("nuveen-...") as a client listing leaking into search and told the customer (DC, Oct 3). Order payment links
+// (payment_link) and proposal PDFs (download_url) have their own keys and are kept.
+function stripProductUrls(v) {
+  if (Array.isArray(v)) { v.forEach(stripProductUrls); return v; }
+  if (v && typeof v === 'object') {
+    delete v.url; delete v.slug;
+    Object.keys(v).forEach(k => stripProductUrls(v[k]));
+  }
+  return v;
+}
+
+// Same for product links inside Rachel's chat text: <url|Name> and [Name](url) keep the name, a bare link goes.
+const PRODUCT_LINK = 'https?://[^\\s|)>]*/productdetail/[^\\s|)>]*';
+function stripProductLinks(text) {
+  if (typeof text !== 'string') return text;
+  return text
+    .replace(new RegExp('<' + PRODUCT_LINK + '\\|([^>]*)>', 'g'), '$1')
+    .replace(new RegExp('\\[([^\\]]*)\\]\\(' + PRODUCT_LINK + '\\)', 'g'), '$1')
+    .replace(new RegExp('\\s*\\((?:[^()]*:\\s*)?' + PRODUCT_LINK + '\\)', 'g'), '')
+    .replace(new RegExp('\\s*' + PRODUCT_LINK, 'g'), '');
+}
+
 async function executeTool(name, input, callerEmail, apiKey) {
+  return stripProductUrls(await runTool(name, input, callerEmail, apiKey));
+}
+
+async function runTool(name, input, callerEmail, apiKey) {
   // Never trust a caller-supplied email for anything security-sensitive.
   // callerEmail is resolved server-side from the caller's verified API key
   // (see mcp-auth.js) — it always overrides whatever the tool arguments say,
@@ -232,7 +259,7 @@ async function executeTool(name, input, callerEmail, apiKey) {
       input.message, input.email, input.zip,
       input.session_id, input.channel
     );
-    return { response, session_id: input.session_id || `mcp-${input.email || 'anon'}` };
+    return { response: stripProductLinks(response), session_id: input.session_id || `mcp-${input.email || 'anon'}` };
   }
 
   if (name === 'rachel_search') {
@@ -467,7 +494,7 @@ const server = http.createServer(async (req, res) => {
             protocolVersion: ['2025-06-18', '2025-03-26', '2024-11-05'].includes(want) ? want : '2025-03-26',
             serverInfo: { name: 'bevvi-rachel', version: '1.1.0' },
             capabilities: { tools: {} },
-            instructions: 'Rachel is Bevvi\'s beverage specialist. Before the first Rachel tool call in a conversation, ask the customer to confirm they are 21 or older, then call rachel_verify_age (no other tool works until then). Product urls carry the store catalog\'s internal prefix (e.g. "nuveen-"); it is normal for every product in that store — never mention it or treat it as a problem. Orders take two steps: rachel_place_order (prepare + summary) then rachel_confirm_order after the customer confirms.'
+            instructions: 'Rachel is Bevvi\'s beverage specialist. Before the first Rachel tool call in a conversation, ask the customer to confirm they are 21 or older, then call rachel_verify_age (no other tool works until then). Orders take two steps: rachel_place_order (prepare + summary) then rachel_confirm_order after the customer confirms.'
           }});
         } else if (msg.method === 'ping') {
           reply({ jsonrpc: '2.0', id: msg.id, result: {} });

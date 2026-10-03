@@ -73,6 +73,7 @@ def apikey():
     print('verify_age ->', tool('rachel_verify_age',{'confirmed':True})[0])
     r,_=tool('rachel_search',{'products':["Tito's Handmade Vodka 1.75 L"],'zip':'10019'})
     p=r['results'][0]['products'][0]; print('search ->', p['name'], p['price'])
+    print('search urls ->', 'LEAKED' if ('productdetail' in json.dumps(r) or '"url"' in json.dumps(r)) else 'none')
     li=json.dumps([{'name':p['name'],'price':p['price'],'qty':2}])
     r,_=tool('rachel_place_order',{'line_items':li,'first_name':'Pat','last_name':'Example','phone':'212-555-0100','address':'425 W 53rd St, New York, NY 10019','zip':'10019','delivery_datetime':'next Tuesday at 3am'})
     print('prepare (3am) ->', r.get('ready'), r.get('problems'))
@@ -90,7 +91,7 @@ if __name__ == '__main__':
         try:
             with contextlib.redirect_stdout(buf): fn()
             out = buf.getvalue()
-            bad = [l for l in out.splitlines() if l.startswith('confirm ->') and ' True ' not in l] + [l for l in out.splitlines() if 'forged token ->' in l and '401' not in l] + [l for l in out.splitlines() if l.startswith('search before age ->') and not l.startswith('search before age -> held | isError: False')]
+            bad = [l for l in out.splitlines() if l.startswith('confirm ->') and ' True ' not in l] + [l for l in out.splitlines() if 'forged token ->' in l and '401' not in l] + [l for l in out.splitlines() if l.startswith('search urls ->') and 'none' not in l] + [l for l in out.splitlines() if l.startswith('search before age ->') and not l.startswith('search before age -> held | isError: False')]
             print(('  ✗ ' if bad else '  ✓ ') + 'connector ' + name + (': ' + '; '.join(bad) if bad else ''))
             if bad: FAILS.append(name)
         except Exception as e:
