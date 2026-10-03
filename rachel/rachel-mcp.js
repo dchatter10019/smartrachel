@@ -216,10 +216,14 @@ async function executeTool(name, input, callerEmail, apiKey) {
   }
 
   // Gate all other tools behind age verification (this connection, last 4 hours)
+  // Not an error result: claude.ai showed the gate as "1 failed" on every first question (DC, Oct 3). The tool
+  // simply has nothing to return until the customer confirms their age.
   if (name !== 'rachel_verify_age' && !ageVerified(apiKey)) {
+    console.log('[rachel-mcp] ' + name + ' HELD (age not verified on this connection yet) — ' + callerEmail);
     return {
-      error: 'Age not verified. Call rachel_verify_age first to confirm the customer is 21 or older.',
-      action_required: 'Call rachel_verify_age with confirmed:true after customer confirms age'
+      age_verification_required: true,
+      message: 'Before Rachel can help, the customer must confirm they are 21 or older.',
+      next_step: 'Ask the customer to confirm they are 21 or older, then call rachel_verify_age with confirmed:true and repeat this call.'
     };
   }
 
@@ -462,7 +466,7 @@ const server = http.createServer(async (req, res) => {
             protocolVersion: ['2025-06-18', '2025-03-26', '2024-11-05'].includes(want) ? want : '2025-03-26',
             serverInfo: { name: 'bevvi-rachel', version: '1.1.0' },
             capabilities: { tools: {} },
-            instructions: 'Rachel is Bevvi\'s beverage specialist. Call rachel_verify_age first. Orders take two steps: rachel_place_order (prepare + summary) then rachel_confirm_order after the customer confirms.'
+            instructions: 'Rachel is Bevvi\'s beverage specialist. Before the first Rachel tool call in a conversation, ask the customer to confirm they are 21 or older, then call rachel_verify_age (no other tool works until then). Orders take two steps: rachel_place_order (prepare + summary) then rachel_confirm_order after the customer confirms.'
           }});
         } else if (msg.method === 'ping') {
           reply({ jsonrpc: '2.0', id: msg.id, result: {} });

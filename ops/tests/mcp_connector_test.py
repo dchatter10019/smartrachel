@@ -68,7 +68,8 @@ def apikey():
     print('initialize', s, j['result']['protocolVersion'], j['result']['serverInfo'], ct)
     print('notification ->', call('notifications/initialized',id=None)[0])
     s,(j,ct)=call('tools/list',accept='text/event-stream'); print('tools/list (SSE)', ct, [t['name'] for t in j['result']['tools']])
-    print('search before age ->', tool('rachel_search',{'products':["Tito's Handmade Vodka 1.75 L"],'zip':'10019'})[0].get('error','')[:50])
+    r,err=tool('rachel_search',{'products':["Tito's Handmade Vodka 1.75 L"],'zip':'10019'})
+    print('search before age ->', 'held' if r.get('age_verification_required') else 'NOT HELD', '| isError:', err)
     print('verify_age ->', tool('rachel_verify_age',{'confirmed':True})[0])
     r,_=tool('rachel_search',{'products':["Tito's Handmade Vodka 1.75 L"],'zip':'10019'})
     p=r['results'][0]['products'][0]; print('search ->', p['name'], p['price'])
@@ -89,7 +90,7 @@ if __name__ == '__main__':
         try:
             with contextlib.redirect_stdout(buf): fn()
             out = buf.getvalue()
-            bad = [l for l in out.splitlines() if l.startswith('confirm ->') and ' True ' not in l] + [l for l in out.splitlines() if 'forged token ->' in l and '401' not in l]
+            bad = [l for l in out.splitlines() if l.startswith('confirm ->') and ' True ' not in l] + [l for l in out.splitlines() if 'forged token ->' in l and '401' not in l] + [l for l in out.splitlines() if l.startswith('search before age ->') and not l.startswith('search before age -> held | isError: False')]
             print(('  ✗ ' if bad else '  ✓ ') + 'connector ' + name + (': ' + '; '.join(bad) if bad else ''))
             if bad: FAILS.append(name)
         except Exception as e:
