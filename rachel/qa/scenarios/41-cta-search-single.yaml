@@ -2,7 +2,7 @@ name: cta-search-single
 fresh: true
 tags: [smoke, cta]
 # Learning Phase 1, Part B: one clear match. If the LLM ends with a generic nudge, the table's
-# search.offer_qty ("Want 3 of those?") replaces it; if it asks a real question ("How many bottles?"),
+# search.offer_qty ("How many would you like?"; was "Want 3 of those?" until DC, Oct 3) replaces it; if it asks a real question ("How many bottles?"),
 # that stays and no CTA is added (DC, Sep 29: option A). Either way exactly one question, never the old
 # trailer, and "3" puts 3 in the basket. (cta_taken on a deterministic path: 43-cta-no-double-question.)
 turns:
@@ -11,7 +11,7 @@ turns:
   - send: "425 W 53rd St, New York, NY 10019"
   - send: "do you have Tito's Handmade Vodka 1.75 L?"
     expect:
-      matches: "(?:Want 3 of those|How many[^?\\n]*)\\?\\s*$"
+      matches: "How many[^?\\n]*\\?\\s*$"
       not_contains: ["place the order, generate", "Anything else"]
       log_contains: ["[cta] "]
   - send: "3"

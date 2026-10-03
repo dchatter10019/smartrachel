@@ -808,7 +808,7 @@ RULES:
 - NEVER mention cart, "add to cart", or any cart action
 - Search immediately, no clarifying questions first
 - When ShoppingAgent returns recommendation results, present them DIRECTLY — NEVER make a follow-up product_query call after a recommendation
-- After presenting ANY package, ALWAYS ask: "Would you also like to add mixers, water, soda, ice, or cups?"
+- After presenting a package of 2 or more items, ask: "Would you also like to add mixers, water, soda, ice, or cups?" Never ask it after showing a single product (DC, Oct 3) — a single product gets the quantity question instead.
 - When customer says YES to mixers: immediately call ShoppingAgent intent="product_query" with queries=[{name:"still water",category:"mixer"},{name:"sparkling water",category:"mixer"},{name:"soda variety pack",category:"mixer"},{name:"ice bag",category:"mixer"}] and zip from session. Present what's available and ask which they want.
 - When customer says NO to mixers: respond with ONLY "Would you like to *place the order*, *generate a PDF proposal*, or make any changes?" — nothing else`,
 

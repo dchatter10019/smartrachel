@@ -17,8 +17,9 @@ const money = n => '$' + (Number(n) || 0).toFixed(2);
 const TABLE = {
   search_single: [
     { id: 'search.offer_qty', when: t => /wine|spirit|liquor|champagne|vodka|tequila|whisk|gin|rum|bourbon/i.test(t.category || ''),
-      // Never drinks-per-person: the customer's own number, else a flat default.
-      text: t => 'Want ' + (t.statedQty > 0 ? t.statedQty : isWine(t.category) ? 6 : 3) + ' of those?',
+      // Never a number the customer didn't give (DC, Oct 3: "why ask want 3 of those when the customer hasn't indicated
+      // that?"). Was 'Want 3 of those?' (6 for wine). A number reply sets the quantity; a bare yes adds 1 and asks how many.
+      text: 'How many would you like?',
       accept: /^\s*(?:yes|yep|yeah|sure|ok(?:ay)?)\b|^\s*\d{1,3}\s*(?:bottles?|x)?\s*[.!]?\s*$/i },
     { id: 'search.add_more', text: 'Want me to add it to your basket, or keep looking?', accept: /\badd\b|^\s*(?:yes|yep|yeah|sure)\b/i },
   ],

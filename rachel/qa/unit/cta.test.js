@@ -51,9 +51,9 @@ console.log('declined is not repeated');
 
 console.log('texts');
 {
-  eq('spirits default 3', text({ kind: 'search_single', category: 'spirits' }), 'Want 3 of those?');
-  eq('wine default 6', text({ kind: 'search_single', category: 'wine' }), 'Want 6 of those?');
-  eq('stated qty wins', text({ kind: 'search_single', category: 'wine', statedQty: 2 }), 'Want 2 of those?');
+  eq('spirits: no made-up number', text({ kind: 'search_single', category: 'spirits' }), 'How many would you like?');
+  eq('wine: no made-up number', text({ kind: 'search_single', category: 'wine' }), 'How many would you like?');
+  eq('stated qty: still asks (a bare yes takes the stated number)', text({ kind: 'search_single', category: 'wine', statedQty: 2 }), 'How many would you like?');
   eq('named substitute', text({ kind: 'item_unavailable', substitute: { name: 'Ketel One', size: '750 mL', price: 29.99 } }), 'Ketel One 750 mL is in stock at $29.99 — swap it in?');
 }
 

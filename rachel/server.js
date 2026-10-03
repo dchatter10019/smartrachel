@@ -2865,7 +2865,7 @@ app.post('/chat', async (req, res) => {
             let t = listText != null ? listText : cta.stripTrailer(dn);
             if (listText == null && t !== orig.trimEnd()) console.log('[cta] stripped the generic four-action trailer');
             // The prompt's "add mixers, water, soda, ice, or cups?" belongs after a PACKAGE. On a one-product search it is not
-            // the customer's next step: kept as a "real question" it blocked "Want 3 of those?", and the bare "3" that followed
+            // the customer's next step: kept as a "real question" it blocked the quantity offer, and the bare "3" that followed
             // went to the LLM, which said "Got it — 3 bottles" with the basket still at 1 (nightly Oct 3, cta-search-single).
             const evS = events.ctx() || { actions: [] };
             if (evS.ev && evS.ev.discussed_capture && !(evS.actions || []).includes('built_basket') && /add mixers, water, soda/i.test(t)) {
@@ -2947,7 +2947,7 @@ app.post('/chat', async (req, res) => {
               const t0 = t; t = cta.scrubGenericQuestions(t);
               if (t !== t0.trimEnd()) console.log('[cta] removed generic question(s) from the body — the CTA is the one question');
               t = t.trimEnd() + '\n\n' + c.text;
-              st.lastCta = { id: c.id, product: turn.product || null, qty: turn.offerQty || 0, substitute: turn.substitute || null, at: Date.now() };
+              st.lastCta = { id: c.id, product: turn.product || null, qty: turn.offerQty || 0, stated: turn.statedQty || 0, substitute: turn.substitute || null, at: Date.now() };
               events.note({ cta_id: c.id });
             }
             let nB = 0; try { nB = JSON.parse(st.lastLineItems || '[]').length; } catch (e) {}
@@ -2986,7 +2986,8 @@ app.post('/chat', async (req, res) => {
         const pr = lc.id === 'sub.offer_named' ? lc.substitute : lc.product;
         if ((lc.id === 'search.offer_qty' || lc.id === 'search.add_more' || lc.id === 'sub.offer_named') && pr && pr.name) {
           const nM = message.match(/^\s*(\d{1,3})\b/) || message.match(/\b(\d{1,3})\s*(?:bottles?|x)\b/i);
-          const q = lc.id === 'search.offer_qty' ? (nM ? parseInt(nM[1]) : lc.qty) : 0;
+          // a number = the quantity; a bare "yes" = the customer's own stated number if any, else add it and ask how many
+          const q = lc.id === 'search.offer_qty' ? (nM ? parseInt(nM[1]) : (lc.stated || 0)) : 0;
           const r = await applyBasketSubstitute(sessionKey, email, '', pr.name, pr.price, pr.size, { add: true });
           if (r && r.success) {
             let nm = r.with || pr.name;
