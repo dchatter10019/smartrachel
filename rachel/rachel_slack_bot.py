@@ -347,7 +347,7 @@ def handle_reaction(event, client, ack=None):
         log.warning(f"[fix-review] could not read the reacted message: {e}"); return
     m = re.search(r"(?:Fix ready|Needs a decision) — (F-\d{4})", msg.get("text", ""))
     if not m or "Fix ready" not in msg.get("text", ""):
-        return
+        log.info(f"[fix-review] :{name}: by {user} on a message that is not a fix post — ignored"); return
     fid = m.group(1)
     if user not in OPS_APPROVERS:
         client.chat_postMessage(channel=ch, thread_ts=ts, text="Only the people allowed to approve fixes can put one live or throw it away.")
