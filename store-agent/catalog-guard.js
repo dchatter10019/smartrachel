@@ -55,6 +55,7 @@ async function webMarketPrice(name, ml, zip) {
   let messages = [first], resp = null;
   for (let k = 0; k < 3; k++) {   // a long server-tool turn can pause; resume by sending the paused turn back
     resp = await anthropic().beta.messages.create(Object.assign({}, base, { messages }));
+    try { require(require('path').join(__dirname, '..', 'rachel', 'ai-spend.js')).record('web-price', base.model, resp.usage); } catch (e) {}
     if (resp.stop_reason !== 'pause_turn') break;
     messages = [first, { role: 'assistant', content: resp.content }];
   }

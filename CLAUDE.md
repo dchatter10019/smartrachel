@@ -55,6 +55,11 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   message (next turn reuses the whole earlier conversation), the last tool result. Before: the customer's details were in
   the cached block -> 138/146 conversations rebuilt ~20k tokens; after: 0 cold starts, $0.036 -> $0.017 per call. Every
   call logs `[usage] rachel iteration N: input, cache read, cache write, output`. The classifier prompt is too small to cache.
+- AI spend ledger (DC, Oct 3): every Anthropic call (rachel.js main, classifier, image reading, reviewer, catalog-guard web
+  prices, QA judge) appends {ts, kind, model, test, env, tokens, usd} to logs/ai-spend.jsonl via rachel/ai-spend.js (price
+  table there — update it when prices/models change; an unknown model logs [ai-spend] no price). test = staging, a «qa-»
+  session or a QA email. ops/ai-spend.py = yesterday + month to date (customers / tests / auto-fixer, merges
+  logs/fixer/spend.jsonl), appended to the nightly QA Slack summary. gbrain's own model calls are not covered.
 - Model choice, measured Oct 3 (DC: cost). Main call stays claude-sonnet-4-6: on the 22-scenario smoke set Sonnet 5.5 cost
   $0.90 (medium, 21/22) / $0.70 (low, 19/22, order placement broke) vs 4.6 $0.86 22/22 — 5.5's tokenizer uses ~40% more
   tokens, cancelling its price. Re-test: `RACHEL_MODEL=claude-sonnet-5-5 RACHEL_EFFORT=medium ops/staging.sh start ...`

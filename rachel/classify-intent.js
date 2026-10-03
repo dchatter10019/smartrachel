@@ -91,6 +91,7 @@ async function callClassifier(model, timeoutMs, user, key) {
     });
     const d = await r.json();
     if (d.error) throw new Error(d.error.type || 'api_error');
+    require('./ai-spend.js').record('classifier', model, d.usage);
     const txt = (d.content || []).map(c => c.text || '').join('').replace(/```json|```/g, '').trim();
     return firstJson(txt);
   } finally { clearTimeout(t); }

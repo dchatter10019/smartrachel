@@ -199,6 +199,7 @@ If it contains a list of drinks to order (handwritten, printed, an invoice, a re
 If it is NOT a list of drinks to order (a menu photo, a bottle photo, a screenshot, something unrelated), do not invent a list.
 Reply ONLY with JSON: {"is_order": true|false, "list": "<lines joined with \\n, or empty>", "note": "<one short sentence about what the image is, or what was unclear>"}` });
     const r = await vc.messages.create({ model: 'claude-sonnet-4-6', max_tokens: 800, messages: [{ role: 'user', content }] });
+    require('./ai-spend.js').record('image', 'claude-sonnet-4-6', r.usage);
     const txt = (r.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
     const m = txt.match(/\{[\s\S]*\}/); const j = m ? JSON.parse(m[0]) : null;
     if (!j) return { is_order: false, list: '', note: 'could not read the image' };

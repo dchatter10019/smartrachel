@@ -41,4 +41,6 @@ function withQAHeader(url, opts) {
 // Run fn inside the session's context when it is a QA session; otherwise just run it.
 function runTagged(session, fn) { return isQASession(session) ? als.run({ tag: String(session) }, fn) : fn(); }
 
-module.exports = { install, runTagged, withQAHeader, HEADER, isQASession };
+// The QA session being served right now ('' outside a QA turn) — ai-spend.js counts its calls as tests.
+const currentTag = () => { const st = als.getStore(); return (st && st.tag) || ''; };
+module.exports = { install, runTagged, withQAHeader, HEADER, isQASession, currentTag };

@@ -9,6 +9,8 @@ CHANGES=$(echo "$OUT" | grep -c "reply change(s)")
 MON=$(python3 /home/ubuntu/ops/tests/monitor_test.py 2>&1 | tail -1); [ $? -eq 0 ] && echo "$MON" | grep -q "all passed" || { RC=1; SUMMARY="$SUMMARY"$'\n'"  ✗ $MON"; }
 STATUS=$([ $RC -eq 0 ] && echo "✅ PASS" || echo "❌ FAIL")
 TEXT="*Rachel nightly QA — $STATUS*"$'\n'"$SUMMARY"$'\n'"_${CHANGES} scenario(s) had reply changes vs the previous run_"
+# AI spend, yesterday + month to date: customers / tests / auto-fixer (ops/ai-spend.py; DC, Oct 3)
+SPEND=$(python3 /home/ubuntu/ops/ai-spend.py 2>/dev/null) && TEXT="$TEXT"$'\n'"$SPEND"
 echo "$OUT" >> /home/ubuntu/logs/qa-nightly.log; echo "$TEXT" >> /home/ubuntu/logs/qa-nightly.log
 if [ -n "$QA_SLACK_CHANNEL" ] && [ -n "$SLACK_BOT_TOKEN" ]; then
   curl -s -X POST https://slack.com/api/chat.postMessage -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H "Content-Type: application/json" \

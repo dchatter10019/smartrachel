@@ -899,6 +899,7 @@ RULES:
     }, /^claude-sonnet-5/.test(RACHEL_MODEL)
       ? { thinking: { type: 'between_tools' }, output_config: { effort: RACHEL_EFFORT }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' }
       : { temperature: 0.3 }));   // Sonnet 4.6 (RACHEL_MODEL=claude-sonnet-4-6): exactly as before Oct 3
+    require('./ai-spend.js').record('rachel', RACHEL_MODEL, response.usage, { qa: (eventParams && eventParams.qa) || /^(qa-[^@]*|rachel_qa)@getbevvi\.com$/i.test(String((context && context.user_email) || '')) });
     if (response.stop_reason === 'refusal') console.log('[rachel] REFUSED by the model (' + ((response.stop_details && response.stop_details.category) || '?') + ') — the customer gets the fallback reply');
 
     console.log(`[rachel] iteration ${iterations} stop_reason: ${response.stop_reason}`);

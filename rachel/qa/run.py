@@ -60,6 +60,12 @@ def judge(reply, criterion):
         c = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
         r = c.messages.create(model="claude-haiku-4-5-20251001", max_tokens=60, messages=[{"role": "user", "content":
             f"Reply from a beverage-ordering assistant:\n---\n{reply[:3000]}\n---\nCriterion: {criterion}\nDoes the reply satisfy the criterion? First word YES or NO, then one short reason."}])
+        try:   # AI spend ledger (rachel/ai-spend.js format): the judge is test spend
+            u = r.usage; usd = (u.input_tokens * 1 + u.output_tokens * 5) / 1e6
+            with open(os.environ.get("AI_SPEND_FILE", "/home/ubuntu/logs/ai-spend.jsonl"), "a") as fh:
+                fh.write(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "kind": "qa-judge", "model": "claude-haiku-4-5", "test": True, "env": "qa",
+                                     "in": u.input_tokens, "cw": 0, "cr": 0, "out": u.output_tokens, "ws": 0, "usd": round(usd, 6)}) + "\n")
+        except Exception as e: say("   ai-spend write failed:", e)
         verdict = r.content[0].text.strip(); ok = verdict.upper().startswith("YES")
         if not ok: say("       judge:", verdict[:140])
         return ok

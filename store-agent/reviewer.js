@@ -174,6 +174,7 @@ async function runLlmCritic(intent, result, request, customerProfile) {
       })
     });
     const data = await res.json();
+    try { require(require('path').join(__dirname, '..', 'rachel', 'ai-spend.js')).record('reviewer', REVIEW_MODEL, data.usage); } catch (e) {}
     const rawText = ((data.content || []).find(b => b && b.type === 'text') || {}).text || '{}';   // by type: Sonnet 5.5 may lead with a thinking block
     const cleaned = rawText.replace(/^```(json)?/i, '').replace(/```$/, '').trim();
     const parsed = JSON.parse(cleaned);
