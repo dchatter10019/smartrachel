@@ -296,6 +296,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   lists the basket (before the closing question).
 - The LLM's generate_proposal/place_order use the LIVE basket (state.lastLineItems after this turn's edits) and the
   saved event date/client when it omits them. In a client edit the LAST client statement wins ("it should be just Goody").
+- Every order Rachel places (createCorpOrder) has top-level email = rachelai@getbevvi.com (DC, Oct 3; ORDER_ACCOUNT_EMAIL in
+  store-agent/shopping-agent.js, env RACHEL_ORDER_ACCOUNT_EMAIL); customerData.email = the customer; who asked is kept
+  in our order log (requested_by) and [place_order] account | customer email | requested by. Until Oct 3 the top-level
+  email was the requester (email sender / Slack user).
 - A placed order (API success only) leaves the cart → state.placedOrder; touching it asks reopen/new.
   Bevvi has no cancel API: a re-placed reopened order leaves the earlier one unpaid (logged).
 

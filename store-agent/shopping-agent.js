@@ -3,6 +3,7 @@
  */
 
 const http = require('http');
+const ORDER_ACCOUNT_EMAIL = process.env.RACHEL_ORDER_ACCOUNT_EMAIL || 'rachelai@getbevvi.com';   // top-level email of every order Rachel places (DC, Oct 3)
 const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args));
 
 const PORT = Number(process.env.SHOPPING_AGENT_PORT) || 8300;   // staging: 8301 (ops/staging.sh --with-shopping-agent)
@@ -1238,10 +1239,10 @@ async function executeTool(name, input) {
       };
       const pa = parseAddr(c.address);
       const body = {
-        // Top-level email = the LOGGED-IN user (account holder), never the recipient.
-        // The old fallback chain could pick up customer.email — the recipient's — when
-        // the LLM placed it there, misattributing the order.
-        email: input.account_email || input.email || '',
+        // Top-level email = the account every Rachel order is placed under: rachelai@getbevvi.com (DC, Oct 3). Until then
+        // it was whoever asked (the email sender / Slack user), so orders were spread over staff accounts. The customer is
+        // customerData.email; who asked is kept in our own order logs (requested_by).
+        email: ORDER_ACCOUNT_EMAIL,
         products: products.map(p => ({
           productId:       p.product_id || p.productId || '',
           upc:             p.upc || '',
@@ -1268,6 +1269,7 @@ async function executeTool(name, input) {
       const ctrlCO = new AbortController(); const tCO = setTimeout(() => ctrlCO.abort(), 20000);
       let res;
       try {
+        console.log('[place_order] account ' + body.email + ' | customer email ' + (body.customerData.email || 'NONE — no customer email known') + ' | requested by ' + (input.account_email || input.email || '?'));
         res = await fetch('https://api-client.getbevvi.com/api/bevvibot/createCorpOrder', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctrlCO.signal
         });
@@ -1304,7 +1306,7 @@ async function executeTool(name, input) {
       }
       // Order history (summary + itemized) for order_history queries.
       try {
-        const orderLog = JSON.stringify({ ts: new Date().toISOString(), order_id: orderId, store: loc.kitchen, amount: Math.round((productTotal + serviceChargeAmt + tipAmt) * 100) / 100, email: input.email || c.email || '', zip });
+        const orderLog = JSON.stringify({ ts: new Date().toISOString(), order_id: orderId, store: loc.kitchen, amount: Math.round((productTotal + serviceChargeAmt + tipAmt) * 100) / 100, email: input.email || c.email || '', account: ORDER_ACCOUNT_EMAIL, requested_by: input.account_email || input.email || '', customer_email: c.email || '', zip });
         require('fs').appendFileSync('/home/ubuntu/logs/orders.jsonl', orderLog + '\n');
         const items = products.map(p => ({ name: p.name || '', upc: p.upc || '', qty: p.qty || p.quantity || 1, unit_price: parseFloat(p.price) || 0, line_total: Math.round((parseFloat(p.price) || 0) * (p.qty || p.quantity || 1) * 100) / 100 }));
         require('fs').appendFileSync('/home/ubuntu/logs/order-items.jsonl', JSON.stringify({ ts: new Date().toISOString(), order_id: orderId, email: input.email || c.email || '', items }) + '\n');
