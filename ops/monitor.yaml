@@ -16,6 +16,7 @@ detectors:
   slow_turn:           {severity: high,   seconds: 60}                     # one customer turn over this (QA excluded)
   unmatched_spike:     {severity: medium, count: 5, window_hours: 24}      # same product string unavailable (customers only)
   resolver_miss:       {severity: medium, count: 3, window_hours: 24}
+  feedback:            {severity: high}    # a correction / 'Rachel feedback:' / Slack 👎 (logs/feedback.jsonl)
   stuck_session:       {severity: medium, same_state_turns: 4, repeat_message: 2}
   latency:             {severity: medium, median_seconds: 20, window_minutes: 60, min_turns: 5}
   qa_fail:             {severity: high}

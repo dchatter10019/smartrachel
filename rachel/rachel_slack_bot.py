@@ -8,6 +8,7 @@ GBrain lookup: email first, then display name, then Slack user ID
 import os
 import re
 import json
+import time
 import subprocess
 import logging
 import threading
@@ -339,6 +340,23 @@ def handle_reaction(event, client, ack=None):
         ack()
     item = event.get("item") or {}
     ch, ts, user, name = item.get("channel", ""), item.get("ts", ""), event.get("user", ""), event.get("reaction", "")
+    # 👎 on a Rachel reply (any channel / DM) = feedback for the debug-and-fix loop (DC, Oct 3): logs/feedback.jsonl ->
+    # monitor finding -> nightly fixer. The person is thanked in the thread.
+    if name in ("-1", "thumbsdown") and event.get("item_user") == _BOT_USER_ID and ch not in (OPS_CHANNEL, OPS_TEST):
+        text, email = "", ""
+        try: text = client.conversations_history(channel=ch, latest=ts, inclusive=True, limit=1)["messages"][0].get("text", "")
+        except Exception as e: log.warning(f"[feedback] 👎 recorded without the reply text ({e})")
+        try: email = client.users_info(user=user)["user"]["profile"].get("email", "") or ""
+        except Exception: pass
+        entry = {"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "kind": "thumbs_down", "session": f"slack-{email}" if email else f"slack-{user}",
+                 "who": email or user, "channel": "slack", "text": "👎 on Rachel's reply", "rachel_said": text[:1500],
+                 "qa": bool(re.match(r"^(qa-[^@]*|rachel_qa)@getbevvi\.com$", email or "", re.I))}
+        try:
+            with open(os.path.join(os.environ.get("RACHEL_DATA_DIR", "/home/ubuntu/logs"), "feedback.jsonl"), "a") as f: f.write(json.dumps(entry) + "\n")
+            log.info(f"[feedback] 👎 by {email or user} on a Rachel reply recorded")
+            client.chat_postMessage(channel=ch, thread_ts=ts, text="Thanks for flagging this — I've passed it to the team so it gets fixed.")
+        except Exception as e: log.warning(f"[feedback] 👎 could not be recorded: {e}")
+        return
     if not OPS_CHANNEL or ch not in (OPS_CHANNEL, OPS_TEST) or name not in ("white_check_mark", "heavy_check_mark", "x"):
         return
     try:

@@ -2,7 +2,7 @@
 # DC edits this file. Nothing moves from diagnose to fix without a commit here. Anything not clearly fixable = diagnose.
 
 # Finding detectors the fixer may try to fix (the rest are posted as diagnoses with their evidence)
-fix_detectors: [crash, stuck_turn, unmatched_spike, resolver_miss, qa_fail, stuck_session, upstream_error]
+fix_detectors: [crash, stuck_turn, unmatched_spike, resolver_miss, qa_fail, stuck_session, upstream_error, feedback]
 diagnose_detectors: [llm_error, latency, slow_turn, escalation_request, watchdog_alert]
 
 # Kinds of change it may make (the prompt tells the fixer; the diff check below enforces the paths)

@@ -152,6 +152,16 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   /etc/rachel.env (Oct 3): OPS_SLACK_CHANNEL = #rachel-ops C0C6E8CER9Q, OPS_TEST_CHANNEL = #rachel-ops-test C0C6CEA8VRC
   (--dry-post), OPS_APPROVERS = DC U04NB3GDUC8. ✅ also needs the Slack app's reaction_added event + the bot in both channels.
 
+- Learning from people (DC, Oct 3): a correction in any message ("I already told you", "X is not the customer", "that's
+  wrong"; feedback.js correctionIn), a "Rachel feedback: ..." line (recorded + thanked in code, the rest of the message
+  handled as usual) and a Slack 👎 on a Rachel reply (rachel_slack_bot.py, thanked in the thread) -> logs/feedback.jsonl
+  with what Rachel said before -> monitor detector `feedback` (QA skipped) -> finding -> nightly fixer (fix_detectors).
+- Customer preferences (customer-prefs.js -> RACHEL_DATA_DIR/customer-prefs.json): lasting statements ("we always do cans",
+  "from now on...", "we never serve red", "can you always...") saved per customer email and per client ("client:goody");
+  Bevvi staff in a client's email thread -> the client only; a QA identity -> its own address only. Shown to the LLM on
+  every turn ([prefs] N preference(s) shown); a new one is acknowledged in code if the reply didn't; "forget the X
+  preference" removes it. The suggestion-acceptance reordering (cta.js Phase 3) waits for more data (DC, Oct 3).
+
 ## QA harness (rachel/qa/)
 - `qa/unit/*.test.js`: pure-logic unit tests on saved real replies (multi-pick resolver), run by every
   `precheck.sh` lint/deploy. Lint also enforces eslint no-use-before-define (runtime TDZ errors).

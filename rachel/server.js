@@ -1236,6 +1236,19 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       channelNote += '\n\n## ORIGINAL REQUEST vs BASKET (computed in code from the basket — this is the answer; report every SHORT / NOT IN BASKET / extra line exactly as listed, do not re-derive or contradict it)\n' + table;
     } catch (e) { console.log('[original-compare] error: ' + e.message); }
   }
+  let prefsAddedNow = null;   // preferences stated this turn: acknowledged in code below if the reply doesn't
+  try {
+    const CP = require('./customer-prefs.js');
+    const clientP = stateForEmail.savedClientName || require('./email-subject.js').clientFromSubject(stateForEmail.emailSubject || (context && context.email_subject) || '') || '';
+    const prefs = CP.render({ email: /^email-/.test(String(sessionKey || '')) && EO.isStaff(email) ? '' : email, client: clientP });
+    if (prefs) { channelNote += '\n\n' + prefs; console.log('[prefs] ' + (prefs.match(/\n- /g) || []).length + ' preference(s) shown to the LLM'); }
+    if (stateForEmail.prefsNote && Date.now() - (stateForEmail.prefsNoteAt || 0) < 5 * 60e3) {   // this turn's only (a code-answered turn leaves it unused)
+      channelNote += /^\(forgot/.test(stateForEmail.prefsNote[0]) ? '\n\nThe customer asked you to forget a preference — it is forgotten; confirm that in one short sentence.'
+        : '\n\nIn this message the customer stated a lasting preference (' + stateForEmail.prefsNote.map(x => JSON.stringify(x)).join(', ') + '). It is saved for future orders — confirm in one short, warm sentence that you\'ll remember it, and follow it now.';
+      if (!/^\(forgot/.test(stateForEmail.prefsNote[0])) prefsAddedNow = stateForEmail.prefsNote;
+    }
+    delete stateForEmail.prefsNote;
+  } catch (e) { console.log('[prefs] not shown (' + e.message + ')'); }
   if (stateForEmail.onHand && stateForEmail.onHand.length) channelNote += '\n\n## ALREADY ON HAND (the customer has these — NEVER add them to the basket or proposal)\n' + stateForEmail.onHand.map(o => '- ' + (o.qty ? o.qty + 'x ' : '') + o.name).join('\n');
   const result = await rachelChat({
     messages: [...messages, { role: 'user', content: message }],
@@ -1554,6 +1567,11 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       numbered += '\n\nI haven\'t done ' + (missed.length === 1 ? 'this one' : 'these') + ' yet:\n' + missed.map(x => '• ' + x).join('\n') + '\nWant me to go ahead' + (missed.length === 1 ? '' : ' with ' + (missed.length === 2 ? 'both' : 'all of them')) + '?';
     } else console.log('[instructions] all ' + instrs.length + ' handled');
   }
+  // A preference stated this turn is always acknowledged (staging Oct 3: told to, the LLM skipped it).
+  if (prefsAddedNow && typeof numbered === 'string' && !/\bremember|\bnoted\b|\bgoing forward\b|\bfrom now on\b/i.test(numbered)) {
+    numbered = 'Noted — I\'ll remember that for your future orders: ' + prefsAddedNow.map(x => '"' + x.replace(/[.!]+$/, '') + '"').join(', ') + '.\n\n' + numbered;
+    console.log('[prefs] acknowledged in code (the reply did not)');
+  }
   return numbered;
 }
 
@@ -1710,6 +1728,35 @@ app.post('/chat', async (req, res) => {
     }
     getState(sessionKey).lastActive = Date.now();
     saveFlowState();
+  }
+  // ── FEEDBACK + CUSTOMER PREFERENCES (feedback.js, customer-prefs.js; DC, Oct 3: learn from every correction) ──────
+  // A correction ("I already told you", "Mara is not the customer") or a "Rachel feedback:" line is recorded with what
+  // Rachel said before it -> logs/feedback.jsonl -> monitor finding -> the nightly fixer. A lasting preference ("we always
+  // do cans") is saved for the customer / client and shown to the LLM on later turns.
+  if (message && !/^__/.test(message)) {
+    try {
+      const FB = require('./feedback.js');
+      const lastSaid = String((lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '').slice(0, 1500);
+      const who = String(email || (context && context.user_email) || '');
+      const fl = FB.feedbackLine(message);
+      if (fl && fl.text) {
+        FB.record({ kind: 'feedback', session: sessionKey, who, channel: format, text: fl.text, rachel_said: lastSaid, qa: isQA });
+        if (!fl.rest || /^(?:thanks?|thank you|cheers|best|regards)[\s\S]{0,60}$/i.test(fl.rest)) {
+          const t = 'Thank you for the feedback — I\'ve passed it on to the team so it gets fixed.';
+          return res.json({ text: t, response: t });
+        }
+        message = fl.rest;   // the rest of the message is handled as usual
+      } else {
+        const c = FB.correctionIn(message);
+        if (c) FB.record({ kind: 'correction', session: sessionKey, who, channel: format, text: c, message: String(message).slice(0, 1500), rachel_said: lastSaid, qa: isQA });
+      }
+      {
+        const stP = getState(sessionKey);
+        const client = stP.savedClientName || require('./email-subject.js').clientFromSubject(stP.emailSubject || (context && context.email_subject) || '') || '';
+        const lp = require('./customer-prefs.js').learn(message, { email: who, client, staff: /^email-/.test(sessionKey) && EO.isStaff(who) });
+        if (lp.added.length || lp.forgot) { stP.prefsNote = lp.added.length ? lp.added : ['(forgot ' + lp.forgot + ')']; stP.prefsNoteAt = Date.now(); saveFlowState(); }
+      }
+    } catch (e) { console.log('[feedback] error (turn continues): ' + e.message); }
   }
   // Stock the customer already has ("we have the below inventory from last time") is never ordered (on-hand.js).
   try {

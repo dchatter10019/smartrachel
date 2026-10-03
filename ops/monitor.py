@@ -28,6 +28,7 @@ TEXT_LOGS = {   # source -> path; lines have no timestamp unless the format give
     'whatsapp': LOGS + '/rachel-whatsapp.log', 'email': LOGS + '/email-agent.log', 'watchdog': LOGS + '/watchdog.log',
 }
 EVENTS = LOGS + '/events.jsonl'
+FEEDBACK = LOGS + '/feedback.jsonl'   # corrections, 'Rachel feedback:' lines, Slack 👎 (rachel/feedback.js, rachel_slack_bot.py)
 QA_RUNS = HOME + '/rachel/qa/runs'
 
 def log(msg): print(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()) + ' [monitor] ' + msg, flush=True)
@@ -202,6 +203,14 @@ class Monitor:
         if so and so != 'ready' and len(st) >= n and all(x == so for x in st[-n:]):
             self.store.record('stuck_session', d['stuck_session']['severity'], 'session stuck in "%s" for %d turns (%s)' % (so, n, sess), [json.dumps(e)[:300]], [sess], t); st.clear()
 
+    def feedback(self, e, t=None):
+        # A person told Rachel she got something wrong (DC, Oct 3). One finding per conversation (repeats count up).
+        if e.get('qa'): return
+        kinds = {'correction': 'customer corrected Rachel', 'feedback': 'feedback about Rachel', 'thumbs_down': '👎 on a Rachel reply'}
+        sess = e.get('session', '')
+        ev = '%s | %s said: %s | Rachel had said: %s' % (e.get('kind'), e.get('who', '?'), str(e.get('text', ''))[:300], str(e.get('rachel_said', ''))[:600].replace('\n', ' / '))
+        self.store.record('feedback', self.d.get('feedback', {}).get('severity', 'high'), '%s (%s)' % (kinds.get(e.get('kind'), 'feedback'), sess), [ev], [sess], t or self.now())
+
     def qa_summary(self, path, t=None):
         try: s = json.load(open(path))
         except Exception: return
@@ -248,6 +257,9 @@ def one_pass(mon, st):
     for line in new_lines(EVENTS, st, 'off:' + EVENTS):
         try: mon.event(json.loads(line))
         except Exception: pass
+    for line in new_lines(FEEDBACK, st, 'off:' + FEEDBACK):
+        try: mon.feedback(json.loads(line))
+        except Exception: pass
     seen = set(st.get('qa_seen', []))
     for p in sorted(glob.glob(QA_RUNS + '/*/summary.json'))[-20:]:
         if p not in seen:
@@ -284,6 +296,8 @@ PLAIN = {   # detector -> (what it means for customers, what a person could do).
                            "Often the AI provider or Bevvi's product search being slow. If it lasts, it's worth a look."),
     'qa_fail':            ("One of Rachel's automatic practice conversations went wrong. No real customer was involved, but a real customer would probably hit the same thing.", ''),
     'escalation_request': ('A customer asked to talk to a person.', 'Someone should reach out to that customer.'),
+    'feedback':           ('Someone told Rachel she got something wrong — a correction in their message ("I already told you…"), a "Rachel feedback:" note, or a 👎 on her reply in Slack.',
+                           'Read what they said and what Rachel had said just before; the fixer turns it into a test and a fix.'),
     'watchdog_alert':     ('The nightly health check found something wrong.', 'See the technical details below.'),
 }
 

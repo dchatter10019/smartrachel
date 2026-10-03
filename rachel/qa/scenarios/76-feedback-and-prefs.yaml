@@ -1,0 +1,28 @@
+name: feedback-and-prefs
+fresh: true
+tags: [learning]
+# DC (Oct 3, "how can we constantly train the model?"): a lasting preference ("we always do cans") is remembered for the
+# customer across conversations and shown to the LLM; a "Rachel feedback:" line is recorded and thanked in code; a
+# correction ("I already told you") is recorded with what Rachel said before (logs/feedback.jsonl -> monitor -> fixer).
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "We always do cans, not bottles. Do you have Modelo?"
+    expect:
+      matches: "(?i)remember"
+      log_contains: ["[prefs] learned for qa-feedback-and-prefs-", "[prefs] 1 preference(s) shown to the LLM"]
+  - send: "Rachel feedback: you should have shown the 24-pack first"
+    expect:
+      contains: ["Thank you for the feedback"]
+      log_contains: ["[feedback] feedback recorded (QA)"]
+  - send: "I already told you, cans not bottles"
+    expect:
+      log_contains: ["[feedback] correction recorded (QA)"]
+  # a new conversation for the same customer still knows the preference
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "do you have Corona?"
+    expect:
+      log_contains: ["[prefs] 1 preference(s) shown to the LLM"]

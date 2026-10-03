@@ -58,6 +58,12 @@ d = tempfile.mkdtemp(); p = os.path.join(d, 'summary.json'); json.dump({'stamp':
 mon.qa_summary(p, T)
 check('qa_fail: a QA run with failures', len(found('qa_fail')) == 1 and 'order-flow' in found('qa_fail')[0]['summary'])
 check('redact: tokens and webhook URLs', M.redact('x xoxb-123-abc https://hooks.slack.com/services/T/B/C') == 'x <redacted-token> https://hooks.slack.com/<redacted>')
+# feedback (Oct 3): a correction / 👎 from a customer is a finding with what Rachel had said; QA feedback never is
+mon.feedback({'kind': 'correction', 'session': 'email-abc-sean', 'who': 'dc@x.com', 'text': 'Mara is not the customer', 'rachel_said': "I need Mara's last name", 'qa': False}, T)
+mon.feedback({'kind': 'correction', 'session': 'email-abc-sean', 'who': 'dc@x.com', 'text': 'I already told you', 'rachel_said': "I need Mara's last name", 'qa': False}, T + 60)
+mon.feedback({'kind': 'thumbs_down', 'session': 'qa-fb-1', 'who': 'qa-fb@getbevvi.com', 'text': '👎', 'rachel_said': 'x', 'qa': True}, T)
+fb = found('feedback')
+check('feedback: one finding per conversation (count 2), evidence has what Rachel said, QA ignored', len(fb) == 1 and fb[0]['count'] == 2 and any("Mara's last name" in e for e in fb[0]['evidence']))
 check('findings file written', sum(1 for _ in open(tmp)) == len(store.items))
 # two writers (Oct 3): a status set by another process (fixer / deploy-fix / Slack ❌ / by hand) survives the long-running
 # monitor's next save, and the monitor's own update to a finding still lands
