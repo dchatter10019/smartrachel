@@ -17,7 +17,12 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   verify_age confirmed:false clears it), never saved to the profile (rule 4). rachel_build_package = shopping-agent menu_build,
   the builder Slack/email use (was custom_list with category words as products), with Rachel's intake in code: missing guests /
   hours (or drinks per guest) / budget / drink types asked in ONE needs_info.ask_customer, then a mixed event's "what will your
-  guests drink most?" (rachel/serving-mix.js, shared with server.js); only zip is required, so the client can't invent values. Clients never get product urls/slugs
+  guests drink most?" (rachel/serving-mix.js, shared with server.js); only zip is required, so the client can't invent values.
+  Cocktails: named none -> Rachel's "which cocktails?" list; named -> rachel/cocktail-expand.js (Sonnet 4.6, guided by prompt.md
+  "Cocktail mode" + 8.3 read live — no recipe table in code, DC: hundreds of cocktails; unknown name asked back; spend ledger
+  kind cocktail-expand) -> custom_list (Wine/Beer lines + every ingredient), as Rachel's cocktail mode. rachel_chat: a connection
+  that passed rachel_verify_age tells Rachel via POST /internal/age-verified {session_id, via:'rachel-mcp'} (refused when proxied
+  or after a refusal in 24h) -> that conversation only skips her age question, never the profile (DC approved, Oct 3). Clients never get product urls/slugs
   (also inside JSON-text fields and chat text), buyer tier or reviewer notes; told not to judge prices (DC, Oct 3). Orders are two-step:
   rachel_place_order PREPARES (server /internal/order-preview: catalog linking, real delivery windows, totals) and returns
   a 15-min one-use confirmation_code bound to the key; rachel_confirm_order places it (QA identities dry-run). Streamable

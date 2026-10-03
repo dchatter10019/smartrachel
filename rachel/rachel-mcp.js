@@ -11,6 +11,7 @@ const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args
 const PORT = 3600;
 const { requestKey, verifyCode, resolveEmailForKey } = require('./mcp-auth.js');
 const { parseServingMix, mixText } = require('./serving-mix.js');
+const { expandCocktails } = require('./cocktail-expand.js');
 const OAUTH = require('./mcp-oauth.js');   // claude.ai connector sign-in (OAuth 2.1 + PKCE); API keys keep working
 const callerFor = token => resolveEmailForKey(token) || OAUTH.emailForToken(token);
 const RACHEL_URL = 'http://127.0.0.1:3500';
@@ -68,6 +69,7 @@ const TOOLS = [
         budget:            { type: 'number', description: 'Total budget in USD (as the customer said)' },
         categories:        { type: 'array', description: 'Drink types the customer wants: wine, beer, spirits (liquor / cocktails)', items: { type: 'string' } },
         serving_mix:       { type: 'string', description: 'The customer\'s own words for what guests will drink most, e.g. "mostly wine", "about even", "50% beer 30% wine 20% liquor"' },
+        cocktails:         { type: 'array', items: { type: 'string' }, description: 'If the customer wants cocktails / mixed drinks: the cocktail names they gave (pass [] if they named none — the tool will ask). Also include "cocktails" in categories.' },
         zip:               { type: 'string', description: 'Delivery zip code' },
         email:             { type: 'string', description: 'Customer email' }
       },
@@ -287,6 +289,13 @@ async function runTool(name, input, callerEmail, apiKey) {
   }
 
   if (name === 'rachel_chat') {
+    // This connection passed rachel_verify_age (the gate above): tell Rachel, for this conversation only, so she
+    // doesn't ask again (DC, Oct 3). A failure just means she asks — logged, never a bypass.
+    const sid = input.session_id || `mcp-${input.email || 'anon'}`;
+    try {
+      const r = await fetch(`${RACHEL_URL}/internal/age-verified`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sid, via: 'rachel-mcp' }) });
+      if (!r.ok) console.log('[rachel-mcp] age not passed to Rachel for ' + sid + ': HTTP ' + r.status);
+    } catch (e) { console.log('[rachel-mcp] age not passed to Rachel for ' + sid + ': ' + e.message); }
     const response = await callRachel(
       input.message, input.email, input.zip,
       input.session_id, input.channel
@@ -321,6 +330,9 @@ async function runTool(name, input, callerEmail, apiKey) {
     const catOf = c => /spirit|liquor|cocktail|mixed|vodka|tequila|whisk|bourbon|rum|gin|full bar/i.test(c) ? 'spirits'
       : /beer|seltzer|cider|lager|ipa/i.test(c) ? 'beer' : /wine|champagne|prosecco|sparkling|ros|red|white/i.test(c) ? 'wine' : null;
     const cats = [...new Set((input.categories || []).map(c => catOf(String(c))).filter(Boolean))];
+    const cocktailNames = (Array.isArray(input.cocktails) ? input.cocktails : []).map(c => String(c).trim()).filter(Boolean);
+    const wantsCocktails = cocktailNames.length > 0 || Array.isArray(input.cocktails) || (input.categories || []).some(c => /cocktail|mixed drink/i.test(String(c)));
+    if (wantsCocktails && !cats.includes('spirits')) cats.push('spirits');
     const asks = [];
     if (!(input.guests > 0)) asks.push('how many guests');
     if (!(input.hours > 0) && !(input.drinks_per_person > 0)) asks.push('how many hours the event runs');
@@ -332,9 +344,16 @@ async function runTool(name, input, callerEmail, apiKey) {
         ask_customer: 'Happy to put that together! Could you tell me ' + (asks.length > 1 ? asks.slice(0, -1).join(', ') + ' and ' + asks[asks.length - 1] : asks[0]) + '?',
         instructions: 'Ask the customer this in one message, then call rachel_build_package again with their answers. Do not fill in any value yourself.' };
     }
+    // Rachel's COCKTAIL NAMES gate (prompt.md): cocktails with no names are asked, never stood in for by a full bar.
+    if (wantsCocktails && !cocktailNames.length) {
+      console.log('[rachel-mcp] build_package HELD — cocktails requested without names');
+      return { needs_info: true, missing: ['cocktails'],
+        ask_customer: 'Great — which cocktails would you like? Popular picks:\n1. Margarita (tequila, triple sec, lime)\n2. Moscow Mule (vodka, ginger beer, lime)\n3. Old Fashioned (bourbon, bitters)\n4. Aperol Spritz (prosecco, Aperol, soda)\n5. Espresso Martini (vodka, Kahlua, espresso)\n6. Paloma (tequila, grapefruit soda, lime)\nOr name any others you have in mind.',
+        instructions: 'Ask the customer this, then call rachel_build_package again with the same values plus cocktails = the names they chose.' };
+    }
     let mixJson = '';
     if (cats.length >= 2) {
-      const label = k => k === 'spirits' ? 'liquor' : k;
+      const label = k => k === 'spirits' ? (wantsCocktails ? 'cocktails' : 'liquor') : k;
       const got = input.serving_mix ? parseServingMix(String(input.serving_mix), cats, false) : null;
       if (!got) {
         const labels = cats.map(label);
@@ -349,7 +368,27 @@ async function runTool(name, input, callerEmail, apiKey) {
     // menu_build = the event builder Slack/email use (full bar, still + sparkling wine, spends the budget). Until Oct 3
     // this sent custom_list with the category words as products: one bourbon as "spirits", a Champagne as the wine,
     // a third of a $2,000 budget (DC).
-    const result = await callShoppingAgent('menu_build', {
+    let result;
+    if (cocktailNames.length) {
+      // Named cocktails: the AI works out the ingredients (hundreds of cocktails — no table in code, DC), then the same
+      // custom_list build Rachel's cocktail mode sends: generic Wine / Beer lines for those types + every ingredient.
+      const ex = await expandCocktails(cocktailNames, { qa: QA_RE.test(String(callerEmail || '')) });
+      if (ex.unknown) {
+        console.log('[rachel-mcp] build_package HELD — unknown cocktail(s): ' + ex.unknown.join(', '));
+        return { needs_info: true, missing: ['cocktails'], ask_customer: 'I don\'t know ' + ex.unknown.join(' or ') + ' — could you tell me what\'s in it, or pick another cocktail?',
+          instructions: 'Ask the customer this, then call again with the corrected cocktails list.' };
+      }
+      if (ex.error) {
+        console.log('[rachel-mcp] build_package REFUSED — cocktail ingredients not worked out: ' + ex.error);
+        return { error: 'Could not work out the cocktail ingredients just now — please try again in a moment.' };
+      }
+      console.log('[rachel-mcp] build_package cocktails ' + cocktailNames.join(', ') + ' -> ' + ex.items.map(i => i.name + '/' + i.category).join(', '));
+      const named = [].concat(cats.includes('wine') ? [{ name: 'Wine', category: 'wine' }] : [], cats.includes('beer') ? [{ name: 'Beer', category: 'beer' }] : [], ex.items);
+      result = await callShoppingAgent('custom_list', {
+        named_products: named, guests: input.guests, hours: input.hours, drinks_per_person: input.drinks_per_person || undefined,
+        budget: input.budget, serving_mix: mixJson, zip: input.zip, email: input.email || ''
+      });
+    } else result = await callShoppingAgent('menu_build', {
       guests: input.guests,
       hours: input.hours,
       drinks_per_person: input.drinks_per_person || undefined,

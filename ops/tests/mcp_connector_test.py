@@ -72,6 +72,8 @@ def apikey():
     r,err=tool('rachel_search',{'products':["Tito's Handmade Vodka 1.75 L"],'zip':'10019'})
     print('search before age ->', 'held' if r.get('age_verification_required') else 'NOT HELD', '| isError:', err)
     print('verify_age ->', tool('rachel_verify_age',{'confirmed':True})[0])
+    c,_=tool('rachel_chat',{'message':'hi','zip':'10019','session_id':'qa-mcp-age-pass'})
+    print('chat after age ->', 'no re-ask' if '21' not in c.get('response','') else 'ASKED AGAIN', '|', c.get('response','')[:120].replace(chr(10),' '))
     r,_=tool('rachel_search',{'products':["Tito's Handmade Vodka 1.75 L"],'zip':'10019'})
     p=r['results'][0]['products'][0]; print('search ->', p['name'], p['price'])
     print('search urls ->', 'LEAKED' if ('productdetail' in json.dumps(r) or '"url"' in json.dumps(r)) else 'none')
@@ -79,6 +81,15 @@ def apikey():
     print('package intake ->', 'asks' if q.get('needs_info') and 'hours' in q.get('ask_customer','') else 'NO QUESTION', '|', q.get('ask_customer'))
     q,_=tool('rachel_build_package',{'guests':10,'hours':4,'budget':2000,'zip':'10019','categories':['beer','wine','spirits']})
     print('package mix question ->', 'asks' if q.get('needs_info') and 'drink most' in q.get('ask_customer','') else 'NO QUESTION', '|', q.get('ask_customer'))
+    ck={'guests':20,'hours':3,'budget':1500,'zip':'10019','categories':['wine','cocktails'],'serving_mix':'mostly wine'}
+    q,_=tool('rachel_build_package',dict(ck,cocktails=[]))
+    print('package cocktail question ->', 'asks' if q.get('needs_info') and 'Margarita' in q.get('ask_customer','') else 'NO QUESTION')
+    q,qerr=tool('rachel_build_package',dict(ck,cocktails=['Margarita','Paper Plane']))
+    names=' '.join(li.get('name','') for li in (q.get('line_items') or [])).lower()
+    # NYC carries no lime/lemon juice (Rachel's own cocktail scenario lists it unavailable too): a mixer counts when it is
+    # a line OR reported unavailable — never silently gone.
+    unav=str(q.get('unavailable','')).lower()
+    print('package cocktails built ->', 'asks' if (not qerr and 'triple sec' in names and 'bourbon' in names and 'amaro' in names and all(m in names or m in unav for m in ('lime','lemon'))) else 'MISSING INGREDIENTS', '|', names[:300], '| unavailable:', unav[:120])
     b,berr=tool('rachel_build_package',{'guests':10,'hours':4,'budget':2000,'zip':'10019','categories':['beer','wine','spirits'],'serving_mix':'mostly wine'})
     print('package urls ->', 'ERROR' if (berr or not b.get('line_items')) else ('LEAKED' if ('productdetail' in json.dumps(b) or 'url' in json.dumps(b).replace('download_url','')) else 'none'), '| items', len(b.get('line_items') or []), '| total', b.get('product_total'))
     li=json.dumps([{'name':p['name'],'price':p['price'],'qty':2}])
@@ -98,7 +109,7 @@ if __name__ == '__main__':
         try:
             with contextlib.redirect_stdout(buf): fn()
             out = buf.getvalue()
-            bad = [l for l in out.splitlines() if l.startswith('confirm ->') and ' True ' not in l] + [l for l in out.splitlines() if 'forged token ->' in l and '401' not in l] + [l for l in out.splitlines() if l.startswith(('search urls ->', 'package urls ->')) and '-> none' not in l] + [l for l in out.splitlines() if l.startswith(('package intake ->', 'package mix question ->')) and '-> asks' not in l] + [l for l in out.splitlines() if l.startswith('search before age ->') and not l.startswith('search before age -> held | isError: False')]
+            bad = [l for l in out.splitlines() if l.startswith('confirm ->') and ' True ' not in l] + [l for l in out.splitlines() if 'forged token ->' in l and '401' not in l] + [l for l in out.splitlines() if l.startswith(('search urls ->', 'package urls ->')) and '-> none' not in l] + [l for l in out.splitlines() if l.startswith(('chat after age ->', 'package intake ->', 'package mix question ->', 'package cocktail question ->', 'package cocktails built ->')) and '-> asks' not in l and '-> no re-ask' not in l] + [l for l in out.splitlines() if l.startswith('search before age ->') and not l.startswith('search before age -> held | isError: False')]
             print(('  ✗ ' if bad else '  ✓ ') + 'connector ' + name + (': ' + '; '.join(bad) if bad else ''))
             if bad: FAILS.append(name)
         except Exception as e:

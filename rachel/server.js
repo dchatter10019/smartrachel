@@ -5568,6 +5568,24 @@ app.post('/internal/order-preview', async (req, res) => {
   res.json({ ok: !problems.length, problems, line_items: items, delivery, totals });
 });
 
+// The Rachel connector (rachel-mcp.js) confirmed age on its connection: this ONE conversation skips Rachel's own age
+// question (DC, Oct 3). Never written to the customer's profile (rule 4); a refusal in the last 24h still stands.
+// Internal only: the server binds 127.0.0.1 and a proxied request (nginx's public /chat) carries X-Forwarded-For.
+app.post('/internal/age-verified', (req, res) => {
+  const { session_id, via } = req.body || {};
+  if (req.headers['x-forwarded-for'] || req.headers['x-real-ip']) { console.log('[age] /internal/age-verified REFUSED: proxied request'); return res.status(403).json({ ok: false }); }
+  if (!session_id || via !== 'rachel-mcp') return res.status(400).json({ ok: false, error: 'session_id and via=rachel-mcp required' });
+  const st = getState(session_id);
+  if (st.ageRefusedAt && Date.now() - st.ageRefusedAt < 24 * 3600 * 1000) { console.log('[age] connector check NOT applied to ' + session_id + ': refused in this session within 24h'); return res.status(409).json({ ok: false, refused: true }); }
+  if (!st.ageVerified) {
+    st.ageVerified = true; st.ageVia = 'rachel-mcp';
+    if (st.step === 'age') st.step = st.address ? 'ready' : 'addr_new';
+    saveFlowState();
+    console.log('[age] verified by the Rachel connector for this conversation only (' + session_id + ') — not saved to the profile');
+  }
+  res.json({ ok: true });
+});
+
 app.post('/internal/session-basket', async (req, res) => {
   const { session_id, sent_text, from_proposal } = req.body || {};
   let line_items = req.body && req.body.line_items, prop = null;

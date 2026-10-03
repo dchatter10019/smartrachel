@@ -157,7 +157,7 @@ deploy() {
   echo "$DIRTY" | grep -q " rachel/rachel_slack_bot\.py" && svcs+=(rachel-slack)
   # The MCP connector (rachel-mcp.js on :3600) and what it loads. Until Oct 3 it was restarted by hand, outside a
   # deploy -> no deploy log -> the monitor raised a false "restarted outside a deploy" crash (F-0014).
-  echo "$DIRTY" | grep -qE " rachel/(rachel-mcp|mcp-auth|mcp-oauth|gbrain|generate-proposal)\.js" && svcs+=(rachel-mcp)
+  echo "$DIRTY" | grep -qE " rachel/(rachel-mcp|mcp-auth|mcp-oauth|gbrain|generate-proposal|serving-mix|cocktail-expand)\.js" && svcs+=(rachel-mcp)
   [ ${#svcs[@]} -eq 0 ] && svcs=(rachel)
   echo "Deploy $STAMP: HEAD $(git rev-parse --short HEAD), services: ${svcs[*]}"
   if [ -n "$DIRTY" ]; then echo "Uncommitted changes being deployed:"; echo "$DIRTY"; else echo "Working tree clean under $SCOPE (deploying HEAD)."; fi
