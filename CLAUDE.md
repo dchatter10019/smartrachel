@@ -131,7 +131,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   paths/patterns refuse a branch), headless Claude Code in a worktree (~/work/<id>, branch fix/<id>) writes a scenario + fix;
   fixer.py then proves it itself (scenario fails on staging from base, passes from the branch, smoke passes). Result ->
   logs/fixer/<id>.json + a review post (logs/fixer/<id>.post.txt until OPS_SLACK_CHANNEL is set). `--plan` = classify only,
-  no tokens; `--finding F-…`; kill switch: ops/PAUSE. NOT running yet: no systemd unit / nightly hook.
+  no tokens; `--finding F-…`; kill switch: ops/PAUSE. SCHEDULED (DC, Oct 3): qa/nightly.sh runs monitor --once then
+  fixer.py after the QA Slack post (PATH gets ~/.npm-global/bin for the claude CLI; log logs/fixer/nightly.log).
   Spend (DC, Oct 3; ops/monitor.yaml fixer:): $15 per UTC day across runs, $5 hard cap per fix (claude --max-budget-usd), max 3
   fixes; a fix starts only if the full $5 still fits. A run with no reported cost (timeout/crash) is charged the $5 cap, never
   $0. Every run -> logs/fixer/spend.jsonl; each pass ends with a spend report (tonight + month to date) posted to Slack /
