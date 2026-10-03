@@ -51,6 +51,36 @@ function field(lines, re) {
   for (const l of lines || []) { const m = l.match(re); if (m && m[1].trim()) return m[1].trim(); }
   return '';
 }
+// A labelled field whose value is on the same line OR the next non-empty line (a form pasted into an email). Real
+// (Oct 3, Sean, Foodie For All): "*Customer Name: *\nInge Pham-Swann" / "*Customer Email:*\ninge@..." / "*Customer Phone
+// Number: *\n(862) 252-5077" — none were read, the on-site contact "Mara" became the customer and every "place the
+// order" asked for Mara's last name.
+function labelled(lines, labelRe) {
+  const L = lines || [];
+  const re = new RegExp('^\\s*\\*?\\s*(?:' + labelRe + ')\\s*\\*?\\s*:\\s*\\*?\\s*(.*)$', 'i');
+  for (let i = 0; i < L.length; i++) {
+    const m = L[i].match(re);
+    if (!m) continue;
+    let v = m[1].replace(/\*+/g, '').trim();
+    if (!v) for (let j = i + 1; j < L.length && j <= i + 3; j++) {
+      const n = L[j].replace(/\*+/g, '').trim();
+      if (!n) continue;
+      if (!/^[^:]{1,40}:\s*$/.test(n) && !/^[A-Za-z ]{2,40}:\s/.test(n)) v = n;   // the next line, unless it's another label
+      break;
+    }
+    if (v) return v;
+  }
+  return '';
+}
+const WHO = '(?:customer|client|contact|recipient)(?:\'?s)?\\s+';
+// "You have the name from before. It's Inge Pham-Swann (that's the first and last name of the customer, Mara is not the
+// customer)" (Oct 3, DC) — a full name given as a correction.
+function nameCorrection(text) {
+  const t = String(text || '');
+  if (!/\b(?:name|customer)\b/i.test(t)) return '';
+  const m = t.match(/(?:\b[Ii]t['’]?s['’]?s?|\b[Ii]ts['’]?s|\b[Cc]ustomer(?:['’]s)?\s+(?:full\s+)?name\s+is|\b[Tt]he\s+customer\s+is|\b(?:[Ff]ull\s+)?[Nn]ame\s+is)\s+([A-Z][a-z'’]+(?:(?:\s+|-)[A-Z][a-z'’]+)+)/);
+  return m ? m[1].trim() : '';
+}
 // Delivery timing in the text (email header lines and quoted "On ... wrote:" lines skipped):
 //   when: a date WITH a time ("Oct 5 at 2pm") | date: a date alone, after today ("Monday, October 5th")
 //   time: a time alone ("2pm", "11am-12pm") — combined with a date given earlier.
@@ -169,11 +199,14 @@ function extract(text, sender, now) {
     if (lt.length) { out.email = lt[0]; out.source = out.source || 'payment-link recipient'; }
   }
   // Typed fields win (either part of the email).
-  const n = field(all, /^\s*\*?(?:name|contact(?: name)?|recipient|order (?:name|for))\*?\s*:\s*([^\n<]{3,60})$/i);
+  const n = field(all, /^\s*\*?(?:name|contact(?: name)?|recipient|order (?:name|for))\*?\s*:\s*([^\n<]{3,60})$/i)
+    || labelled(all, WHO + '(?:full\\s+)?name') || nameCorrection(top.join('\n'));
   if (n) { out.name = n.replace(PHONE, '').replace(EMAIL, '').replace(/[,;|]+\s*$/, '').trim(); out.source = out.source || 'typed'; }
-  const em = field(all, /^\s*\*?(?:e-?mail|contact email|recipient email)\*?\s*:\s*(\S+@\S+)/i);
+  const em = field(all, /^\s*\*?(?:e-?mail|contact email|recipient email)\*?\s*:\s*(\S+@\S+)/i)
+    || (labelled(all, WHO + 'e-?mail(?:\\s+address)?').match(EMAIL) || [''])[0];
   if (em) out.email = em.replace(/[<>]/g, '').toLowerCase();
-  const ph = field(all, /^\s*\*?(?:phone|mobile|cell|tel|contact (?:phone|number))\*?\s*[:.]\s*(.+)$/i);
+  const ph = field(all, /^\s*\*?(?:phone|mobile|cell|tel|contact (?:phone|number))\*?\s*[:.]\s*(.+)$/i)
+    || labelled(all, WHO + '(?:phone|mobile|cell|tel)(?:\\s+(?:number|no\\.?|#))?');
   if (ph && PHONE.test(ph)) out.phone = fmtPhone(ph.match(PHONE));
   // A contact line in the new text ("Contact: Natalia Diaz, 555-010-0100, nd@x.com").
   const cl = field(top, /^\s*\*?contact\*?\s*:\s*(.+)$/i);
@@ -208,4 +241,10 @@ function askText(miss, od, problem) {
     '\n\nPlease reply with ' + (miss.length > 1 ? 'all of these' : 'this') + ' in one email (e.g. "Natalia Diaz, 617-555-0100, natalia@company.com, Thursday Oct 1 at 2pm").';
 }
 
-module.exports = { cleanGmail, pocIn, instructionsBlock, isOrderCommand, extract, missing, askText, isStaff, tipIn, findWhen, timing, linkRecipients, normalizeTimes };
+// "Mara is not the customer", "Mara isn't the customer" -> ['Mara']
+function notCustomer(text) {
+  const out = [];
+  for (const m of String(text || '').matchAll(/\b([A-Z][a-z'’-]+)\s+(?:is\s+not|isn['’]?t)\s+(?:not\s+)?(?:the\s+|our\s+|a\s+)?(?:customer|client)\b/g)) if (!/^(?:This|That|It|He|She|They|Who|Which|There|Here|What|Name|Customer|Client)$/.test(m[1])) out.push(m[1]);
+  return out;
+}
+module.exports = { notCustomer, cleanGmail, pocIn, instructionsBlock, isOrderCommand, extract, missing, askText, isStaff, tipIn, findWhen, timing, linkRecipients, normalizeTimes };

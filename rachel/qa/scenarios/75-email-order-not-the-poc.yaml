@@ -1,0 +1,22 @@
+name: email-order-not-the-poc
+fresh: true
+tags: [email]
+# Real (Oct 3, Foodie For All thread): Sean's payment-link email named the on-site contact ("Main POC is Mara") and then
+# pasted the customer's details as a form (value on the line BELOW each label). The form was not read, Mara became the
+# customer, and DC's next three emails ("Customer Name:\nInge ...", "It's Inge ..., Mara is not the customer", "place the
+# order") each got "I need Mara's last name"; the LLM also tried its own place_order and asked "order or proposal?".
+format: plain
+context: {email_subject: "Menu Request - Example Event - Oct 6th", user_name: "QA Tester"}
+turns:
+  - send: "Hi,\r\n\r\nPlease send a quote for the items below.\r\n\r\nI am 21 years old. Deliver to 132 W 32nd St, New York, NY 10001\r\n\r\n2 x Corona Extra 12 pack\r\n2 Josh Cellars Cabernet Sauvignon\r\n\r\nThanks!"
+    expect:
+      contains: ["PDF proposal is attached"]
+  - send: "Hi Rachel,\r\n\r\nCan you please generate a payment link for this order?\r\n\r\nAlso, here are the delivery instructions for the order:\r\n\r\n*Main POC is Mara (862) 555-0177. Please let us know what time we should expect the delivery.*\r\n\r\nThanks!"
+    expect:
+      contains: ["Mara's last name"]
+  - send: "Mara is not the customer.\r\n\r\n*Customer Name: *\r\nPat Example-Lee\r\n\r\n*Customer Email:*\r\npat@example-client.com\r\n\r\n*Customer Phone Number: *\r\n(862) 555-0142\r\n\r\n*Delivery date and time:*\r\nMonday, October 5th, between 5 to 6 PM"
+    expect:
+      not_contains: ["Mara's last name", "PDF proposal?"]
+      contains: ["Pat Example-Lee", "Payment link"]
+      log_contains: ["[email-order] \"Mara\" is not the customer"]
+      log_not_contains: ["[order-confirm-gate] BLOCKED"]

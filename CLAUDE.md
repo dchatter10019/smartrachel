@@ -37,7 +37,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   the customer in the email (a forwarded customer's header + signature; the sender unless @getbevvi.com; from a
   @getbevvi.com sender: the on-site contact "Main POC is Mara (862) ..." = name + phone, and the address the payment
   link "should be sent to" = email); a "delivery instructions:" paragraph is kept (Gmail link clutter cut); no date
-  given = the event date, with its real windows offered; a first name alone asks only for the last name; all
+  given = the event date, with its real windows offered; a first name alone asks only for the last name; a pasted form ("Customer Name:" with the value on the NEXT line)
+  is read; "It's <First Last>" corrects the name; "<X> is not the customer" is remembered (od.not_customer) and the on-site
+  contact's first name never replaces a full customer name; a field still missing is taken from the thread's earlier
+  emails; the LLM's place_order is refused in email threads (EMAIL_ORDER_IN_CODE) (Oct 3, Foodie For All: Mara asked 4x); all
   missing fields (name, email, phone, delivery date+time checked against real windows) asked in ONE reply (sender only, no cc),
   kept in state.emailOrder until the answer places it. Tip 5% unless stated. A repeat re-sends the link.
 - Basket lines with no catalog link (a hand-built quote) are linked by line-resolve.js — same price AND name

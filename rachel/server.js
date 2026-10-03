@@ -2676,10 +2676,32 @@ app.post('/chat', async (req, res) => {
       }
       if (oItems.length && (cmd || provided)) {
         const od = Object.assign({}, state.emailOrder || {});
+        // "Mara is not the customer" (DC, Oct 3) is remembered for the thread, and the on-site contact's first name never
+        // replaces a full customer name already given.
+        for (const nm of EO.notCustomer(message)) if (!(od.not_customer || []).includes(nm)) { od.not_customer = (od.not_customer || []).concat(nm); console.log('[email-order] ' + JSON.stringify(nm) + ' is not the customer (said in the email)'); }
+        const notC = n => (od.not_customer || []).some(b => String(n || '').toLowerCase().split(/\s+/)[0] === b.toLowerCase());
+        if (notC(od.name)) { console.log('[email-order] dropped ' + JSON.stringify(od.name) + ' as the customer name (not the customer)'); od.name = ''; }
+        if (x.name && (notC(x.name) || (x.source === 'contact in the email' && String(od.name || '').trim().split(/\s+/).length >= 2 && x.name.trim().split(/\s+/).length < 2))) {
+          console.log('[email-order] kept ' + JSON.stringify(od.name || '') + ' — ignored ' + JSON.stringify(x.name) + ' (' + (notC(x.name) ? 'not the customer' : 'on-site contact, a full customer name is already given') + ')');
+          x.name = '';
+        }
         for (const k of ['name', 'email', 'phone', 'instructions']) if (x[k]) od[k] = x[k];
         if (x.tip) od.tip = x.tip;
         if (x.source) od.source = x.source;
         if (x.link_to && x.link_to.length) od.link_to = [...new Set((od.link_to || []).concat(x.link_to))];
+        // Still missing a name / email / phone: the thread's earlier emails, newest first. Real (Oct 3, DC): "You have the
+        // name from before" — Sean's form two emails up had the customer's name, email and phone.
+        if (!(String(od.name || '').trim().split(/\s+/).length >= 2 && od.email && od.phone)) {
+          const prior = (sessions[sessionKey] || []).filter(m => m.role === 'user').map(m => typeof m.content === 'string' ? m.content : (Array.isArray(m.content) ? m.content.filter(c => c.type === 'text').map(c => c.text).join('\n') : '')).filter(Boolean).reverse();
+          const got = [];
+          for (const t of prior) {
+            const px = EO.extract(t, { name: context && context.user_name, email }, new Date());
+            if (px.name && !notC(px.name) && px.name.trim().split(/\s+/).length >= 2 && String(od.name || '').trim().split(/\s+/).length < 2) { got.push('name ' + JSON.stringify(px.name) + (od.name ? ' (was ' + JSON.stringify(od.name) + ')' : '')); od.name = px.name; }
+            if (!od.email && px.email) { od.email = px.email; got.push('email'); }
+            if (!od.phone && px.phone) { od.phone = px.phone; got.push('phone'); }
+          }
+          if (got.length) console.log('[email-order] from earlier emails in the thread: ' + got.join(', '));
+        }
         let problem = '';
         // A date alone is kept; a time alone joins the kept date (Sep 29, Gen II: "the delivery date is Monday,
         // October 5th" was ignored and the date+time asked for again).

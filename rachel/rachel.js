@@ -587,6 +587,13 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           const result = await onSubstituteConfirmed(saInput.original_item || '', saInput.replacement_name || '', saInput.replacement_price || 0, saInput.replacement_size || '');
           return result || { success: true };
         }
+        // Email orders are placed in code (server.js EMAIL ORDER: contact, real delivery window, payment link). Real (Oct 3,
+        // Foodie For All): the LLM tried its own place_order with delivery "2025-10-05", was blocked by the gate below, and
+        // then asked "place the order, or send you a PDF proposal?" after the customer had already said place it.
+        if (saInput.intent === 'place_order' && sessionState && (sessionState.emailSubject || sessionState.emailOrder)) {
+          console.log('[order] REFUSED the LLM\'s place_order in an email thread — email orders are placed in code');
+          return { success: false, order_id: '', payment_url: '', error: 'EMAIL_ORDER_IN_CODE: in an email thread the order is placed by the system, not by this tool.', action_required: 'Do not call place_order. Do not ask whether to place the order or send a proposal. Tell the customer, in one short paragraph, which of these are still needed: the customer\'s full name, email, phone, and delivery date + time — and that you will create the order and send the payment link as soon as they reply with them.' };
+        }
         if (saInput.intent === 'place_order' && !alreadyConfirmed) {
           const msgLowerForConfirm = (customerMessage || '').toLowerCase();
           const hasExplicitConfirmation = ORDER_CONFIRMATION_WORDS.some(w => msgLowerForConfirm.includes(w));
