@@ -102,7 +102,15 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   tunes thresholds, `--once` one pass. Customer-facing detectors skip QA (tag «qa-», events qa:true, qa- session ids).
   Runs as rachel-monitor (unit in ops/systemd/, installed by DC). Critical findings post to OPS_SLACK_CHANNEL once set.
   ops/tests/monitor_test.py runs in the nightly QA. Interactive sessions: check `ops/monitor.py --status` first.
-- Steps 3 (fixer) and 4 (Slack review/deploy): not built yet.
+- Step 3 fixer (ops/fixer.py): per open finding, classified by ops/scope.yaml (fix vs diagnose-only detectors; protected
+  paths/patterns refuse a branch), headless Claude Code in a worktree (~/work/<id>, branch fix/<id>) writes a scenario + fix;
+  fixer.py then proves it itself (scenario fails on staging from base, passes from the branch, smoke passes). Result ->
+  logs/fixer/<id>.json + a review post (logs/fixer/<id>.post.txt until OPS_SLACK_CHANNEL is set). `--plan` = classify only,
+  no tokens; `--finding F-…`; kill switch: ops/PAUSE. NOT running yet: no systemd unit / nightly hook, and with
+  fixer.nightly_budget_usd unset in ops/monitor.yaml no agent runs.
+- Step 4 deploy (ops/deploy-fix.sh <id>): ✅ by an approver on the fixer post (rachel_slack_bot.py reaction_added) →
+  scope re-check, fast-forward-only, precheck --deploy --stage-first, push; rollback + master reset on failure; ❌ discards.
+  Inactive until /etc/rachel.env has OPS_SLACK_CHANNEL + OPS_APPROVERS and the Slack app subscribes to reaction_added.
 
 ## QA harness (rachel/qa/)
 - `qa/unit/*.test.js`: pure-logic unit tests on saved real replies (multi-pick resolver), run by every
