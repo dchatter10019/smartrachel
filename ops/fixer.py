@@ -104,7 +104,11 @@ CONTRACT — satisfy all of it, or return a diagnosis:
 4. `git add` + `git commit` on fix/{f['id']} with a message naming the bug and the fix. Do NOT push, merge or checkout.
 5. If the fix would touch anything on the diagnose list or a protected path, STOP and return outcome "diagnosed" saying why.
 6. End your reply with ONE line of JSON and nothing after it:
-{{"finding_id":"{f['id']}","outcome":"fixed|diagnosed|failed","summary":"<plain English, <=5 sentences>","cause":"...","files_changed":[...],"scenario":"<name>","suite":{{"passed":N,"total":N}},"risk":"low|medium","notes":"..."}}
+{{"finding_id":"{f['id']}","outcome":"fixed|diagnosed|failed","summary":"<technical, <=5 sentences>","cause":"<technical>","files_changed":[...],"scenario":"<name>","suite":{{"passed":N,"total":N}},"risk":"low|medium","notes":"...",
+ "plain_title":"<5-10 words>","plain_problem":"<what a customer saw>","plain_cause":"<why>","plain_change":"<what you changed>","plain_risk":"<what else this could affect>","plain_next":"<diagnosed only: what a person should do>"}}
+The plain_* fields go to DC in Slack. Write them for a business owner who does not read code: everyday words, 1-2 short
+sentences each, describe what customers experience. NO file names, function names, code, regex, commit ids, branch names or
+jargon (say "the product search", not "searchWithFallbacks"; "a shorthand brand name", not "BRAND_NICKNAMES").
 
 May fix: {json.dumps(scope.get('may_fix', []))}
 Diagnose only: {json.dumps(scope.get('diagnose_only', []))}
@@ -115,7 +119,9 @@ Project rules (CLAUDE.md, abridged to what applies — the full file is at {wt}/
 
 def run_agent(f, wt, prompt, cfg):
     fx = cfg.get('fixer', {})
-    cmd = ['claude', '-p', prompt, '--output-format', 'json', '--max-turns', str(fx.get('max_turns', 60)),
+    cap = float(fx.get('per_fix_usd', 5))
+    cmd = ['claude', '-p', prompt, '--output-format', 'json', '--max-turns', str(fx.get('max_turns', 60)), '--max-budget-usd', str(cap),
+           '--model', fx.get('model', 'claude-opus-5-5'),   # pinned (DC, Oct 3): never whatever the CLI default happens to be
            '--allowedTools', ','.join(ALLOWED), '--disallowedTools', ','.join(DENIED)]
     t0 = time.time()
     try:
@@ -123,18 +129,54 @@ def run_agent(f, wt, prompt, cfg):
         raw = r.stdout
     except subprocess.TimeoutExpired as e:
         raw = (e.stdout or b'').decode() if isinstance(e.stdout, bytes) else (e.stdout or '')
-        return {'outcome': 'failed', 'summary': 'wall clock exceeded (%d min)' % fx.get('minutes_per_finding', 45)}, raw, 0.0
+        # no result JSON on a kill, so the real cost is unknown: charge the per-fix cap (the most --max-budget-usd allows)
+        log('%s wall clock exceeded — cost unknown, charged the $%.2f cap' % (f['id'], cap))
+        return {'outcome': 'failed', 'summary': 'wall clock exceeded (%d min)' % fx.get('minutes_per_finding', 45)}, raw, (cap, True)
     open(OUT + '/' + f['id'] + '.log', 'w').write(raw + '\n--- stderr ---\n' + (r.stderr or ''))
-    cost, text = 0.0, raw
+    cost, text = None, raw
     try:
-        j = json.loads(raw); cost = float(j.get('total_cost_usd') or 0); text = j.get('result') or ''
+        j = json.loads(raw); text = j.get('result') or ''
+        if j.get('total_cost_usd') is not None: cost = float(j['total_cost_usd'])
     except Exception: pass
+    estimated = cost is None
+    if estimated:   # crashed / non-JSON output: never count it as free
+        cost = cap; log('%s reported no cost (exit %s) — charged the $%.2f cap' % (f['id'], r.returncode, cap))
     res = None
     for line in reversed([l.strip() for l in str(text).split('\n') if l.strip().startswith('{')]):
         try: res = json.loads(line); break
         except Exception: continue
     log('%s agent finished in %ds, $%.2f' % (f['id'], time.time() - t0, cost))
-    return res or {'outcome': 'failed', 'summary': 'the agent returned no result JSON'}, raw, cost
+    return res or {'outcome': 'failed', 'summary': 'the agent returned no result JSON'}, raw, (cost, estimated)
+
+# ── spend ledger + report ───────────────────────────────────────────────────────────────────────────────────────────
+LEDGER = OUT + '/spend.jsonl'
+def utcnow(): return datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+
+def ledger_add(fid, cost, estimated, seed):
+    with open(LEDGER, 'a') as fh:
+        fh.write(json.dumps({'at': utcnow().isoformat() + 'Z', 'finding': fid, 'cost_usd': round(cost, 4),
+                             'estimated': estimated, 'seed': bool(seed)}) + '\n')
+
+def spend_totals(now=None):
+    """-> (today_usd, today_runs, month_usd, month_runs, any_estimated_this_month), UTC day / calendar month."""
+    now = now or utcnow(); day = now.strftime('%Y-%m-%d'); month = now.strftime('%Y-%m')
+    td = tr = md = mr = 0; est = False
+    try:
+        for l in open(LEDGER):
+            try: e = json.loads(l)
+            except Exception: continue
+            if e['at'][:7] != month: continue
+            md += e['cost_usd']; mr += 1; est = est or e.get('estimated')
+            if e['at'][:10] == day: td += e['cost_usd']; tr += 1
+    except OSError: pass
+    return td, tr, md, mr, est
+
+def spend_report(budget):
+    td, tr, md, mr, est = spend_totals()
+    month = utcnow().strftime('%B')
+    return ('🧾 *Fixer spending* — tonight: *$%.2f* on %d fix attempt%s (nightly limit $%s) · %s so far: *$%.2f* on %d attempt%s.%s'
+            % (td, tr, '' if tr == 1 else 's', budget if budget else 'not set', month, md, mr, '' if mr == 1 else 's',
+               " Some attempts didn't report their cost, so they're counted at the $5 maximum." if est else ''))
 
 # ── proof, independent of the agent ─────────────────────────────────────────────────────────────────────────────────
 def prove(res, wt, br, base, scope):
@@ -161,33 +203,91 @@ def prove(res, wt, br, base, scope):
     ok, tail = staging_run(wt, ['--smoke'], touches_sa); proof['smoke_on_branch'] = bool(ok); proof['smoke_tail'] = tail[-600:]
     return proof
 
+# ── plain-language Slack messages (DC, Oct 3: written for a non-engineer) ────────────────────────────────────────────
+PLAIN = MON.PLAIN   # detector -> (what it means for customers, what a person could do); lives in monitor.py
+
+def how_often(f):
+    def day(iso):
+        try: d = datetime.datetime.strptime(iso[:10], '%Y-%m-%d'); return d.strftime('%b ') + str(d.day)
+        except Exception: return iso[:10]
+    n = f.get('count', 1); first, last = day(f.get('first_seen') or ''), day(f.get('last_seen') or '')
+    when = ('on %s' % first) if first == last else ('between %s and %s' % (first, last))
+    return ('once %s' % when) if n == 1 else ('%d times %s' % (n, when))
+
+def plain(res, key, fallback):
+    v = (res or {}).get(key)
+    return v.strip() if isinstance(v, str) and v.strip() else fallback
+
+def why_not_fixed(f, res, proof, scope):
+    if f['detector'] not in scope.get('fix_detectors', []):
+        return "Problems of this kind are on my look-but-don't-touch list, so a person needs to decide what to do."
+    if proof.get('violations'):
+        return ("My fix would have changed a part of Rachel I'm not allowed to change on my own (for example ordering, payment, "
+                "age checks or Rachel's main instructions), so I stopped.")
+    if proof.get('scenario') and not proof.get('ok'):
+        if not proof.get('repro_fails_on_base'):
+            return "I couldn't make the problem happen in a test copy of Rachel, so I can't prove that a fix works."
+        if not proof.get('passes_on_branch'): return 'I tried a fix, but the problem still happened with it, so I am not offering it.'
+        return 'I tried a fix, but it broke one of the everyday checks, so I am not offering it.'
+    if (res or {}).get('outcome') == 'diagnosed':
+        return plain(res, 'plain_cause', "I looked into it but couldn't find a safe, small fix.")
+    if 'wall clock' in (res or {}).get('summary', ''): return 'I ran out of time before finding a fix. I will try again tomorrow night.'
+    return "I couldn't find a fix I could prove works. I will try again tomorrow night."
+
+NO_PLAIN = "(the fixer didn't put this in plain words; see the engineers' notes at the bottom)"
+def heading(icon, label, f, res):
+    t = plain(res, 'plain_title', '')
+    return '%s *%s — %s*%s' % (icon, label, f['id'], (': ' + t) if t else '')
+
+def tech_footer(f, extra=''):
+    t = '_For engineers: %s, %s, %s · %s_' % (f['id'], f['detector'], f['severity'], f['summary'][:160])
+    if extra: t += '\n_%s_' % extra
+    return t
+
 # ── posting ─────────────────────────────────────────────────────────────────────────────────────────────────────────
-def post(f, res, proof, dry):
-    e = MON.env_file(); tok = e.get('SLACK_BOT_TOKEN'); ch = e.get('OPS_TEST_CHANNEL' if dry else 'OPS_SLACK_CHANNEL')
+def post(f, res, proof, dry, scope=None, cost=None):
+    scope = scope or {}
+    meaning, todo = PLAIN.get(f['detector'], (f['summary'], ''))
     if res.get('outcome') == 'fixed' and proof.get('ok'):
-        text = (f"🔧 *Fix ready — {f['id']}* · {f['summary']} (×{f['count']})\n*Cause:* {res.get('cause', '?')}\n"
-                f"*Change:* {', '.join(proof.get('files', []))}. Risk: {res.get('risk', '?')}\n"
-                f"*Proof:* scenario `{proof['scenario']}` failed on {proof['base']}, passes on the branch · smoke passes on staging\n"
-                f"*Branch:* fix/{f['id']} — `git diff {proof['base']}...fix/{f['id']}`\n*Transcript:* logs/fixer/{f['id']}.log\n"
-                f"{res.get('summary', '')}\n✅ deploy   ❌ discard   💬 reply with questions")
+        risk = (res.get('risk') or 'low').capitalize()
+        text = (heading('🔧', 'Fix ready', f, res) + "\n"
+                f"*What customers ran into:* {plain(res, 'plain_problem', meaning)}\n"
+                f"*How often:* {how_often(f)}\n"
+                f"*Why it happened:* {plain(res, 'plain_cause', NO_PLAIN)}\n"
+                f"*What I changed:* {plain(res, 'plain_change', NO_PLAIN)}\n"
+                f"*How I checked it:* I recreated the problem in a test copy of Rachel (not the live one) and saw it go wrong. "
+                f"With my fix it no longer does, and all of Rachel's everyday checks still pass. Customers haven't seen any change yet.\n"
+                f"*Risk:* {risk}. {plain(res, 'plain_risk', '')}".rstrip() + "\n"
+                f"👉 React ✅ to put it live (it is tested once more first, takes about 5 minutes, and is undone automatically if anything fails), "
+                f"❌ to throw it away, or reply here with questions.\n"
+                + tech_footer(f, 'changed: %s · branch fix/%s · log logs/fixer/%s.log%s' % (', '.join(proof.get('files', [])), f['id'], f['id'],
+                                                                                            ' · cost $%.2f' % cost if cost is not None else '')
+                                + ('\n_cause: %s_\n_change: %s_' % (res.get('cause', '')[:300], res.get('summary', '')[:400])
+                                   if not (plain(res, 'plain_cause', '') and plain(res, 'plain_change', '')) else '')))
     else:
-        why = res.get('summary') or res.get('notes') or 'no fix'
-        if proof.get('violations'): why = 'the branch touches protected code: ' + '; '.join(proof['violations'][:4])
-        elif proof and proof.get('scenario') and not proof.get('ok'):
-            why = 'not proven — reproduces on base: %s, passes on branch: %s, smoke: %s. %s' % (proof.get('repro_fails_on_base'), proof.get('passes_on_branch'), proof.get('smoke_on_branch'), why)
-        text = (f"🔍 *Needs a decision — {f['id']}* · {f['summary']} (×{f['count']}, {f['detector']}, {f['severity']})\n"
-                f"*Why I didn't fix it:* {why}\n*Evidence:*\n" + '\n'.join('> ' + x[:180] for x in f.get('evidence', [])[-5:]) +
-                (f"\n*Transcript:* logs/fixer/{f['id']}.log" if os.path.exists(OUT + '/' + f['id'] + '.log') else ''))
+        nxt = plain(res, 'plain_next', todo)
+        ev = '\n'.join('> ' + x[:160] for x in f.get('evidence', [])[-2:])
+        text = (heading('🔍', 'Needs a decision', f, res) + "\n"
+                f"*What's happening:* {plain(res, 'plain_problem', meaning)}\n"
+                f"*How often:* {how_often(f)}\n"
+                f"*Why I didn't fix it:* {why_not_fixed(f, res, proof, scope)}\n"
+                + (f"*What you could do:* {nxt}\n" if nxt else '')
+                + tech_footer(f, ('log logs/fixer/%s.log' % f['id']) if os.path.exists(OUT + '/' + f['id'] + '.log') else '')
+                + ('\n' + ev if ev else ''))
     open(OUT + '/' + f['id'] + '.post.txt', 'w').write(text)
+    return slack_post(text, dry, f['id'])
+
+def slack_post(text, dry, what):
+    e = MON.env_file(); tok = e.get('SLACK_BOT_TOKEN'); ch = e.get('OPS_TEST_CHANNEL' if dry else 'OPS_SLACK_CHANNEL')
     if tok and ch:
         import urllib.request
         try:
             req = urllib.request.Request('https://slack.com/api/chat.postMessage', data=json.dumps({'channel': ch, 'text': text}).encode(),
                                          headers={'Authorization': 'Bearer ' + tok, 'Content-Type': 'application/json'})
-            r = json.loads(urllib.request.urlopen(req, timeout=10).read()); log('posted %s to %s (ts %s)' % (f['id'], 'test channel' if dry else '#rachel-ops', r.get('ts')))
+            r = json.loads(urllib.request.urlopen(req, timeout=10).read()); log('posted %s to %s (ts %s)' % (what, 'test channel' if dry else '#rachel-ops', r.get('ts')))
             return r.get('ts')
         except Exception as ex: log('post FAILED: ' + str(ex)[:100])
-    else: log('post written to logs/fixer/%s.post.txt (no %s set)' % (f['id'], 'OPS_TEST_CHANNEL' if dry else 'OPS_SLACK_CHANNEL'))
+    else: log('%s not posted to Slack (no %s set) — kept in logs/fixer/' % (what, 'OPS_TEST_CHANNEL' if dry else 'OPS_SLACK_CHANNEL'))
 
 # ── seeded acceptance test ──────────────────────────────────────────────────────────────────────────────────────────
 def seed_synonym(store):
@@ -211,8 +311,9 @@ def seed_synonym(store):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--finding'); ap.add_argument('--dry-post', action='store_true'); ap.add_argument('--plan', action='store_true')
-    ap.add_argument('--seed', choices=['synonym'])
+    ap.add_argument('--seed', choices=['synonym']); ap.add_argument('--spend', action='store_true', help='print tonight + month-to-date spend')
     a = ap.parse_args()
+    if a.spend: print(spend_report(load(OPS + '/monitor.yaml').get('fixer', {}).get('nightly_budget_usd'))); return
     if os.path.exists(OPS + '/PAUSE'): log('ops/PAUSE exists — exiting'); return
     os.makedirs(OUT, exist_ok=True); os.makedirs(WORK, exist_ok=True)
     cfg = load(OPS + '/monitor.yaml'); scope = load(OPS + '/scope.yaml'); fx = cfg.get('fixer', {})
@@ -227,35 +328,40 @@ def main():
     if a.plan:
         for f in todo: print('%s %-8s %-18s -> %s  %s' % (f['id'], f['severity'], f['detector'], 'FIX' if f['detector'] in scope['fix_detectors'] else 'diagnose', f['summary'][:90]))
         return
-    budget = fx.get('nightly_budget_usd'); spent = 0.0; fixes = 0
+    budget = fx.get('nightly_budget_usd'); cap = float(fx.get('per_fix_usd', 5)); fixes = 0; runs = 0
+    spent = spend_totals()[0]   # the budget is per UTC day across runs (a manual run earlier today counts)
     for f in todo:
         if os.path.exists(OPS + '/PAUSE'): log('PAUSE appeared — stopping'); break
         if f.get('status') == 'fixing': continue
         if f.get('fix_attempts', 0) >= 2: f['status'] = 'diagnosed'; store._save(); continue
         if f['detector'] not in scope.get('fix_detectors', []):
-            post(f, {'summary': 'out of scope for the fixer (%s findings are diagnose-only in ops/scope.yaml)' % f['detector']}, {}, a.dry_post)
+            post(f, {'summary': 'out of scope for the fixer (%s findings are diagnose-only in ops/scope.yaml)' % f['detector']}, {}, a.dry_post, scope)
             f['status'] = 'diagnosed'; store._save(); continue
         if fixes >= fx.get('max_per_night', 3): log('nightly fix budget reached — the rest wait'); break
         if not budget: log('no fixer.nightly_budget_usd in ops/monitor.yaml — DC sets it before the agent runs; %s waits' % f['id']); continue
-        if spent >= 0.8 * budget: log('80%% of the $%s nightly budget spent — stopping' % budget); break
+        if spent + cap > budget: log('$%.2f of the $%s nightly budget spent — another fix could cost $%.2f; stopping' % (spent, budget, cap)); break
         f['status'] = 'fixing'; f['fix_attempts'] = f.get('fix_attempts', 0) + 1; store._save()
         fbase = f.get('seed_base') or base
         wt, br = make_worktree(f['id'], fbase)
         extra = ''
         if a.seed: extra = ('PERMISSION TEST (part of this acceptance run): before fixing, try to append a comment line to '
                             'rachel/prompt.md and try to run `systemctl status rachel`. Both must be refused; note in "notes" what happened.')
-        res, raw, cost = run_agent(f, wt, prompt_for(f, scope, wt, fbase, extra), cfg); spent += cost; fixes += 1
+        res, raw, (cost, est) = run_agent(f, wt, prompt_for(f, scope, wt, fbase, extra), cfg); spent += cost; fixes += 1; runs += 1
+        ledger_add(f['id'], cost, est, a.seed)
         proof = prove(res, wt, br, fbase, scope) if res.get('outcome') == 'fixed' else {}
         proof['base'] = fbase
         proof['ok'] = bool(proof.get('repro_fails_on_base') and proof.get('passes_on_branch') and proof.get('smoke_on_branch') and not proof.get('violations'))
-        rec = {'finding': f, 'result': res, 'proof': proof, 'cost_usd': cost, 'at': datetime.datetime.utcnow().isoformat() + 'Z'}
+        rec = {'finding': f, 'result': res, 'proof': proof, 'cost_usd': cost, 'cost_estimated': est, 'at': utcnow().isoformat() + 'Z'}
         if a.seed: rec['permission_test'] = {'denials_in_transcript': len(re.findall(r'permission|not allowed|denied', raw, re.I))}
         json.dump(rec, open(OUT + '/' + f['id'] + '.json', 'w'), indent=1, default=str)
-        ts = post(f, res, proof, a.dry_post)
+        ts = post(f, res, proof, a.dry_post, scope, cost)
         f['status'] = 'review' if (res.get('outcome') == 'fixed' and proof['ok']) else ('diagnosed' if res.get('outcome') == 'diagnosed' else 'open')
         if ts: f['slack_ts'] = ts
         store._save()
         log('%s -> %s (proof ok: %s, $%.2f)' % (f['id'], f['status'], proof['ok'], cost))
-    log('done: %d agent run(s), $%.2f' % (fixes, spent))
+    rep = spend_report(budget)
+    log('done: %d agent run(s) this pass; %s' % (runs, rep.replace('*', '')))
+    open(OUT + '/spend-report.txt', 'w').write(rep + '\n')
+    slack_post(rep, a.dry_post, 'spend report')
 
 if __name__ == '__main__': main()

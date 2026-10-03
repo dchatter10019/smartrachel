@@ -350,7 +350,7 @@ def handle_reaction(event, client, ack=None):
         return
     fid = m.group(1)
     if user not in OPS_APPROVERS:
-        client.chat_postMessage(channel=ch, thread_ts=ts, text="Only approvers can deploy or discard a fix.")
+        client.chat_postMessage(channel=ch, thread_ts=ts, text="Only the people allowed to approve fixes can put one live or throw it away.")
         log.info(f"[fix-review] {fid}: :{name}: by {user} — not an approver"); return
     if fid in _fix_runs:
         return
@@ -359,16 +359,16 @@ def handle_reaction(event, client, ack=None):
         try:
             if name == "x":
                 r = subprocess.run(["bash", "-c", f"cd /home/ubuntu && git worktree remove --force work/{fid} 2>/dev/null; git branch -D fix/{fid} && python3 -c \"import sys;sys.path.insert(0,'ops');import monitor as M;s=M.Store();[f.update(status='discarded') for f in s.items if f['id']=='{fid}'];s._save()\""], capture_output=True, text=True, timeout=60)
-                out = f"🗑️ Discarded {fid} — branch removed." if r.returncode == 0 else f"⚠️ Discard of {fid} hit a problem: {(r.stderr or r.stdout)[-200:]}"
+                out = f"🗑️ Thrown away: {fid} will not go live. Nothing changed for customers." if r.returncode == 0 else f"⚠️ I couldn't fully throw {fid} away, but nothing went live. (tech: {(r.stderr or r.stdout)[-200:]})"
             else:
-                client.chat_postMessage(channel=ch, thread_ts=ts, text=f"Deploying {fid} — staging first, then production (≈5 min)…")
+                client.chat_postMessage(channel=ch, thread_ts=ts, text=f"Putting {fid} live: testing it once more on a practice copy first, then on the real Rachel (about 5 minutes)…")
                 r = subprocess.run(["/home/ubuntu/ops/deploy-fix.sh", fid], capture_output=True, text=True, timeout=1800)
                 out = (r.stdout.strip().split("\n") or ["(no output)"])[-1]
             client.chat_postMessage(channel=ch, thread_ts=ts, text=out)
             log.info(f"[fix-review] {fid}: :{name}: by {user} -> {out[:160]}")
         except Exception as e:
             log.warning(f"[fix-review] {fid} failed: {e}")
-            client.chat_postMessage(channel=ch, thread_ts=ts, text=f"⛔ {fid}: {e}")
+            client.chat_postMessage(channel=ch, thread_ts=ts, text=f"⛔ Something went wrong with {fid} and nothing changed for customers. (tech: {e})")
         finally:
             _fix_runs.discard(fid)
     threading.Thread(target=run, daemon=True).start()

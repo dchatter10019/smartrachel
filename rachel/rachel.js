@@ -481,6 +481,46 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           console.log('[ShoppingAgent] basket changed earlier this turn — ' + saInput.intent + ' uses the live basket');
           currentLineItems = sessionState.lastLineItems;
         }
+        // "use another pinot noir" / "a different prosecco instead" with ONE basket line of that kind = alternatives TO that
+        // line (anchored to its price), never a plain search. Real (Oct 3 full suite, event-list-swap-by-number): the LLM
+        // sometimes sent product_query "Pinot Noir 750 mL" — Goldeneye $73 listed first as the stand-in for La Crema ~$25.
+        if (saInput.intent === 'product_query' && Array.isArray(saInput.queries) && saInput.queries.length === 1
+            && /\b(instead|swap|replace|switch|different)\b|\b(use|try|get|pick|choose|want|need)\s+(an)?other\b/i.test(customerMessage || '')
+            && !/\b(add|more|extra)\b/i.test(customerMessage || '')) {
+          let bkS = []; try { bkS = JSON.parse(currentLineItems || '[]') || []; } catch (e) {}
+          const q = saInput.queries[0] || {};
+          const hits = bkS.filter(it => require('./basket-line.js')([it], q.name) === 0);
+          if (hits.length === 1) {
+            console.log('[swap-to-alternatives] "' + q.name + '" for "' + String(customerMessage).slice(0, 80) + '" -> alternatives to basket line "' + hits[0].name + '"');
+            saInput.intent = 'alternatives'; saInput.originals = [{ name: hits[0].name, category: q.category || hits[0].category || 'wine', exclude: [hits[0].name], basket_price: hits[0].price }]; delete saInput.queries;
+          } else if (hits.length > 1) console.log('[swap-to-alternatives] not rerouted: "' + q.name + '" matches ' + hits.length + ' basket lines');
+        }
+        // A replacement the customer wrote as "A -> B" must replace A's line — the LLM's original_item is checked against the
+        // arrow in code. Real (Oct 3 full suite, arrow-swap-applied): "Rose from Provence -> whispering angel / Remy Cointreau
+        // -> Cointreau 750 ML" — the LLM sent original_item = the Provence ROSE line with Cointreau as its replacement: the
+        // rosé vanished and Cointreau became 3x.
+        if (saInput.intent === 'confirm_substitute' && saInput.original_item && saInput.replacement_name) {
+          const bl = require('./basket-line.js');
+          const pairs = String(customerMessage || '').split(/\r?\n/).map(l => l.match(/^\s*(.+?)\s*(?:->|-&gt;|→)\s*(.+?)\s*$/)).filter(Boolean).map(m => ({ a: m[1], b: m[2] }));
+          const pair = pairs.find(pp => bl([{ name: saInput.replacement_name }], pp.b) === 0);
+          if (pair && bl([{ name: saInput.original_item }], pair.a) !== 0 && bl([{ name: pair.a }], saInput.original_item) !== 0) {
+            let bkA = []; try { bkA = JSON.parse(currentLineItems || '[]') || []; } catch (e) {}
+            // the line by its name, or by what the customer first asked for ("Remy Cointreau" -> the Cointreau line)
+            let ia = bl(bkA, pair.a);
+            if (ia < 0) ia = bkA.findIndex(it => [it.label, it.match && it.match.asked].some(x => x && bl([{ name: x }], pair.a) === 0));
+            if (ia >= 0 && bl([bkA[ia]], saInput.replacement_name) === 0) {
+              console.log('[arrow-original] "' + pair.a + ' -> ' + pair.b + '": "' + bkA[ia].name + '" is already that product — the LLM\'s swap of "' + saInput.original_item + '" REFUSED');
+              return { success: true, already_in_basket: true, message: '"' + bkA[ia].name + '" is already in the basket for "' + pair.a + '" — nothing was replaced. "' + saInput.original_item + '" was NOT touched.' };
+            }
+            if (ia >= 0) {
+              console.log('[arrow-original] "' + pair.a + ' -> ' + pair.b + '": original_item "' + saInput.original_item + '" corrected to "' + bkA[ia].name + '"');
+              saInput.original_item = bkA[ia].name;
+            } else {
+              console.log('[arrow-original] "' + pair.a + ' -> ' + pair.b + '": no basket line for "' + pair.a + '" — the LLM\'s swap of "' + saInput.original_item + '" REFUSED');
+              return { success: false, error: 'The customer asked to replace "' + pair.a + '", which is not a basket line — "' + saInput.original_item + '" was NOT replaced. Ask the customer which line they mean.' };
+            }
+          }
+        }
         // The saved event date / client, as the in-code proposal reuses them. Same session: the LLM's
         // generate_proposal sent no event_date and the PDF said "Event Date(s): —".
         if (saInput.intent === 'generate_proposal' && sessionState) {
@@ -771,7 +811,9 @@ RULES:
 
   const channelNote = channelNotes[channel_format] || channelNotes.plain;
 
-  const systemPrompt = rachalPromptToSystem(rachelPrompt, context);
+  // Block 1 is the SAME for every customer (only the channel varies), so one cached copy serves everyone. Until Oct 3 the
+  // customer's email/address/ids were filled into it: 138 of 146 conversations rebuilt the ~20k-token cache (~70% of spend).
+  const systemPrompt = rachalPromptToSystem(rachelPrompt, null);
   // context.order_change_note (set by server.js for this turn) was never injected anywhere —
   // the "changed at confirm" instruction was silently dropped. It now reaches the model.
   const orderNote = context && context.order_change_note ? '\n\n## THIS TURN\n' + context.order_change_note : '';
@@ -785,17 +827,39 @@ RULES:
   const listNote = listLines.length >= 2 ? '## THIS TURN — A PRODUCT LIST\nThe customer listed ' + listLines.length + ' products with quantities. Call ShoppingAgent intent="custom_list" with ALL of them in named_products (each with its qty) — not product_query per item.' : '';
   if (listNote) console.log('[list-note] ' + listLines.length + ' quantity-led lines — the LLM is told to use custom_list');
   const systemBlocks = [
-    { type: 'text', text: systemPrompt + channelNote, cache_control: { type: 'ephemeral' } },
-    { type: 'text', text: [address_rule, gbrain_context ? '## CUSTOMER CONTEXT FROM MEMORY\n' + gbrain_context : '', orderNote, listNote].filter(x => String(x || '').trim()).join('\n\n') || '(no session notes)' }
+    { type: 'text', text: systemPrompt + channelNote, cache_control: { type: 'ephemeral' } }
   ];
-  // The conversation so far is cached too: each tool-loop iteration re-sends it plus one tool result.
+  // Session facts + this turn's notes go AFTER the conversation, attached to the customer's latest message (Oct 3, DC: cut
+  // cost). As a second system block they sat before the conversation and changed every turn, so the conversation cache
+  // could never be reused on the next turn. They are sent with this turn's request only — never stored in the history.
+  const sessionFacts = '## SESSION FACTS\n' + ['kitchen_location', 'user_email', 'client_id', 'account_id'].map(k => k + ': ' + ((context && context[k]) || '(none)')).join('\n')
+    + '\nage_verified: ' + (context && context.age_verified ? 'true' : 'false');
+  const turnNotes = '<rachel_system_notes>\nSession notes from Rachel\'s system for this turn (NOT written by the customer):\n\n'
+    + [sessionFacts, address_rule, gbrain_context ? '## CUSTOMER CONTEXT FROM MEMORY\n' + gbrain_context : '', orderNote, listNote].filter(x => String(x || '').trim()).map(x => String(x).trim()).join('\n\n')
+    + '\n</rachel_system_notes>';
+  const turnMsgIdx = (() => { for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === 'user') return i; return -1; })();
+  const toBlocks = content => typeof content === 'string' ? [{ type: 'text', text: content }] : (Array.isArray(content) ? content.map(b => Object.assign({}, b)) : null);
+  // Cache breakpoints (max 4): block 1; the customer's latest message BEFORE the notes (next turn's history matches up to
+  // here, so the whole earlier conversation is a cache read); and the last tool result within this turn's tool loop.
   const withHistoryCache = msgs => {
     if (!msgs.length) return msgs;
-    const out = msgs.slice(), last = Object.assign({}, out[out.length - 1]);
-    const c = typeof last.content === 'string' ? [{ type: 'text', text: last.content }] : (Array.isArray(last.content) ? last.content.map(b => Object.assign({}, b)) : null);
-    if (!c || !c.length) return msgs;
-    c[c.length - 1] = Object.assign({}, c[c.length - 1], { cache_control: { type: 'ephemeral' } });
-    last.content = c; out[out.length - 1] = last;
+    const out = msgs.slice();
+    if (turnMsgIdx >= 0 && turnMsgIdx < out.length) {
+      const c = toBlocks(out[turnMsgIdx].content);
+      if (c && c.length) {
+        c[c.length - 1] = Object.assign({}, c[c.length - 1], { cache_control: { type: 'ephemeral' } });
+        c.push({ type: 'text', text: turnNotes });
+        out[turnMsgIdx] = Object.assign({}, out[turnMsgIdx], { content: c });
+      }
+    }
+    const li = out.length - 1;
+    if (li !== turnMsgIdx) {
+      const c = toBlocks(out[li].content);
+      if (c && c.length) {
+        c[c.length - 1] = Object.assign({}, c[c.length - 1], { cache_control: { type: 'ephemeral' } });
+        out[li] = Object.assign({}, out[li], { content: c });
+      }
+    }
     return out;
   };
 
@@ -868,13 +932,16 @@ RULES:
   return { response: finalResponse, messages: claudeMessages };
 }
 
+// context = null (the default since Oct 3): each placeholder points at the turn's SESSION FACTS instead of holding the value,
+// so the prompt text — and its cache — is identical for every customer.
 function rachalPromptToSystem(prompt, context) {
+  const v = (k, val) => context ? val : '<' + k + ' from SESSION FACTS>';
   return prompt
-    .replace(/\{kitchen_location\}/g, context.kitchen_location || '')
-    .replace(/\{user_email\}/g,       context.user_email       || '')
-    .replace(/\{age_verified\}/g,     context.age_verified ? 'true' : 'false')
-    .replace(/\{account_id\}/g,       context.account_id       || '')
-    .replace(/\{client_id\}/g,        context.client_id        || '');
+    .replace(/\{kitchen_location\}/g, v('kitchen_location', context && (context.kitchen_location || '')))
+    .replace(/\{user_email\}/g,       v('user_email', context && (context.user_email || '')))
+    .replace(/\{age_verified\}/g,     v('age_verified', context && (context.age_verified ? 'true' : 'false')))
+    .replace(/\{account_id\}/g,       v('account_id', context && (context.account_id || '')))
+    .replace(/\{client_id\}/g,        v('client_id', context && (context.client_id || '')));
 }
 
 module.exports = { rachelChat, executeTool, getTools };

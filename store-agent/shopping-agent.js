@@ -937,6 +937,12 @@ async function executeTool(name, input) {
       for (const t of terms) { try { cands = cands.concat(await searchWithFallbacks(loc.kitchen, loc.client, t, 100) || []); } catch (e) { console.error('[alternatives] search failed for', t, e.message); } }
       // Bevvi's subCategory ("Aperitif", "Sparkling") decides the drink type — added here only, not to every search
       // result the LLM sees (an extra field there changed how it formatted product lists).
+      // Never offer the product being replaced as its own alternative ("use another pinot noir" listed the La Crema already in
+      // the basket as option 1, Oct 3). o.exclude = names to leave out (rachel.js passes the basket line).
+      const nmX = x => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const excl = new Set([o.name].concat(Array.isArray(o.exclude) ? o.exclude : []).map(nmX));
+      const nC = cands.length; cands = cands.filter(p => !excl.has(nmX(formatProduct(p).name)) && !excl.has(nmX(p.name)));
+      if (cands.length < nC) console.log('[alternatives] left out ' + (nC - cands.length) + ' candidate(s) = the product being replaced: ' + JSON.stringify([...excl]));
       const r = rankAlternatives({ name: o.name, type: o.type || '' }, cands.map(p => Object.assign(formatProduct(p), { subCategory: p.subCategory || '' })), ref || null);
       console.log('[alternatives] ' + JSON.stringify(o.name) + ' | varietal ' + (r.varietal || '?') + ' | region ' + (r.region || '?') + ' | ref ' + (ref ? '$' + ref.toFixed(2) + ' (' + refSource + ')' : 'none') +
         ' | considered ' + r.considered + ', rejected ' + r.rejected.length + ' | picks: ' + r.alternatives.map(a => a.name + ' $' + a.price + ' [' + a.tier + ', ' + a.region_match + ']').join('; ') + (r.no_tier_match ? ' | NO TIER MATCH' : ''));

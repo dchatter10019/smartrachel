@@ -25,3 +25,13 @@ detectors:
 # Slack: critical findings post immediately once these are set in /etc/rachel.env (DC provides the channel):
 #   OPS_SLACK_CHANNEL (+ the existing SLACK_BOT_TOKEN). Until then alerts are logged only.
 critical_immediate: true
+
+# Fixer (ops/fixer.py) spend limits — DC, Oct 3. Every agent run is recorded in logs/fixer/spend.jsonl; each run ends with a
+# spend report (today + month to date) posted to OPS_SLACK_CHANNEL (logs/fixer/spend-report.txt until it is set).
+fixer:
+  nightly_budget_usd: 15    # per UTC day, across all runs; a fix starts only if the full per-fix cap still fits
+  per_fix_usd: 5            # hard cap per agent run (claude --max-budget-usd); a run with no reported cost is charged this
+  max_per_night: 3
+  model: claude-opus-5-5     # pinned (DC, Oct 3) — the fixer never runs on the CLI's default model
+  max_turns: 60
+  minutes_per_finding: 45

@@ -59,6 +59,17 @@ mon.qa_summary(p, T)
 check('qa_fail: a QA run with failures', len(found('qa_fail')) == 1 and 'order-flow' in found('qa_fail')[0]['summary'])
 check('redact: tokens and webhook URLs', M.redact('x xoxb-123-abc https://hooks.slack.com/services/T/B/C') == 'x <redacted-token> https://hooks.slack.com/<redacted>')
 check('findings file written', sum(1 for _ in open(tmp)) == len(store.items))
+# two writers (Oct 3): a status set by another process (fixer / deploy-fix / Slack ❌ / by hand) survives the long-running
+# monitor's next save, and the monitor's own update to a finding still lands
+other = M.Store(path=tmp)
+fid = found('qa_fail')[0]['id']
+[f.update(status='resolved') for f in other.items if f['id'] == fid]; other._save()
+mon.text_line('rachel', "[rachel] error: TypeError: Cannot read properties of undefined (reading 'qty') «qa-a-9»", T + 5)
+on_disk = {f['id']: f for f in M.Store(path=tmp).items}
+check('store: another writer\'s status survives the monitor\'s save', on_disk[fid]['status'] == 'resolved')
+check('store: the monitor sees it too (no stale copy)', [f for f in store.items if f['id'] == fid][0]['status'] == 'resolved')
+crash = [f for f in on_disk.values() if f['detector'] == 'crash'][0]
+check('store: the monitor\'s own update still lands', crash['count'] >= 3)
 os.remove(tmp)
 print('monitor test: ' + ('all passed' if not fails else '%d FAILED' % fails))
 sys.exit(1 if fails else 0)

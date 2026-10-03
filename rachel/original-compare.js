@@ -28,7 +28,10 @@ function packOf(s) {
 function parseRequest(text, onHand) {
   const out = [];
   for (const raw of String(text || '').replace(/\r/g, '').split('\n')) {
-    const m = raw.match(/^\s*(?:[-•*·]|\d+[.)])\s+(.+?)\s*$/);
+    // a bulleted line, or a quantity-led one ("5 x The Prisoner Red Blend 750 mL"). Until Oct 3 only bullets counted, so an
+    // unbulleted list parsed as empty: the LLM's left-out lines were never re-added (full suite: Tito's, Lillet, Hendrick's
+    // vanished from a "just beer and wine" event list without the "Left out" note naming them).
+    const m = raw.match(/^\s*(?:[-•*·]|\d+[.)])\s+(.+?)\s*$/) || (/^\s*\d{1,3}\s*[x×]\s*[A-Za-z]/i.test(raw) ? [raw, raw.trim()] : null);
     if (!m) continue;
     for (let part of m[1].split(/\s\+\s/)) {
       if (onHand && OH.isOnHand(part, onHand)) continue;

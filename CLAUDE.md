@@ -48,9 +48,13 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   session: POST localhost:3500/internal/session-basket {session_id, from_proposal}). nginx /proposals/ serves
   ONLY bevvi-proposal*.pdf (sites rachel AND bevvi-support; until Sep 29 it served all of logs/). Address geocoding: Google Maps (geocodeAddress in server.js).
 - Logs: /home/ubuntu/logs/ (rachel.log, shopping-agent.log, ...). Journal is NOT where bots log.
-- Token use: Rachel's main call caches its system prompt (block 1 = prompt.md + channel notes, cached; block 2 =
-  address/basket rules, memory, this turn's note) and the conversation (last message). Every call logs
-  `[usage] rachel iteration N: input, cache read, cache write, output`. The classifier prompt is too small to cache.
+- Token use (DC, Oct 3: cost is the goal): the system prompt is ONE block (prompt.md + channel note), identical for every
+  customer — prompt.md's {user_email}/{kitchen_location}/{client_id}/{account_id}/{age_verified} render as "<x from SESSION
+  FACTS>"; the values, address/basket rules, memory and this turn's notes ride on the customer's latest message AFTER a
+  cache breakpoint (<rachel_system_notes>, request-only, never stored in history). Breakpoints: system, the latest customer
+  message (next turn reuses the whole earlier conversation), the last tool result. Before: the customer's details were in
+  the cached block -> 138/146 conversations rebuilt ~20k tokens; after: 0 cold starts, $0.036 -> $0.017 per call. Every
+  call logs `[usage] rachel iteration N: input, cache read, cache write, output`. The classifier prompt is too small to cache.
 - Rachel's state (flow-state.json, chat-sessions.json, conversations.jsonl, baskets.json, customer-contacts.json,
   events.jsonl) lives in RACHEL_DATA_DIR (rachel/data-dir.js; default /home/ubuntu/logs). A Rachel on any port but
   3500 REFUSES to start on the production dir — a second instance would rewrite live sessions.
@@ -79,8 +83,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
    tree has nothing to roll back. Plain `precheck.sh` = lint only; `--smoke` tests the live service.
    `precheck.sh --deploy --stage-first` (the default to use): the 22-scenario smoke set on staging from the working tree
    FIRST — a change that fails there never restarts production; production then gets only the 4-scenario `prodcheck`
-   set (tag prodcheck; `qa/run.py --tag <t>`). DC (Oct 2): deploy without asking; run the FULL suite (`./qa/run.py`)
-   once per BATCH of deploys (not after each one — token cost), fix/revert anything newly failing, then commit + push.
+   set (tag prodcheck; `qa/run.py --tag <t>`). DC (Oct 2): deploy without asking, then commit + push.
+   DC (Oct 3, cost): NO full suite after deploys — the gate is staging smoke + prodcheck; the full suite (`./qa/run.py`,
+   ~$15-20 of Rachel tokens) runs only in the 08:00 UTC nightly. Fix/revert whatever the nightly shows newly failing.
    Don't run staging and a production full suite at the same time (shared box; turns time out).
 2. Ask DC before running anything that places a real order, sends a real email/message, or changes
    systemd units, nginx, or secrets.
@@ -106,8 +111,20 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   paths/patterns refuse a branch), headless Claude Code in a worktree (~/work/<id>, branch fix/<id>) writes a scenario + fix;
   fixer.py then proves it itself (scenario fails on staging from base, passes from the branch, smoke passes). Result ->
   logs/fixer/<id>.json + a review post (logs/fixer/<id>.post.txt until OPS_SLACK_CHANNEL is set). `--plan` = classify only,
-  no tokens; `--finding F-…`; kill switch: ops/PAUSE. NOT running yet: no systemd unit / nightly hook, and with
-  fixer.nightly_budget_usd unset in ops/monitor.yaml no agent runs.
+  no tokens; `--finding F-…`; kill switch: ops/PAUSE. NOT running yet: no systemd unit / nightly hook.
+  Spend (DC, Oct 3; ops/monitor.yaml fixer:): $15 per UTC day across runs, $5 hard cap per fix (claude --max-budget-usd), max 3
+  fixes; a fix starts only if the full $5 still fits. A run with no reported cost (timeout/crash) is charged the $5 cap, never
+  $0. Every run -> logs/fixer/spend.jsonl; each pass ends with a spend report (tonight + month to date) posted to Slack /
+  logs/fixer/spend-report.txt. `ops/fixer.py --spend` prints it. Model pinned: fixer.model = claude-opus-5-5 (billed to the
+  server's ANTHROPIC_API_KEY). --max-budget-usd is checked between steps, so a run can end slightly over $5.
+  Seed acceptance test passed twice on Oct 3 ($0.66, $1.11).
+- Every Slack message of the loop (fixer posts, monitor urgent alerts, deploy-fix.sh results, the bot's ✅/❌ replies) is
+  written for DC as a non-engineer (DC, Oct 3): what customers saw / how often / why / what changed / how checked / risk,
+  from the agent's plain_* JSON fields + monitor.PLAIN per detector; code, files and branches only in a "For engineers"
+  footer. Headings keep "Fix ready — F-nnnn" / "Needs a decision — F-nnnn" (the reaction handler parses them).
+- logs/findings.jsonl has several writers (monitor service, fixer, deploy-fix.sh, Slack ❌, by hand). Store merges per item:
+  an item this process changed since its last sync wins, others take the file's version (before Oct 3 the monitor's stale
+  copy won, reverting every outside status change — the fixer would have re-fixed, and re-paid for, the same finding).
 - Step 4 deploy (ops/deploy-fix.sh <id>): ✅ by an approver on the fixer post (rachel_slack_bot.py reaction_added) →
   scope re-check, fast-forward-only, precheck --deploy --stage-first, push; rollback + master reset on failure; ❌ discards.
   Inactive until /etc/rachel.env has OPS_SLACK_CHANNEL + OPS_APPROVERS and the Slack app subscribes to reaction_added.
@@ -155,6 +172,12 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   calculator quantities, 0% categories dropped and listed in the reply, no re-adds that turn) — also when the mix
   is stated in the same message ("only beer and wine, make it equal"). An aperitif (Lillet, vermouth) counts as liquor;
   "just/only beer and wine" also leaves hard seltzer out (DC) unless the customer's own words mention seltzer.
+- "use another / a different <type>" with ONE basket line of that type: the LLM's product_query is rerouted in code to
+  alternatives for that line ([swap-to-alternatives]; anchored to its price, the line's own product excluded via
+  originals[].exclude). A confirm_substitute whose replacement is the B of the customer's "A -> B" must replace A's line
+  (name, label or what was asked): corrected, or refused when A's line already IS B / A isn't in the basket ([arrow-original]).
+  (Oct 3: Goldeneye $73 offered first for La Crema; the Provence rosé replaced by Cointreau.) original-compare parseRequest
+  reads "5 x Product" lines too (it read only bullets, so the LLM's left-out list lines were never re-added).
 - A replacement for a not-carried line (pick from the listed options, or confirm_substitute) REPLACES it at the line's
   planned qty (buildPackage unavailable_qty -> state.unavailableQty; else the qty in the customer's own list).
   Every pick path (numbered list, add-item by name) uses pendingSubFor to find the missing line it replaces.

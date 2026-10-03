@@ -12,19 +12,19 @@ cd /home/ubuntu
 ID=${1:?usage: ops/deploy-fix.sh <finding-id>}
 BR=fix/$ID
 say() { echo "$*"; }
-git rev-parse --verify -q "$BR" >/dev/null || { say "⛔ $ID: no branch $BR"; exit 1; }
-[ -z "$(git status --porcelain -- rachel store-agent ops precheck.sh)" ] || { say "⛔ $ID: the main tree has uncommitted changes — not deploying on top of them (commit or stash first)"; exit 1; }
-[ "$(git rev-parse --abbrev-ref HEAD)" = master ] || { say "⛔ $ID: the main tree is not on master"; exit 1; }
+git rev-parse --verify -q "$BR" >/dev/null || { say "⛔ Couldn't put $ID live: I can't find the fix any more (it may have been thrown away). Nothing changed."; exit 1; }
+[ -z "$(git status --porcelain -- rachel store-agent ops precheck.sh)" ] || { say "⛔ Couldn't put $ID live yet: someone is in the middle of other changes to Rachel, and I won't mix this fix in with them. Nothing changed. Try ✅ again once that work is saved. (tech: uncommitted changes in the main tree)"; exit 1; }
+[ "$(git rev-parse --abbrev-ref HEAD)" = master ] || { say "⛔ Couldn't put $ID live: Rachel's code is not on its normal version right now. Nothing changed. (tech: main tree not on master)"; exit 1; }
 V=$(python3 - "$BR" <<'PY'
 import sys; sys.path.insert(0, '/home/ubuntu/ops'); import fixer, yaml
 bad, _ = fixer.scope_violations(yaml.safe_load(open('/home/ubuntu/ops/scope.yaml')), 'master', sys.argv[1])
 print('; '.join(bad))
 PY
 )
-[ -z "$V" ] || { say "⛔ $ID: refused — the branch touches protected code: $V"; exit 1; }
-git merge-base --is-ancestor master "$BR" || { say "⛔ $ID: master moved since the fix — not a fast-forward; the fixer will rebase and re-prove it"; exit 1; }
+[ -z "$V" ] || { say "⛔ Didn't put $ID live: it changes a part of Rachel the fixer must never change on its own (ordering, payment, age checks or her main instructions). Nothing changed. (tech: $V)"; exit 1; }
+git merge-base --is-ancestor master "$BR" || { say "⛔ Didn't put $ID live yet: Rachel was updated after this fix was made, so it has to be re-checked against the new version first. The fixer will do that tonight. Nothing changed."; exit 1; }
 WAS=$(git rev-parse HEAD)
-git merge --ff-only -q "$BR" || { say "⛔ $ID: fast-forward failed"; exit 1; }
+git merge --ff-only -q "$BR" || { say "⛔ Couldn't put $ID live because of a technical hiccup. Nothing changed. (tech: fast-forward failed)"; exit 1; }
 # precheck deploys UNCOMMITTED changes; the fix is now committed on master, so it ships the working tree = the fix.
 # Restart the services the fix touched: precheck decides from the diff it sees, so show it the fix as a working-tree change.
 git reset -q --soft "$WAS"
@@ -33,7 +33,7 @@ echo "$OUT" > "logs/fixer/$ID.deploy.log"
 if [ $RC -ne 0 ]; then
   # precheck stashed the change on failure (or aborted before restarting): master back where it was, tree clean
   git reset -q --hard "$WAS"; git stash list | grep -q "deploy-rollback" && git stash drop -q 2>/dev/null
-  say "⛔ Deploy of $ID failed — rolled back, master unchanged: $(echo "$OUT" | grep -E '===|✗' | tail -2 | tr '\n' ' ')"
+  say "⛔ $ID didn't pass the final checks, so I undid it automatically. Rachel is running exactly as before. (tech: $(echo "$OUT" | grep -E '===|✗' | tail -2 | tr '\n' ' '))"
   python3 -c "import sys;sys.path.insert(0,'/home/ubuntu/ops');import monitor as M;s=M.Store();[f.update(status='review',deploy_error=sys.argv[1]) for f in s.items if f['id']==sys.argv[2]];s._save()" "$(echo "$OUT" | tail -3)" "$ID"
   exit 1
 fi
@@ -42,4 +42,4 @@ git reset -q --hard "$BR"
 git push -q origin master 2>&1 | tail -1
 C=$(git rev-parse --short HEAD)
 python3 -c "import sys;sys.path.insert(0,'/home/ubuntu/ops');import monitor as M;s=M.Store();[f.update(status='deployed',deployed_commit=sys.argv[1]) for f in s.items if f['id']==sys.argv[2]];s._save()" "$C" "$ID"
-say "🚀 Deployed $ID at $(TZ=America/New_York date '+%H:%M %Z') (commit $C) · $(echo "$OUT" | grep -E 'scenarios passed' | tail -1 | sed 's/ *→.*//')"
+say "🚀 $ID is live as of $(TZ=America/New_York date '+%-I:%M %p %Z'). It passed the final checks; customers now get the fixed behaviour. (tech: commit $C · $(echo "$OUT" | grep -E 'scenarios passed' | tail -1 | sed 's/ *→.*//'))"

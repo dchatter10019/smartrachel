@@ -16,7 +16,8 @@ turns:
   - send: "$8"
     expect: {contains: ["Tip: $8.00", "Shall I go ahead"]}
   - send: "add a red wine"
-    expect: {judge: "offers red wine options or asks which red wine, rather than placing the order"}
+    # structural (Oct 3): the Haiku judge failed "Any preference on varietal or price range...?" though it asks which red
+    expect: {matches: "(?m)\\?|^\\s*1[.)]", not_matches: "(?i)order (?:has been |is )?placed|payment link"}
   - send: "1"
   - send: "1"
   - send: "place the order"

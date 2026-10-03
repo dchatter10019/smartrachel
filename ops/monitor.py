@@ -51,15 +51,40 @@ def is_qa(line): return bool(QA_TAG.search(line)) or 'rachel_qa@' in line or 'qa
 class Store:
     def __init__(self, path=FINDINGS, dedupe_days=7, evidence_cap=40, dry=False):
         self.path, self.dedupe, self.cap, self.dry = path, dedupe_days * 86400, evidence_cap, dry
-        self.items = []
-        if os.path.exists(path):
-            for l in open(path):
-                try: self.items.append(json.loads(l))
-                except Exception: pass
+        self.items = self._read()
+        self._snap = {f['id']: self._sig(f) for f in self.items}   # each item as last synced with the file
         self.new = []
+    @staticmethod
+    def _sig(f): return json.dumps(f, sort_keys=True, default=str)
+    def _read(self):
+        out = []
+        if os.path.exists(self.path):
+            for l in open(self.path):
+                try: out.append(json.loads(l))
+                except Exception: pass
+        return out
+    def _merge(self, disk):
+        # An item THIS process changed since it last synced wins; every other item takes the file's version (updated in
+        # place, so callers holding a finding keep a live reference). Before Oct 3 our whole stale copy won: the long-running
+        # monitor's next save reverted every status the fixer, deploy-fix.sh or the Slack ❌ handler had written.
+        mine = {f['id']: f for f in self.items}; merged = []
+        for d in disk:
+            m = mine.pop(d['id'], None)
+            if m is not None and self._sig(m) != self._snap.get(d['id']): merged.append(m)
+            elif m is not None: m.clear(); m.update(d); merged.append(m)
+            else: merged.append(d)
+        self.items = merged + list(mine.values())
+        self._snap = {f['id']: self._sig(f) for f in self.items}
+    def refresh(self):
+        """Pull in what other processes wrote (keeps our own unsaved changes)."""
+        if self.dry: return
+        import fcntl
+        with open(self.path + '.lock', 'w') as lk:
+            fcntl.flock(lk, fcntl.LOCK_EX); self._merge(self._read())
     def key(self, detector, summary): return detector + '|' + re.sub(r'\d+', '#', summary.lower())[:160]
     def record(self, detector, severity, summary, evidence, sessions=(), now=None):
         now = now or time.time(); k = self.key(detector, summary)
+        self.refresh()   # a finding resolved/diagnosed elsewhere must not be matched (or re-opened) from a stale copy
         for f in self.items:
             if f.get('key') == k and f['status'] in ('open', 'fixing', 'review', 'diagnosed') and now - f['last_seen_t'] < self.dedupe:
                 f['count'] += 1; f['last_seen_t'] = now; f['last_seen'] = iso(now)
@@ -71,25 +96,18 @@ class Store:
              'count': 1, 'first_seen': iso(now), 'last_seen': iso(now), 'last_seen_t': now, 'status': 'open'}
         self.items.append(f); self.new.append(f); self._save(); return f, True
     def _save(self):
-        # The monitor service and the fixer both write this file: lock, re-read, merge by id (ours win), write.
+        # The monitor service, the fixer, deploy-fix.sh and the Slack bot all write this file: lock, re-read, merge (_merge), write.
         if self.dry: return
         import fcntl
         with open(self.path + '.lock', 'w') as lk:
             fcntl.flock(lk, fcntl.LOCK_EX)
-            disk = []
-            if os.path.exists(self.path):
-                for l in open(self.path):
-                    try: disk.append(json.loads(l))
-                    except Exception: pass
-            mine = {f['id']: f for f in self.items}
-            merged = [mine.pop(d['id'], d) for d in disk] + list(mine.values())
+            self._merge(self._read())
             tmp = self.path + '.tmp'
             with open(tmp, 'w') as fh:
-                for f in merged: fh.write(json.dumps(f) + '\n')
+                for f in self.items: fh.write(json.dumps(f) + '\n')
             os.replace(tmp, self.path)
-            self.items = merged
     def expire(self, now=None):
-        now = now or time.time()
+        now = now or time.time(); self.refresh()
         for f in self.items:
             if f['status'] == 'open' and now - f['last_seen_t'] > self.dedupe: f['status'] = 'expired'
         self._save()
@@ -248,9 +266,33 @@ def env_file(path='/etc/rachel.env'):
     except OSError: pass
     return out
 
+PLAIN = {   # detector -> (what it means for customers, what a person could do). Slack text for DC (not an engineer); the fixer uses it too
+    'crash':              ('Part of Rachel hit an error and stopped mid-task, so a customer may have got no reply or a broken one.',
+                           'Look at the technical details below, or let the fixer try again tomorrow night.'),
+    'upstream_error':     ("Bevvi's store system (product search / ordering) sent back errors several times in a few minutes, so Rachel couldn't look up products or place orders properly.",
+                           "Usually a short outage on Bevvi's side. If it keeps happening, check with the Bevvi API team."),
+    'llm_error':          ("Rachel's AI provider (Anthropic) failed to answer several times in a few minutes, so some customers may have waited or got no reply.",
+                           'Usually a short outage that fixes itself. If it keeps happening, check status.anthropic.com and our Anthropic billing.'),
+    'stuck_turn':         ('Rachel started answering a customer and never finished (2+ minutes with no reply).', 'Check whether that customer needs a follow-up.'),
+    'slow_turn':          ('A customer waited more than a minute for one reply from Rachel.', "Often the AI provider or Bevvi's product search being slow. Worth a look if it keeps happening."),
+    'unmatched_spike':    ("Customers kept asking for the same product and Rachel kept telling them it isn't available.",
+                           'Check whether the store really carries it under another name.'),
+    'resolver_miss':      ("Customers picked an option from a numbered list Rachel showed them, and Rachel didn't understand which one they meant.", ''),
+    'stuck_session':      ('A conversation went in circles: Rachel kept asking the same thing, or the customer kept repeating themselves.',
+                           'Read that conversation and check whether the customer needs help.'),
+    'latency':            ('Rachel has been slow overall for the past hour (a typical reply took more than 20 seconds).',
+                           "Often the AI provider or Bevvi's product search being slow. If it lasts, it's worth a look."),
+    'qa_fail':            ("One of Rachel's automatic practice conversations went wrong. No real customer was involved, but a real customer would probably hit the same thing.", ''),
+    'escalation_request': ('A customer asked to talk to a person.', 'Someone should reach out to that customer.'),
+    'watchdog_alert':     ('The nightly health check found something wrong.', 'See the technical details below.'),
+}
+
 def alert(f):
     e = env_file(); tok, ch = e.get('SLACK_BOT_TOKEN'), e.get('OPS_SLACK_CHANNEL')
-    text = ':rotating_light: *%s* · %s — %s (×%d)' % (f['id'], f['detector'], f['summary'], f['count'])
+    meaning = PLAIN.get(f['detector'], (f['summary'], ''))[0]
+    text = (':rotating_light: *Urgent — %s*: %s\nSeen %s so far. The fixer will look at it tonight; if it is not something it is allowed '
+            'to fix, you will get a "Needs a decision" message.\n_For engineers: %s, %s · %s_' % (f['id'], meaning, 'once' if f['count'] == 1 else '%d times' % f['count'],
+                                                                                             f['detector'], f['severity'], f['summary'][:160]))
     if not (tok and ch):
         log('ALERT (not posted — OPS_SLACK_CHANNEL not set): ' + text); return
     try:
