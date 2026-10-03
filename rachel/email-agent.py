@@ -186,6 +186,17 @@ def proposal_pdf(reply):
     p = os.path.join('/home/ubuntu/logs', m.group(1)) if m else None
     return p if p and os.path.exists(p) else None
 
+PAY_URL = r'https?://[^\s<>"]*(?:direct-checkout|checkout|/pay)[^\s<>"]*'
+def to_html(body):
+    # The HTML version of an email. A payment link shows as a clickable "Payment Link", never the long token URL (DC, Oct 3);
+    # other links stay clickable. The plain-text part (full URLs) stays as the fallback.
+    import html, re
+    h = html.escape(body or '', quote=False)
+    h = re.sub(r'(?im)^(\s*)payment link:\s*(' + PAY_URL + r')', lambda m: m.group(1) + '<a href="' + m.group(2) + '">Payment Link</a>', h)
+    h = re.sub(r'(?<!href=")(' + PAY_URL + r')', r'<a href="\1">Payment Link</a>', h)
+    h = re.sub(r'(?<!href=")(?<!">)(https?://[^\s<>"]+)', r'<a href="\1">\1</a>', h)
+    return '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.5">' + h.replace('\n', '<br>\n') + '</div>'
+
 def send_reply(service, thread_id, to, subject, body, pdf_path=None, in_reply_to=None, references=None, cc=None):
     msg = MIMEMultipart()
     msg['To'] = to
@@ -197,7 +208,10 @@ def send_reply(service, thread_id, to, subject, body, pdf_path=None, in_reply_to
         msg['In-Reply-To'] = in_reply_to
         msg['References'] = ((references or '') + ' ' + in_reply_to).strip()
     msg['Subject'] = subject if subject.startswith('Re:') else f'Re: {subject}'
-    msg.attach(MIMEText(body, 'plain'))
+    alt = MIMEMultipart('alternative')
+    alt.attach(MIMEText(body, 'plain'))
+    alt.attach(MIMEText(to_html(body), 'html'))
+    msg.attach(alt)
     if pdf_path and os.path.exists(pdf_path):
         with open(pdf_path, 'rb') as f:
             part = MIMEBase('application', 'octet-stream')

@@ -2898,7 +2898,7 @@ app.post('/chat', async (req, res) => {
             // order-flow): "Your order is placed! 🎉 ... Cheers!" with no link; the customer had no way to pay.
             if (turn.kind === 'order_placed' && st.placedOrder && st.placedOrder.payment_url && t.indexOf(st.placedOrder.payment_url) < 0) {
               const pu = st.placedOrder.payment_url;
-              t = t.trimEnd() + '\n\nPayment link: ' + (format === 'slack' ? '<' + pu + '|pay here>' : pu) + ' — the order is confirmed once it\'s paid.';
+              t = t.trimEnd() + '\n\n' + (format === 'slack' ? '<' + pu + '|Payment Link>' : 'Payment link: ' + pu) + ' — the order is confirmed once it\'s paid.';   // Slack: a named link (DC, Oct 3)
               console.log('[order] placed-order reply had no payment link — added in code (' + st.placedOrder.order_id + ')');
             }
             // The customer holds a proposal PDF that this change makes stale: say so. Real bug (Oct 1, DC): Cointreau went

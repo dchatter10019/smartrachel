@@ -27,7 +27,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   originalRequest takes it from there (threads older than the feature), and a later email never becomes the original.
   Replies are reply-all (To + Cc of the incoming email, minus rachelai@ and the sender).
   A payment-link reply for a customer ("send the link to inge@... and copy Sean and me") goes To the customer, Cc the sender
-  + the thread (server email_to -> email-agent recipients()). Every email opens "Hi <first name>," and ends "Warmly, Rachel /
+  + the thread (server email_to -> email-agent recipients()). Every email has an HTML part (email-agent to_html): a payment link shows as a clickable "Payment Link",
+  never the token URL (DC, Oct 3; Slack: <url|Payment Link>); the plain part keeps full URLs. Every email opens "Hi <first name>," and ends "Warmly, Rachel /
   Your personal mixologist at Bevvi" (email-agent dress(); DC Oct 3: cordial, Rachel is their personal mixologist); the
   plain/email channel note tells the LLM that voice and not to add its own greeting/sign-off.
 - The client an email subject names: email-subject.js clientFromSubject ("Goody alcohol order" -> Goody, "... - Gen II
