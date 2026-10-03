@@ -230,7 +230,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   code (quote-edits.js; email sessions or sessions with a proposal), listed back, PDF regenerated. An edit that
   also ADDS items goes to the LLM. An email quote request's reply + PDF are always built in code.
 - Stock the customer says they already have ("we have the below inventory from last time") is never ordered:
-  on-hand.js -> state.onHand, dropped from custom_list/menu_build in rachel.js ([on-hand] DROPPED) + noted (DC).
+  on-hand.js -> state.onHand, dropped from custom_list/menu_build in rachel.js ([on-hand] DROPPED) + noted (DC). A generic line
+  ("4 white") never picks an on-hand product while another fits (np.avoid -> [buildPackage] on-hand product(s) not picked).
   A generic type+size line ("tequila blanco 1.75L") gets a MID-priced product (median of the size matches, DC);
   "a case" with no count = 24 units (a 12-pack is fine, DC); not wine/spirits. A smaller stand-in for a not-carried
   line makes up its volume (Lemon Juice 1L -> 3 x 375 mL). A pick replaces the pending not-carried line of the same
@@ -258,7 +259,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   reconcileNamed, [list-reconcile]): a line with an amount and no count ("3L mango purée", "1L lemon juice") is
   np.volume_ml — any bottle size, buildPackage sizes the qty to cover it ([buildPackage] volume:) instead of
   UNAVAILABLE (size mismatch); a counted line keeps its count; a list line the LLM left out is added (on-hand lines
-  never). Instruction / question lines ("can we swap X for Y?", "remove the water case") are never request rows. A pack
+  never). The customer's spelling still matches ("Budlight" = Bud Light, "Michelop", "Pumkin", "Ice tea" = Iced; a near
+  spelling ranks below an exact word) and an LLM line answers only ONE list line. Instruction / question lines ("can we swap X for Y?", "remove the water case") are never request rows. A pack
   request whose pick has no pack size in its name prefers a candidate that names it (Nixie -> Perrier 8pk).
 - A custom_list build on an EDIT turn (add / swap / "add back" wording, not "new list" / "start over") MERGES into the
   basket, never replaces it (basket-merge.js, [basket-merge]): same product = updated, else added; "swap X for Y" removes

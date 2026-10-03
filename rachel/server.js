@@ -64,11 +64,22 @@ async function checkDeliveryAvailability(establishmentId, dateStr) {
   try {
     const fetchFn = (url, opts) => import('node-fetch').then(({default: f}) => f(url, require('./log-tag.js').withQAHeader(url, opts)));
     const url = 'https://api-client.getbevvi.com/api/bevviutils/getDeliveryDateTimes?accountId=rachel&establishmentId=' + encodeURIComponent(establishmentId) + '&date=' + encodeURIComponent(dateStr);
-    const res = await fetchFn(url);
-    if (!res.ok) return null;
-    return await res.json();
+    // One retry on a 5xx / dropped connection. Nightly Oct 3 (email-order-command): one failed lookup and the customer
+    // was asked for "the delivery time" with no windows listed — and nothing in rachel.log said why.
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res = await fetchFn(url);
+        if (res.ok) return await res.json();
+        console.log('[delivery-check] windows lookup ' + establishmentId + ' ' + dateStr + ': HTTP ' + res.status + (attempt === 1 && res.status >= 500 ? ' — retrying' : ' — no windows'));
+        if (res.status < 500) return null;
+      } catch (e) {
+        console.log('[delivery-check] windows lookup ' + establishmentId + ' ' + dateStr + ' failed: ' + e.message + (attempt === 1 ? ' — retrying' : ' — no windows'));
+      }
+      if (attempt === 1) await new Promise(r => setTimeout(r, 1000));
+    }
+    return null;
   } catch (e) {
-    console.error('[delivery-check] checkDeliveryAvailability error:', e.message);
+    console.log('[delivery-check] checkDeliveryAvailability error: ' + e.message);
     return null;
   }
 }
@@ -1011,9 +1022,9 @@ async function deliveryWindowsOn(state, datePhrase) {
   const dateStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
   let label = dateStr; try { label = new Date(dateStr + 'T12:00:00Z').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', timeZone: 'UTC' }); } catch (e) {}
   let est = ''; try { const it = JSON.parse(state.lastLineItems || '[]'); est = (it.find(li => li.establishmentId) || {}).establishmentId || ''; } catch (e) {}
-  if (!est) return { label, options: [], none: false };
+  if (!est) { console.log('[delivery-check] no windows offered for ' + dateStr + ': no basket line has a store (establishmentId)'); return { label, options: [], none: false }; }
   const avail = await checkDeliveryAvailability(est, dateStr);
-  if (!avail || !Array.isArray(avail.deliveryTimes)) return { label, options: [], none: false };
+  if (!avail || !Array.isArray(avail.deliveryTimes)) { console.log('[delivery-check] no windows offered for ' + dateStr + ': lookup returned nothing usable — the time is asked without them'); return { label, options: [], none: false }; }
   const windowZone = WINDOWS_ARE_STORE_LOCAL ? zoneForAddress(state.address) : 'America/New_York';
   return { label, options: avail.deliveryTimes.map(w => fmtWindowInZone(w.displayTime, dateStr, windowZone, null)), none: avail.deliveryTimes.length === 0 };
 }
@@ -1099,8 +1110,8 @@ async function validateDeliveryTime(state, message, email, format, res) {
           state.orderData.delivery_datetime_iso = zonedToUtcIso(dateStr, hh, mm, windowZone);   // window start in the store's zone -> UTC instant
         }
       } catch (e) {}
-    }
-  }
+    } else console.log('[delivery-check] "' + message.slice(0, 40) + '" accepted UNCHECKED — the windows lookup for ' + dateStr + ' returned nothing');
+  } else console.log('[delivery-check] "' + message.slice(0, 40) + '" accepted UNCHECKED — no basket line has a store (establishmentId)');
 
   state.orderData.delivery_datetime = finalDeliveryText;
   return null;
@@ -2808,6 +2819,14 @@ app.post('/chat', async (req, res) => {
             if (dn !== orig) console.log('[cta] removed list numbering from basket lines (they are not pick options)');
             let t = listText != null ? listText : cta.stripTrailer(dn);
             if (listText == null && t !== orig.trimEnd()) console.log('[cta] stripped the generic four-action trailer');
+            // The prompt's "add mixers, water, soda, ice, or cups?" belongs after a PACKAGE. On a one-product search it is not
+            // the customer's next step: kept as a "real question" it blocked "Want 3 of those?", and the bare "3" that followed
+            // went to the LLM, which said "Got it — 3 bottles" with the basket still at 1 (nightly Oct 3, cta-search-single).
+            const evS = events.ctx() || { actions: [] };
+            if (evS.ev && evS.ev.discussed_capture && !(evS.actions || []).includes('built_basket') && /add mixers, water, soda/i.test(t)) {
+              t = t.replace(/[^\n.!?]*\badd mixers, water, soda[^?\n]*\?[*_]*/i, '').replace(/\n{3,}/g, '\n\n').trimEnd();
+              console.log('[cta] removed the package mixers question from a single-product search reply — the table decides the follow-up');
+            }
             const ga = cta.trimGenericAlternative(t);
             if (ga.cut.length) { t = ga.text; console.log('[cta] cut the generic alternative off a real question: ' + JSON.stringify(ga.cut.join(' | ').slice(0, 100))); }
             const cl = cta.splitCloser(t);

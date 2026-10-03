@@ -1086,6 +1086,13 @@ async function buildPackage(iv) {
         return true;
       }
       var found=results[n].filter(function(p){return !isMini(p)&&categorySane(p,catN);});
+      // Stock the customer already has (rachel.js np.avoid = state.onHand, not chosen later) is never the pick for this line
+      // while another candidate fits. Nightly Oct 3: "White Wine" -> Conundrum White, which DC had 2 bottles of.
+      if (Array.isArray(np.avoid) && np.avoid.length && found.length) {
+        var OHa=require('./on-hand.js');
+        var keptA=found.filter(function(p){return !OHa.isOnHand(p.name, np.avoid);});
+        if (keptA.length && keptA.length<found.length) { console.log('[buildPackage] '+JSON.stringify(np.name)+': on-hand product(s) not picked — '+JSON.stringify(found.filter(function(p){return keptA.indexOf(p)<0;}).map(function(p){return p.name;}))); found=keptA; }
+      }
       // Size preference: for wine and spirits, prefer 750 mL when the customer did NOT
       // state a size (a stated size lives in the product name, e.g. "Grey Goose 1.75L",
       // and is honored as-is). 750 mL is the standard event bottle; without this the

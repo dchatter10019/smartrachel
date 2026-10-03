@@ -382,6 +382,11 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             return !o;
           });
           if (left.length) sessionState.replyNote = 'Not ordered — you already have: ' + left.join(', ') + '.';
+          // A generic line ("4 white") must not land on the on-hand product either (nightly Oct 3: "White Wine" was filled
+          // with Conundrum White, the 2 bottles DC already has). Products the customer chose later (onHandReleased) stay pickable.
+          const relN = new Set((sessionState.onHandReleased || []).map(x => String(x).toLowerCase()));
+          const avoid = sessionState.onHand.filter(o => !relN.has(String(o.name).toLowerCase())).map(o => ({ name: o.name }));
+          if (avoid.length) { saInput.named_products.forEach(np => { if (np) np.avoid = avoid; }); saInput._ohAvoid = avoid; }
         }
         if (saInput.intent === 'custom_list' && Array.isArray(saInput.named_products)) {
           const splitMergedNamedProducts = (list) => {
@@ -408,6 +413,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           };
           saInput.named_products = splitMergedNamedProducts(saInput.named_products);
           try { for (const l of require('./original-compare.js').reconcileNamed(saInput.named_products, customerMessage)) console.log('[list-reconcile] ' + l); } catch (e) { console.log('[list-reconcile] error: ' + e.message); }
+          if (saInput._ohAvoid) saInput.named_products.forEach(np => { if (np && !np.avoid) np.avoid = saInput._ohAvoid; });   // lines added by the reconcile too
           // A quantity the customer SAID in words is theirs, not the calculator's. Real bug:
           // "2 bottles of Tito's 750ml and a Whispering Angel" — the LLM omitted qty for the
           // rosé and the system sized it to 3. Only for non-event lists (no guests), and only

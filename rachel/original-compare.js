@@ -10,7 +10,7 @@ const DT = require('./drink-type.js');
 const OH = require('./on-hand.js');
 
 const norm = s => String(s || '').toLowerCase().replace(/[‘’]/g, "'").replace(/é/g, 'e');
-const GENERIC = new Set(['the', 'and', 'or', 'of', 'a', 'x', 'pack', 'packs', 'case', 'cases', 'bottle', 'bottles', 'can', 'cans', 'ml', 'l', 'oz', 'liter', 'litre', 'unsweetened', 'if', 'you', 'carry', 'them']);
+const GENERIC = new Set(['the', 'and', 'or', 'of', 'a', 'x', 'pack', 'packs', 'case', 'cases', 'bottle', 'bottles', 'can', 'cans', 'ml', 'l', 'oz', 'liter', 'litre', 'unsweetened', 'if', 'you', 'carry', 'them', 'per', 'include', 'only']);
 const words = s => norm(s).replace(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz|liter|litre)\b/g, ' ').split(/[^a-z0-9/']+/).map(w => w.replace(/^n\/a$/, 'na')).filter(w => w && !GENERIC.has(w) && !/^\d+$/.test(w) && w.length >= 2);
 
 function sizeMl(s) {
@@ -51,14 +51,29 @@ function parseRequest(text, onHand) {
   return out;
 }
 
+// a and b differ by at most one inserted, deleted or changed letter
+function editDist1(a, b) {
+  if (a === b) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++;
+  return a.slice(i + 1) === b.slice(i + 1) || a.slice(i) === b.slice(i + 1) || a.slice(i + 1) === b.slice(i);
+}
 function matchScore(name, li) {
   const w = words(name);
   if (!w.length) return 0;
   const t = ' ' + norm((li.label || '') + ' ' + (li.name || '')).replace(/[^a-z0-9/']+/g, ' ') + ' ';
-  const hits = w.filter(x => t.indexOf(' ' + x + ' ') >= 0 || (x === 'na' && /\bn\/a\b|\bnon[- ]?alc/.test(t))).length;
+  const tw = t.trim().split(' '), squashed = tw.join('');
+  // The customer's spelling vs the catalog's (nightly Oct 3, Sean's list): "Budlight" = Bud Light (words run
+  // together), "Michelop"/"Pumkin" = one letter off, "Ice tea" = Iced Tea. Before, those lines read as "missing",
+  // were re-added as junk rows (Budlight as a mixer) and their searches pushed the reply past the QA timeout.
+  const near = x => x.length >= 5 && (squashed.indexOf(x) >= 0 || tw.some(y => y.length >= 5 && editDist1(x, y))) ||
+    x.length >= 3 && tw.some(y => y === x + 's' || y === x + 'd' || x === y + 's' || x === y + 'd');
+  const exact = x => t.indexOf(' ' + x + ' ') >= 0 || (x === 'na' && /\bn\/a\b|\bnon[- ]?alc/.test(t));
+  const hits = w.filter(x => exact(x) || near(x)).length;
+  const fuzzy = w.filter(x => !exact(x) && near(x)).length;   // a near-spelling ranks below the exact word ("simple" syrup: Simply Squeeze)
   const tAsk = DT.typeOf({ name }), tLi = DT.typeOf({ name: li.name });
   if (tAsk && tLi && tAsk === tLi && hits === 0) return 0.5;          // "vodka" -> Ketel One
-  return hits === w.length ? 1 + hits / 10 : hits / w.length >= 0.5 ? hits / w.length : 0;
+  return hits === w.length ? 1 + hits / 10 - fuzzy * 0.05 : hits / w.length >= 0.5 ? hits / w.length : 0;
 }
 
 function compare(text, items, onHand) {
@@ -190,13 +205,13 @@ function reconcileNamed(namedProducts, text) {
   if (rows.length < all.length) console.log('[list-reconcile] not product lines (instructions / questions), ignored: ' + JSON.stringify(all.filter(r => !rows.includes(r)).map(r => r.text)));
   const log = [];
   if (rows.length < 3 || !Array.isArray(namedProducts)) return log;
-  const covered = new Set();
+  const covered = new Set(), claimed = new Set();   // claimed: LLM items that already answer a list line
   for (const np of namedProducts) {
     if (!np || !np.name) continue;
     let best = null, bs = 0;
     for (const r of rows) { const sc = Math.max(...r.names.map(n => matchScore(n, { name: np.name }))); if (sc > bs) { bs = sc; best = r; } }
     if (!best || bs < 1) continue;
-    covered.add(best);
+    covered.add(best); claimed.add(np);
     if (!best.counted && best.ml && best.pack === 1) {
       const was = JSON.stringify({ name: np.name, qty: np.qty });
       np.volume_ml = Math.round(best.ml);
@@ -213,8 +228,9 @@ function reconcileNamed(namedProducts, text) {
   const llmItems = namedProducts.slice();   // only the LLM's own items say a line is covered — never one added here
   for (const r of rows) {
     if (covered.has(r)) continue;
-    const part = llmItems.find(np => np && Math.max(...r.names.map(n => matchScore(n, { name: np.name }))) > 0.5);
-    if (part) { log.push(JSON.stringify(r.text) + ' partly matches ' + JSON.stringify(part.name) + ' — taken as that line'); continue; }
+    // never an item that already answers another line (Oct 3: "Sun Cruiser Lemonade" was taken as the Iced Tea line)
+    const part = llmItems.find(np => np && !claimed.has(np) && Math.max(...r.names.map(n => matchScore(n, { name: np.name }))) > 0.5);
+    if (part) { claimed.add(part); log.push(JSON.stringify(r.text) + ' partly matches ' + JSON.stringify(part.name) + ' — taken as that line'); continue; }
     const isVol = !r.counted && r.ml && r.pack === 1;
     let base = r.names[0].replace(/^\s*\d+\s*[x×]\s*/i, '').replace(/^\s*(?:\d+|a|one)\s+(cases?)\s+(.+)$/i, '$2 $1');   // "1 case bottled water" -> "bottled water case"
     const packM = base.match(/\b(\d+)\s*-?\s*packs?\b/i);
