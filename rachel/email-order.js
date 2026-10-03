@@ -22,6 +22,17 @@ const HEADER = /^\s*\*?(?:From|Date|Sent|Subject|To|Cc):\*?\s/i;
 const FWD = /^\s*(?:-{2,}\s*Forwarded message\s*-{2,}|Begin forwarded message:)\s*$/i;
 const PHONE = /(?:\+?1[\s.-]?)?\(?\b(\d{3})\)?[\s.-]?(\d{3})[\s.-]?(\d{4})\b/;
 const EMAIL = /[\w.+-]+@[\w-]+(?:\.[\w-]+)+/;
+// An address with the next word glued on: "inge@foodieforall.comand copy Sean" (DC, Oct 3 — a missing space) was taken
+// as a second address "...comand", which got the payment link and went on the Bevvi order as the customer's email.
+const GLUED = /\.(com|net|org|edu|gov|io|co|us|ai|biz|info|me)(and|or|then|plus|also|too|thanks|please|cc)$/i;
+function fixAddr(a) {
+  const x = String(a || '').trim().toLowerCase().replace(/[.,;:)>\]]+$/, '');
+  const m = x.match(GLUED);
+  if (!m) return x;
+  const y = x.slice(0, x.length - m[2].length);
+  console.log('[email-order] address ' + JSON.stringify(x) + ' read as ' + JSON.stringify(y) + ' ("' + m[2] + '" glued onto the domain)');
+  return y;
+}
 const isStaff = e => /@getbevvi\.com$/i.test(String(e || '').trim());
 const fmtPhone = m => '(' + m[1] + ') ' + m[2] + '-' + m[3];
 
@@ -134,7 +145,7 @@ function linkRecipients(text) {
   const out = [];
   for (const sent of String(text || '').replace(/\s*\n\s*/g, ' ').split(/(?<=[.!?])\s+/)) {
     if (!/\bpay(?:ment)?\s*link\b|\blink\b[^.]{0,20}\bpay/i.test(sent) || !/\b(?:send|sent|email(?:ed)?|forward(?:ed)?|share(?:d)?|go(?:es)?\s+to|to\s*:)\b/i.test(sent)) continue;
-    for (const m of sent.match(new RegExp(EMAIL.source, 'g')) || []) { const a = m.toLowerCase().replace(/[.,;:]+$/, ''); if (!/^rachelai@/.test(a) && !out.includes(a)) out.push(a); }
+    for (const m of sent.match(new RegExp(EMAIL.source, 'g')) || []) { const a = fixAddr(m); if (!/^rachelai@/.test(a) && !out.includes(a)) out.push(a); }
   }
   return out;
 }
@@ -204,13 +215,13 @@ function extract(text, sender, now) {
   if (n) { out.name = n.replace(PHONE, '').replace(EMAIL, '').replace(/[,;|]+\s*$/, '').trim(); out.source = out.source || 'typed'; }
   const em = field(all, /^\s*\*?(?:e-?mail|contact email|recipient email)\*?\s*:\s*(\S+@\S+)/i)
     || (labelled(all, WHO + 'e-?mail(?:\\s+address)?').match(EMAIL) || [''])[0];
-  if (em) out.email = em.replace(/[<>]/g, '').toLowerCase();
+  if (em) out.email = fixAddr(em.replace(/[<>]/g, ''));
   const ph = field(all, /^\s*\*?(?:phone|mobile|cell|tel|contact (?:phone|number))\*?\s*[:.]\s*(.+)$/i)
     || labelled(all, WHO + '(?:phone|mobile|cell|tel)(?:\\s+(?:number|no\\.?|#))?');
   if (ph && PHONE.test(ph)) out.phone = fmtPhone(ph.match(PHONE));
   // A contact line in the new text ("Contact: Natalia Diaz, 555-010-0100, nd@x.com").
   const cl = field(top, /^\s*\*?contact\*?\s*:\s*(.+)$/i);
-  if (cl) { if (PHONE.test(cl)) out.phone = fmtPhone(cl.match(PHONE)); if (EMAIL.test(cl)) out.email = cl.match(EMAIL)[0].toLowerCase(); }
+  if (cl) { if (PHONE.test(cl)) out.phone = fmtPhone(cl.match(PHONE)); if (EMAIL.test(cl)) out.email = fixAddr(cl.match(EMAIL)[0]); }
   const tm = timing(all, now);
   out.when = tm.when; out.date = tm.date; out.time = tm.time;
   out.link_to = linkRecipients(top.join('\n'));
@@ -247,4 +258,4 @@ function notCustomer(text) {
   for (const m of String(text || '').matchAll(/\b([A-Z][a-z'’-]+)\s+(?:is\s+not|isn['’]?t)\s+(?:not\s+)?(?:the\s+|our\s+|a\s+)?(?:customer|client)\b/g)) if (!/^(?:This|That|It|He|She|They|Who|Which|There|Here|What|Name|Customer|Client)$/.test(m[1])) out.push(m[1]);
   return out;
 }
-module.exports = { notCustomer, cleanGmail, pocIn, instructionsBlock, isOrderCommand, extract, missing, askText, isStaff, tipIn, findWhen, timing, linkRecipients, normalizeTimes };
+module.exports = { fixAddr, notCustomer, cleanGmail, pocIn, instructionsBlock, isOrderCommand, extract, missing, askText, isStaff, tipIn, findWhen, timing, linkRecipients, normalizeTimes };

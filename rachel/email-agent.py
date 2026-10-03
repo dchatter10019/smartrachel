@@ -129,7 +129,7 @@ def recipients(email, sender_email):
     # -> (To, Cc). Normally To = the sender, Cc = reply-all. When Rachel's reply carries a payment link for a customer
     # ("send the payment link to inge@... and copy Sean and me"), the customer is the To and the sender is copied.
     cc = reply_all_cc(email, sender_email)
-    to = [a.lower() for a in LAST_EXTRA_TO if '@' in a]
+    to = list(dict.fromkeys(a.strip().lower() for a in LAST_EXTRA_TO if '@' in a))   # never the same address twice
     if not to:
         return sender_email, cc
     cc = [sender_email.lower()] + [a for a in cc if a not in to and a != sender_email.lower()]

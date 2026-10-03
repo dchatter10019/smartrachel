@@ -35,5 +35,8 @@ eq('a name correction ("It\'s <First Last> ... customer")', corr.name, 'Pat Exam
 eq('"its fine, place the order" is not a name', E.extract('its fine, place the order', { email: 'dc@getbevvi.com' }, new Date()).name, '');
 eq('a label followed by another label is not a value', E.extract('*Customer Name:*\n*Customer Email:* pat@example-client.com', { email: 'dc@getbevvi.com' }, new Date()).name, '');
 eq('"Jordan is not not customer" -> Jordan; "This is not the customer list" -> nothing', [E.notCustomer('the customer, Jordan is not not customer)'), E.notCustomer('This is not the customer list')], [['Jordan'], []]);
+const glued = E.extract('Yes place the order and send the payment link to pat@example-client.comand\ncopy Sean and me.', { email: 'dc@getbevvi.com' }, new Date());
+eq('"...comand" (missing space) is the .com address, once (Oct 3)', [glued.email, glued.link_to], ['pat@example-client.com', ['pat@example-client.com']]);
+eq('a real domain ending is untouched', [E.fixAddr('x@brand.com'), E.fixAddr('x@island.co'), E.fixAddr('x@commander.org')], ['x@brand.com', 'x@island.co', 'x@commander.org']);
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');

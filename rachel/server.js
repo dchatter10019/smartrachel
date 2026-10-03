@@ -2701,7 +2701,8 @@ app.post('/chat', async (req, res) => {
         for (const k of ['name', 'email', 'phone', 'instructions']) if (x[k]) od[k] = x[k];
         if (x.tip) od.tip = x.tip;
         if (x.source) od.source = x.source;
-        if (x.link_to && x.link_to.length) od.link_to = [...new Set((od.link_to || []).concat(x.link_to))];
+        if (x.link_to && x.link_to.length) od.link_to = [...new Set((od.link_to || []).concat(x.link_to).map(EO.fixAddr))];
+        if (od.email) od.email = EO.fixAddr(od.email);   // a saved "...comand" from before the fix is repaired too
         // Still missing a name / email / phone: the thread's earlier emails, newest first. Real (Oct 3, DC): "You have the
         // name from before" — Sean's form two emails up had the customer's name, email and phone.
         if (!(String(od.name || '').trim().split(/\s+/).length >= 2 && od.email && od.phone)) {
