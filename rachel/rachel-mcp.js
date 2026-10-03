@@ -215,12 +215,21 @@ const QA_RE = /^(qa-[^@]*|rachel_qa)@getbevvi\.com$/i;
 // Product page urls (and slugs) are never sent to connector clients: claude.ai read the store-catalog prefix in them
 // ("nuveen-...") as a client listing leaking into search and told the customer (DC, Oct 3). Order payment links
 // (payment_link) and proposal PDFs (download_url) have their own keys and are kept.
+// shopping-agent sends some lists as JSON TEXT (menu_build line_items): those are parsed, cleaned and re-encoded —
+// until Oct 3 the walk skipped strings, so every package line still carried its product url to claude.ai.
 function stripProductUrls(v) {
-  if (Array.isArray(v)) { v.forEach(stripProductUrls); return v; }
+  if (typeof v === 'string') {
+    const t = v.trim();
+    if ((t[0] === '[' || t[0] === '{') && /"(url|slug)"/.test(t)) {
+      try { return JSON.stringify(stripProductUrls(JSON.parse(t))); } catch (e) { /* not JSON: text below */ }
+    }
+    return stripProductLinks(v);
+  }
+  if (Array.isArray(v)) { v.forEach((x, i) => { v[i] = stripProductUrls(x); }); return v; }
   if (v && typeof v === 'object') {
     delete v.url; delete v.slug;
     delete v.buyer_tier;   // the customer's spend tier is internal and invites price commentary (DC, Oct 3)
-    Object.keys(v).forEach(k => stripProductUrls(v[k]));
+    Object.keys(v).forEach(k => { v[k] = stripProductUrls(v[k]); });
   }
   return v;
 }
@@ -254,6 +263,8 @@ async function runTool(name, input, callerEmail, apiKey) {
   // Age verification tool — per connection (see ageVerified)
   if (name === 'rachel_verify_age') {
     if (!input.confirmed) {
+      ageOk.delete(keyHash(apiKey)); saveAge();   // a "no" (or an under-21 answer) ends the connection's earlier check
+      console.log('[rachel-mcp] age NOT confirmed (' + callerEmail + ') — connection held until confirmed');
       return { verified: false, message: 'Customer must confirm they are 21 or older to proceed.' };
     }
     markAgeVerified(apiKey);
@@ -318,7 +329,8 @@ async function runTool(name, input, callerEmail, apiKey) {
     // (rachel.js drops them for Slack/email too), the rest is store plumbing.
     ['kitchen', 'client', 'buyer_discount', 'review_note', 'review_layer', 'tier_warning', 'preferred_brands', 'swaps', 'unavailable_qty']
       .forEach(k => delete result[k]);
-    (result.line_items || []).forEach(li => { delete li.establishmentId; delete li.product_id; });
+    if (typeof result.line_items === 'string') { try { result.line_items = JSON.parse(result.line_items); } catch (e) { console.log('[rachel-mcp] build_package line_items not JSON: ' + e.message); } }
+    if (Array.isArray(result.line_items)) result.line_items.forEach(li => { delete li.establishmentId; delete li.product_id; });
     return result;
   }
 
