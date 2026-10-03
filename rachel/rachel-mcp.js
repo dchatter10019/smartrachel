@@ -8,6 +8,8 @@ const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args
 
 const PORT = 3600;
 const { requestKey, verifyCode, resolveEmailForKey } = require('./mcp-auth.js');
+const OAUTH = require('./mcp-oauth.js');   // claude.ai connector sign-in (OAuth 2.1 + PKCE); API keys keep working
+const callerFor = token => resolveEmailForKey(token) || OAUTH.emailForToken(token);
 const RACHEL_URL = 'http://127.0.0.1:3500';
 
 const TOOLS = [
@@ -358,6 +360,7 @@ function sendSSE(res, data) {
 }
 
 const server = http.createServer(async (req, res) => {
+  try { if (await OAUTH.handle(req, res)) return; } catch (e) { console.error('[mcp-oauth] error:', e.message); if (!res.headersSent) { res.writeHead(500); res.end(); } return; }
   if (req.method === 'GET' && req.url === '/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ status: 'ok', port: PORT, service: 'rachel-mcp', tools: TOOLS.length }));
@@ -404,7 +407,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/api') {
     const auth = req.headers['authorization'] || '';
     const apiKey = auth.replace(/^Bearer\s+/i, '');
-    const callerEmail = resolveEmailForKey(apiKey);
+    const callerEmail = callerFor(apiKey);
     if (!callerEmail) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Unauthorized — obtain an API key via /auth/request-key and /auth/verify-code' }));
@@ -435,9 +438,9 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/mcp') {
     const auth = req.headers['authorization'] || '';
     const apiKey = auth.replace(/^Bearer\s+/i, '');
-    const callerEmail = resolveEmailForKey(apiKey);
+    const callerEmail = callerFor(apiKey);
     if (!callerEmail) {
-      res.writeHead(401, { 'Content-Type': 'application/json', 'WWW-Authenticate': 'Bearer' });
+      res.writeHead(401, { 'Content-Type': 'application/json', 'WWW-Authenticate': OAUTH.wwwAuthenticate() });
       res.end(JSON.stringify({ error: 'Unauthorized — obtain an API key via /auth/request-key and /auth/verify-code' }));
       return;
     }

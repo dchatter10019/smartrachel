@@ -73,6 +73,11 @@ async function requestKey(email) {
   pending[normalizedEmail] = { code, expiresAt: Date.now() + CODE_EXPIRY_MS };
   savePending(pending);
 
+  // QA identities never get real mail (CLAUDE.md rule 5): the code is only in the pending file, for the tests.
+  if (/^(qa-[^@]*|rachel_qa)@getbevvi\.com$/i.test(normalizedEmail)) {
+    console.log('[mcp-auth] QA identity ' + normalizedEmail + ': verification code not emailed (QA)');
+    return { success: true, message: 'Verification code sent — check your email' };
+  }
   const { sendEmail } = require('./email-utils.js');
   await sendEmail(
     [normalizedEmail],
@@ -127,4 +132,4 @@ function resolveEmailForKey(apiKey) {
   return entry ? entry.email : null;
 }
 
-module.exports = { requestKey, verifyCode, resolveEmailForKey };
+module.exports = { requestKey, verifyCode, resolveEmailForKey, PENDING_PATH };

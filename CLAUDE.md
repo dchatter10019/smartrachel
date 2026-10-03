@@ -16,8 +16,12 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   cancel it). Age verified per API key in memory (4h idle), never saved to the profile (rule 4). Orders are two-step:
   rachel_place_order PREPARES (server /internal/order-preview: catalog linking, real delivery windows, totals) and returns
   a 15-min one-use confirmation_code bound to the key; rachel_confirm_order places it (QA identities dry-run). Streamable
-  HTTP: JSON or SSE by Accept, notifications 202, protocol version echoed. API-key auth only (claude.ai web connectors
-  would need OAuth). WhatsApp bot (3601).
+  HTTP: JSON or SSE by Accept, notifications 202, protocol version echoed. claude.ai sign-in = OAuth 2.1 (rachel/mcp-oauth.js, DC Oct 3):
+  discovery /.well-known/oauth-protected-resource/rachel/mcp + /.well-known/oauth-authorization-server/rachel (+ root),
+  dynamic client registration, a Bevvi sign-in page (email -> 6-digit code, same as the API keys), PKCE S256, access
+  tokens 30d / refresh 90d rotated, stored hashed in config/mcp-oauth.json; the 401 carries WWW-Authenticate
+  resource_metadata. API keys still work. QA emails never get the code mailed. ops/tests/mcp_connector_test.py (nightly)
+  runs both paths on the public URL. nginx routes for /rachel/ and the well-known paths are not in the repo. WhatsApp bot (3601).
 - rachel-slack: rachel/rachel_slack_bot.py (Bolt, Socket Mode). Log: logs/slack-rachel.log
 - rachel-email: rachel/email-agent.py (polls rachelai@ inbox every 60s, every email → Rachel chat,
   thread→session map in logs/email-thread-sessions.json). Log: logs/email-agent.log. "New" = an inbox email

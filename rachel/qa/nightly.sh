@@ -7,6 +7,8 @@ SUMMARY=$(echo "$OUT" | sed -n '/^====/,$p' | tail -n +2)
 CHANGES=$(echo "$OUT" | grep -c "reply change(s)")
 # The monitor's own detector tests (ops/tests/monitor_test.py, debug-and-fix loop): a broken detector is a QA failure too.
 MON=$(python3 /home/ubuntu/ops/tests/monitor_test.py 2>&1 | tail -1); [ $? -eq 0 ] && echo "$MON" | grep -q "all passed" || { RC=1; SUMMARY="$SUMMARY"$'\n'"  ✗ $MON"; }
+# The Rachel MCP connector on its public URL (OAuth sign-in as claude.ai does it + API key + two-step dry-run order; Oct 3).
+MCPT=$(python3 /home/ubuntu/ops/tests/mcp_connector_test.py 2>&1 | tail -1); echo "$MCPT" | grep -q "all passed" || { RC=1; SUMMARY="$SUMMARY"$'\n'"  ✗ $MCPT"; }
 STATUS=$([ $RC -eq 0 ] && echo "✅ PASS" || echo "❌ FAIL")
 TEXT="*Rachel nightly QA — $STATUS*"$'\n'"$SUMMARY"$'\n'"_${CHANGES} scenario(s) had reply changes vs the previous run_"
 # AI spend, yesterday + month to date: customers / tests / auto-fixer (ops/ai-spend.py; DC, Oct 3)
