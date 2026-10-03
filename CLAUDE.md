@@ -148,7 +148,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   copy won, reverting every outside status change — the fixer would have re-fixed, and re-paid for, the same finding).
 - Step 4 deploy (ops/deploy-fix.sh <id>): ✅ by an approver on the fixer post (rachel_slack_bot.py reaction_added) →
   scope re-check, fast-forward-only, precheck --deploy --stage-first, push; rollback + master reset on failure; ❌ discards.
-  Inactive until /etc/rachel.env has OPS_SLACK_CHANNEL + OPS_APPROVERS and the Slack app subscribes to reaction_added.
+  /etc/rachel.env (Oct 3): OPS_SLACK_CHANNEL = #rachel-ops C0C6E8CER9Q, OPS_TEST_CHANNEL = #rachel-ops-test C0C6CEA8VRC
+  (--dry-post), OPS_APPROVERS = DC U04NB3GDUC8. ✅ also needs the Slack app's reaction_added event + the bot in both channels.
 
 ## QA harness (rachel/qa/)
 - `qa/unit/*.test.js`: pure-logic unit tests on saved real replies (multi-pick resolver), run by every
