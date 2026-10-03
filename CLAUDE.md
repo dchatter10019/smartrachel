@@ -107,8 +107,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - Gmail service account: /home/ubuntu/config/gmail-service-account.json (domain-wide delegation).
 
 ## Rules — follow every time
-1. Deploy rachel/shopping-agent/rachel-email ONLY via `/home/ubuntu/precheck.sh --deploy`: lint → restart the
-   services whose files changed → smoke set against the new code. If the service doesn't come up or
+1. Deploy rachel/shopping-agent/rachel-email/rachel-mcp ONLY via `/home/ubuntu/precheck.sh --deploy`: lint → restart the
+   services whose files changed (rachel-mcp: rachel-mcp/mcp-auth/mcp-oauth/gbrain/generate-proposal.js; a hand restart
+   has no deploy log and the monitor calls it a crash — F-0014, Oct 3) → smoke set against the new code. If the service doesn't come up or
    smoke fails, it stashes the uncommitted rachel/ + store-agent/ changes (`git stash pop` restores),
    restarts on HEAD and re-smokes. Never a bare `systemctl restart`. It waits for rachel's in-flight chats
    (/internal/inflight) before restarting, and rachel finishes running chats on SIGTERM (max 80s). Deploy BEFORE committing — a clean

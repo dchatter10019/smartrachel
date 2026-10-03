@@ -70,7 +70,7 @@ up() {
   local svc=$1 url i
   # rachel-email has no HTTP port: up = still active 10 s after the restart (catches a crash at startup).
   if [ "$svc" = rachel-email ] || [ "$svc" = rachel-slack ]; then sleep 10; systemctl is-active --quiet "$svc"; return $?; fi
-  case $svc in rachel) url=http://127.0.0.1:3500/health ;; shopping-agent) url=http://127.0.0.1:8300/ ;; esac
+  case $svc in rachel) url=http://127.0.0.1:3500/health ;; shopping-agent) url=http://127.0.0.1:8300/ ;; rachel-mcp) url=http://127.0.0.1:3600/ ;; esac
   for i in $(seq 1 30); do
     if [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "$url")" != "000" ]; then
       sleep 5
@@ -155,6 +155,9 @@ deploy() {
   echo "$DIRTY" | grep -q " rachel/email-agent\.py" && svcs+=(rachel-email)
   # The Slack bot (rachel/rachel_slack_bot.py) is its own service too.
   echo "$DIRTY" | grep -q " rachel/rachel_slack_bot\.py" && svcs+=(rachel-slack)
+  # The MCP connector (rachel-mcp.js on :3600) and what it loads. Until Oct 3 it was restarted by hand, outside a
+  # deploy -> no deploy log -> the monitor raised a false "restarted outside a deploy" crash (F-0014).
+  echo "$DIRTY" | grep -qE " rachel/(rachel-mcp|mcp-auth|mcp-oauth|gbrain|generate-proposal)\.js" && svcs+=(rachel-mcp)
   [ ${#svcs[@]} -eq 0 ] && svcs=(rachel)
   echo "Deploy $STAMP: HEAD $(git rev-parse --short HEAD), services: ${svcs[*]}"
   if [ -n "$DIRTY" ]; then echo "Uncommitted changes being deployed:"; echo "$DIRTY"; else echo "Working tree clean under $SCOPE (deploying HEAD)."; fi
