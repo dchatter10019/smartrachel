@@ -13,7 +13,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - gbrain (port 7700): customer memory; rachel/gbrain.js. rachel-mcp (3600, 127.0.0.1 only) = the "rachel" MCP connector,
   public at https://mcp.getbevvi.com/rachel/mcp (nginx /rachel/ -> :3600; the "bevvi" transactions MCP is /mcp -> :8000).
   Per-caller API keys (mcp-auth.js: /rachel/auth/request-key -> emailed code -> /rachel/auth/verify-code; 5 wrong codes
-  cancel it). Age verified per API key in memory (4h idle), never saved to the profile (rule 4). Orders are two-step:
+  cancel it). Age verified per API key (4h idle; kept by key hash in RACHEL_DATA_DIR/mcp-age.json so a deploy doesn't re-ask;
+  verify_age confirmed:false clears it), never saved to the profile (rule 4). rachel_build_package = shopping-agent menu_build,
+  the builder Slack/email use (was custom_list with category words as products). Clients never get product urls/slugs
+  (also inside JSON-text fields and chat text), buyer tier or reviewer notes; told not to judge prices (DC, Oct 3). Orders are two-step:
   rachel_place_order PREPARES (server /internal/order-preview: catalog linking, real delivery windows, totals) and returns
   a 15-min one-use confirmation_code bound to the key; rachel_confirm_order places it (QA identities dry-run). Streamable
   HTTP: JSON or SSE by Accept, notifications 202, protocol version echoed. claude.ai sign-in = OAuth 2.1 (rachel/mcp-oauth.js, DC Oct 3):
