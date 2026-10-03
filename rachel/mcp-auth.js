@@ -95,6 +95,10 @@ function verifyCode(email, code) {
     return { success: false, error: 'Verification code expired — request a new one' };
   }
   if (String(code).trim() !== entry.code) {
+    // 5 wrong tries kill the code (Oct 3, before going public: a 6-digit code had unlimited guesses for 15 minutes)
+    entry.attempts = (entry.attempts || 0) + 1;
+    if (entry.attempts >= 5) { delete pending[normalizedEmail]; savePending(pending); console.log('[mcp-auth] code for ' + normalizedEmail + ' cancelled after 5 wrong tries'); return { success: false, error: 'Too many wrong codes — request a new one' }; }
+    savePending(pending);
     return { success: false, error: 'Incorrect code' };
   }
 

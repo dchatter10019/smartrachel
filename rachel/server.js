@@ -5597,6 +5597,42 @@ app.post('/internal/email-link', (req, res) => {
   res.json({ session_id: r.session_id, reason: r.reason });
 });
 
+// Order preview for the Rachel MCP connector's two-step order (rachel-mcp.js rachel_place_order -> rachel_confirm_order;
+// DC, Oct 3): the SAME checks as the email/Slack order paths, in code — basket lines linked to catalog products (exact
+// only, line-resolve.js), the delivery time checked against the store's real windows (validateDeliveryTime), totals.
+// Places nothing. Local only (this server listens on 127.0.0.1).
+app.post('/internal/order-preview', async (req, res) => {
+  const b = req.body || {};
+  let items = b.line_items;
+  if (typeof items === 'string') { try { items = JSON.parse(items); } catch (e) { items = null; } }
+  if (!Array.isArray(items) || !items.length) return res.json({ ok: false, problems: ['line_items must be a non-empty list from rachel_search / rachel_build_package'] });
+  const zip = String(b.zip || '').trim(), address = String(b.address || '').trim();
+  const problems = [];
+  if (!/^\d{5}$/.test(zip)) problems.push('zip must be a 5-digit zip code');
+  if (!address) problems.push('address is required');
+  let unresolved = [];
+  if (zip && items.some(LR.needsLink)) {
+    try { const rr = await LR.resolveLines(items, (n, c) => catalogSearch(zip, n, c)); items = rr.items; unresolved = rr.unresolved; }
+    catch (e) { problems.push('could not check the items against the catalog (' + e.message + ')'); }
+  }
+  for (const u of unresolved) problems.push('"' + u.name + '" is not an exact catalog match' + (u.options && u.options.length ? ' — closest: ' + u.options.join('; ') : '') + ' (search it with rachel_search and use that line)');
+  let delivery = null;
+  if (!b.delivery_datetime) problems.push('delivery_datetime is required (e.g. "2026-10-05 17:00" or "Monday Oct 5 at 5pm")');
+  else {
+    const st = { lastLineItems: JSON.stringify(items), address, orderData: {} };
+    let asked = null;
+    await validateDeliveryTime(st, String(b.delivery_datetime), '', 'plain', { json: pl => { asked = pl && (pl.text || pl.response); return null; } });
+    if (asked) problems.push(asked);
+    else delivery = { window: st.orderData.delivery_window_display || st.orderData.delivery_datetime || '', date: st.orderData.delivery_date_label || '', iso: st.orderData.delivery_datetime_iso || '', raw: st.orderData.delivery_datetime || '' };
+  }
+  const pt = Math.round(items.reduce((a, li) => a + (parseFloat(li.price) || 0) * (li.qty || li.quantity || 1), 0) * 100) / 100;
+  const tip = typeof b.tip_amount === 'number' && b.tip_amount >= 0 ? b.tip_amount : Math.round(pt * 5) / 100;
+  const tax = Math.round(pt * 10) / 100, svc = Math.round(pt * 10) / 100;
+  const totals = { product_total: pt, estimated_tax: tax, service_charge: svc, tip, estimated_delivery: 25, estimated_total: Math.round((pt + tax + svc + tip + 25) * 100) / 100 };
+  console.log('[order-preview] ' + items.length + ' line(s), ' + (problems.length ? problems.length + ' problem(s): ' + JSON.stringify(problems).slice(0, 300) : 'ready') + ' | delivery ' + JSON.stringify(delivery));
+  res.json({ ok: !problems.length, problems, line_items: items, delivery, totals });
+});
+
 app.post('/internal/session-basket', async (req, res) => {
   const { session_id, sent_text, from_proposal } = req.body || {};
   let line_items = req.body && req.body.line_items, prop = null;

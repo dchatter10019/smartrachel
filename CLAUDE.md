@@ -10,7 +10,14 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   + rachel/rachel.js = LLM tool dispatch + rachel/classify-intent.js (Sonnet intent classifier)
   + rachel/prompt.md (system prompt, hot-reloads) + rachel/functions.js (search, buildPackage)
 - shopping-agent (port 8300): store-agent/shopping-agent.js → Bevvi API (client=bevvibot, zipcode= search)
-- gbrain (port 7700): customer memory; rachel/gbrain.js. rachel-mcp (3600). WhatsApp bot (3601).
+- gbrain (port 7700): customer memory; rachel/gbrain.js. rachel-mcp (3600, 127.0.0.1 only) = the "rachel" MCP connector,
+  public at https://mcp.getbevvi.com/rachel/mcp (nginx /rachel/ -> :3600; the "bevvi" transactions MCP is /mcp -> :8000).
+  Per-caller API keys (mcp-auth.js: /rachel/auth/request-key -> emailed code -> /rachel/auth/verify-code; 5 wrong codes
+  cancel it). Age verified per API key in memory (4h idle), never saved to the profile (rule 4). Orders are two-step:
+  rachel_place_order PREPARES (server /internal/order-preview: catalog linking, real delivery windows, totals) and returns
+  a 15-min one-use confirmation_code bound to the key; rachel_confirm_order places it (QA identities dry-run). Streamable
+  HTTP: JSON or SSE by Accept, notifications 202, protocol version echoed. API-key auth only (claude.ai web connectors
+  would need OAuth). WhatsApp bot (3601).
 - rachel-slack: rachel/rachel_slack_bot.py (Bolt, Socket Mode). Log: logs/slack-rachel.log
 - rachel-email: rachel/email-agent.py (polls rachelai@ inbox every 60s, every email → Rachel chat,
   thread→session map in logs/email-thread-sessions.json). Log: logs/email-agent.log. "New" = an inbox email

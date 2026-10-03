@@ -84,24 +84,31 @@ const TOOLS = [
   },
   {
     name: 'rachel_place_order',
-    description: 'Place a beverage order for a customer. Requires confirmed line_items from a previous search or package build.',
+    description: 'Step 1 of 2 — PREPARE an order (places nothing). Checks every line against the store catalog, the delivery time against the store\'s real delivery windows, and the customer details, and returns the full order summary with totals plus a confirmation_code (valid 15 minutes). Show the summary to the customer; only after they confirm, call rachel_confirm_order with the code. If problems are returned, fix them and prepare again.',
     inputSchema: {
       type: 'object',
       properties: {
-        line_items:           { type: 'string', description: 'JSON string of line_items from previous rachel_search or rachel_build_package' },
-        first_name:           { type: 'string' },
-        last_name:            { type: 'string' },
-        email:                { type: 'string' },
-        phone:                { type: 'string' },
-        address:              { type: 'string', description: 'Full delivery address' },
-        city:                 { type: 'string' },
-        state:                { type: 'string' },
-        zip:                  { type: 'string' },
-        delivery_datetime:    { type: 'string', description: 'ISO datetime for delivery' },
+        line_items:           { type: 'string', description: 'JSON string of line_items from a previous rachel_search or rachel_build_package (each with name, price, qty)' },
+        first_name:           { type: 'string', description: 'Customer first name' },
+        last_name:            { type: 'string', description: 'Customer last name' },
+        customer_email:       { type: 'string', description: 'The customer\'s email (goes on the order). Defaults to your own verified email.' },
+        phone:                { type: 'string', description: 'Customer phone' },
+        address:              { type: 'string', description: 'Full delivery address: street, city, state zip' },
+        zip:                  { type: 'string', description: 'Delivery zip code' },
+        delivery_datetime:    { type: 'string', description: 'Requested delivery date and time, e.g. "2026-10-05 17:00" or "Monday Oct 5 at 5pm"' },
         delivery_instructions:{ type: 'string' },
-        tip_amount:           { type: 'number' }
+        tip_amount:           { type: 'number', description: 'Tip in USD (default 5% of the product total)' }
       },
-      required: ['line_items', 'email', 'address', 'zip']
+      required: ['line_items', 'first_name', 'last_name', 'phone', 'address', 'zip', 'delivery_datetime']
+    }
+  },
+  {
+    name: 'rachel_confirm_order',
+    description: 'Step 2 of 2 — PLACE the order prepared by rachel_place_order, after the customer has seen the summary and confirmed it. Returns the order number and the Payment Link. The code works once, only for you, and only within 15 minutes.',
+    inputSchema: {
+      type: 'object',
+      properties: { confirmation_code: { type: 'string', description: 'The confirmation_code returned by rachel_place_order' } },
+      required: ['confirmation_code']
     }
   },
   {
@@ -139,7 +146,7 @@ async function callRachel(message, email, zip, session_id, channel) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       message,
-      session_id: session_id || `mcp-${email || 'anon'}-${Date.now()}`,
+      session_id: session_id || `mcp-${email || 'anon'}`,   // one continuing conversation per caller unless a session_id is given (was a new session every call)
       format: channel || 'plain',
       context: {
         kitchen_location: '',
@@ -169,16 +176,23 @@ async function callShoppingAgent(intent, args) {
   return JSON.parse(data.result.content[0].text);
 }
 
-async function checkAgeVerified(email) {
-  if (!email) return false;
-  try {
-    const { getD2CSession } = require('./gbrain.js');
-    const session = await getD2CSession(email);
-    return session && session.age_verified === true;
-  } catch(e) { return false; }
+// Age is verified per CONNECTION (API key), held in memory for 4 hours idle — never saved to the customer's profile
+// (CLAUDE.md rule 4: per session, never inherited). Until Oct 3 it was written to gbrain and trusted forever.
+const AGE_TTL_MS = 4 * 3600e3;
+const ageOk = new Map();   // api key -> last use
+function ageVerified(key) {
+  const t = ageOk.get(key);
+  if (!t || Date.now() - t > AGE_TTL_MS) { ageOk.delete(key); return false; }
+  ageOk.set(key, Date.now()); return true;
 }
 
-async function executeTool(name, input, callerEmail) {
+// Two-step order: prepared orders waiting for rachel_confirm_order (code -> { key, payload, summary, expires }).
+const crypto = require('crypto');
+const pendingOrders = new Map();
+const ORDER_CODE_TTL_MS = 15 * 60e3;
+const QA_RE = /^(qa-[^@]*|rachel_qa)@getbevvi\.com$/i;
+
+async function executeTool(name, input, callerEmail, apiKey) {
   // Never trust a caller-supplied email for anything security-sensitive.
   // callerEmail is resolved server-side from the caller's verified API key
   // (see mcp-auth.js) — it always overrides whatever the tool arguments say,
@@ -189,35 +203,22 @@ async function executeTool(name, input, callerEmail) {
   }
   console.log(`[rachel-mcp] tool: ${name}`, JSON.stringify(input).slice(0, 150));
 
-  // Age verification tool
+  // Age verification tool — per connection (see ageVerified)
   if (name === 'rachel_verify_age') {
     if (!input.confirmed) {
       return { verified: false, message: 'Customer must confirm they are 21 or older to proceed.' };
     }
-    try {
-      const { getD2CSession, saveD2CSession } = require('./gbrain.js');
-      const existing = await getD2CSession(input.email) || {};
-      await saveD2CSession(input.email, { ...existing, age_verified: true });
-      return { verified: true, message: 'Age verified. Customer is confirmed 21 or older.' };
-    } catch(e) {
-      return { verified: false, error: e.message };
-    }
+    ageOk.set(apiKey, Date.now());
+    console.log('[rachel-mcp] age verified for this connection (' + callerEmail + ') — not saved to the profile');
+    return { verified: true, message: 'Age verified for this session. Customer is confirmed 21 or older.' };
   }
 
-  // Gate all other tools behind age verification
-  const unprotected = ['rachel_verify_age'];
-  if (!unprotected.includes(name)) {
-    const email = input.email || (input.customer && input.customer.email) || '';
-    if (!email) {
-      return { error: 'Email is required. Please provide customer email.' };
-    }
-    const ageVerified = await checkAgeVerified(email);
-    if (!ageVerified) {
-      return { 
-        error: 'Age not verified. Call rachel_verify_age first to confirm the customer is 21 or older.',
-        action_required: 'Call rachel_verify_age with confirmed:true after customer confirms age'
-      };
-    }
+  // Gate all other tools behind age verification (this connection, last 4 hours)
+  if (name !== 'rachel_verify_age' && !ageVerified(apiKey)) {
+    return {
+      error: 'Age not verified. Call rachel_verify_age first to confirm the customer is 21 or older.',
+      action_required: 'Call rachel_verify_age with confirmed:true after customer confirms age'
+    };
   }
 
   if (name === 'rachel_chat') {
@@ -271,30 +272,50 @@ async function executeTool(name, input, callerEmail) {
   }
 
   if (name === 'rachel_place_order') {
-    const result = await callShoppingAgent('place_order', {
-      line_items: input.line_items,
-      zip: input.zip,
-      customer: {
-        firstName: input.first_name || '',
-        lastName:  input.last_name  || '',
-        email:     input.email      || '',
-        phone:     input.phone      || '',
-        address:   input.address    || '',
-        city:      input.city       || '',
-        state:     input.state      || '',
-        zipcode:   input.zip        || ''
-      },
-      tip_amount:            input.tip_amount || 0,
-      delivery_datetime:     input.delivery_datetime || '',
-      delivery_instructions: input.delivery_instructions || ''
-    });
-    return result;
+    const customerEmail = String(input.customer_email || callerEmail || '').trim().toLowerCase();
+    const missing = ['first_name', 'last_name', 'phone', 'address', 'zip', 'delivery_datetime'].filter(k => !String(input[k] || '').trim());
+    if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(customerEmail)) missing.push('customer_email (a valid email)');
+    const pr = await fetch(`${RACHEL_URL}/internal/order-preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ line_items: input.line_items, zip: input.zip, address: input.address, delivery_datetime: input.delivery_datetime, tip_amount: input.tip_amount }) }).then(r => r.json());
+    const problems = missing.map(m => 'missing: ' + m).concat(pr.problems || []);
+    if (problems.length) {
+      console.log('[rachel-mcp] order NOT ready (' + callerEmail + '): ' + JSON.stringify(problems).slice(0, 300));
+      return { ready: false, problems, message: 'Not ready to place — fix these and call rachel_place_order again.' };
+    }
+    const code = crypto.randomBytes(5).toString('hex');
+    const payload = {
+      line_items: JSON.stringify(pr.line_items), zip: input.zip,
+      customer: { firstName: input.first_name, lastName: input.last_name, email: customerEmail, phone: input.phone, address: input.address, zipcode: input.zip },
+      tip_amount: pr.totals.tip, delivery_datetime: pr.delivery.iso || pr.delivery.raw, delivery_instructions: input.delivery_instructions || '',
+      account_email: callerEmail, email: callerEmail
+    };
+    const summary = {
+      items: pr.line_items.map(li => ({ name: li.name, qty: li.qty || li.quantity || 1, price: li.price })),
+      totals: pr.totals, delivery: { address: input.address, when: [pr.delivery.date, pr.delivery.window].filter(Boolean).join(', ') },
+      customer: { name: input.first_name + ' ' + input.last_name, email: customerEmail, phone: input.phone },
+      instructions: input.delivery_instructions || ''
+    };
+    pendingOrders.set(code, { key: apiKey, payload, summary, expires: Date.now() + ORDER_CODE_TTL_MS });
+    console.log('[rachel-mcp] order prepared ' + code + ' by ' + callerEmail + ' for ' + customerEmail + ': ' + summary.items.length + ' line(s), $' + pr.totals.estimated_total + ', ' + summary.delivery.when);
+    return { ready: true, confirmation_code: code, expires_in_minutes: 15, summary,
+      next_step: 'Show this summary to the customer. Only after they confirm, call rachel_confirm_order with this confirmation_code.' };
+  }
+
+  if (name === 'rachel_confirm_order') {
+    const code = String(input.confirmation_code || '').trim();
+    const p = pendingOrders.get(code);
+    if (!p || p.key !== apiKey) { console.log('[rachel-mcp] confirm REFUSED (' + callerEmail + '): unknown code or another caller\'s'); return { placed: false, error: 'Unknown confirmation code. Prepare the order again with rachel_place_order.' }; }
+    if (Date.now() > p.expires) { pendingOrders.delete(code); console.log('[rachel-mcp] confirm REFUSED (' + callerEmail + '): code ' + code + ' expired'); return { placed: false, error: 'This confirmation code expired (15 minutes). Prepare the order again with rachel_place_order.' }; }
+    pendingOrders.delete(code);   // one use
+    const dry = QA_RE.test(callerEmail || '') || QA_RE.test(p.payload.customer.email || '');
+    const result = await callShoppingAgent('place_order', Object.assign({}, p.payload, dry ? { dry_run: true } : {}));
+    console.log('[rachel-mcp] order ' + (result && result.success ? 'PLACED ' + (result.order_id || result.order_number) + (dry ? ' (QA dry run)' : '') : 'FAILED: ' + JSON.stringify(result).slice(0, 200)) + ' — confirm ' + code + ' by ' + callerEmail);
+    if (!result || !result.success) return { placed: false, error: (result && result.error) || 'The order service did not accept the order.' };
+    return { placed: true, order_id: result.order_id || result.order_number, payment_link: result.payment_url, dry_run: !!result.dry_run, summary: p.summary,
+      message: 'Order created. Share the Payment Link with the customer — the order is confirmed once it is paid.' };
   }
 
   if (name === 'rachel_generate_proposal') {
-    const ageVerified = await checkAgeVerified(input.email);
-    if (!ageVerified) return { error: 'Age not verified. Call rachel_verify_age first.' };
-
     // Get line_items from input or active session
     let lineItems = input.line_items;
     if (!lineItems) {
@@ -394,7 +415,7 @@ const server = http.createServer(async (req, res) => {
     req.on('end', async () => {
       try {
         const { tool, args } = JSON.parse(body);
-        const result = await executeTool(tool, args || {}, callerEmail);
+        const result = await executeTool(tool, args || {}, callerEmail, apiKey);
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(result));
       } catch(e) {
@@ -405,48 +426,55 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  // MCP over streamable HTTP (2025 spec): JSON or SSE by the client's Accept, notifications get 202, ping, the client's
+  // protocol version echoed when supported. Until Oct 3: SSE only, 2024-11-05 only, and notifications/initialized got a
+  // "Method not found" error that strict clients treat as a failed handshake.
+  if (req.url === '/mcp' && req.method !== 'POST') {
+    res.writeHead(405, { 'Allow': 'POST' }); res.end(); return;
+  }
   if (req.method === 'POST' && req.url === '/mcp') {
     const auth = req.headers['authorization'] || '';
     const apiKey = auth.replace(/^Bearer\s+/i, '');
     const callerEmail = resolveEmailForKey(apiKey);
     if (!callerEmail) {
-      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.writeHead(401, { 'Content-Type': 'application/json', 'WWW-Authenticate': 'Bearer' });
       res.end(JSON.stringify({ error: 'Unauthorized — obtain an API key via /auth/request-key and /auth/verify-code' }));
       return;
     }
     let body = '';
     req.on('data', chunk => body += chunk);
     req.on('end', async () => {
+      let msg;
+      try { msg = JSON.parse(body); } catch (e) { res.writeHead(400, { 'Content-Type': 'application/json' }); res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } })); return; }
+      if (msg.id === undefined || msg.id === null) { res.writeHead(202); res.end(); return; }   // a notification: nothing to answer
+      const sse = /text\/event-stream/.test(req.headers['accept'] || '') && !/application\/json/.test(req.headers['accept'] || '');
+      const reply = obj => {
+        if (sse) { res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' }); sendSSE(res, obj); res.end(); }
+        else { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); }
+      };
       try {
-        const msg = JSON.parse(body);
-        res.writeHead(200, {
-          'Content-Type': 'text/event-stream',
-          'Cache-Control': 'no-cache',
-          'Connection': 'keep-alive'
-        });
-
         if (msg.method === 'initialize') {
-          sendSSE(res, { jsonrpc: '2.0', id: msg.id, result: {
-            protocolVersion: '2024-11-05',
-            serverInfo: { name: 'bevvi-rachel', version: '1.0.0' },
-            capabilities: { tools: {} }
+          const want = msg.params && msg.params.protocolVersion;
+          reply({ jsonrpc: '2.0', id: msg.id, result: {
+            protocolVersion: ['2025-06-18', '2025-03-26', '2024-11-05'].includes(want) ? want : '2025-03-26',
+            serverInfo: { name: 'bevvi-rachel', version: '1.1.0' },
+            capabilities: { tools: {} },
+            instructions: 'Rachel is Bevvi\'s beverage specialist. Call rachel_verify_age first. Orders take two steps: rachel_place_order (prepare + summary) then rachel_confirm_order after the customer confirms.'
           }});
+        } else if (msg.method === 'ping') {
+          reply({ jsonrpc: '2.0', id: msg.id, result: {} });
         } else if (msg.method === 'tools/list') {
-          sendSSE(res, { jsonrpc: '2.0', id: msg.id, result: { tools: TOOLS } });
+          reply({ jsonrpc: '2.0', id: msg.id, result: { tools: TOOLS } });
         } else if (msg.method === 'tools/call') {
-          const { name, arguments: args } = msg.params;
-          const result = await executeTool(name, args || {}, callerEmail);
-          sendSSE(res, { jsonrpc: '2.0', id: msg.id, result: {
-            content: [{ type: 'text', text: JSON.stringify(result) }]
-          }});
+          const { name, arguments: args } = msg.params || {};
+          const result = await executeTool(name, args || {}, callerEmail, apiKey);
+          reply({ jsonrpc: '2.0', id: msg.id, result: { content: [{ type: 'text', text: JSON.stringify(result) }], isError: !!(result && result.error) } });
         } else {
-          sendSSE(res, { jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'Method not found' } });
+          reply({ jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'Method not found' } });
         }
-        res.end();
-      } catch(e) {
+      } catch (e) {
         console.error('[rachel-mcp] error:', e.message);
-        res.writeHead(500);
-        res.end(JSON.stringify({ error: e.message }));
+        reply({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: e.message } });
       }
     });
     return;
@@ -456,7 +484,7 @@ const server = http.createServer(async (req, res) => {
   res.end('Not found');
 });
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[rachel-mcp] Rachel MCP Server on http://0.0.0.0:${PORT}`);
+server.listen(PORT, '127.0.0.1', () => {   // local only: the public way in is nginx https://mcp.getbevvi.com/rachel/ (Oct 3)
+  console.log(`[rachel-mcp] Rachel MCP Server on http://127.0.0.1:${PORT}`);
   console.log(`[rachel-mcp] Tools: ${TOOLS.map(t => t.name).join(', ')}`);
 });
