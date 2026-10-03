@@ -232,7 +232,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   wines (Lillet, vermouth, sherry, port...) get 1/4 of a table wine's share of the wine servings (DC). Pack size comes from the name ("6PKC").
 - Catalog 5xx/429: searchProducts retries twice; a build that still hit failures returns CATALOG_UNREACHABLE,
   never "isn't available at this store".
-- A conversation expires after RACHEL_IDLE_HOURS (4) idle, except email threads; age is re-asked.
+- A conversation expires after RACHEL_IDLE_HOURS (4) idle, except email threads; age is re-asked. An email thread's
+  conversation is kept until the later of last email + 14 days and EVENT DATE + 14 days (DC, Oct 3; pruneChatSessions,
+  event date read relative to the last email; [memory] logs a clear). Flow state (basket, details) is never pruned.
+  email-link's "only quote from this sender" uses the same live window.
 - Edits to a quote the customer has (remove lines, "all beer in bottles", "only 1 case of X") are applied in
   code (quote-edits.js; email sessions or sessions with a proposal), listed back, PDF regenerated. An edit that
   also ADDS items goes to the LLM. An email quote request's reply + PDF are always built in code.

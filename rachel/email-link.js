@@ -110,9 +110,11 @@ function pick(msg, candidates, now = Date.now()) {
   if (!isEdit(text)) return { session_id: null, reason: pool.length + ' earlier quote(s) from this sender, none named — not about changing a quote' };
   const w = bySignals(text, pool, pdfs);
   if (w.best) return { session_id: w.best.c.session_id, reason: 'about changing a quote; ' + w.best.s.join(' + ') + ' matches only "' + (clientOf(w.best.c) || w.best.c.session_id) + '"' };
-  const recent = pool.filter(c => now - (c.last_active || 0) <= 14 * DAY);
+  // Live = last email within 14 days, or the event not yet 14 days past (DC, Oct 3: a thread lives until event + 14 days).
+  const evEnd = c => { if (!c.event_date || !c.last_active) return 0; try { const nd = require('./event-date.js').normalizeEventDate(c.event_date, new Date(c.last_active)); return nd && nd.date ? (Date.parse(nd.text) || 0) + 14 * DAY : 0; } catch (e) { return 0; } };
+  const recent = pool.filter(c => now - (c.last_active || 0) <= 14 * DAY || now <= evEnd(c));
   if (!w.tied.length && recent.length === 1) {
-    return { session_id: recent[0].session_id, reason: 'about changing a quote, and the only quote from this sender in 14 days' };
+    return { session_id: recent[0].session_id, reason: 'about changing a quote, and the only live quote from this sender (last email within 14 days or event + 14 days not passed)' };
   }
   const ask = (w.tied.length ? w.tied : (recent.length ? recent : pool)).slice(0, 5);
   return { session_id: null, ask, reason: 'about changing a quote; ' + (w.tied.length ? w.tied.length + ' quotes match equally' : (recent.length || pool.length) + ' possible quotes') + ' — asking which one' };

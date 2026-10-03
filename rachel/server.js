@@ -302,7 +302,19 @@ function pruneChatSessions() {
   for (const k of new Set([...Object.keys(sessions), ...Object.keys(lastRepliesBySession)])) {
     const last = (flowState[k] && flowState[k].lastActive) || 0;
     const keepMs = /^email-/.test(k) ? 14 * 24 * 3600e3 : /^qa-/.test(k) ? 3600e3 : IDLE_HOURS * 3600e3;
-    if (!last || now - last > keepMs) { delete sessions[k]; delete lastRepliesBySession[k]; }
+    // An email thread is kept until 14 days after its EVENT when that is later (DC, Oct 3): a quote sent a month ahead
+    // keeps its whole conversation until the event is over, not just 14 days from the last email.
+    let evMs = 0;
+    const stK = flowState[k], rawD = /^email-/.test(k) && stK ? stK.savedEventDate || (stK.eventParams && stK.eventParams.event_date) || '' : '';
+    if (rawD && last) {
+      // read relative to the last email, so "Oct 6th" keeps the year it had when it was written
+      try { const nd = require('./event-date.js').normalizeEventDate(rawD, new Date(last)); if (nd && nd.date) evMs = Date.parse(nd.text) || 0; } catch (e) {}
+    }
+    const keepUntil = Math.max(last + keepMs, evMs ? evMs + 14 * 24 * 3600e3 : 0);
+    if (!last || now > keepUntil) {
+      if (/^email-/.test(k) && sessions[k]) console.log('[memory] email thread conversation cleared: ' + k + ' (last email ' + (last ? new Date(last).toISOString().slice(0, 10) : '?') + (evMs ? ', event ' + new Date(evMs).toISOString().slice(0, 10) : ', no event date') + ' — both + 14 days passed)');
+      delete sessions[k]; delete lastRepliesBySession[k];
+    }
   }
 }
 function saveChatSessionsNow() {
@@ -1696,7 +1708,8 @@ app.post('/chat', async (req, res) => {
       console.log(`[session] idle ${forced ? '(simulated)' : idleH.toFixed(1) + 'h'} > ${IDLE_HOURS}h — fresh conversation for ${sessionKey} (was step=${st0.step}${st0.orderStep ? ' orderStep=' + st0.orderStep : ''}${st0.proposalStep ? ' proposalStep=' + st0.proposalStep : ''})`);
       resetState(sessionKey, email);
     }
-    getState(sessionKey).lastActive = Date.now(); saveFlowState();
+    getState(sessionKey).lastActive = Date.now();
+    saveFlowState();
   }
   // Stock the customer already has ("we have the below inventory from last time") is never ordered (on-hand.js).
   try {
