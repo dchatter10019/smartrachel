@@ -10,6 +10,7 @@ const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args
 
 const PORT = 3600;
 const { requestKey, verifyCode, resolveEmailForKey } = require('./mcp-auth.js');
+const { parseServingMix, mixText } = require('./serving-mix.js');
 const OAUTH = require('./mcp-oauth.js');   // claude.ai connector sign-in (OAuth 2.1 + PKCE); API keys keep working
 const callerFor = token => resolveEmailForKey(token) || OAUTH.emailForToken(token);
 const RACHEL_URL = 'http://127.0.0.1:3500';
@@ -57,19 +58,20 @@ const TOOLS = [
   },
   {
     name: 'rachel_build_package',
-    description: 'Build a beverage package for an event. Returns product list with quantities, prices, and totals.',
+    description: 'Build a beverage package for an event — the same builder and the same questions as Rachel on Slack and email. Pass ONLY what the customer actually said: never assume or default guests, duration, budget, drink types or what guests drink most. If something is missing the tool returns needs_info with ask_customer: ask the customer exactly that, then call again with everything they have told you.',
     inputSchema: {
       type: 'object',
       properties: {
-        guests:     { type: 'number', description: 'Number of guests' },
-        hours:      { type: 'number', description: 'Event duration in hours' },
-        budget:     { type: 'number', description: 'Total budget in USD' },
-        categories: { type: 'array', description: 'Categories to include: beer, wine, spirits (all three if omitted)', items: { type: 'string' } },
-        serving_mix:{ type: 'string', description: 'Optional: what guests will drink most, e.g. "mostly wine", "50% beer 30% wine 20% spirits"' },
-        zip:        { type: 'string', description: 'Delivery zip code' },
-        email:      { type: 'string', description: 'Customer email' }
+        guests:            { type: 'number', description: 'Number of guests (as the customer said)' },
+        hours:             { type: 'number', description: 'Event duration in hours (as the customer said)' },
+        drinks_per_person: { type: 'number', description: 'Instead of hours, if the customer gave drinks per guest' },
+        budget:            { type: 'number', description: 'Total budget in USD (as the customer said)' },
+        categories:        { type: 'array', description: 'Drink types the customer wants: wine, beer, spirits (liquor / cocktails)', items: { type: 'string' } },
+        serving_mix:       { type: 'string', description: 'The customer\'s own words for what guests will drink most, e.g. "mostly wine", "about even", "50% beer 30% wine 20% liquor"' },
+        zip:               { type: 'string', description: 'Delivery zip code' },
+        email:             { type: 'string', description: 'Customer email' }
       },
-      required: ['guests', 'hours', 'zip']
+      required: ['zip']
     }
   },
   {
@@ -313,15 +315,47 @@ async function runTool(name, input, callerEmail, apiKey) {
   }
 
   if (name === 'rachel_build_package') {
+    // Same intake as Rachel (prompt.md Step 1 + server.js serving-mix question), decided in code (rule 6): every missing
+    // input is asked in ONE message, then the serving mix for a mixed event. Until Oct 3 the schema REQUIRED hours, so
+    // claude.ai invented "a 4-hour event" and never asked what guests drink most (DC).
+    const catOf = c => /spirit|liquor|cocktail|mixed|vodka|tequila|whisk|bourbon|rum|gin|full bar/i.test(c) ? 'spirits'
+      : /beer|seltzer|cider|lager|ipa/i.test(c) ? 'beer' : /wine|champagne|prosecco|sparkling|ros|red|white/i.test(c) ? 'wine' : null;
+    const cats = [...new Set((input.categories || []).map(c => catOf(String(c))).filter(Boolean))];
+    const asks = [];
+    if (!(input.guests > 0)) asks.push('how many guests');
+    if (!(input.hours > 0) && !(input.drinks_per_person > 0)) asks.push('how many hours the event runs');
+    if (!(input.budget > 0)) asks.push('the total budget');
+    if (!cats.length) asks.push('what they would like — wine, beer, spirits, or a mix');
+    if (asks.length) {
+      console.log('[rachel-mcp] build_package HELD — missing: ' + asks.join('; '));
+      return { needs_info: true, missing: asks,
+        ask_customer: 'Happy to put that together! Could you tell me ' + (asks.length > 1 ? asks.slice(0, -1).join(', ') + ' and ' + asks[asks.length - 1] : asks[0]) + '?',
+        instructions: 'Ask the customer this in one message, then call rachel_build_package again with their answers. Do not fill in any value yourself.' };
+    }
+    let mixJson = '';
+    if (cats.length >= 2) {
+      const label = k => k === 'spirits' ? 'liquor' : k;
+      const got = input.serving_mix ? parseServingMix(String(input.serving_mix), cats, false) : null;
+      if (!got) {
+        const labels = cats.map(label);
+        console.log('[rachel-mcp] build_package HELD — mixed event (' + cats.join(' + ') + '), ' + (input.serving_mix ? 'serving mix not understood: ' + JSON.stringify(input.serving_mix).slice(0, 60) : 'no serving preference'));
+        return { needs_info: true, missing: ['serving_mix'],
+          ask_customer: 'To get the mix right — what will your guests drink most: ' + labels.slice(0, -1).join(', ') + ' or ' + labels[labels.length - 1] + '? (e.g. "mostly ' + labels[0] + '", "' + labels[0] + ' and ' + labels[1] + '", or "about even")',
+          instructions: 'Ask the customer this, then call rachel_build_package again with the same values plus serving_mix = their answer in their own words.' };
+      }
+      mixJson = JSON.stringify(got.mix);
+      console.log('[rachel-mcp] build_package serving mix (' + got.why + '): ' + mixText(got.mix));
+    }
     // menu_build = the event builder Slack/email use (full bar, still + sparkling wine, spends the budget). Until Oct 3
     // this sent custom_list with the category words as products: one bourbon as "spirits", a Champagne as the wine,
     // a third of a $2,000 budget (DC).
     const result = await callShoppingAgent('menu_build', {
       guests: input.guests,
       hours: input.hours,
-      budget: input.budget || undefined,
-      categories: input.categories && input.categories.length ? input.categories : undefined,
-      serving_mix: input.serving_mix || '',
+      drinks_per_person: input.drinks_per_person || undefined,
+      budget: input.budget,
+      categories: cats,
+      serving_mix: mixJson,
       zip: input.zip,
       email: input.email || ''
     });
