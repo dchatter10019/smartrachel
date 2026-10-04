@@ -6,9 +6,14 @@ OUT=$(./qa/run.py 2>&1); RC=$?
 SUMMARY=$(echo "$OUT" | sed -n '/^====/,$p' | tail -n +2)
 CHANGES=$(echo "$OUT" | grep -c "reply change(s)")
 # The monitor's own detector tests (ops/tests/monitor_test.py, debug-and-fix loop): a broken detector is a QA failure too.
-MON=$(python3 /home/ubuntu/ops/tests/monitor_test.py 2>&1 | tail -1); [ $? -eq 0 ] && echo "$MON" | grep -q "all passed" || { RC=1; SUMMARY="$SUMMARY"$'\n'"  ✗ $MON"; }
+# Side tests (not scenarios) also go to logs/side-tests.jsonl, so a failure becomes a monitor finding (detector side_test)
+# and reaches #rachel-ops — until Oct 4 the connector test's failure was only a line in this Slack summary.
+side() { python3 -c 'import json,sys,time; print(json.dumps({"ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "test": sys.argv[1], "ok": sys.argv[2] == "1", "detail": [l for l in sys.argv[3].splitlines() if "✗" in l or "FAIL" in l][:20]}))' "$1" "$2" "$3" >> /home/ubuntu/logs/side-tests.jsonl; }
+MONO=$(python3 /home/ubuntu/ops/tests/monitor_test.py 2>&1); MON=$(echo "$MONO" | tail -1)
+if echo "$MON" | grep -q "all passed"; then side monitor_test 1 ""; else RC=1; SUMMARY="$SUMMARY"$'\n'"  ✗ $MON"; side monitor_test 0 "$MONO"; fi
 # The Rachel MCP connector on its public URL (OAuth sign-in as claude.ai does it + API key + two-step dry-run order; Oct 3).
-MCPT=$(python3 /home/ubuntu/ops/tests/mcp_connector_test.py 2>&1 | tail -1); echo "$MCPT" | grep -q "all passed" || { RC=1; SUMMARY="$SUMMARY"$'\n'"  ✗ $MCPT"; }
+MCPO=$(python3 /home/ubuntu/ops/tests/mcp_connector_test.py 2>&1); MCPT=$(echo "$MCPO" | tail -1)
+if echo "$MCPT" | grep -q "all passed"; then side mcp_connector_test 1 ""; else RC=1; SUMMARY="$SUMMARY"$'\n'"  ✗ $MCPT"; side mcp_connector_test 0 "$MCPO"; fi
 STATUS=$([ $RC -eq 0 ] && echo "✅ PASS" || echo "❌ FAIL")
 TEXT="*Rachel nightly QA — $STATUS*"$'\n'"$SUMMARY"$'\n'"_${CHANGES} scenario(s) had reply changes vs the previous run_"
 # AI spend, yesterday + month to date: customers / tests / auto-fixer (ops/ai-spend.py; DC, Oct 3)

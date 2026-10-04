@@ -74,7 +74,9 @@ ALLOWED = ['Read', 'Grep', 'Glob', 'Edit', 'Write',
            'Bash(node:*)', 'Bash(python3:*)', 'Bash(./qa/run.py:*)', 'Bash(/home/ubuntu/ops/staging.sh:*)',
            'Bash(git add:*)', 'Bash(git commit:*)', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git status:*)', 'Bash(git show:*)',
            'Bash(grep:*)', 'Bash(sed -n:*)', 'Bash(tail:*)', 'Bash(head:*)', 'Bash(cat:*)', 'Bash(ls:*)', 'Bash(wc:*)']
-DENIED = ['Bash(systemctl:*)', 'Bash(sudo:*)', 'Bash(git push:*)', 'Bash(git merge:*)', 'Bash(git checkout:*)', 'Bash(git reset:*)',
+# Read-only for the agent (writes there are in DENIED): production logs, the QA runs that failed, staging runs.
+READ_DIRS = [HOME + '/logs', HOME + '/rachel/qa/runs', HOME + '/rachel/qa/runs-staging']
+DENIED = ['Edit(//home/ubuntu/logs/**)', 'Write(//home/ubuntu/logs/**)', 'Bash(git -C %s push:*)' % HOME, 'Bash(systemctl:*)', 'Bash(sudo:*)', 'Bash(git push:*)', 'Bash(git merge:*)', 'Bash(git checkout:*)', 'Bash(git reset:*)',
           'Bash(git rebase:*)', 'Bash(git worktree:*)', 'Bash(curl:*)', 'Bash(wget:*)', 'Bash(/home/ubuntu/precheck.sh:*)', 'Bash(rm:*)',
           'Read(//etc/**)', 'Read(//home/ubuntu/config/**)', 'Read(//etc/systemd/**)',
           'Edit(//home/ubuntu/rachel/**)', 'Edit(//home/ubuntu/store-agent/**)', 'Edit(//home/ubuntu/ops/**)', 'Edit(//home/ubuntu/CLAUDE.md)',
@@ -92,6 +94,17 @@ Evidence (redacted log lines / events):
 """ + '\n'.join('  ' + e for e in f.get('evidence', [])[-25:]) + f"""
 Sessions: {', '.join(f.get('sessions', [])[:10]) or '-'}
 {extra}
+TOOL RULES (commands outside these are refused — don't retry variants of a refused command, change approach):
+- One command per Bash call. No `cd X && ...`, no `;` chains, no for-loops: use absolute paths and separate calls.
+- git only as `git -C {wt} add|commit|diff|status|log ...`. Lint: `{wt}/precheck.sh` (no arguments).
+- Readable (never edit): production logs /home/ubuntu/logs/ (rachel.log, shopping-agent.log, staging-*.log); the failing
+  run's replies /home/ubuntu/rachel/qa/runs/<stamp>/<scenario>.json; staging runs /home/ubuntu/rachel/qa/runs-staging/.
+- The live catalog (read-only): `python3 /home/ubuntu/ops/catalog-search.py <zip> <words>`. A product that vanished from a
+  test is often the CATALOG changing (Oct 4: FIJI water and the Stella 24-pack left the SF store) — check it first; then
+  fix Rachel so she copes (a stand-in), and only loosen the assertion if it named one exact product.
+- Commit early (as soon as the scenario + fix pass), then keep checking: work left uncommitted when you run out of turns
+  is only kept if it proves itself.
+
 CONTRACT — satisfy all of it, or return a diagnosis:
 1. FIRST write a QA scenario in {wt}/rachel/qa/scenarios/ (next free number; name: "fix-{f['id'].lower()}-<what>") that
    reproduces the finding. The worktree still holds the base code, so prove it FAILS there before you change any code:
@@ -120,9 +133,15 @@ Project rules (CLAUDE.md, abridged to what applies — the full file is at {wt}/
 def run_agent(f, wt, prompt, cfg):
     fx = cfg.get('fixer', {})
     cap = float(fx.get('per_fix_usd', 5))
-    cmd = ['claude', '-p', prompt, '--output-format', 'json', '--max-turns', str(fx.get('max_turns', 60)), '--max-budget-usd', str(cap),
+    # Oct 4 (F-0015): the agent found both causes and wrote the fix, but 16 of its commands were refused — the logs and the
+    # failing run's replies are outside its worktree, `git -C <wt>` / the worktree's lint weren't allowed — and it ran out
+    # of turns before committing. READ access to those dirs (writes stay denied), per-worktree git/lint rules.
+    allowed = ALLOWED + ['Bash(git -C %s add:*)' % wt, 'Bash(git -C %s commit:*)' % wt, 'Bash(git -C %s diff:*)' % wt,
+                         'Bash(git -C %s status:*)' % wt, 'Bash(git -C %s log:*)' % wt, 'Bash(%s/precheck.sh)' % wt, 'Bash(./precheck.sh)']
+    cmd = ['claude', '-p', prompt, '--output-format', 'json', '--max-turns', str(fx.get('max_turns', 150)), '--max-budget-usd', str(cap),
            '--model', fx.get('model', 'claude-opus-5-5'),   # pinned (DC, Oct 3): never whatever the CLI default happens to be
-           '--allowedTools', ','.join(ALLOWED), '--disallowedTools', ','.join(DENIED)]
+           '--allowedTools', ','.join(allowed), '--disallowedTools', ','.join(DENIED)]
+    for d in READ_DIRS: cmd += ['--add-dir', d]
     t0 = time.time()
     try:
         r = subprocess.run(cmd, cwd=wt, capture_output=True, text=True, timeout=fx.get('minutes_per_finding', 45) * 60)
@@ -145,8 +164,31 @@ def run_agent(f, wt, prompt, cfg):
     for line in reversed([l.strip() for l in str(text).split('\n') if l.strip().startswith('{')]):
         try: res = json.loads(line); break
         except Exception: continue
-    log('%s agent finished in %ds, $%.2f' % (f['id'], time.time() - t0, cost))
-    return res or {'outcome': 'failed', 'summary': 'the agent returned no result JSON'}, raw, (cost, estimated)
+    stop, denied = '', []
+    try: j = json.loads(raw); stop = j.get('subtype') or ''; denied = j.get('permission_denials') or []
+    except Exception: pass
+    log('%s agent finished in %ds, $%.2f%s%s' % (f['id'], time.time() - t0, cost, (' — stopped: ' + stop) if stop and stop != 'success' else '',
+                                                  (' — %d command(s) refused' % len(denied)) if denied else ''))
+    for d in denied[:20]: log('  refused: %s %s' % (d.get('tool_name'), str((d.get('tool_input') or {}).get('command') or d.get('tool_input'))[:160].replace('\n', ' ')))
+    if not res:
+        res = {'outcome': 'failed', 'summary': 'the agent returned no result JSON' + ((' (stopped: %s)' % stop) if stop else '') +
+               ((', %d command(s) refused' % len(denied)) if denied else '')}
+    res['stopped'] = stop; res['refused'] = len(denied)
+    return res, raw, (cost, estimated)
+
+def salvage(f, wt, res):
+    # The agent ended without its JSON (turn / budget limit) but left a fix in the worktree: commit it here so the proof
+    # below decides — it is offered only if the scenario fails on base, passes on the branch and smoke passes. (F-0015,
+    # Oct 4: a working fix was left uncommitted and thrown away.)
+    if res.get('outcome') in ('fixed', 'diagnosed'): return res
+    ch = [l[3:] for l in sh(['git', 'status', '--porcelain'], cwd=wt).stdout.splitlines()
+          if not re.search(r'(^|/)(node_modules|venv)(/|$)', l[3:])]
+    if not ch: return res
+    sh(['git', 'add', '--'] + ch, cwd=wt)
+    if sh(['git', 'commit', '-q', '-m', '%s: work the fixer agent left uncommitted (%s) — salvaged for the proof' % (f['id'], res.get('stopped') or 'no result')], cwd=wt).returncode != 0:
+        return res
+    log('%s salvaged %d uncommitted file(s) for the proof: %s' % (f['id'], len(ch), ', '.join(ch)[:300]))
+    return dict(res, outcome='fixed', salvaged=True)
 
 # ── spend ledger + report ───────────────────────────────────────────────────────────────────────────────────────────
 LEDGER = OUT + '/spend.jsonl'
@@ -232,6 +274,10 @@ def why_not_fixed(f, res, proof, scope):
     if (res or {}).get('outcome') == 'diagnosed':
         return plain(res, 'plain_cause', "I looked into it but couldn't find a safe, small fix.")
     if 'wall clock' in (res or {}).get('summary', ''): return 'I ran out of time before finding a fix. I will try again tomorrow night.'
+    if (res or {}).get('refused', 0) >= 5:
+        return ('I was blocked from running %d of the checks I needed (my safety settings were too tight), so I couldn\'t finish. '
+                'This is a problem with my setup, not with Rachel — it needs an engineer.' % res['refused'])
+    if (res or {}).get('stopped') == 'error_max_turns': return 'I ran out of steps before I could finish and prove a fix. I will try again tomorrow night.'
     return "I couldn't find a fix I could prove works. I will try again tomorrow night."
 
 NO_PLAIN = "(the fixer didn't put this in plain words; see the engineers' notes at the bottom)"
@@ -348,6 +394,7 @@ def main():
                             'rachel/prompt.md and try to run `systemctl status rachel`. Both must be refused; note in "notes" what happened.')
         res, raw, (cost, est) = run_agent(f, wt, prompt_for(f, scope, wt, fbase, extra), cfg); spent += cost; fixes += 1; runs += 1
         ledger_add(f['id'], cost, est, a.seed)
+        res = salvage(f, wt, res)
         proof = prove(res, wt, br, fbase, scope) if res.get('outcome') == 'fixed' else {}
         proof['base'] = fbase
         proof['ok'] = bool(proof.get('repro_fails_on_base') and proof.get('passes_on_branch') and proof.get('smoke_on_branch') and not proof.get('violations'))

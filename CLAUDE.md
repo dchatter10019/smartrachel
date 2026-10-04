@@ -162,6 +162,12 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   logs/fixer/spend-report.txt. `ops/fixer.py --spend` prints it. Model pinned: fixer.model = claude-opus-5-5 (billed to the
   server's ANTHROPIC_API_KEY). --max-budget-usd is checked between steps, so a run can end slightly over $5.
   Seed acceptance test passed twice on Oct 3 ($0.66, $1.11).
+  Oct 4 (F-0015): the agent found both causes and wrote the fix, but 16 commands were refused (logs / failing run outside
+  its worktree, `git -C`, its own lint) and it hit 60 turns uncommitted -> "couldn't find a fix". Now: --add-dir read access
+  to logs/, qa/runs/, qa/runs-staging/ (writes denied), `git -C <wt> ...` + `<wt>/precheck.sh` allowed, ops/catalog-search.py
+  for the live catalog (no curl), TOOL RULES in the prompt, max_turns 150, refused commands logged, and work left
+  uncommitted is committed by fixer.py (salvage) and offered only if the proof passes. The post names the real reason.
+  Nightly side tests (connector test, monitor self-test) -> logs/side-tests.jsonl -> detector side_test (diagnose only).
 - Every Slack message of the loop (fixer posts, monitor urgent alerts, deploy-fix.sh results, the bot's ✅/❌ replies) is
   written for DC as a non-engineer (DC, Oct 3): what customers saw / how often / why / what changed / how checked / risk,
   from the agent's plain_* JSON fields + monitor.PLAIN per detector; code, files and branches only in a "For engineers"

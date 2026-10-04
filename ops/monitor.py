@@ -29,6 +29,7 @@ TEXT_LOGS = {   # source -> path; lines have no timestamp unless the format give
 }
 EVENTS = LOGS + '/events.jsonl'
 FEEDBACK = LOGS + '/feedback.jsonl'   # corrections, 'Rachel feedback:' lines, Slack 👎 (rachel/feedback.js, rachel_slack_bot.py)
+SIDE_TESTS = LOGS + '/side-tests.jsonl'   # nightly side tests (connector, monitor self-test) — rachel/qa/nightly.sh
 QA_RUNS = HOME + '/rachel/qa/runs'
 
 def log(msg): print(time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()) + ' [monitor] ' + msg, flush=True)
@@ -211,6 +212,12 @@ class Monitor:
         ev = '%s | %s said: %s | Rachel had said: %s' % (e.get('kind'), e.get('who', '?'), str(e.get('text', ''))[:300], str(e.get('rachel_said', ''))[:600].replace('\n', ' / '))
         self.store.record('feedback', self.d.get('feedback', {}).get('severity', 'high'), '%s (%s)' % (kinds.get(e.get('kind'), 'feedback'), sess), [ev], [sess], t or self.now())
 
+    def side_test(self, e, t=None):
+        # A nightly side test (connector test, monitor self-test) failed: qa/nightly.sh -> logs/side-tests.jsonl (Oct 4).
+        if e.get('ok'): return
+        self.store.record('side_test', self.d.get('side_test', {}).get('severity', 'high'), 'nightly %s failed' % e.get('test', '?'),
+                          ['%s: %s' % (e.get('test', '?'), x) for x in (e.get('detail') or ['(no detail)'])], [], t or self.now())
+
     def qa_summary(self, path, t=None):
         try: s = json.load(open(path))
         except Exception: return
@@ -260,6 +267,9 @@ def one_pass(mon, st):
     for line in new_lines(FEEDBACK, st, 'off:' + FEEDBACK):
         try: mon.feedback(json.loads(line))
         except Exception: pass
+    for line in new_lines(SIDE_TESTS, st, 'off:' + SIDE_TESTS):
+        try: mon.side_test(json.loads(line))
+        except Exception: pass
     seen = set(st.get('qa_seen', []))
     for p in sorted(glob.glob(QA_RUNS + '/*/summary.json'))[-20:]:
         if p not in seen:
@@ -294,6 +304,8 @@ PLAIN = {   # detector -> (what it means for customers, what a person could do).
                            'Read that conversation and check whether the customer needs help.'),
     'latency':            ('Rachel has been slow overall for the past hour (a typical reply took more than 20 seconds).',
                            "Often the AI provider or Bevvi's product search being slow. If it lasts, it's worth a look."),
+    'side_test':          ("One of the nightly extra checks failed (for example the Claude connector test: signing in, the age question, a practice order). No real customer was involved.",
+                           'An engineer should look at the failing step listed below.'),
     'qa_fail':            ("One of Rachel's automatic practice conversations went wrong. No real customer was involved, but a real customer would probably hit the same thing.", ''),
     'escalation_request': ('A customer asked to talk to a person.', 'Someone should reach out to that customer.'),
     'feedback':           ('Someone told Rachel she got something wrong — a correction in their message ("I already told you…"), a "Rachel feedback:" note, or a 👎 on her reply in Slack.',

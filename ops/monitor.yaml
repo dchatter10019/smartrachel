@@ -20,6 +20,7 @@ detectors:
   stuck_session:       {severity: medium, same_state_turns: 4, repeat_message: 2}
   latency:             {severity: medium, median_seconds: 20, window_minutes: 60, min_turns: 5}
   qa_fail:             {severity: high}
+  side_test:           {severity: high}   # a nightly side test failed (connector test, monitor self-test)
   escalation_request:  {severity: info}
   watchdog_alert:      {severity: high}   # the 03:15 nightly-watchdog.js reported a failed check
 
@@ -34,5 +35,5 @@ fixer:
   per_fix_usd: 5            # hard cap per agent run (claude --max-budget-usd); a run with no reported cost is charged this
   max_per_night: 3
   model: claude-opus-5-5     # pinned (DC, Oct 3) — the fixer never runs on the CLI's default model
-  max_turns: 60
+  max_turns: 150           # Oct 4: 60 ran out mid-fix; the $5 per-fix cap still bounds the cost
   minutes_per_finding: 45

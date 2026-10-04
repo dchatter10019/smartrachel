@@ -64,6 +64,11 @@ mon.feedback({'kind': 'correction', 'session': 'email-abc-sean', 'who': 'dc@x.co
 mon.feedback({'kind': 'thumbs_down', 'session': 'qa-fb-1', 'who': 'qa-fb@getbevvi.com', 'text': '👎', 'rachel_said': 'x', 'qa': True}, T)
 fb = found('feedback')
 check('feedback: one finding per conversation (count 2), evidence has what Rachel said, QA ignored', len(fb) == 1 and fb[0]['count'] == 2 and any("Mara's last name" in e for e in fb[0]['evidence']))
+# side tests (Oct 4): a failed nightly connector test is a finding with the failing step; a pass is not
+mon.side_test({'test': 'mcp_connector_test', 'ok': False, 'detail': ['  ✗ connector api key + two-step order: chat after age -> ASKED AGAIN']}, T)
+mon.side_test({'test': 'monitor_test', 'ok': True, 'detail': []}, T)
+st_ = found('side_test')
+check('side test: a failure is one finding with the failing step, a pass is none', len(st_) == 1 and 'ASKED AGAIN' in st_[0]['evidence'][0])
 check('findings file written', sum(1 for _ in open(tmp)) == len(store.items))
 # two writers (Oct 3): a status set by another process (fixer / deploy-fix / Slack ❌ / by hand) survives the long-running
 # monitor's next save, and the monitor's own update to a finding still lands
