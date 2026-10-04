@@ -825,8 +825,21 @@ async function buildPackage(iv) {
 
   var lineItems=[];var unavailable=[];var summaryBits=[];var totalDrinks=0;var fullBarNote="";var categoryNeeds=null;
 
-  function addLines(picks,label,category) {
+  function addLines(picks,label,category,needDrinks) {
     if (picks.length===0){unavailable.push(label);return;}
+    // Beer packs are sized across the lines TOGETHER on the real pack sizes: each line rounded up on its own bought
+    // 72 bottles for 50 beer servings (Oct 4: 3 + 2 twelve-packs planned -> 2 + 1 twenty-four-packs). Fill to >= 95%
+    // of the need (the supply check's floor), one pack at a time, smallest pack first.
+    var beerPlan=null;
+    if ((category==='beer'||category==='seltzer') && needDrinks>0 && picks.length>1) {
+      var packOfP=function(pp){ var m=String(pp.product.sizeStr||'').match(/^(\d+)\s*x/i)||String(pp.product.name||'').match(/(\d+)\s*x\s*\d/i); return m?parseInt(m[1]):beerPackSize; };
+      var packs=picks.map(packOfP), implied=picks.map(function(pp){return pp.qty*beerPackSize;}), totI=implied.reduce(function(a,b){return a+b;},0)||1;
+      beerPlan=picks.map(function(pp,k){ return Math.max(1, Math.floor(needDrinks*implied[k]/totI/packs[k])); });
+      var supB=function(){ return beerPlan.reduce(function(a,q,k){return a+q*packs[k];},0); };
+      var order=packs.map(function(p,k){return k;}).sort(function(a,b){return packs[a]-packs[b];});
+      for (var g=0; supB()<needDrinks*0.95 && g<50; g++) beerPlan[order[0]]++;
+      console.log('[buildPackage] beer packs sized together: '+Math.round(needDrinks)+' servings -> '+picks.map(function(pp,k){return beerPlan[k]+'x '+pp.product.name;}).join(', ')+' = '+supB());
+    }
     for (var i=0;i<picks.length;i++) {
       var finalQty = picks[i].qty;
       // Beer quantity was computed assuming a generic beerPackSize (default 12
@@ -848,12 +861,15 @@ async function buildPackage(iv) {
         }
       }
       if (category === 'beer' || category === 'seltzer') {
-        var sizeStr = picks[i].product.sizeStr || '';
-        var packMatch = sizeStr.match(/^(\d+)\s*x/i);
-        var realPackSize = packMatch ? parseInt(packMatch[1]) : null;
-        if (realPackSize && realPackSize > 0 && realPackSize !== beerPackSize) {
-          var impliedDrinks = picks[i].qty * beerPackSize;
-          finalQty = Math.max(1, Math.ceil(impliedDrinks / realPackSize));
+        if (beerPlan && beerPlan[i] != null) finalQty = beerPlan[i];
+        else {
+          var sizeStr = picks[i].product.sizeStr || '';
+          var packMatch = sizeStr.match(/^(\d+)\s*x/i);
+          var realPackSize = packMatch ? parseInt(packMatch[1]) : null;
+          if (realPackSize && realPackSize > 0 && realPackSize !== beerPackSize) {
+            var impliedDrinks = picks[i].qty * beerPackSize;
+            finalQty = Math.max(1, Math.ceil(impliedDrinks / realPackSize));
+          }
         }
       }
       lineItems.push({label:label,name:picks[i].product.name,qty:finalQty,upc:picks[i].product.upc||'',
@@ -1663,11 +1679,17 @@ async function buildPackage(iv) {
     var resAll=await Promise.all(plan.map(function(pl){return doSearch(pl.term);}));
     for (var pIdx=0;pIdx<plan.length;pIdx++) {
       var pl=plan[pIdx];
+      // "Beer" is beer: a cider is not picked for it while beer is in stock (Oct 4, claude.ai connector: a third of a
+      // beer + wine event's "beer" was Stella Artois Cider).
+      if (pl.slot==="beer") {
+        var noCider=(resAll[pIdx]||[]).filter(function(p){return !/\bcider\b/i.test(p.name||'');});
+        if (noCider.length && noCider.length<(resAll[pIdx]||[]).length) { console.log('[buildPackage] beer slot: '+((resAll[pIdx]||[]).length-noCider.length)+' cider(s) left out — beer was asked for'); resAll[pIdx]=noCider; }
+      }
       var picks=pick(resAll[pIdx],pl.slot,pl.target,pl.min,pl.max,pl.qty,pl.uniq);
       if (picks.length===0&&pl.slot!=="mixer"&&!(pl.cat==="wine"&&capWineMax)&&!(pl.cat==="beer"&&capBeerMax)&&!(pl.cat==="spirits"&&capSpiritMax)) {
         picks=pick(resAll[pIdx],pl.slot,0,0,999999,pl.qty,pl.uniq);
       }
-      addLines(picks,pl.label,pl.cat);
+      addLines(picks,pl.label,pl.cat,pl.slot==="beer"&&!hardSeltzer&&!naBeer?beerDrinks:0);
     }
     var durationLabel2 = hours > 0 ? (hours+"h") : (baseDpp+" drinks/person");
     summaryBits.push("Package "+packageType+" | "+guests+" guests | "+durationLabel2+" | "+(isQuoteMode?"QUOTE":"$"+totalBudget)+" | drinks "+totalDrinks);

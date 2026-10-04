@@ -233,6 +233,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   calculator quantities, 0% categories dropped and listed in the reply, no re-adds that turn) — also when the mix
   is stated in the same message ("only beer and wine, make it equal"). An aperitif (Lillet, vermouth) counts as liquor;
   "just/only beer and wine" also leaves hard seltzer out (DC) unless the customer's own words mention seltzer.
+  Mix percentages: "60 pct / percent wine", "60/40 wine/beer", "wine 70%" (that form read NaN until Oct 4) (serving-mix.js).
+  An event's beer packs are sized across the beer lines together on the real pack sizes to >= 95% of the need ([buildPackage]
+  beer packs sized together; Oct 4: two lines each rounded up = 72 bottles for 50), and the "Beer" slot skips cider.
 - "use another / a different <type>" with ONE basket line of that type: the LLM's product_query is rerouted in code to
   alternatives for that line ([swap-to-alternatives]; anchored to its price, the line's own product excluded via
   originals[].exclude). A confirm_substitute whose replacement is the B of the customer's "A -> B" must replace A's line

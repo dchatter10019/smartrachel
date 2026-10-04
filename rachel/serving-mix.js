@@ -34,14 +34,21 @@ function parseServingMix(msg, cats, requireCue) {
   return { mix: r.mix, why: r.why + '; left out: ' + out.join('/'), excluded: out };
 }
 function parseServingMix0(msg, cats, requireCue) {
-  const m = String(msg || '').toLowerCase();
+  // "60 pct wine", "60 percent wine" = "60% wine"; "60/40 wine/beer", "60-40 wine to beer" = 60% wine, 40% beer.
+  // Real (Oct 4, claude.ai connector): serving_mix "60 pct wine, 40 pct beer" was read as 50/50.
+  let m = String(msg || '').toLowerCase().replace(/(\d)\s*(?:pct|percent|per cent)\b/g, '$1%');
+  const sp = m.match(/\b(\d{1,2})\s*[\/-]\s*(\d{1,2})\b(?:\s*split)?\s*(?:of\s+|between\s+)?([a-z]+)\s*(?:\/|-|,|and|to|vs\.?)\s*([a-z]+)/);
+  if (sp && +sp[1] + +sp[2] === 100) {
+    const kA = cats.find(k => MIX_SYN[k].test(sp[3])), kB = cats.find(k => MIX_SYN[k].test(sp[4]));
+    if (kA && kB && kA !== kB) m = m + ' ' + sp[1] + '% ' + sp[3] + ' ' + sp[2] + '% ' + sp[4];
+  }
   const out = {}; cats.forEach(k => { out[k] = 0; });
   // explicit percentages: "50% wine", "wine 50%"
   let pctFound = 0;
   for (const k of cats) {
     const src = MIX_SYN[k].source.replace(/^\\b|\\b$/g, '');
     const a = m.match(new RegExp('(\\d{1,3})\\s*%\\s*(?:of\\s+)?(?:\\w+\\s+)?' + src)) || m.match(new RegExp(src + '\\s*(?:at\\s+|:)?\\s*(\\d{1,3})\\s*%'));
-    if (a) { out[k] = Number(a[1] || a[a.length - 1]); pctFound++; }
+    if (a) { out[k] = Number(a.slice(1).find(x => /^\d+$/.test(x || ''))); pctFound++; }   // the number group, not the drink word ("wine 70%" was NaN)
   }
   if (pctFound >= 1) { const sum = Object.values(out).reduce((x, y) => x + y, 0); const rest = cats.filter(k => !out[k]); const left = Math.max(0, 100 - sum); rest.forEach(k => { out[k] = left / rest.length; }); const tot = Object.values(out).reduce((x, y) => x + y, 0) || 1; cats.forEach(k => { out[k] = out[k] / tot; }); return { mix: out, why: 'percentages' }; }
   const cue = /\b(most|mostly|mainly|primarily|majority|more|heavier|heavy on|lean(?:ing)?|bigger preference|prefer|preference|favorite|love|big on)\b/.test(m);
