@@ -21,10 +21,10 @@ turns:
     expect: {matches: "placed|confirmed|submitted", log_contains: ["basket cleared"]}
   - send: "Hi, I just made the payment. Could you please update the recipient name to Mara Miller, and that the delivery people say they are delivering from Foodie For All for COI purposes?"
     expect:
-      contains: ["paid", "Mara Miller", "bevvi-support"]
+      contains: ["paid", "support team has been made aware", "update the order"]
       not_contains: ["direct-checkout", "reopen", "Payment is still open"]
       log_contains: ["paid — change request not sent (QA/dry-run"]
   - send: "Also please change the on-site contact phone to 862-252-5077"
     expect:
-      contains: ["862-252-5077"]
+      contains: ["support team has been made aware"]
       not_contains: ["direct-checkout", "reopen"]

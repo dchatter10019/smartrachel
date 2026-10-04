@@ -3040,12 +3040,10 @@ app.post('/chat', async (req, res) => {
         }
         saveFlowState();
         console.log('[order] placed order ' + po.order_id + ': ' + pom + ' — ' + (asks.length ? (fwd ? 'change request sent to support' : 'change request not sent (QA/dry-run or error)') : 'no change asked') + ', no payment link, no reopen question: ' + JSON.stringify(message).slice(0, 80));
-        const bullets = asks.map(a => '• ' + a).join('\n');
+        // No order-update API yet: the reply just says support has it (DC, Oct 4: "just simply reply").
         const head = /^paid/.test(pom) ? 'Thank you — I\'ve noted that order #' + po.order_id + ' is paid.' : 'Thanks — got it for order #' + po.order_id + '.';
         let rP = head;
-        if (asks.length) rP += (pom === 'paid_items' ? ' Since it\'s already paid I can\'t change its items myself, so I\'ve' : ' I\'ve') +
-          ' passed your request to our delivery team at bevvi-support@getbevvi.com to update on the order:\n\n' + bullets + '\n\nThey\'ll take care of it and follow up if they need anything.' +
-          (pom === 'details' && !po.paid_reported ? ' Your items and payment link stay the same.' : '');
+        if (asks.length) rP += ' Our support team has been made aware of this request — we\'ll update the order and let you know once it\'s done.';
         else rP += ' Your delivery is all set — just reply here if anything needs a tweak.';
         return res.json({ text: rP, response: rP });
       }
