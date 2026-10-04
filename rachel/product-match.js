@@ -76,7 +76,10 @@ function fit(request, product) {
   // Cans asked, a bottle given (a 750 mL Skinnygirl for "margarita cans").
   const pText = String((product && product.name) || '') + ' ' + String((product && (product.sizeStr || product.size)) || '');
   const container = !(/\bcans?\b/i.test(request) && !/\bcans?\b/i.test(pText) && /\b(?:375|750|1000)\s*ml\b|\b1(?:\.75)?\s*l\b/i.test(pText));
-  const soft = w => w === 'variety' || w === 'mix';
+  // Plain water: "bottled" / "still" / "plain" describe any plain water, not a missing brand — the note said
+  // "(no bottled in stock)" for Basically Spring Water 24ct (Oct 4, DC).
+  const plainWater = req.includes('water') && has('water');
+  const soft = w => w === 'variety' || w === 'mix' || (plainWater && /^(bottled|still|plain|drinking)$/.test(w));
   // A brand is one thing however many words it has ("Samuel Adams"): the first missing brand word costs 6, the
   // rest 2 — so a missing STYLE (12) outweighs a missing brand: an Oktoberfest beats Sam Adams Boston Lager.
   let brandMiss = 0;
