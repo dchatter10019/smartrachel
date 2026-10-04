@@ -586,6 +586,23 @@ async function buildPackage(iv) {
     var words = cleanedTerm.trim().split(/\s+/).filter(Boolean);
     if (words.length === 0) return [];
 
+    // Tier 0: plain water ("Bottled Water case", "still water", "spring water") = the store's plain still water, never a
+    // product that only shares a word. Real (Oct 4 nightly): FIJI left the SF store; "Bottled Water case" broad-searched
+    // "Bottled" (Late Bottled Vintage Port, Bottled in Bond bourbon), and the line went "not available" while the store had
+    // "Basically Purified Water 24ct 16.9 OZ". Sparkling / tonic / flavored water requests keep the normal search.
+    if (/\bwater\b/i.test(cleanedTerm) && !/\b(tonic|sparkling|seltzer|soda|coconut|flavou?red|infused|mineral|alkaline|rose)\b/i.test(cleanedTerm)) {
+      var NOT_PLAIN = /\b(tonic|sparkling|seltzer|soda|infused|flavou?r\w*|ros[eé]|whiske?y|crackers?|ranch|stout|beer|mint|lime|lemon|cherry|grapefruit|peach|berry|blackberry|strawberry|watermelon|wtrmln|ginger|electrolytes?|alkaline|nutrient|hydration|distilled|gallon|flower|orange|cucumber)\b/i;
+      var waterRows = (await rawSearch('water')).filter(function(p) { return /\bwater\b/i.test(p.name) && !NOT_PLAIN.test(p.name); });
+      if (waterRows.length) {
+        var wantCase = /\b(case|cases|pack|pk|24)\b/i.test(cleanedTerm);
+        var rank = function(p) { var n = p.name; return (wantCase && /\b(24\s*(ct|pk|pack|count)|24\s*x|case)\b/i.test(n) ? 0 : 2) + (/16\.9\s*oz|500\s*ml/i.test(n) ? 0 : 1); };
+        waterRows.sort(function(a, b) { return rank(a) - rank(b); });
+        console.log('[doSearch] plain water: ' + JSON.stringify(cleanedTerm) + ' -> ' + waterRows.slice(0, 5).map(function(p) { return p.name; }).join(', '));
+        return waterRows;
+      }
+      console.log('[doSearch] plain water: ' + JSON.stringify(cleanedTerm) + ' — no plain still water at this store');
+    }
+
     // Tier 1: broad search on just the first word (usually the brand name) — helps
     // when the brand word itself is correct but other words in the query are wrong.
     var broadResults = await rawSearch(words[0]);
@@ -1322,7 +1339,15 @@ async function buildPackage(iv) {
       if (reqPack && best.sizeStr) {
         var packKey = function(s){ var m=String(s||'').toLowerCase().match(/(\d+)\s*x\s*(\d+(?:\.\d+)?)\s*(oz|ml)/); return m ? (m[1]+'x'+m[2]+m[3]) : ''; };
         var reqPK = packKey(np.name), foundPK = packKey(best.sizeStr) || packKey(best.name);
-        if (reqPK && foundPK && reqPK !== foundPK) { console.log('[buildPackage] UNAVAILABLE (pack mismatch):', JSON.stringify(np.name), 'wanted', reqPK, 'found', foundPK); unavailable.push(np.name); continue; }
+        // A smaller pack of the SAME product and container makes up the volume: "Stella 24 x 11 oz" with only the
+        // 6 x 11 oz here = 4 six-packs per 24-pack. Real (Oct 4 nightly, SF): the 24-pack left the catalog and the line
+        // went UNAVAILABLE (pack mismatch) — the event was left 124 beer servings short.
+        var rpm = reqPK.match(/^(\d+)x(.+)$/), fpm = (foundPK || '').match(/^(\d+)x(.+)$/);
+        if (reqPK && foundPK && reqPK !== foundPK && rpm && fpm && rpm[2] === fpm[2] && +fpm[1] < +rpm[1] && +fpm[1] > 1 && !PM.fit(reqForFit, best).missing.filter(function(w){return PM.brandWords(reqForFit).indexOf(w)>=0;}).length) {
+          var packMult = Math.ceil(+rpm[1] / +fpm[1]);
+          np._packMult = packMult;
+          console.log('[buildPackage] pack: ' + JSON.stringify(np.name) + ' wanted ' + reqPK + ', only ' + foundPK + ' here (' + best.name + ') — ' + packMult + ' per requested pack');
+        } else if (reqPK && foundPK && reqPK !== foundPK) { console.log('[buildPackage] UNAVAILABLE (pack mismatch):', JSON.stringify(np.name), 'wanted', reqPK, 'found', foundPK); unavailable.push(np.name); continue; }
       }
       // An amount of liquid ("3L mango purée", "1L lemon juice": np.volume_ml, set in code from the customer's own line)
       // takes any bottle size — the quantity covers the amount below. Real bug (Oct 2, DC's Goody list): "Lemon Juice 1L"
@@ -1352,6 +1377,7 @@ async function buildPackage(iv) {
         }
       }
       var pq=plannedQty[n], qty=pq.qty;
+      if (np._packMult && !(!pq.hasExplicitQty && !pq.mod && (catN==='wine'||catN==='beer'||catN==='spirits') && pq.servings>0)) { console.log('[buildPackage] pack: ' + qty + ' x ' + JSON.stringify(np.name) + ' -> ' + (qty * np._packMult) + ' x ' + best.name); qty = qty * np._packMult; }
       // Size the line on the product actually picked (a 1 L bottle, a 24-pack) — the plan assumed
       // 750 mL and the default pack. Real bug: 40 beer servings bought 4x 24-packs (96).
       if (!pq.hasExplicitQty && !pq.mod && (catN==='wine'||catN==='beer'||catN==='spirits') && pq.servings>0) {

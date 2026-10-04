@@ -22,7 +22,7 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   "Cocktail mode" + 8.3 read live — no recipe table in code, DC: hundreds of cocktails; unknown name asked back; spend ledger
   kind cocktail-expand) -> custom_list (Wine/Beer lines + every ingredient), as Rachel's cocktail mode. rachel_chat: a connection
   that passed rachel_verify_age tells Rachel via POST /internal/age-verified {session_id, via:'rachel-mcp'} (refused when proxied
-  or after a refusal in 24h) -> that conversation only skips her age question, never the profile (DC approved, Oct 3). Clients never get product urls/slugs
+  or after a refusal in 24h; an idle session is expired there first, else /chat's idle expiry wiped the check — Oct 4) -> that conversation only skips her age question, never the profile (DC approved, Oct 3). Clients never get product urls/slugs
   (also inside JSON-text fields and chat text), buyer tier or reviewer notes; told not to judge prices (DC, Oct 3). Orders are two-step:
   rachel_place_order PREPARES (server /internal/order-preview: catalog linking, real delivery windows, totals) and returns
   a 15-min one-use confirmation_code bound to the key; rachel_confirm_order places it (QA identities dry-run). Streamable
@@ -278,7 +278,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   on-hand.js -> state.onHand, dropped from custom_list/menu_build in rachel.js ([on-hand] DROPPED) + noted (DC). A generic line
   ("4 white") never picks an on-hand product while another fits (np.avoid -> [buildPackage] on-hand product(s) not picked).
   A generic type+size line ("tequila blanco 1.75L") gets a MID-priced product (median of the size matches, DC);
-  "a case" with no count = 24 units (a 12-pack is fine, DC); not wine/spirits. A smaller stand-in for a not-carried
+  "a case" with no count = 24 units (a 12-pack is fine, DC); not wine/spirits. Plain water ("bottled water case") = the store's plain
+  still water ([doSearch] plain water; a 24ct pack first for a case), never a word match (Oct 4: FIJI left SF and "Bottled"
+  found port/bourbon). A requested pack not carried, with a smaller pack of the same product + container here, takes enough
+  of those ("Stella 24 x 11 oz" -> 4 six-packs each; [buildPackage] pack:). A smaller stand-in for a not-carried
   line makes up its volume (Lemon Juice 1L -> 3 x 375 mL). A pick replaces the pending not-carried line of the same
   kind (pending-original.js) — never pendingSubstitutes[0]. "N/A" = "NA" = non-alcoholic; "Brewing"/"Winery" are filler.
 - Every ready turn, before anything reads the basket (basket-hygiene.js, [basket-hygiene]): on-hand lines (state.onHand

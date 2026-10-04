@@ -5614,7 +5614,15 @@ app.post('/internal/age-verified', (req, res) => {
   const { session_id, via } = req.body || {};
   if (req.headers['x-forwarded-for'] || req.headers['x-real-ip']) { console.log('[age] /internal/age-verified REFUSED: proxied request'); return res.status(403).json({ ok: false }); }
   if (!session_id || via !== 'rachel-mcp') return res.status(400).json({ ok: false, error: 'session_id and via=rachel-mcp required' });
+  // An idle conversation is expired HERE, before the check is applied — else /chat's idle expiry right after wiped it
+  // and Rachel asked the age again (Oct 4 nightly: connector test "chat after age -> ASKED AGAIN", 6.3h idle).
+  const stI = flowState[session_id];
+  if (stI && !/^email-/.test(session_id) && stI.lastActive && (Date.now() - stI.lastActive) / 3600000 > IDLE_HOURS) {
+    console.log('[session] idle ' + ((Date.now() - stI.lastActive) / 3600000).toFixed(1) + 'h > ' + IDLE_HOURS + 'h — fresh conversation for ' + session_id + ' (before the connector age check)');
+    resetState(session_id, '');
+  }
   const st = getState(session_id);
+  st.lastActive = Date.now();
   if (st.ageRefusedAt && Date.now() - st.ageRefusedAt < 24 * 3600 * 1000) { console.log('[age] connector check NOT applied to ' + session_id + ': refused in this session within 24h'); return res.status(409).json({ ok: false, refused: true }); }
   if (!st.ageVerified) {
     st.ageVerified = true; st.ageVia = 'rachel-mcp';
