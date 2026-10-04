@@ -1066,6 +1066,7 @@ async function validateDeliveryTime(state, message, email, format, res) {
 const cta = require('./cta.js');
 const QE = require('./quote-edits.js');   // edits to a quote the customer already has, applied in code
 const EO = require('./email-order.js');
+const POM = require('./placed-order-msg.js');   // a payment report / detail change on a placed order
 const LR = require('./line-resolve.js');   // unlinked basket lines (a hand-built quote) -> catalog products, exact matches only   // "create the order" / "payment link" from an email, placed in code
 const listReply = require('./list-reply.js');   // shopping-list replies composed in code (see the NEXT-BEST-ACTION wrapper)
 const contacts = require('./customer-contacts.js');   // name/phone from the last placed order + channel profile name (order flow)
@@ -3016,6 +3017,38 @@ app.post('/chat', async (req, res) => {
       const po = state.placedOrder;
       let cartN = 0; try { cartN = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
       const heldRequest = () => { const h = po.heldMessage; message = h; msgLower = h.toLowerCase().trim().replace(/\*/g, '').replace(/_/g, ''); };
+      // "I just made the payment" / a delivery-detail change (recipient, driver note, COI) is not a reason to reopen: never
+      // re-send the payment link to someone who says they paid, and pass detail changes to the team (no order-update API).
+      // (Oct 4, Foodie For All: BJ paid and asked to change the recipient — Rachel re-sent the link and asked reopen/new.)
+      let pom = cartN === 0 ? POM.classify(message) : null;
+      if (!pom && cartN === 0 && po.paid_reported && POM.itemChange(message)) pom = 'paid_items';
+      if (pom) {
+        if (/^paid/.test(pom) && !po.paid_reported) { po.paid_reported = true; po.paid_reported_at = Date.now(); po.paid_reported_by = email || ''; }
+        po.awaitingReopen = false;
+        const asks = POM.requestSentences(message);
+        let fwd = false;
+        if (asks.length) {
+          if (isQA || po.dry_run) console.log('[order] QA/dry-run — support note for ' + po.order_id + ' NOT sent');
+          else {
+            try {
+              await sendSupportEmail('Order change request — ' + po.order_id + (po.paid_reported ? ' (customer says PAID)' : ''),
+                'Rachel placed order ' + po.order_id + ' and the customer asked for a change Rachel cannot make (no order-update API).\n\n' +
+                'From: ' + (email || 'unknown') + '\nChannel: ' + format + '\nSession: ' + sessionKey + '\nPaid (customer says): ' + (po.paid_reported ? 'yes' : 'not said') + '\n\nRequest:\n' + message);
+              fwd = true;
+            } catch (e) { console.error('[order] support note for ' + po.order_id + ' failed: ' + e.message); }
+          }
+        }
+        saveFlowState();
+        console.log('[order] placed order ' + po.order_id + ': ' + pom + ' — ' + (asks.length ? (fwd ? 'change request sent to support' : 'change request not sent (QA/dry-run or error)') : 'no change asked') + ', no payment link, no reopen question: ' + JSON.stringify(message).slice(0, 80));
+        const bullets = asks.map(a => '• ' + a).join('\n');
+        const head = /^paid/.test(pom) ? 'Thank you — I\'ve noted that order #' + po.order_id + ' is paid.' : 'Thanks — got it for order #' + po.order_id + '.';
+        let rP = head;
+        if (asks.length) rP += (pom === 'paid_items' ? ' Since it\'s already paid I can\'t change its items myself, so I\'ve' : ' I\'ve') +
+          ' passed your request to our delivery team at bevvi-support@getbevvi.com to update on the order:\n\n' + bullets + '\n\nThey\'ll take care of it and follow up if they need anything.' +
+          (pom === 'details' && !po.paid_reported ? ' Your items and payment link stay the same.' : '');
+        else rP += ' Your delivery is all set — just reply here if anything needs a tweak.';
+        return res.json({ text: rP, response: rP });
+      }
       if (po.awaitingReopen) {
         const wantsNew = /^(no|nope|nah|2|new|separate|fresh)\b/.test(msgLower) || /\b(new|separate|another|different) order\b|\bstart (a )?(new|fresh|over)\b/.test(msgLower);
         const wantsReopen = !wantsNew && (/^(yes|yeah|yep|yup|sure|ok|okay|please|1|reopen|re-open|go ahead)\b/.test(msgLower) || /\b(re-?open|change (it|that|the order)|modify|edit (it|the order)|update (it|the order))\b/.test(msgLower));
@@ -3032,7 +3065,8 @@ app.post('/chat', async (req, res) => {
           po.reasked = true; saveFlowState();
           console.log('[order] reopen answer unclear — asking once more: ' + JSON.stringify(message).slice(0, 60));
           const rq = 'Just to check — should I *reopen* order #' + po.order_id + ' so you can change it, or start a *new* separate order?';
-          return res.json({ text: rq, response: rq });
+          const rqOut = format === 'plain' ? rq.replace(/\*/g, '') : rq;
+          return res.json({ text: rqOut, response: rqOut });
         } else {
           po.resolved = true; po.awaitingReopen = false; saveFlowState();
           console.log('[order] reopen still unclear after re-ask — leaving ' + po.order_id + ' as placed, handling message as new');
@@ -3045,8 +3079,9 @@ app.post('/chat', async (req, res) => {
         console.log('[order] request touches placed order ' + po.order_id + ' with an empty cart — asking before reopening: ' + JSON.stringify(message).slice(0, 80));
         const rq = 'Heads up — I already placed your order #' + po.order_id + (summary ? ' (' + summary + ')' : '') + '.' + (link ? ' Payment is still open: ' + link + '.' : '') +
           '\n\nWould you like me to *reopen* it? I\'ll put those items back in your basket so you can make changes and place an updated order (you\'d then pay the new link instead). Or I can start a *new*, separate order.' +
-          '\n\nIf you\'ve already paid, reply *new* and contact bevvi-support@getbevvi.com to change the paid order.';
-        return res.json({ text: rq, response: rq });
+          '\n\nIf you\'ve already paid, just tell me what to change and I\'ll pass it to our team.';
+        const rqOut = format === 'plain' ? rq.replace(/\*/g, '') : rq;
+        return res.json({ text: rqOut, response: rqOut });
       }
     }
 

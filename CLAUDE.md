@@ -323,6 +323,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   in our order log (requested_by) and [place_order] account | customer email | requested by. Until Oct 3 the top-level
   email was the requester (email sender / Slack user).
 - A placed order (API success only) leaves the cart → state.placedOrder; touching it asks reopen/new.
+  A payment report ("I just made the payment") or a delivery-detail change (recipient, on-site contact, driver note, COI)
+  never gets the link again or the reopen question (placed-order-msg.js): paid is noted (po.paid_reported), the change is
+  emailed to bevvi-support (no order-update API; QA/dry-run not sent) and quoted back (Oct 4, Foodie For All: BJ paid, Rachel
+  re-sent the link and asked reopen/new). email-agent reply-all reads a glued cc ("...comand") as the real address.
   Bevvi has no cancel API: a re-placed reopened order leaves the earlier one unpaid (logged).
 
 ## Open items

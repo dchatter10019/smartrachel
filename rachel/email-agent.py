@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Rachel Email Agent - monitors rachelai@getbevvi.com"""
 
-import os, json, base64, time, logging, requests, subprocess
+import os, re, json, base64, time, logging, requests, subprocess
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
@@ -101,6 +101,9 @@ def get_email(service, msg_id):
 LAST_EXTRA_CC = []
 LAST_EXTRA_TO = []   # the payment link's customer: the reply's To; the sender + the thread go in Cc (DC, Oct 3)
 LAST_RELINK = None   # {session_id, message}: the "which proposal?" answer — replay the held email on that session
+# Same pattern as email-order.js GLUED: a TLD with the next word glued on.
+GLUED = re.compile(r'\.(com|net|org|edu|gov|io|co|us|ai|biz|info|me)(and|or|then|plus|also|too|thanks|please|cc)$', re.I)
+
 def reply_all_cc(email, sender_email):
     # Reply-all (DC, Sep 29): everyone on the email's To and Cc gets Rachel's reply, except Rachel and the
     # sender (who is the To). Addresses parsed properly ("Name, Jr." <a@b>, lists), lowercased, deduped.
@@ -108,6 +111,12 @@ def reply_all_cc(email, sender_email):
     seen, out = {RACHEL_EMAIL.lower(), (sender_email or '').lower()}, []
     for _name, addr in getaddresses([email.get('to', ''), email.get('cc', '')] + list(LAST_EXTRA_CC)):
         a = (addr or '').strip().lower()
+        g = GLUED.search(a)
+        if g:
+            # "inge@foodieforall.comand" (Oct 3, a missing space) went out once and stayed on the thread: every reply-all
+            # bounced (mailer-daemon x2 per email, Oct 4). Read as the real address.
+            log.info(f'[recipients] {a} read as {a[:g.start(2)]} ("{g.group(2)}" glued onto the domain)')
+            a = a[:g.start(2)]
         if '@' in a and a not in seen:
             seen.add(a); out.append(a)
     return out

@@ -1,0 +1,30 @@
+name: order-paid-detail-change
+# Oct 4, Foodie For All: after the order was placed, BJ wrote "I just made the payment. Could you please update the
+# recipient name to Mara Miller ..." — Rachel re-sent the payment link and asked reopen/new. A payment report never
+# gets the link again; a recipient / driver-note change is passed to the team, not a reopen question.
+stop_on_fail: true
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+  - send: "ok lets go with this and order"
+  - send: "QA Tester"
+  - send: "same"
+  - send: "9175550100"
+  - send: "tomorrow at 5 pm"
+  - send: "none"
+  - send: "10%"
+  - send: "yes"
+    expect: {matches: "placed|confirmed|submitted", log_contains: ["basket cleared"]}
+  - send: "Hi, I just made the payment. Could you please update the recipient name to Mara Miller, and that the delivery people say they are delivering from Foodie For All for COI purposes?"
+    expect:
+      contains: ["paid", "Mara Miller", "bevvi-support"]
+      not_contains: ["direct-checkout", "reopen", "Payment is still open"]
+      log_contains: ["paid — change request not sent (QA/dry-run"]
+  - send: "Also please change the on-site contact phone to 862-252-5077"
+    expect:
+      contains: ["862-252-5077"]
+      not_contains: ["direct-checkout", "reopen"]
