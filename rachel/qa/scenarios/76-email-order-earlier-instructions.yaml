@@ -1,0 +1,17 @@
+name: email-order-earlier-instructions
+fresh: true
+tags: [email]
+# Real (Oct 3, Foodie For All): the delivery instructions (POC, "say you're delivering from Foodie For All" for COI,
+# loading dock) came in earlier emails ("Please see the delivery instructions below:Main POC is ..." — text on the same
+# line as the label); the order was placed from a later "place the order" email and went out with no driver notes.
+format: plain
+context: {email_subject: "Menu Request - Example Event - Oct 6th", user_name: "QA Tester"}
+turns:
+  - send: "Hi,\r\n\r\nPlease send a quote for the items below.\r\n\r\nI am 21 years old. Deliver to 132 W 32nd St, New York, NY 10001\r\n\r\n2 x Corona Extra 12 pack\r\n2 Josh Cellars Cabernet Sauvignon\r\n\r\nThanks!"
+    expect:
+      contains: ["PDF proposal is attached"]
+  - send: "Rachel,\r\n\r\n*Please see the delivery instructions below:Main POC is Mara **(862)\r\n555-0177 <8625550177>**. They should say they're delivering from Example Co to\r\navoid any COI issues. Loading dock is on 31st Street.*\r\n\r\nThanks!"
+  - send: "Please place the order and send the payment link to pat@example-client.com\r\n\r\n*Customer Name: *\r\nPat Example-Lee\r\n\r\n*Customer Phone Number: *\r\n(862) 555-0142\r\n\r\n*Delivery date and time:*\r\nMonday, October 5th, between 5 to 6 PM"
+    expect:
+      contains: ["Payment link", "Notes for our driver", "Loading dock is on 31st Street", "delivering from Example Co"]
+      log_contains: ["[email-order] delivery instructions from an earlier email in the thread"]

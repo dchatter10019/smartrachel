@@ -162,7 +162,7 @@ function tipIn(text) {
 // Gmail's plain-text decorations: "<(862)%20252-5077>", "<https://www.google.com/maps/...>", "<a@b.com>" after the same
 // address, "*bold*" markers. Real (Oct 2, Sean's Foodie For All payment-link email): none of it was read.
 function cleanGmail(text) {
-  return String(text || '').replace(/<(?:https?:\/\/|mailto:|tel:)[^>\s]*>/gi, ' ').replace(/<\(?\d{3}\)?%20[\d%-]+>/g, ' ')
+  return String(text || '').replace(/<(?:https?:\/\/|mailto:|tel:)[^>\s]*>/gi, ' ').replace(/<\(?\d{3}\)?%20[\d%-]+>/g, ' ').replace(/<\+?\d{7,15}>/g, ' ')
     .replace(/([\w.+-]+@[\w-]+(?:\.[\w-]+)+)\s*<\1>/gi, '$1')
     .replace(/(^|\s)\*+(?=\S)|(?<=\S)\*+(?=\s|$)/gm, '$1').replace(/(^|\s)\*+(?=\s|$)/gm, '$1').replace(/\u00a0/g, ' ').replace(/[ \t]{2,}/g, ' ');
 }
@@ -181,15 +181,19 @@ function pocIn(lines) {
   return null;
 }
 // "here are the delivery instructions for the order:" + the paragraph(s) after it, up to the sign-off.
+// The text may start on the same line: "Please see the delivery instructions below:Main POC is Mara ..." (Oct 3, Foodie For
+// All — it was missed, and the order went out without the driver notes).
 function instructionsBlock(lines) {
-  const i = (lines || []).findIndex(l => /\b(?:delivery|driver)\s+(?:instructions?|notes?|details)\b[^\n]*:\s*$/i.test(l));
+  const KW = /\b(?:delivery|driver)\s+(?:instructions?|notes?|details)\b[^:\n]*:\s*(.*)$/i;
+  const i = (lines || []).findIndex(l => KW.test(l));
   if (i < 0) return '';
-  const out = [];
+  const first = lines[i].match(KW)[1].replace(/^[*\s]+|[*\s]+$/g, '');
+  const out = first ? [first] : [];
   for (const l of lines.slice(i + 1)) {
     if (/^\s*(?:thanks|thank you|best|regards|cheers|sincerely)\b/i.test(l) || /^\s*On\s.+wrote:\s*$/.test(l) || HEADER.test(l)) break;
     if (l.trim()) out.push(l.trim());
   }
-  return out.join(' ').replace(/\s{2,}/g, ' ').trim().slice(0, 700);
+  return out.join(' ').replace(/\s{2,}/g, ' ').replace(/\s+([.,;])/g, '$1').trim().slice(0, 700);
 }
 
 function extract(text, sender, now) {

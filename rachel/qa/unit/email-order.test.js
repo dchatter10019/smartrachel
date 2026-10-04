@@ -86,5 +86,8 @@ console.log('delivery date/time phrasings (checked on real wording, Sep 29) -> t
   for (const [label, text, want] of cases) eq(label, hourOf(text), want);
 }
 
+// Oct 3, Foodie For All: the instructions start on the label's own line.
+eq('instructions on the same line as the label', EO.extract('*Please see the delivery instructions below:Main POC is Mara **(862)\n252-5077 <8622525077>**. Say you are delivering from Foodie For All.*\n*Freight: loading dock on your left.*\n\nThanks!', { email: 'sean@getbevvi.com' }, new Date()).instructions, 'Main POC is Mara (862) 252-5077. Say you are delivering from Foodie For All. Freight: loading dock on your left.');
+
 console.log(failed ? '\nemail-order: ' + failed + ' FAILED' : '\nemail-order: all passed');
 if (failed) process.exit(1);

@@ -2699,6 +2699,15 @@ app.post('/chat', async (req, res) => {
           }
           if (got.length) console.log('[email-order] from earlier emails in the thread: ' + got.join(', '));
         }
+        // Delivery instructions given in an earlier email ride on the order too (Oct 3, Foodie For All: the POC / COI /
+        // loading-dock notes were two emails up; the order was placed from "place the order" and went out without them).
+        if (!od.instructions) {
+          const prior = (sessions[sessionKey] || []).filter(m => m.role === 'user').map(m => typeof m.content === 'string' ? m.content : (Array.isArray(m.content) ? m.content.filter(c => c.type === 'text').map(c => c.text).join('\n') : '')).filter(Boolean).reverse();
+          for (const t of prior) {
+            const px = EO.extract(t, { name: context && context.user_name, email }, new Date());
+            if (px.instructions) { od.instructions = px.instructions; console.log('[email-order] delivery instructions from an earlier email in the thread: ' + JSON.stringify(px.instructions).slice(0, 160)); break; }
+          }
+        }
         let problem = '';
         // A date alone is kept; a time alone joins the kept date (Sep 29, Gen II: "the delivery date is Monday,
         // October 5th" was ignored and the date+time asked for again).
@@ -3009,10 +3018,10 @@ app.post('/chat', async (req, res) => {
 
     // ── PLACED ORDER: reopen only with the customer's permission ───────────
     // After an order is placed the cart is empty (onOrderPlaced). The customer may not have
-    // paid yet and may want to change it. When they refer to the basket/order with nothing
-    // new in the cart, say the order is already placed and ASK: reopen it (items go back in
-    // the basket, their request then runs on it) or start a new, separate order. Decided
-    // here, in code — the LLM never re-populates a placed order on its own.
+    // paid yet and may want to change it. There is no order-update API: a change request is emailed
+    // to bevvi-support and the customer told support will update it (DC, Oct 4). Decided here, in
+    // code — the LLM never re-populates a placed order on its own. (The reopen question below only
+    // finishes sessions that were asked it before Oct 4.)
     if (state.placedOrder && !state.placedOrder.resolved && !state.orderStep && !state.proposalStep && !isInternalMsg) {
       const po = state.placedOrder;
       let cartN = 0; try { cartN = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
@@ -3020,12 +3029,20 @@ app.post('/chat', async (req, res) => {
       // "I just made the payment" / a delivery-detail change (recipient, driver note, COI) is not a reason to reopen: never
       // re-send the payment link to someone who says they paid, and pass detail changes to the team (no order-update API).
       // (Oct 4, Foodie For All: BJ paid and asked to change the recipient — Rachel re-sent the link and asked reopen/new.)
-      let pom = cartN === 0 ? POM.classify(message) : null;
-      if (!pom && cartN === 0 && po.paid_reported && POM.itemChange(message)) pom = 'paid_items';
+      // DC (Oct 4): ANY change to a placed order — paid or not, items or delivery details — goes to bevvi-support the same
+      // way; Rachel no longer offers to reopen it (that placed a second order). Only "a new / separate order" starts fresh.
+      const wantsNewOrder = /\b(?:new|separate|another|different|second) order\b|\bstart (?:a )?(?:new|fresh|over)\b/i.test(message);
+      if (wantsNewOrder && cartN === 0 && !po.awaitingReopen) {
+        po.resolved = true; saveFlowState();
+        console.log('[order] customer asked for a new order; ' + po.order_id + ' left as placed: ' + JSON.stringify(message).slice(0, 80));
+      }
+      let pom = cartN === 0 && !po.resolved ? POM.classify(message) : null;
+      if (!pom && cartN === 0 && !po.resolved && !wantsNewOrder && POM.changeRequest(message)) pom = po.paid_reported ? 'paid_items' : 'items';
       if (pom) {
         if (/^paid/.test(pom) && !po.paid_reported) { po.paid_reported = true; po.paid_reported_at = Date.now(); po.paid_reported_by = email || ''; }
         po.awaitingReopen = false;
-        const asks = POM.requestSentences(message);
+        let asks = POM.requestSentences(message);
+        if (!asks.length && pom !== 'paid') asks = [String(message).trim()];
         let fwd = false;
         if (asks.length) {
           if (isQA || po.dry_run) console.log('[order] QA/dry-run — support note for ' + po.order_id + ' NOT sent');
@@ -3069,17 +3086,6 @@ app.post('/chat', async (req, res) => {
           po.resolved = true; po.awaitingReopen = false; saveFlowState();
           console.log('[order] reopen still unclear after re-ask — leaving ' + po.order_id + ' as placed, handling message as new');
         }
-      } else if (cartN === 0 && /\b(add|also|remove|drop|take out|swap|replace|change|instead|more|less|fewer|update|edit|increase|decrease|cart|basket|my order|the order|this order|that order|place (the |an |my )?order|order it|check ?out|re-?order)\b/i.test(message)) {
-        po.awaitingReopen = true; po.heldMessage = message; saveFlowState();
-        let items = []; try { items = JSON.parse(po.line_items || '[]'); } catch (e) {}
-        const summary = items.slice(0, 3).map(i => (i.qty || i.quantity || 1) + 'x ' + i.name).join(', ') + (items.length > 3 ? ' and ' + (items.length - 3) + ' more' : '');
-        const link = po.payment_url ? (format === 'slack' ? '<' + po.payment_url + '|payment link>' : po.payment_url) : '';
-        console.log('[order] request touches placed order ' + po.order_id + ' with an empty cart — asking before reopening: ' + JSON.stringify(message).slice(0, 80));
-        const rq = 'Heads up — I already placed your order #' + po.order_id + (summary ? ' (' + summary + ')' : '') + '.' + (link ? ' Payment is still open: ' + link + '.' : '') +
-          '\n\nWould you like me to *reopen* it? I\'ll put those items back in your basket so you can make changes and place an updated order (you\'d then pay the new link instead). Or I can start a *new*, separate order.' +
-          '\n\nIf you\'ve already paid, just tell me what to change and I\'ll pass it to our team.';
-        const rqOut = format === 'plain' ? rq.replace(/\*/g, '') : rq;
-        return res.json({ text: rqOut, response: rqOut });
       }
     }
 

@@ -322,13 +322,15 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   store-agent/shopping-agent.js, env RACHEL_ORDER_ACCOUNT_EMAIL); customerData.email = the customer; who asked is kept
   in our order log (requested_by) and [place_order] account | customer email | requested by. Until Oct 3 the top-level
   email was the requester (email sender / Slack user).
-- A placed order (API success only) leaves the cart → state.placedOrder; touching it asks reopen/new.
-  A payment report ("I just made the payment") or a delivery-detail change (recipient, on-site contact, driver note, COI)
-  never gets the link again or the reopen question (placed-order-msg.js): paid is noted (po.paid_reported), the change is
-  emailed to bevvi-support (no order-update API; QA/dry-run not sent); the reply only says "Our support team has been made
-  aware of this request — we'll update the order and let you know" (DC, Oct 4) (Oct 4, Foodie For All: BJ paid, Rachel
-  re-sent the link and asked reopen/new). email-agent reply-all reads a glued cc ("...comand") as the real address.
-  Bevvi has no cancel API: a re-placed reopened order leaves the earlier one unpaid (logged).
+- A placed order (API success only) leaves the cart → state.placedOrder. There is no order-update API: ANY change to a
+  placed order, paid or not (items, recipient, contact, driver note, COI, cancel), is emailed to bevvi-support and the reply
+  only says "Our support team has been made aware of this request — we'll update the order and let you know" (DC, Oct 4;
+  placed-order-msg.js). No reopen question any more (the old awaitingReopen branch only finishes sessions asked before
+  Oct 4). "I paid" is noted (po.paid_reported) and never gets the link again. Only "a new / separate order" starts fresh.
+  QA/dry-run orders: the support email is not sent. email-agent reply-all reads a glued cc ("...comand") as the real address.
+- Email orders: delivery instructions in an EARLIER email of the thread ride on the order ([email-order] delivery
+  instructions from an earlier email); text on the label's own line ("delivery instructions below:Main POC ...") is read
+  (Oct 3, Foodie For All: the POC/COI/loading-dock notes never reached the order).
 
 ## Open items
 - WhatsApp QA phone +19173024521 has no handset and is not a Twilio number: replies come back 63024

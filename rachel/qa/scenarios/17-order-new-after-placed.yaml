@@ -1,6 +1,6 @@
 name: order-new-after-placed
-# After an order is placed, "add X" asks first; "new" starts a separate order: the placed
-# items do not come back and the held request runs on an empty basket.
+# After an order is placed, "add X" is a change to that order -> escalated to support (DC, Oct 4); asking for a NEW
+# order starts a separate one: the placed items do not come back.
 stop_on_fail: true
 turns:
   - send: reset
@@ -21,6 +21,6 @@ turns:
   - send: "yes"
     expect: {matches: "placed|confirmed|submitted", log_contains: ["basket cleared"]}
   - send: "add a bottle of Veuve Clicquot"
-    expect: {contains: ["already placed", "new"]}
-  - send: "new"
-    expect: {contains: ["Veuve"], not_contains: ["Kim Crawford", "already placed"], log_contains: ["customer chose a new order"]}
+    expect: {contains: ["support team has been made aware"], not_contains: ["reopen"]}
+  - send: "start a new order please, I need a bottle of Veuve Clicquot"
+    expect: {contains: ["Veuve"], not_contains: ["Kim Crawford", "support team has been made aware"], log_contains: ["customer asked for a new order"]}

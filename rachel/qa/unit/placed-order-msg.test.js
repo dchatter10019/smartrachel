@@ -20,5 +20,8 @@ eq('delivery instructions', P.classify('Please add delivery instructions: use th
 eq('item change -> reopen question', P.classify('Can you add 2 more bottles of Grey Goose?'), null);
 eq('paid + item change', P.classify('I paid, but can we add another case of Corona?'), 'paid_items');
 eq('thanks only', P.classify('Looping in BJ to process payment!'), null);
+eq('change request: add', P.changeRequest('can you add 2 more bottles to that order?'), true);
+eq('change request: cancel', P.changeRequest('please cancel it'), true);
+eq('a question is not a change', P.changeRequest('when will my order arrive?'), false);
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');

@@ -16,6 +16,11 @@ const DETAILS = /\b(?:recipient|receiver|receiving|on-?site contact|point of con
 const ITEM_NOUN = /\b(?:bottles?|cases?|packs?|cans|\d+\s*cans?|wine|beer|vodka|tequila|whiske?y|bourbon|gin|rum|prosecco|champagne|seltzers?|liquor|basket|cart|items?)\b/i;
 const ITEM_VERB = /\b(?:add|remove|drop|take out|swap|replace|instead of|more|less|fewer|increase|decrease|extra|re-?order)\b/i;
 
+// A request to change the order: an item verb, or change/update/edit/modify/cancel wording. A question about it
+// ("when will my order arrive?") is not.
+const CHANGE = /\b(?:add|remove|drop|take out|swap|replace|instead|make (?:it|that|them) \d+|more|less|fewer|increase|decrease|extra|change|update|edit|modify|cancel|switch)\b/i;
+function changeRequest(text) { return CHANGE.test(String(text || '')); }
+
 function paidClaim(text) { const t = String(text || ''); return PAID.test(t) && !NOT_PAID.test(t); }
 function detailsChange(text) { return DETAILS.test(String(text || '')); }
 function itemChange(text) {
@@ -38,4 +43,4 @@ function requestSentences(text) {
     .filter(s => s && !PAID.test(s) && !/^(?:hi|hello|hey|thanks?|thank you|best|regards|cheers)\b[\w ,!.]*$/i.test(s) && (DETAILS.test(s) || ITEM_NOUN.test(s) || ITEM_VERB.test(s) || /\b(?:update|change|could you|can you|please)\b/i.test(s)));
 }
 
-module.exports = { paidClaim, detailsChange, itemChange, classify, requestSentences };
+module.exports = { changeRequest, paidClaim, detailsChange, itemChange, classify, requestSentences };
