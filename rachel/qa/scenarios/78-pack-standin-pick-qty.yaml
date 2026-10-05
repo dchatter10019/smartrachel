@@ -1,0 +1,17 @@
+name: pack-standin-pick-qty
+# Oct 5 (DC asked, checked live): "2 x Stella Artois Premium Lager Beer 24 x 11 oz Bottles" in SF — the 24-pack isn't
+# carried, Rachel listed the 12-packs, the customer picked one and the basket got 1x (she only ASKED whether to make
+# it 4). A picked pack stand-in now keeps the units asked for: 2 x 24 = 4 x 12-pack (pack-standin.js).
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "332 Pine St, San Francisco, CA 94104"
+  - send: "2 x Stella Artois Premium Lager Beer 24 x 11 oz Bottles"
+    expect: {contains: ["Stella"]}
+  - send: "the Stella 12 pack works"
+    expect:
+      log_contains: ["[confirm-substitute] pack: "]
+  - send: "show my basket"
+    expect:
+      matches: "(?i)\\b4\\s*x?\\s*[^\\n]*Stella[^\\n]*12"
+      not_matches: "(?i)\\b1\\s*x\\s*Stella"

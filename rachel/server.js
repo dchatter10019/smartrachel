@@ -552,6 +552,7 @@ function basketAfterChange(state) {
 // The quantity the customer asked for an item in their own recent messages ("3 x La Crema Pinot Noir Sonoma Coast
 // 750 mL") — for a replacement of an item that never made the basket (not carried). Real bug (Sep 30, DC): picking
 // Decoy Pinot Noir for the unavailable "3 x La Crema Pinot Noir" added 1 bottle and asked "How many?".
+const { parsePack, packStandInQty, requestedPackLine } = require('./pack-standin.js');
 function requestedQtyFor(sessionKey, itemName) {
   const nrm = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/['’]/g, '');
   const want = nrm(itemName).replace(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/g, ' ').split(/[^a-z0-9]+/).filter(w => w.length >= 3);
@@ -609,6 +610,15 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
               if (named.length === 1) { originalItem = named[0]; console.log('[confirm-substitute] no original given — ' + replacementName + ' stands in for the not-carried ' + JSON.stringify(named[0]) + ' (the customer named it with "' + t + '")'); }
             }
           } catch (e) {}
+          // A pack the customer asked for ("2 x Stella ... 24 x 11 oz") that only came back in another pack size: the pick
+          // is its stand-in, so the units asked for carry over. Real (Oct 5): the 12-pack picked from the list went in at 1x.
+          if (!originalItem) try {
+            const linesK = (sessions[sessionKey] || []).filter(m => m.role === 'user' && typeof m.content === 'string').slice(-6).map(m => m.content)
+              .concat(state.currentUserMessage || '').reverse().flatMap(c => String(c).split(/\n+/));
+            const rl = requestedPackLine(linesK, replacementName);
+            if (rl && basketLineFor(items, rl.name) < 0) { originalItem = rl.name; console.log('[confirm-substitute] no original given — ' + replacementName + ' stands in for the customer\'s ' + rl.qty + ' x ' + JSON.stringify(rl.name) + ' (another pack size)'); }
+            else if (rl) console.log('[confirm-substitute] ' + JSON.stringify(rl.name) + ' is a basket line — the pick is not its stand-in by pack alone');
+          } catch (e) { console.log('[confirm-substitute] pack line check failed: ' + e.message); }
         }
         // A cross-type original must come from the customer. Real bug (Sep 29 QA, scenario 26): for
         // "Don Julio Blanco and Casamigos Blanco" the LLM sent original_item = the Bacardi (a rum still
@@ -639,12 +649,14 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
         // The line being replaced (basketLineFor: whole words — "La" never matches "Blanc").
         let qtyToUse = 1;
         let categoryToUse = '';
+        let packFrom = '';   // the original's name/size when qtyToUse counts ITS packs (converted once the pick is resolved)
         if (originalItem) {
           const removeIdx = basketLineFor(items, originalItem);
           if (removeIdx >= 0) console.log('[confirm-substitute] line replaced: ' + JSON.stringify(items[removeIdx].name || items[removeIdx].label));
           if (removeIdx >= 0) {
             qtyToUse = items[removeIdx].qty || items[removeIdx].quantity || 1;
             categoryToUse = items[removeIdx].category || '';
+            packFrom = (items[removeIdx].name || '') + ' ' + (items[removeIdx].size || '');
             items.splice(removeIdx, 1);
           } else {
             const rq = (opts && opts.qty) || ((getState(sessionKey).unavailableQty || {})[originalItem]) || requestedQtyFor(sessionKey, originalItem);
@@ -653,7 +665,8 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
             // up to 1 L"). "Lemon Juice 1L" x1 -> Master of Mixes 375 mL x3.
             const vol = x => { const m = String(x || '').toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l|liter|litre|oz)\b/); return m ? +m[1] * (m[2] === 'ml' ? 1 : m[2] === 'oz' ? 29.5735 : 1000) : 0; };
             const vO = vol(originalItem), vR = vol(replacementSize) || vol(replacementName);
-            if (vO && vR && vR < vO * 0.9) {
+            if (parsePack(originalItem)) packFrom = originalItem;   // a pack: units carry over below, not bottle volume
+            else if (vO && vR && vR < vO * 0.9) {
               const qv = Math.ceil(((qtyToUse || 1) * vO) / vR - 0.02);
               console.log('[confirm-substitute] volume: ' + (qtyToUse || 1) + ' x ' + JSON.stringify(originalItem) + ' = ' + Math.round((qtyToUse || 1) * vO) + ' mL -> ' + qv + ' x ' + Math.round(vR) + ' mL of ' + replacementName);
               qtyToUse = qv;
@@ -729,6 +742,11 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
           console.log('[confirm-substitute] REFUSED: could not resolve', JSON.stringify(replacementName), 'to a catalog product — not added');
           events.unmatched(replacementName);
           return { success: false, unresolved_replacement: replacementName, error: 'Could not find "' + replacementName + '" in the catalog. Search for it and present the real matches so the customer can pick one; do not assume a product name.' };
+        }
+        if (packFrom) {
+          const replText = (resolved.name || replacementName) + ' ' + (resolved.sizeStr || resolved.size || replacementSize || '');
+          const pk = packStandInQty(packFrom, qtyToUse, replText);
+          if (pk) { console.log('[confirm-substitute] pack: ' + qtyToUse + ' x ' + pk.from + '-pack (' + JSON.stringify(packFrom.trim()) + ') -> ' + pk.qty + ' x ' + pk.to + '-pack of ' + (resolved.name || replacementName)); qtyToUse = pk.qty; }
         }
         const rp = resolved ? (parseFloat(resolved.salePrice || resolved.price) || replacementPrice || 0) : (replacementPrice || 0);
         const newPid = resolved ? ((resolved.corpProductFilter && resolved.corpProductFilter.corpProductId) || resolved.product_id || resolved.id || '') : '';

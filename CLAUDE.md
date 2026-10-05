@@ -292,7 +292,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   "a case" with no count = 24 units (a 12-pack is fine, DC); not wine/spirits. Plain water ("bottled water case") = the store's plain
   still water ([doSearch] plain water; a 24ct pack first for a case), never a word match (Oct 4: FIJI left SF and "Bottled"
   found port/bourbon). A requested pack not carried, with a smaller pack of the same product + container here, takes enough
-  of those ("Stella 24 x 11 oz" -> 4 six-packs each; [buildPackage] pack:). A smaller stand-in for a not-carried
+  of those ("Stella 24 x 11 oz" -> 4 six-packs each; [buildPackage] pack:; a container within 10% counts, 11 vs 12 oz). A PICKED
+  pack stand-in keeps the units too (pack-standin.js in applyBasketSubstitute, every pick/swap path; with no original named,
+  the customer's own counted pack line of that brand is the original): 2 x 24-pack -> 4 x 12pk ([confirm-substitute] pack:;
+  Oct 5: the picked 12-pack went in at 1x). A smaller stand-in for a not-carried
   line makes up its volume (Lemon Juice 1L -> 3 x 375 mL). A pick replaces the pending not-carried line of the same
   kind (pending-original.js) — never pendingSubstitutes[0]. "N/A" = "NA" = non-alcoholic; "Brewing"/"Winery" are filler.
 - Every ready turn, before anything reads the basket (basket-hygiene.js, [basket-hygiene]): on-hand lines (state.onHand
