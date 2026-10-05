@@ -323,6 +323,10 @@ def handle_message(event, say, client, ack=None):
         handle(event, say, client)
         return
 
+    if OPS_CHANNEL and channel in (OPS_CHANNEL, OPS_TEST):
+        handle_ops_message(event, client)
+        return
+
 
 # ── DEBUG-AND-FIX LOOP: ✅ / ❌ on a fixer post in #rachel-ops (spec Part D) ───────────────────────────────────
 # Inactive until /etc/rachel.env has OPS_SLACK_CHANNEL and OPS_APPROVERS (comma-separated Slack user ids), and the
@@ -366,30 +370,107 @@ def handle_reaction(event, client, ack=None):
     m = re.search(r"(?:Fix ready|Needs a decision) — (F-\d{4})", msg.get("text", ""))
     if not m or "Fix ready" not in msg.get("text", ""):
         log.info(f"[fix-review] :{name}: by {user} on a message that is not a fix post — ignored"); return
-    fid = m.group(1)
+    _act_on_fix(client, ch, ts, m.group(1), user, "x" if name == "x" else "approve")
+
+
+def _finding_status(fid):
+    """Status of a finding in logs/findings.jsonl (one line per finding), or '' when unknown."""
+    try:
+        for l in open("/home/ubuntu/logs/findings.jsonl"):
+            try: d = json.loads(l)
+            except Exception: continue
+            if d.get("id") == fid: return d.get("status", "")
+    except Exception as e:
+        log.warning(f"[fix-review] could not read findings.jsonl: {e}")
+    return ""
+
+def _act_on_fix(client, ch, post_ts, fid, user, action):
+    """action 'approve' -> ops/deploy-fix.sh, 'x' -> throw the branch away. Replies go in the fix post's thread."""
     if user not in OPS_APPROVERS:
-        client.chat_postMessage(channel=ch, thread_ts=ts, text="Only the people allowed to approve fixes can put one live or throw it away.")
-        log.info(f"[fix-review] {fid}: :{name}: by {user} — not an approver"); return
+        client.chat_postMessage(channel=ch, thread_ts=post_ts, text="Only the people allowed to approve fixes can put one live or throw it away.")
+        log.info(f"[fix-review] {fid}: {action} by {user} — not an approver"); return
+    status = _finding_status(fid)
+    if status in ("deployed", "resolved", "discarded", "dismissed"):
+        word = {"deployed": "already live", "resolved": "already live", "discarded": "already thrown away", "dismissed": "already closed"}[status]
+        client.chat_postMessage(channel=ch, thread_ts=post_ts, text=f"{fid} is {word} — nothing to do.")
+        log.info(f"[fix-review] {fid}: {action} by {user} ignored — status {status}"); return
     if fid in _fix_runs:
-        return
+        log.info(f"[fix-review] {fid}: {action} by {user} ignored — already running"); return
     _fix_runs.add(fid)
+    log.info(f"[fix-review] {fid}: {action} by {user} — starting")
     def run():
         try:
-            if name == "x":
+            if action == "x":
                 r = subprocess.run(["bash", "-c", f"cd /home/ubuntu && git worktree remove --force work/{fid} 2>/dev/null; git branch -D fix/{fid} && python3 -c \"import sys;sys.path.insert(0,'ops');import monitor as M;s=M.Store();[f.update(status='discarded') for f in s.items if f['id']=='{fid}'];s._save()\""], capture_output=True, text=True, timeout=60)
                 out = f"🗑️ Thrown away: {fid} will not go live. Nothing changed for customers." if r.returncode == 0 else f"⚠️ I couldn't fully throw {fid} away, but nothing went live. (tech: {(r.stderr or r.stdout)[-200:]})"
             else:
-                client.chat_postMessage(channel=ch, thread_ts=ts, text=f"Putting {fid} live: testing it once more on a practice copy first, then on the real Rachel (about 5 minutes)…")
+                client.chat_postMessage(channel=ch, thread_ts=post_ts, text=f"Putting {fid} live: testing it once more on a practice copy first, then on the real Rachel (about 5 minutes)…")
                 r = subprocess.run(["/home/ubuntu/ops/deploy-fix.sh", fid], capture_output=True, text=True, timeout=1800)
                 out = (r.stdout.strip().split("\n") or ["(no output)"])[-1]
-            client.chat_postMessage(channel=ch, thread_ts=ts, text=out)
-            log.info(f"[fix-review] {fid}: :{name}: by {user} -> {out[:160]}")
+            client.chat_postMessage(channel=ch, thread_ts=post_ts, text=out)
+            log.info(f"[fix-review] {fid}: {action} by {user} -> {out[:160]}")
         except Exception as e:
             log.warning(f"[fix-review] {fid} failed: {e}")
-            client.chat_postMessage(channel=ch, thread_ts=ts, text=f"⛔ Something went wrong with {fid} and nothing changed for customers. (tech: {e})")
+            client.chat_postMessage(channel=ch, thread_ts=post_ts, text=f"⛔ Something went wrong with {fid} and nothing changed for customers. (tech: {e})")
         finally:
             _fix_runs.discard(fid)
     threading.Thread(target=run, daemon=True).start()
+
+# A TYPED ✅ / ❌ in #rachel-ops counts like the reaction (Oct 5: DC typed ✅ as a new channel message under the F-0016 post;
+# only reactions were handled, so it was silently ignored and the fix sat unapproved). Approve = a short message that is a
+# check mark or "approve / deploy / go live / ship it"; reject = ❌ or "throw it away / discard / reject". It acts on
+# the F-nnnn named in it, else the fix post it replies to (thread), else the one fix still waiting for review in the channel
+# (several waiting: asks which). Anything else in the channel is ignored (logged).
+_APPROVE_RE = re.compile(r"^(?:(?::white_check_mark:|:heavy_check_mark:|✅|✔️?)+|approved?|deploy(?: it)?|go live|put it live|ship it)[.!]*$", re.I)
+_REJECT_RE  = re.compile(r"^(?:(?::x:|❌)+|reject(?:ed)?|discard(?: it)?|throw it away)[.!]*$", re.I)
+
+def _fix_posts(client, ch, limit=50):
+    """Fix posts in the channel, newest first: [(ts, fid)]."""
+    try: msgs = client.conversations_history(channel=ch, limit=limit).get("messages", [])
+    except Exception as e:
+        log.warning(f"[fix-review] could not read the channel: {e}"); return []
+    out = []
+    for msg in msgs:
+        m = re.search(r"Fix ready — (F-\d{4})", msg.get("text", ""))
+        if m: out.append((msg.get("ts", ""), m.group(1)))
+    return out
+
+def handle_ops_message(event, client):
+    if is_bot(event): return
+    ch, user, ts = event.get("channel", ""), event.get("user", ""), event.get("ts", "")
+    text = re.sub(r"<@[A-Z0-9]+>", "", event.get("text", "")).strip()
+    idm = re.search(r"\bF-\d{4}\b", text, re.I)
+    fid = idm.group(0).upper() if idm else ""
+    core = re.sub(r"\bF-\d{4}\b", "", text, flags=re.I).strip(" ,-")
+    action = "approve" if _APPROVE_RE.match(core) else "x" if _REJECT_RE.match(core) else ""
+    if not action:
+        log.info(f"[fix-review] message in ops channel by {user} is not an approval — ignored: {text[:80]!r}"); return
+    posts = _fix_posts(client, ch)
+    thread = event.get("thread_ts")
+    if not fid and thread:
+        fid = next((f for t, f in posts if t == thread), "")
+        if not fid:
+            try:
+                parent = client.conversations_replies(channel=ch, ts=thread, limit=1)["messages"][0].get("text", "")
+                m = re.search(r"Fix ready — (F-\d{4})", parent); fid = m.group(1) if m else ""
+            except Exception as e: log.warning(f"[fix-review] could not read the thread parent: {e}")
+    reply_ts = thread or ts
+    if not fid:
+        waiting = [(t, f) for t, f in posts if _finding_status(f) == "review"]
+        if len(waiting) == 1:
+            fid = waiting[0][1]
+        elif not waiting:
+            client.chat_postMessage(channel=ch, thread_ts=reply_ts, text="There's no fix waiting for approval right now, so nothing changed.")
+            log.info(f"[fix-review] {action} by {user} — no fix waiting"); return
+        else:
+            ids = ", ".join(f for _, f in waiting)
+            client.chat_postMessage(channel=ch, thread_ts=reply_ts, text=f"Several fixes are waiting ({ids}). Which one? Reply \"✅ F-nnnn\" or react ✅ on its post.")
+            log.info(f"[fix-review] {action} by {user} — ambiguous ({ids}), asked"); return
+    post_ts = next((t for t, f in posts if f == fid), reply_ts)
+    if post_ts != reply_ts and not thread and user in OPS_APPROVERS:
+        client.chat_postMessage(channel=ch, thread_ts=ts, text=f"Got it — working on {fid}; updates are in its post's thread.")
+    log.info(f"[fix-review] typed {action} by {user} -> {fid}")
+    _act_on_fix(client, ch, post_ts, fid, user, action)
 
 
 # ── ENTRY POINT ───────────────────────────────────────────────────────────────

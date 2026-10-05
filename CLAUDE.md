@@ -175,7 +175,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - logs/findings.jsonl has several writers (monitor service, fixer, deploy-fix.sh, Slack ❌, by hand). Store merges per item:
   an item this process changed since its last sync wins, others take the file's version (before Oct 3 the monitor's stale
   copy won, reverting every outside status change — the fixer would have re-fixed, and re-paid for, the same finding).
-- Step 4 deploy (ops/deploy-fix.sh <id>): ✅ by an approver on the fixer post (rachel_slack_bot.py reaction_added) →
+- Step 4 deploy (ops/deploy-fix.sh <id>): ✅ by an approver on the fixer post (rachel_slack_bot.py reaction_added), or a TYPED
+  ✅/❌ ("approve", "F-0016 ✅", in the post's thread or as a new #rachel-ops message -> the named / threaded / only waiting
+  fix; several waiting = asked which; handle_ops_message, [fix-review] log; Oct 5: DC's typed ✅ was ignored) →
   scope re-check, fast-forward-only, precheck --deploy --stage-first, push; rollback + master reset on failure; ❌ discards.
   /etc/rachel.env (Oct 3): OPS_SLACK_CHANNEL = #rachel-ops C0C6E8CER9Q, OPS_TEST_CHANNEL = #rachel-ops-test C0C6CEA8VRC
   (--dry-post), OPS_APPROVERS = DC U04NB3GDUC8. ✅ also needs the Slack app's reaction_added event + the bot in both channels.
