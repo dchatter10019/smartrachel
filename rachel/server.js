@@ -568,6 +568,20 @@ function requestedQtyFor(sessionKey, itemName) {
   }
   return 0;
 }
+// The customer's own list line ("3 x Sonoma Classic Simple Syrup 24.5oz") naming a product, sizes and punctuation aside.
+function rq0Line(originalRequest, productName) {
+  const core = x => String(x || '').toLowerCase().replace(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz|liters?|litres?)\b/g, ' ').replace(/[^a-z0-9]/g, '');
+  const want = core(productName);
+  if (want.length < 8) return null;
+  for (const line of String(originalRequest || '').split(/\n+/)) {
+    const m = line.match(/^\s*[-•*]?\s*(\d{1,4})\s*(?:x|×)\s*(.+)$/i);
+    if (!m) continue;
+    const have = core(m[2]);
+    if (have.length >= 8 && (have === want || want.startsWith(have) || have.startsWith(want))) return { qty: parseInt(m[1], 10), name: m[2].trim() };
+  }
+  return null;
+}
+function ownListQtyFor(originalRequest, productName) { const l = rq0Line(originalRequest, productName); return l ? l.qty : 0; }
 async function applyBasketSubstitute(sessionKey, email, originalItem, replacementName, replacementPrice, replacementSize, opts) {
       // The LLM calls this explicitly whenever it recognizes the customer has confirmed
       // a substitute, in ANY phrasing — replacing the earlier, fundamentally fragile
@@ -648,19 +662,27 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
         }
         // The line being replaced (basketLineFor: whole words — "La" never matches "Blanc").
         let qtyToUse = 1;
+        let qtyKnown = false;   // the quantity came from the line replaced / the request, not the default 1
         let categoryToUse = '';
         let packFrom = '';   // the original's name/size when qtyToUse counts ITS packs (converted once the pick is resolved)
+        // No original, but the customer's own list names this product with a count: that count. Real (Oct 5, DC, Slack):
+        // "Sonoma Classic Simple Syrup 24.5 OZ — $16.79 is missing" went in at 1x and Rachel asked "How many bottles?" —
+        // the list said "3 x Sonoma Classic Simple Syrup 24.5oz".
+        if (!originalItem && !(opts && opts.qty) && basketLineFor(items, replacementName) < 0) {
+          const rq0 = ownListQtyFor(state.originalRequest, replacementName);
+          if (rq0) { qtyToUse = rq0; qtyKnown = true; console.log('[confirm-substitute] no original — the customer\'s list asks ' + rq0 + ' x ' + JSON.stringify(rq0Line(state.originalRequest, replacementName).name) + ' -> ' + replacementName + ' x' + rq0); }
+        }
         if (originalItem) {
           const removeIdx = basketLineFor(items, originalItem);
           if (removeIdx >= 0) console.log('[confirm-substitute] line replaced: ' + JSON.stringify(items[removeIdx].name || items[removeIdx].label));
           if (removeIdx >= 0) {
-            qtyToUse = items[removeIdx].qty || items[removeIdx].quantity || 1;
+            qtyToUse = items[removeIdx].qty || items[removeIdx].quantity || 1; qtyKnown = true;
             categoryToUse = items[removeIdx].category || '';
             packFrom = (items[removeIdx].name || '') + ' ' + (items[removeIdx].size || '');
             items.splice(removeIdx, 1);
           } else {
             const rq = (opts && opts.qty) || ((getState(sessionKey).unavailableQty || {})[originalItem]) || requestedQtyFor(sessionKey, originalItem);
-            if (rq) { qtyToUse = rq; console.log('[confirm-substitute] ' + JSON.stringify(originalItem) + ' was never in the basket (not carried) — its requested qty ' + rq + ' goes to ' + replacementName); }
+            if (rq) { qtyToUse = rq; qtyKnown = true; console.log('[confirm-substitute] ' + JSON.stringify(originalItem) + ' was never in the basket (not carried) — its requested qty ' + rq + ' goes to ' + replacementName); }
             // A smaller bottle makes up the volume asked for (DC, Oct 1: "smaller bottles are fine but they should add
             // up to 1 L"). "Lemon Juice 1L" x1 -> Master of Mixes 375 mL x3.
             const vol = x => { const m = String(x || '').toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l|liter|litre|oz)\b/); return m ? +m[1] * (m[2] === 'ml' ? 1 : m[2] === 'oz' ? 29.5735 : 1000) : 0; };
@@ -786,7 +808,7 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
         saveFlowState();
         try { saveBasket(email, newLineItems, '', 'slack').catch(() => {}); } catch (e) {}
         console.log('[confirm-substitute-tool] replaced', JSON.stringify(originalItem), 'with', JSON.stringify(replacementName), 'qty', qtyToUse);
-        return { success: true, replaced: originalItem, with: replacementName, qty: qtyToUse };
+        return { success: true, replaced: originalItem, with: replacementName, qty: qtyToUse, qty_known: qtyKnown || !!(opts && opts.qty) };
       } catch (e) {
         console.error('[confirm-substitute-tool] error:', e.message);
         return { success: false, error: e.message };
@@ -833,16 +855,22 @@ function zonedToUtcIso(dateStr, hour, minute, zone) {
 // customer's zone for DISPLAY. The instant we send is already correct; this is so a
 // West-Coast customer who said "1 pm PST" sees "1:00 PM - 2:00 PM PT", not "04:00 PM
 // EST" (correct underneath, but reads as "Rachel ignored my timezone").
+// The store's own label is always "EST", even for the SF store (windows are store-local, above), so a window is shown
+// with its REAL zone. Real (Oct 5, DC, SF): "10 am PST" got "11:00 AM - 12:00 PM EST, ..." (Pacific times labeled EST);
+// "1 PM EST" got "2:00 PM - 3:00 PM ET (11:00 AM - 12:00 PM ET)" — the Pacific window in brackets labeled ET.
+const ZONE_ABBR = { 'America/Los_Angeles': 'PT', 'America/Denver': 'MT', 'America/Chicago': 'CT', 'America/New_York': 'ET', 'America/Phoenix': 'MST', 'Pacific/Honolulu': 'HST', 'America/Anchorage': 'AKT' };
 function fmtWindowInZone(windowStr, dateStr, windowZone, custZone) {
   try {
-    if (!custZone || custZone === windowZone) return windowStr;
     const win = parseTimeWindow(windowStr); if (!win) return windowStr;
-    const abbr = { 'America/Los_Angeles': 'PT', 'America/Denver': 'MT', 'America/Chicago': 'CT', 'America/New_York': 'ET', 'America/Phoenix': 'MST', 'Pacific/Honolulu': 'HST', 'America/Anchorage': 'AKT' }[custZone] || custZone;
-    const fmtOne = (h) => {
-      const iso = zonedToUtcIso(dateStr, Math.floor(h), Math.round((h - Math.floor(h)) * 60), windowZone);
-      return new Intl.DateTimeFormat('en-US', { timeZone: custZone, hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(iso));
+    const fmtIn = (zone) => {
+      const one = (h) => {
+        const iso = zonedToUtcIso(dateStr, Math.floor(h), Math.round((h - Math.floor(h)) * 60), windowZone);
+        return new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: 'numeric', minute: '2-digit', hour12: true }).format(new Date(iso));
+      };
+      return one(win.start) + ' - ' + one(win.end) + ' ' + (ZONE_ABBR[zone] || zone);
     };
-    return fmtOne(win.start) + ' - ' + fmtOne(win.end) + ' ' + abbr + ' (' + windowStr.replace(/\s*EST\s*$/i, ' ET') + ')';
+    if (!custZone || custZone === windowZone) return fmtIn(windowZone);
+    return fmtIn(custZone) + ' (' + fmtIn(windowZone) + ')';
   } catch (e) { return windowStr; }
 }
 
@@ -1010,11 +1038,28 @@ async function validateDeliveryTime(state, message, email, format, res) {
   // Parse as WALL-CLOCK. If the customer typed a zone ("11 am PST"), record it but
   // strip it before chrono sees it — otherwise chrono converts to UTC and the bare
   // hour no longer means what the customer said.
-  const custZone = explicitZoneIn(message);
+  // The zone the customer last stated holds for later bare times: windows listed in ET after "1 PM EST", then "2:00 PM"
+  // = 2 PM ET. Real (Oct 5, DC, SF): "2:00 PM" was read as 2 PM Pacific and the order booked three hours late.
+  const statedZone = explicitZoneIn(message);
+  if (statedZone) state.orderData.custZone = statedZone;
+  const custZone = statedZone || state.orderData.custZone || '';
+  if (!statedZone && custZone) console.log('[delivery-tz] no zone in "' + message.slice(0, 40) + '" — using the zone the customer stated earlier: ' + custZone);
   const storeZone = zoneForAddress(state.address);
   const msgForParse = message.replace(/\b(PST|PDT|PT|MST|MDT|MT|CST|CDT|CT|EST|EDT|ET)\b/gi, '').replace(/\s+/g, ' ').trim();
   const parsedResults = chrono.parse(msgForParse, new Date(), { forwardDate: true });
   if (!parsedResults.length || !parsedResults[0].start.isCertain('hour')) {
+    // A zone with no time ("I said PST not EST") corrects how the windows were shown: list them again in that zone.
+    const lastDate = state.orderData.windowsDate;
+    const estW = (() => { try { return (JSON.parse(state.lastLineItems || '[]').find(li => li.establishmentId) || {}).establishmentId || ''; } catch (e) { return ''; } })();
+    if (statedZone && lastDate && estW) {
+      const availZ = await checkDeliveryAvailability(estW, lastDate);
+      if (availZ && Array.isArray(availZ.deliveryTimes) && availZ.deliveryTimes.length) {
+        const wz = WINDOWS_ARE_STORE_LOCAL ? storeZone : 'America/New_York';
+        console.log('[delivery-tz] zone correction "' + message.slice(0, 40) + '" -> windows on ' + lastDate + ' listed in ' + statedZone);
+        const askZ = 'Sorry about that — here are the delivery windows on ' + lastDate + ' in ' + (ZONE_ABBR[statedZone] || statedZone) + ': ' + availZ.deliveryTimes.map(w => fmtWindowInZone(w.deliveryTime, lastDate, wz, statedZone)).join(', ') + '. Which one works for you?';
+        return res.json({ text: askZ, response: askZ });
+      }
+    }
     const ask = 'Could you give me a specific delivery date and time? (e.g. \"tomorrow at 5pm\" or \"August 5th at 2pm\")';
     return res.json({ text: ask, response: ask });
   }
@@ -1071,7 +1116,8 @@ async function validateDeliveryTime(state, message, email, format, res) {
         }
       }
       if (!matchedWindow) {
-        const optionsText = avail.deliveryTimes.map(w => fmtWindowInZone(w.displayTime, dateStr, windowZone, custZone)).join(', ');
+        state.orderData.windowsDate = dateStr;
+        const optionsText = avail.deliveryTimes.map(w => fmtWindowInZone(w.deliveryTime || w.displayTime, dateStr, windowZone, custZone)).join(', ');
         const ask = 'That time isn\'t available on ' + dateStr + '. Here are the available delivery windows: ' + optionsText + '. Which one works for you?';
         return res.json({ text: ask, response: ask });
       }
@@ -3533,9 +3579,17 @@ app.post('/chat', async (req, res) => {
               return res.json({ text: rF, response: rF });
             }
           }
-          await applyBasketSubstitute(sessionKey, email, '', pr.name, price, size);
+          const rrAdd = await applyBasketSubstitute(sessionKey, email, '', pr.name, price, size);
             retirePendingFor(state, pr.name);
           const label = pr.name + (size && nz(pr.name).indexOf(nz(size)) < 0 ? ' — ' + size : '') + ' — $' + price.toFixed(2);
+          // The quantity is already known (the not-carried line it stands in for, or the customer's own list): say it,
+          // never ask. Real (Oct 5, DC, Slack): Fever Tree went in at 3x for the not-carried Fever-Tree line, and the
+          // reply still asked "How many bottles would you like?".
+          if (clsQty <= 1 && rrAdd && rrAdd.success && rrAdd.qty_known) {
+            console.log('[add-item] quantity known (' + rrAdd.qty + ') — not asked' + (rrAdd.replaced ? ' (stands in for ' + JSON.stringify(rrAdd.replaced) + ')' : ' (from the customer\'s list)'));
+            const rK = 'Got it — ' + rrAdd.qty + 'x ' + label + (rrAdd.replaced ? ' in place of ' + rrAdd.replaced : '') + '.' + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+            return res.json({ text: rK, response: rK });
+          }
           if (clsQty > 1) {
             try { const it = JSON.parse(state.lastLineItems || '[]'); const nk = x => String(x||'').toLowerCase().replace(/[^a-z0-9]/g,''); const row = it.find(x => nk(x.name) === nk(pr.name)); if (row) { row.qty = clsQty; row.quantity = clsQty; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); saveFlowState(); } } catch (e) {}
             const rA = 'Added ' + clsQty + 'x ' + label + ' to your order. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
@@ -3872,6 +3926,11 @@ app.post('/chat', async (req, res) => {
     }
     if (state.orderStep === 'recipient_email') {
       const em = message.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
+      const rcpt = contacts.recipientNameIn(message);
+      if (rcpt && rcpt !== state.orderData.name) {
+        console.log('[order] recipient named with the email: ' + JSON.stringify(rcpt) + ' (was ' + JSON.stringify(state.orderData.name || '') + ')');
+        state.orderData.name = rcpt; state.orderData.namePrefilled = null; state.orderData.recipientNamed = true; saveFlowState();
+      }
       // The name was prefilled (askNameStep) and stated with this question: a reply that corrects or
       // refuses it is about the NAME, not the email — never fall back to the account email on it.
       if (state.orderData.namePrefilled && !em) {
@@ -3896,16 +3955,17 @@ app.post('/chat', async (req, res) => {
       state.orderData.email = (em ? em[0] : (email || '')).toLowerCase();
       state.orderData.account_email = email || '';
       if (!em) console.log('[order] recipient email not given — falling back to account email');
+      const rcptNote = state.orderData.recipientNamed ? 'Got it — the order is for *' + state.orderData.name + '*' + (state.orderData.email ? ' (' + state.orderData.email + ')' : '') + '. ' : '';
       if (state.orderData.phone) {
         state.orderStep = 'details';
         saveFlowState();
         const kd = state.orderData.known_date;
-        const ask = kd ? ('Thanks! Delivering on ' + kd + ' — what time works, and any delivery instructions for the driver?') : 'Thanks! What delivery date and time would you like?';
+        const ask = rcptNote + (kd ? ('Delivering on ' + kd + ' — what time works, and any delivery instructions for the driver?') : (rcptNote ? 'What delivery date and time would you like?' : 'Thanks! What delivery date and time would you like?'));
         return res.json({ text: ask, response: ask });
       }
       state.orderStep = 'phone';
       saveFlowState();
-      const ask = 'And your phone number (for the person placing the order)?';
+      const ask = rcptNote + (rcptNote ? 'And a phone number for the delivery?' : 'And your phone number (for the person placing the order)?');
       return res.json({ text: ask, response: ask });
     }
     if (state.orderStep === 'phone') {

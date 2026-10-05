@@ -219,6 +219,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   NYC 10019 store 5f4d1e12…, Boston 02110 689fa0c7…, SF 94104 679dadac….
   The search needs the possessive apostrophe ("Titos" finds nothing, "Tito's" does): searchWithFallbacks retries
   "<word>s" as "<word>'s" ([searchWithFallbacks] apostrophe retry); rachel.js [not-found] compares without apostrophes.
+  It also matches hyphens literally ("Fever-Tree Ginger Beer" finds nothing, "Fever Tree" does): doSearch retries
+  unhyphenated ([doSearch] hyphen retry). A requested size matches the size field OR the size in the product's name
+  (Sonoma Simple Syrup "24.5 OZ" has size field 25.4 OZ; functions.js productHasSize). (Oct 5, DC, SF: both were "not available".)
 - A customer-named product is never dropped for price caps; a stated size sorts first.
 - Multi-pick resolver only fires on a real numbered options list + a selection-shaped message.
 - A substantive first message (an order) is kept through the age gate (pendingIntent) and replayed.
@@ -338,6 +341,15 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   lists the basket (before the closing question).
 - The LLM's generate_proposal/place_order use the LIVE basket (state.lastLineItems after this turn's edits) and the
   saved event date/client when it omits them. In a client edit the LAST client statement wins ("it should be just Goody").
+- Delivery windows (server.js validateDeliveryTime): the store's windows are store-local but always labeled "EST"; they
+  are shown with the real zone ("11:00 AM - 12:00 PM PT"; in the customer's stated zone first + store zone in brackets).
+  The zone the customer last stated (orderData.custZone) holds for later bare times ("2:00 PM" after ET windows = ET); a
+  zone with no time ("I said PST not EST") lists the same date's windows again in that zone. (Oct 5, DC, SF: Pacific
+  windows labeled EST, the correction re-asked the time, and a bare "2:00 PM" was read as Pacific — order 3h late.)
+  "The name of the recipient is X but the email is Y" at the email step sets the order name (contacts.recipientNameIn).
+  A pick with no original takes its count from the customer's own list line (ownListQtyFor) and a pick whose qty is
+  known never asks "How many bottles?". basket-hygiene never clears a pending line by a line labeled with another
+  request line (Oct 5: the Sonoma syrup pending was cleared by the mango syrup line).
 - Every order Rachel places (createCorpOrder) has top-level email = rachelai@getbevvi.com (DC, Oct 3; ORDER_ACCOUNT_EMAIL in
   store-agent/shopping-agent.js, env RACHEL_ORDER_ACCOUNT_EMAIL); customerData.email = the customer; who asked is kept
   in our order log (requested_by) and [place_order] account | customer email | requested by. Until Oct 3 the top-level

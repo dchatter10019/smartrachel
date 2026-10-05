@@ -28,5 +28,13 @@ eq('Dipanjan Chatterjee', profileName('Dipanjan Chatterjee'), 'Dipanjan Chatterj
 eq('one word', profileName('DC'), '');
 eq('email', profileName('dc@getbevvi.com'), '');
 eq('empty', profileName(''), '');
+// A recipient named with the email answer (Oct 5, DC: "Khira Patel" was dropped, the order went under the Slack name).
+const { recipientNameIn } = require('../../customer-contacts.js');
+eq('recipient named with the email', recipientNameIn('The Name of the recipient is Khira Patel but the email is <mailto:dc@getbevvi.com|dc@getbevvi.com>'), 'Khira Patel');
+eq('recipient: Name, email', recipientNameIn('recipient: Khira Patel, khira@x.com'), 'Khira Patel');
+eq("it's for First Last", recipientNameIn("it's for John Smith"), 'John Smith');
+eq('"same" names no one', recipientNameIn('same'), null);
+eq('an email alone names no one', recipientNameIn('dc@getbevvi.com'), null);
+eq('"the recipient email is same" names no one', recipientNameIn('the recipient email is same'), null);
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');

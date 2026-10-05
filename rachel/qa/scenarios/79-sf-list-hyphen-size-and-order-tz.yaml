@@ -1,0 +1,48 @@
+name: sf-list-hyphen-size-and-order-tz
+# Oct 5, DC, Slack (SF, 332 Pine St). (1) "3 x Fever-Tree Ginger Beer 6.8oz" was "not available": the catalog spells it
+# "Fever Tree Ginger Beer - 6.8 OZ" and the hyphenated search found only the Ginger Ale. (2) "3 x Sonoma Classic Simple
+# Syrup 24.5oz" was "not available" (size mismatch): the row's name says 24.5 OZ, its size field 25.4 OZ. (3) "The Name
+# of the recipient is Khira Patel but the email is ..." kept the email and dropped the name. (4) Delivery windows of the
+# SF store (Pacific) were labeled EST; "I said PST not EST" got "Could you give me a specific delivery date and time?";
+# after windows were shown in ET, a bare "2:00 PM" was read as Pacific and the order booked three hours late.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "332 Pine St, San Francisco, CA 94104"
+  - send: "4 x Conundrum White 750mL\n3 x Fever-Tree Ginger Beer 6.8oz\n3 x Sonoma Classic Simple Syrup 24.5oz"
+    expect:
+      matches: "(?i)3\\s*x\\s*Fever[ -]Tree Ginger Beer[^\\n]*6\\.8"
+      contains: ["Sonoma Classic Simple Syrup"]
+      not_matches: "(?i)(Fever-Tree Ginger Beer|Sonoma Classic Simple Syrup)[^\\n]*(isn't|is not|not) (available|carried)"
+      log_contains: ["[doSearch] hyphen retry", "its name states 24.5oz"]
+      log_not_contains: ["UNAVAILABLE (size mismatch): \"Sonoma", "UNAVAILABLE (size mismatch): \"Fever"]
+  - send: "place the order"
+    expect: {contains: ["name"]}
+  - send: "QA Tester"
+    expect: {contains: ["email"]}
+  - send: "The Name of the recipient is Khira Patel but the email is qa-sf-tz@getbevvi.com"
+    expect:
+      contains: ["Khira Patel", "phone"]
+      log_contains: ["[order] recipient named with the email: \"Khira Patel\""]
+  - send: "9175550100"
+    expect: {contains: ["date", "time"]}
+  - send: "tomorrow at 7 am PST"
+    expect:
+      matches: "\\d:00 [AP]M - \\d{1,2}:00 [AP]M PT"
+      not_matches: "\\bEST\\b"
+  - send: "I said EST not PST"
+    expect:
+      matches: "\\d:00 [AP]M - \\d{1,2}:00 [AP]M ET \\(\\d{1,2}:00 [AP]M - \\d{1,2}:00 [AP]M PT\\)"
+      not_contains: ["specific delivery date"]
+      log_contains: ["[delivery-tz] zone correction"]
+  - send: "5:00 PM"
+    expect:
+      contains: ["instructions"]
+      log_contains: ["[delivery-tz] no zone in \"5:00 PM\" — using the zone the customer stated earlier: America/New_York"]
+  - send: "none"
+    expect: {contains: ["tip"]}
+  - send: "no tip"
+    expect:
+      contains: ["Order Summary", "Khira Patel", "5:00 PM - 6:00 PM ET (2:00 PM - 3:00 PM PT)"]
+      not_contains: ["QA Tester"]
+      not_matches: "\\bEST\\b"

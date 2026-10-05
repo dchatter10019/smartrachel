@@ -36,10 +36,16 @@ function check(state, opts) {
   // 2. Pending not-carried lines that a basket line of the same kind already stands in for.
   const pending = Array.isArray(state.pendingSubstitutes) ? state.pendingSubstitutes : [];
   const pendingCleared = [];
+  const norm = t => String(t || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const reqText = norm(src);
   for (const pn of pending) {
     // A line that answers ANOTHER requested item (its label is that item: "Lime Juice 1L") never counts —
     // only a line labeled with this item, or one added by product name (label = its own name / none).
-    const by = items.find(li => li && li.name && pendingOriginalByType([pn], li.name) === pn
+    // A label that is a line of the customer's own request is that request item, even when it reads like the product's
+    // name. Real (Oct 5, DC, Slack): "Sonoma Classic Simple Syrup 24.5oz" (not carried) was cleared by the line for
+    // "6 x Simply Squeeze Mango Real Puree Infused Syrup 16.9oz" (both syrups) — then the Sonoma pick went in at 1x, not 3x.
+    const ownRequestLine = li => li.label && li.label !== pn && reqText.includes(norm(li.label));
+    const by = items.find(li => li && li.name && pendingOriginalByType([pn], li.name) === pn && !ownRequestLine(li)
       && (!li.label || li.label === pn || li.label === li.name || String(li.label).toLowerCase().startsWith(String(li.name).toLowerCase().slice(0, 12))));
     if (by) pendingCleared.push({ pending: pn, by: by.name });
   }

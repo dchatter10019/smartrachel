@@ -45,4 +45,18 @@ function nameCorrection(m) {
 // "no" / "that's wrong" with no name: the prefilled name is refused, ask for it.
 const refusesName = m => /^\s*(?:no|nope|wrong|not me|that'?s (?:wrong|not me|not right)|someone else|different name)\s*[.!]?\s*$/i.test(String(m || ''));
 
-module.exports = { get, save, profileName, nameCorrection, refusesName };
+// A recipient named inside another answer: "The Name of the recipient is Khira Patel but the email is x@y.com",
+// "recipient: Khira Patel". Real (Oct 5, DC, Slack): the email was taken and the name dropped — the order went out
+// under the prefilled Slack name.
+function recipientNameIn(m) {
+  const t = String(m || '');
+  const k = t.match(/\b(?:(?:the\s+)?name\s+of\s+the\s+recipient|recipient'?s?\s+(?:full\s+)?name|(?:the\s+)?recipient|deliver(?:y|ing)?\s+(?:is\s+)?(?:to|for)|(?:it'?s|order\s+is)\s+for)\s*(?:is|should\s+be|will\s+be|=|:)?\s+/i);
+  if (!k) return null;
+  const rest = t.slice(k.index + k[0].length);
+  const n = rest.match(/^([A-Z][A-Za-zà-ÿ'.-]+(?:\s+[A-Z][A-Za-zà-ÿ'.-]+){1,3})\b/);
+  if (!n) return null;
+  const nm = n[1].split(/\s+/).filter(w => !/^(But|And|Her|His|The|Email|Phone|Same)$/.test(w)).join(' ');
+  return nm.split(' ').length >= 2 && !/\b(same|email|account|bevvi)\b/i.test(nm) ? nm : null;
+}
+
+module.exports = { get, save, profileName, nameCorrection, refusesName, recipientNameIn };

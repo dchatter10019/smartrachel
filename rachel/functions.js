@@ -661,9 +661,18 @@ async function buildPackage(iv) {
   function normalizeSizeStr(sizeStr) {
     return String(sizeStr || '').toLowerCase().replace(/\s+/g, '');
   }
+  // A product has the requested size when its size field OR its own name says so. Real (Oct 5, DC, SF): "Sonoma
+  // Classic Simple Syrup 24.5oz" was UNAVAILABLE (size mismatch) — the catalog row is "Sonoma Classic Simple Syrup
+  // 24.5 OZ" with a size field of 25.4 OZ (a typo in the size field; the name and the bottle say 24.5).
+  function productHasSize(p, requestedSize) {
+    if (!requestedSize) return true;
+    if (normalizeSizeStr(p && p.sizeStr) === requestedSize) return true;
+    var nameSizes = (String(p && p.name || '').match(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/gi) || []).map(normalizeSizeStr);
+    return nameSizes.indexOf(requestedSize) >= 0;
+  }
   function resultsMatchRequestedSize(results, requestedSize) {
     if (!requestedSize) return true; // no specific size was requested — anything counts
-    return results.some(function(p) { return normalizeSizeStr(p.sizeStr).indexOf(requestedSize) >= 0; });
+    return results.some(function(p) { return normalizeSizeStr(p.sizeStr).indexOf(requestedSize) >= 0 || productHasSize(p, requestedSize); });
   }
 
   async function doSearch(term, searchCategory) {
@@ -730,6 +739,18 @@ async function buildPackage(iv) {
             // candidate set to fall back to — it has the most complete results.
             bestSoFar = bothResults;
           }
+        }
+      }
+
+      // Hyphenated brand ("Fever-Tree"): the catalog spells the same brand both ways ("Fever Tree Ginger Beer - 6.8 OZ"
+      // but "Fever-Tree Premium Ginger Ale"), and its search matches the spelling. Real (Oct 5, DC, SF): "Fever-Tree
+      // Ginger Beer 6.8oz" found nothing, the fuzzy fallback offered the Ginger Ale, and the line went UNAVAILABLE.
+      var unhyphenated = term.replace(/([A-Za-z])-([A-Za-z])/g, '$1 $2');
+      if (unhyphenated !== term) {
+        var unhyResults = await doSearch(unhyphenated, searchCategory);
+        if (unhyResults.length > 0 && (bestSoFar.length === 0 || resultsMatchRequestedSize(unhyResults, requestedSize))) {
+          console.log('[doSearch] hyphen retry:', JSON.stringify(term), '->', JSON.stringify(unhyphenated), '(' + unhyResults.length + ' result(s))');
+          return unhyResults;
         }
       }
 
@@ -1297,7 +1318,7 @@ async function buildPackage(iv) {
             // Never trade away the size the customer stated. Real bug (Oct 1, DC): "Vodka 1.75L" had Svedka 1.75L,
             // the retry swapped in Ciroc 750 mL, and the size check then said "couldn't find a match for Vodka 1.75L".
             var szR=(String(np.name||'').match(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/i)||[''])[0].toLowerCase().replace(/\s+/g,'');
-            var szOk=function(p){return !szR||String(p.sizeStr||'').toLowerCase().replace(/\s+/g,'')===szR;};
+            var szOk=function(p){return !szR||productHasSize(p,szR);};
             if (szR && szOk(best)) { var sized=more.filter(szOk); if (sized.length<more.length) console.log('[buildPackage] better-fit retry for '+JSON.stringify(np.name)+': '+(more.length-sized.length)+' candidate(s) of another size skipped'); more=sized; }
             if (more.length && PM.fit(reqForFit,more[0]).score>fb0) { console.log('[buildPackage] better fit for '+JSON.stringify(np.name)+' from "'+sk+'": '+more[0].name+' (was '+best.name+')'); found=more.concat(found); best=more[0]; }
           }
@@ -1391,6 +1412,10 @@ async function buildPackage(iv) {
               best=hitS[0]; foundSizeNorm=reqSizeNorm;   // the match note below is computed from this pick
             }
           }
+        }
+        if (reqSizeNorm !== foundSizeNorm && productHasSize(best, reqSizeNorm)) {
+          console.log('[buildPackage] size: ' + best.name + ' — its name states ' + requestedSizeMatch[0] + ' (size field ' + best.sizeStr + ') — counted as the requested size');
+          foundSizeNorm = reqSizeNorm;
         }
         if (reqSizeNorm !== foundSizeNorm) {
           console.log('[buildPackage] UNAVAILABLE (size mismatch):', JSON.stringify(np.name), 'best match:', JSON.stringify(best && best.name));
