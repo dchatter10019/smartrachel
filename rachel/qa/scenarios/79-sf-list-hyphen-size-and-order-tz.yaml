@@ -5,6 +5,7 @@ name: sf-list-hyphen-size-and-order-tz
 # of the recipient is Khira Patel but the email is ..." kept the email and dropped the name. (4) Delivery windows of the
 # SF store (Pacific) were labeled EST; "I said PST not EST" got "Could you give me a specific delivery date and time?";
 # after windows were shown in ET, a bare "2:00 PM" was read as Pacific and the order booked three hours late.
+# DC: with no zone given, Rachel asks for it, then shows every time in the zone the customer named.
 turns:
   - send: reset
   - send: "yes"
@@ -26,23 +27,31 @@ turns:
       log_contains: ["[order] recipient named with the email: \"Khira Patel\""]
   - send: "9175550100"
     expect: {contains: ["date", "time"]}
-  - send: "tomorrow at 7 am PST"
+  # No zone given: Rachel asks which one before reading the time (DC, Oct 5).
+  - send: "tomorrow at 7 am"
+    expect:
+      contains: ["Which time zone", "Pacific time"]
+      log_contains: ["[delivery-tz] no time zone stated or known for \"tomorrow at 7 am\" — asking"]
+  # The answer: the held time is read in it, and the windows are shown in that zone only.
+  - send: "Eastern"
+    expect:
+      matches: "\\d:00 [AP]M - \\d{1,2}:00 [AP]M ET"
+      not_matches: "\\bEST\\b|\\bPT\\b"
+      log_contains: ["[delivery-tz] zone answered: America/New_York"]
+  - send: "I said PST not EST"
     expect:
       matches: "\\d:00 [AP]M - \\d{1,2}:00 [AP]M PT"
-      not_matches: "\\bEST\\b"
-  - send: "I said EST not PST"
-    expect:
-      matches: "\\d:00 [AP]M - \\d{1,2}:00 [AP]M ET \\(\\d{1,2}:00 [AP]M - \\d{1,2}:00 [AP]M PT\\)"
       not_contains: ["specific delivery date"]
+      not_matches: "\\bET\\b"
       log_contains: ["[delivery-tz] zone correction"]
-  - send: "5:00 PM"
+  - send: "2:00 PM"
     expect:
       contains: ["instructions"]
-      log_contains: ["[delivery-tz] no zone in \"5:00 PM\" — using the zone the customer stated earlier: America/New_York"]
+      log_contains: ["[delivery-tz] no zone in \"2:00 PM\" — using the zone the customer stated earlier: America/Los_Angeles"]
   - send: "none"
     expect: {contains: ["tip"]}
   - send: "no tip"
     expect:
-      contains: ["Order Summary", "Khira Patel", "5:00 PM - 6:00 PM ET (2:00 PM - 3:00 PM PT)"]
+      contains: ["Order Summary", "Khira Patel", "2:00 PM - 3:00 PM PT"]
       not_contains: ["QA Tester"]
       not_matches: "\\bEST\\b"

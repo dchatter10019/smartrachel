@@ -341,15 +341,17 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   lists the basket (before the closing question).
 - The LLM's generate_proposal/place_order use the LIVE basket (state.lastLineItems after this turn's edits) and the
   saved event date/client when it omits them. In a client edit the LAST client statement wins ("it should be just Goody").
-- Delivery windows (server.js validateDeliveryTime): the store's windows are store-local but always labeled "EST"; they
-  are shown with the real zone ("11:00 AM - 12:00 PM PT"; in the customer's stated zone first + store zone in brackets).
-  The zone the customer last stated (orderData.custZone) holds for later bare times ("2:00 PM" after ET windows = ET); a
-  zone with no time ("I said PST not EST") lists the same date's windows again in that zone. (Oct 5, DC, SF: Pacific
+- Delivery windows (server.js validateDeliveryTime): the store's windows are store-local but always labeled "EST".
+  No time zone stated or known -> Rachel ASKS which one (PT/MT/CT/ET) and holds the time (orderData.pendingWhen; email:
+  od.pending_when / od.awaiting_zone; connector: a problem asking it) — DC, Oct 5. Every window and time is then shown in
+  the CUSTOMER's zone only ("2:00 PM - 3:00 PM ET"). The zone (words too: "Pacific", "eastern time", "east coast") is kept
+  for the conversation (state.custZone; orderData.custZone) and holds for later bare times; a zone with no time ("I said
+  PST not EST") lists the same date's windows again in that zone. QA scenarios give "... ET" with their times. (Oct 5, DC, SF: Pacific
   windows labeled EST, the correction re-asked the time, and a bare "2:00 PM" was read as Pacific — order 3h late.)
   Every channel uses validateDeliveryTime: Slack/WhatsApp (/chat order flow; the "order placed" reply gets the zoned
   window, never Bevvi's raw "EST" string), email (the stated zone + offered date ride on state.emailOrder across emails:
   od.cust_zone / od.windows_date; zoneStatedIn ignores a bare "CT"/"MT" in addresses) and the connector
-  (/internal/order-preview; a time with no zone = local time at the address; delivery.window carries the real zone).
+  (/internal/order-preview; a time with no zone is refused with the zone question; delivery.window is in the customer's zone).
   "The name of the recipient is X but the email is Y" at the email step sets the order name (contacts.recipientNameIn).
   A pick with no original takes its count from the customer's own list line (ownListQtyFor) and a pick whose qty is
   known never asks "How many bottles?". basket-hygiene never clears a pending line by a line labeled with another

@@ -15,7 +15,7 @@ turns:
     expect: {contains: ["phone"]}
   - send: "9175550100"
     expect: {contains: ["date", "time"]}
-  - send: "tomorrow at 5 pm"
+  - send: "tomorrow at 5 pm ET"
     expect: {contains: ["instructions"]}
   - send: "none"
     expect: {contains: ["tip for your driver", "10%", "no tip"], not_contains: ["Shall I go ahead"]}

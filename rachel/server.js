@@ -830,9 +830,12 @@ function zoneForAddress(addr) {
   const st = m ? m[1].toUpperCase() : '';
   return STATE_TZ[st] || 'America/New_York';
 }
-// Explicit zone the customer typed (e.g. "11 am PST") -> IANA. Returns '' if none.
+// Explicit zone the customer typed (e.g. "11 am PST", "Pacific", "eastern time", "east coast") -> IANA. '' if none.
 function explicitZoneIn(text) {
-  const m = String(text || '').match(/\b(PST|PDT|PT|MST|MDT|MT|CST|CDT|CT|EST|EDT|ET)\b/i);
+  const t = String(text || '');
+  const w = t.match(/\b(pacific|mountain|central|eastern|west coast|east coast)\b/i);
+  if (w) { const z = w[1].toLowerCase(); return /^(pacific|west)/.test(z) ? 'America/Los_Angeles' : z === 'mountain' ? 'America/Denver' : z === 'central' ? 'America/Chicago' : 'America/New_York'; }
+  const m = t.match(/\b(PST|PDT|PT|MST|MDT|MT|CST|CDT|CT|EST|EDT|ET)\b/i);
   if (!m) return '';
   const z = m[1].toUpperCase();
   return /^P/.test(z) ? 'America/Los_Angeles' : /^M/.test(z) ? 'America/Denver' : /^C/.test(z) ? 'America/Chicago' : 'America/New_York';
@@ -879,8 +882,8 @@ function fmtWindowInZone(windowStr, dateStr, windowZone, custZone) {
       };
       return one(win.start) + ' - ' + one(win.end) + ' ' + (ZONE_ABBR[zone] || zone);
     };
-    if (!custZone || custZone === windowZone) return fmtIn(windowZone);
-    return fmtIn(custZone) + ' (' + fmtIn(windowZone) + ')';
+    // Shown in the customer's zone only (DC, Oct 5: "convert the times in the time zone that the user has specified").
+    return fmtIn(custZone || windowZone);
   } catch (e) { return windowStr; }
 }
 
@@ -1050,14 +1053,32 @@ async function validateDeliveryTime(state, message, email, format, res) {
   // hour no longer means what the customer said.
   // The zone the customer last stated holds for later bare times: windows listed in ET after "1 PM EST", then "2:00 PM"
   // = 2 PM ET. Real (Oct 5, DC, SF): "2:00 PM" was read as 2 PM Pacific and the order booked three hours late.
+  // No zone stated or known: ASK which one, hold the time, and read it in the zone answered (DC, Oct 5: "if the user
+  // doesn't specify a time zone, rachel should ask for clarification"). The zone is kept for the conversation
+  // (state.custZone) — every later time and window list is in it.
   const statedZone = explicitZoneIn(message);
-  if (statedZone) state.orderData.custZone = statedZone;
-  const custZone = statedZone || state.orderData.custZone || '';
+  if (statedZone) { state.orderData.custZone = statedZone; state.custZone = statedZone; }
+  const custZone = statedZone || state.orderData.custZone || state.custZone || '';
   if (!statedZone && custZone) console.log('[delivery-tz] no zone in "' + message.slice(0, 40) + '" — using the zone the customer stated earlier: ' + custZone);
   const storeZone = zoneForAddress(state.address);
-  const msgForParse = message.replace(/\b(PST|PDT|PT|MST|MDT|MT|CST|CDT|CT|EST|EDT|ET)\b/gi, '').replace(/\s+/g, ' ').trim();
+  const msgForParse = String(message).replace(/\b(PST|PDT|PT|MST|MDT|MT|CST|CDT|CT|EST|EDT|ET)\b/gi, '')
+    .replace(/\b(pacific|mountain|central|eastern)(\s+(standard|daylight))?(\s+time)?\b|\b(west|east) coast( time)?\b/gi, '').replace(/\s+/g, ' ').trim();
   const parsedResults = chrono.parse(msgForParse, new Date(), { forwardDate: true });
-  if (!parsedResults.length || !parsedResults[0].start.isCertain('hour')) {
+  const hasTime = !!(parsedResults.length && parsedResults[0].start.isCertain('hour'));
+  // The answer to "which time zone?": the held time, read in that zone.
+  if (!hasTime && statedZone && state.orderData.pendingWhen) {
+    const held = state.orderData.pendingWhen; state.orderData.pendingWhen = '';
+    console.log('[delivery-tz] zone answered: ' + statedZone + ' — reading the held time "' + held.slice(0, 40) + '" in it');
+    return validateDeliveryTime(state, held, email, format, res);
+  }
+  if (hasTime && !custZone) {
+    state.orderData.pendingWhen = message;
+    const where = { 'America/Los_Angeles': 'Pacific', 'America/Denver': 'Mountain', 'America/Chicago': 'Central', 'America/New_York': 'Eastern', 'America/Phoenix': 'Arizona', 'Pacific/Honolulu': 'Hawaii', 'America/Anchorage': 'Alaska' }[storeZone] || storeZone;
+    console.log('[delivery-tz] no time zone stated or known for "' + message.slice(0, 40) + '" — asking (delivery address is on ' + where + ' time)');
+    const askTz = 'Which time zone is that in — Pacific (PT), Mountain (MT), Central (CT) or Eastern (ET)? (The delivery address is on ' + where + ' time.)';
+    return res.json({ text: askTz, response: askTz });
+  }
+  if (!hasTime) {
     // A zone with no time ("I said PST not EST") corrects how the windows were shown: list them again in that zone.
     const lastDate = state.orderData.windowsDate;
     const estW = (() => { try { return (JSON.parse(state.lastLineItems || '[]').find(li => li.establishmentId) || {}).establishmentId || ''; } catch (e) { return ''; } })();
@@ -2753,7 +2774,10 @@ app.post('/chat', async (req, res) => {
       let oItems = []; try { oItems = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
       const cmd = EO.isOrderCommand(message), poE = state.placedOrder;
       const x = EO.extract(message, { name: context && context.user_name, email }, new Date());
-      const provided = !!(x.name || x.phone || x.when || x.date || x.time || x.instructions || x.tip);   // a bare "2pm" answers the time question
+      // A bare "2pm" answers the time question; a bare "ET" / "Pacific" answers the time-zone question (DC, Oct 5).
+      const eoQ = state.emailOrder || {};
+      const zoneAnswer = !!((eoQ.pending_when || eoQ.awaiting_zone) && String(message).trim().length <= 120 && explicitZoneIn(message));
+      const provided = !!(x.name || x.phone || x.when || x.date || x.time || x.instructions || x.tip || zoneAnswer);
       if (!oItems.length && cmd) {
         const t = poE && poE.payment_url
           ? 'Happy to help — this order was already created (order #' + poE.order_id + '). Here is your Payment Link again: ' + poE.payment_url + '\n\nIf anything should change before it\'s paid, just reply with the change and I\'ll put together an updated order.\n\nWarmly,\nRachel\nYour personal mixologist at Bevvi'
@@ -2810,9 +2834,18 @@ app.post('/chat', async (req, res) => {
           const evD = require('./event-date.js').normalizeEventDate(state.savedEventDate || require('./event-date.js').findEventDateIn(String(state.emailSubject || '')) || '', new Date());
           if (evD && evD.date) { od.delivery_date = evD.text; console.log('[email-order] no delivery date given — the event date is used: ' + JSON.stringify(evD.text)); }
         }
-        const whenPhrase = x.when || (x.time && od.delivery_date ? od.delivery_date + ' at ' + x.time : '');
-        { const zE = zoneStatedIn(message); if (zE) od.cust_zone = zE; }   // "times in PST please"
-        if (!whenPhrase && od.delivery_date && !od.delivery_ok) {
+        let whenPhrase = x.when || (x.time && od.delivery_date ? od.delivery_date + ' at ' + x.time : '');
+        // The zone: stated in this email ("times in PST please"), or — when Rachel asked for it — a short answer ("ET").
+        { const zE = zoneStatedIn(message) || ((od.pending_when || od.awaiting_zone) && String(message).trim().length <= 120 ? explicitZoneIn(message) : '');
+          if (zE) { od.cust_zone = zE; state.custZone = zE; od.awaiting_zone = false; } else if (!od.cust_zone && state.custZone) od.cust_zone = state.custZone; }
+        // A time Rachel held while asking the zone, now answered.
+        if (!whenPhrase && od.pending_when && od.cust_zone) { whenPhrase = od.pending_when; console.log('[email-order] zone answered (' + od.cust_zone + ') — the held time ' + JSON.stringify(od.pending_when) + ' is checked in it'); }
+        if (!whenPhrase && od.delivery_date && !od.delivery_ok && !od.cust_zone) {
+          // Windows for a date alone are shown in the customer's zone — asked first (DC, Oct 5).
+          od.awaiting_zone = true;
+          console.log('[email-order] delivery windows on ' + JSON.stringify(od.delivery_date) + ' — no time zone known, asking it first');
+          problem = 'Which time zone should I show the delivery times in — Pacific (PT), Mountain (MT), Central (CT) or Eastern (ET)?';
+        } else if (!whenPhrase && od.delivery_date && !od.delivery_ok) {
           const w = await deliveryWindowsOn(state, od.delivery_date, od.cust_zone);
           od.delivery_date_label = w.label || od.delivery_date;
           if (w.none) { problem = "There's no delivery availability on " + od.delivery_date_label + ' — which other date works?'; od.delivery_date = ''; od.delivery_date_label = ''; }
@@ -2823,10 +2856,11 @@ app.post('/chat', async (req, res) => {
           // into the ONE reply with the other questions.
           // The customer's stated zone and the date whose windows were offered carry across the thread's emails (each
           // email is a new turn) — "2 PM" after windows shown in ET is 2 PM ET, as on Slack (Oct 5, DC).
-          state.orderData = { custZone: od.cust_zone || '', windowsDate: od.windows_date || '' }; let askedT = null;
+          state.orderData = { custZone: od.cust_zone || '', windowsDate: od.windows_date || '', pendingWhen: od.pending_when || '' }; let askedT = null;
           await validateDeliveryTime(state, whenPhrase, email, format, { json: pl => { askedT = pl && (pl.text || pl.response); return null; } });
           if (state.orderData.custZone) od.cust_zone = state.orderData.custZone;
           if (state.orderData.windowsDate) od.windows_date = state.orderData.windowsDate;
+          od.pending_when = state.orderData.pendingWhen || '';
           // The date stands when only the time wasn't available: a reply with just a time ("5 PM") joins it.
           if (askedT && state.orderData.windowsDate && !x.date) od.delivery_date = state.orderData.windowsDate;
           if (askedT) { problem = askedT; od.delivery_ok = false; }

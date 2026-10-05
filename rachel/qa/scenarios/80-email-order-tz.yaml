@@ -3,19 +3,25 @@ fresh: true
 tags: [email]
 # Oct 5, DC (Slack, SF): the store's Pacific windows were labeled EST, and after windows were shown in ET a bare
 # "2:00 PM" was read as Pacific — the order was booked 3 hours late. The same must hold over email, where each email
-# is a new turn: the zone the customer stated in an earlier email holds for a later bare time, and the date stays.
+# is a new turn: with no zone given Rachel asks for it; the zone then holds for a later bare time, and the date stays.
 format: plain
 context: {email_subject: "Drinks order - SF office", user_name: "QA Tester"}
 turns:
   - send: "Hi,\r\n\r\nPlease send a quote for the items below.\r\n\r\nI am 21 years old. Deliver to 332 Pine St, San Francisco, CA 94104\r\n\r\n4 x Conundrum White 750mL\r\n3 x Fever-Tree Ginger Beer 6.8oz\r\n\r\nThanks!"
     expect:
       contains: ["Fever Tree Ginger Beer"]
-  - send: "Please place the order and send the payment link to pat@example-client.com\r\n\r\nCustomer Name: Pat Example-Lee\r\nCustomer Phone Number: (862) 555-0142\r\nDelivery tomorrow at 7 am ET"
+  # No zone: asked first, the time held (DC, Oct 5).
+  - send: "Please place the order and send the payment link to pat@example-client.com\r\n\r\nCustomer Name: Pat Example-Lee\r\nCustomer Phone Number: (862) 555-0142\r\nDelivery tomorrow at 7 am"
     expect:
-      matches: "\\d:00 [AP]M - \\d{1,2}:00 [AP]M ET \\(\\d{1,2}:00 [AP]M - \\d{1,2}:00 [AP]M PT\\)"
-      not_matches: "\\bEST\\b"
+      contains: ["Which time zone"]
+      not_contains: ["direct-checkout"]
+  - send: "ET"
+    expect:
+      matches: "\\d:00 [AP]M - \\d{1,2}:00 [AP]M ET"
+      not_matches: "\\bEST\\b|\\bPT\\b"
+      log_contains: ["[email-order] zone answered (America/New_York)"]
   - send: "5 PM works"
     expect:
-      contains: ["Payment link", "5:00 PM - 6:00 PM ET (2:00 PM - 3:00 PM PT)"]
-      not_matches: "\\bEST\\b"
-      log_contains: ["[delivery-tz] no zone in", "using the zone the customer stated earlier: America/New_York"]
+      contains: ["Payment Link", "5:00 PM - 6:00 PM ET"]
+      not_matches: "\\bEST\\b|\\bPT\\b"
+      log_contains: ["using the zone the customer stated earlier: America/New_York"]

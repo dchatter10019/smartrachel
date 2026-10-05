@@ -14,7 +14,7 @@ turns:
   - send: "QA Tester"
   - send: "same"
   - send: "9175550100"
-  - send: "tomorrow at 5 pm"
+  - send: "tomorrow at 5 pm ET"
   - send: "none"
   - send: "10%"
   - send: "yes"

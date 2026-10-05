@@ -13,7 +13,7 @@ turns:
   - send: "QA Tester"
   - send: "same"
   - send: "9175550100"
-  - send: "tomorrow at 5 pm"
+  - send: "tomorrow at 5 pm ET"
   - send: "none"
     expect: {contains: ["tip for your driver", "10%", "no tip"], not_contains: ["Shall I go ahead"]}
   - send: "10%"

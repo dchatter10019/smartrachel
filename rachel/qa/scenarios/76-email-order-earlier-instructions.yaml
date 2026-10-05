@@ -11,7 +11,7 @@ turns:
     expect:
       contains: ["PDF proposal is attached"]
   - send: "Rachel,\r\n\r\n*Please see the delivery instructions below:Main POC is Mara **(862)\r\n555-0177 <8625550177>**. They should say they're delivering from Example Co to\r\navoid any COI issues. Loading dock is on 31st Street.*\r\n\r\nThanks!"
-  - send: "Please place the order and send the payment link to pat@example-client.com\r\n\r\n*Customer Name: *\r\nPat Example-Lee\r\n\r\n*Customer Phone Number: *\r\n(862) 555-0142\r\n\r\n*Delivery date and time:*\r\nMonday, October 5th, between 5 to 6 PM"
+  - send: "Please place the order and send the payment link to pat@example-client.com\r\n\r\n*Customer Name: *\r\nPat Example-Lee\r\n\r\n*Customer Phone Number: *\r\n(862) 555-0142\r\n\r\n*Delivery date and time:*\r\nMonday, October 5th, between 5 to 6 PM ET"
     expect:
       contains: ["Payment link", "Notes for our driver", "Loading dock is on 31st Street", "delivering from Example Co"]
       log_contains: ["[email-order] delivery instructions from an earlier email in the thread"]

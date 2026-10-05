@@ -25,7 +25,7 @@ turns:
     expect: {contains: ["phone"]}
   - send: "9175550100"
     expect: {contains: ["date", "time"]}
-  - send: "tomorrow at 5 pm"
+  - send: "tomorrow at 5 pm ET"
   - send: "none"
   - send: "15%"
     expect: {contains: ["Order Summary", "Jordan Smith"], not_contains: ["Quinn Tester"]}

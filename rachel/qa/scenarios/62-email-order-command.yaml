@@ -20,10 +20,11 @@ turns:
   # and only the time is asked, with that day's real windows.
   - send: "Name: Jane Roe\r\nEmail: jane.roe@example.com\r\nPhone: 617-555-0142\r\nThe delivery date is next Tuesday. Please also send qa-link-copy@getbevvi.com the payment link.\r\n\r\nOn Tue, Sep 29, 2026 at 3:00 PM Rachel <rachelai@getbevvi.com> wrote:\r\n> I'll create the order and send the payment link as soon as I have"
     expect:
-      contains: ["the delivery time on", "Delivery windows on", "delivery date:"]
+      contains: ["as soon as I know your time zone", "Which time zone should I show the delivery times in", "delivery date:"]
       not_contains: ["the delivery date and time", "Payment link:"]
-      log_contains: ["date only \"next Tuesday\" (time asked)", "link also to: qa-link-copy@getbevvi.com"]
-  - send: "2pm please"
+      log_contains: ["date only \"next Tuesday\" (time asked)", "link also to: qa-link-copy@getbevvi.com", "no time zone known, asking it first"]
+  # The time zone is asked before any time is read (DC, Oct 5); the answer comes with the time.
+  - send: "Eastern, 2pm please"
     expect:
       contains: ["Hi Jane", "is all set", "QA dry run", "Here is your Payment Link: https://corporate.getbevvi.com/direct-checkout?token=QA_DRY_RUN", "Jane Roe", "(617) 555-0142", "Tip (5%)", "Your personal mixologist at Bevvi"]
       log_contains: ["[email-order] details reply", "complete -> placing", "[QA] place_order dry run"]

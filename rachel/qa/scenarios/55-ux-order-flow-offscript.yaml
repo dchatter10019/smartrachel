@@ -23,11 +23,11 @@ turns:
     expect: {contains: ["phone"], not_contains: ["anything else I can help"]}
   - send: "9175550100"
     expect: {matches: "date|time"}
-  - send: "yesterday at 5pm"
+  - send: "yesterday at 5pm ET"
     expect: {matches: "past|already|upcoming|future"}
-  - send: "3am tomorrow"
+  - send: "3am tomorrow ET"
     expect: {not_contains: ["instructions", "Shall I go ahead"]}
-  - send: "tomorrow at 5 pm"
+  - send: "tomorrow at 5 pm ET"
     expect: {contains: ["instructions"]}
   - send: "none"
     expect: {contains: ["tip for your driver", "10%", "no tip"], not_contains: ["Shall I go ahead"]}

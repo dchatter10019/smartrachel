@@ -104,7 +104,7 @@ const TOOLS = [
         phone:                { type: 'string', description: 'Customer phone' },
         address:              { type: 'string', description: 'Full delivery address: street, city, state zip' },
         zip:                  { type: 'string', description: 'Delivery zip code' },
-        delivery_datetime:    { type: 'string', description: 'Requested delivery date and time, e.g. "2026-10-05 17:00" or "Monday Oct 5 at 5pm". Read as local time at the delivery address unless it names a zone ("5pm ET", "11am PT") — include the zone the customer used. The prepared order\'s delivery.window shows the store window with its real zone; quote it as given.' },
+        delivery_datetime:    { type: 'string', description: 'Requested delivery date and time, e.g. "2026-10-05 17:00" or "Monday Oct 5 at 5pm". ALWAYS include the customer\'s time zone ("5pm ET", "11am Pacific"); if they haven\'t said one, ask them which time zone before calling — a time with no zone comes back as a problem asking for it. The prepared order\'s delivery.window is in the customer\'s zone; quote it as given.' },
         delivery_instructions:{ type: 'string' },
         tip_amount:           { type: 'number', description: 'Tip in USD (default 5% of the product total)' }
       },

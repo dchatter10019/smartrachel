@@ -14,7 +14,7 @@ turns:
   - send: "Hi Rachel,\r\n\r\nCan you please generate a payment link for this order?\r\n\r\nAlso, here are the delivery instructions for the order:\r\n\r\n*Main POC is Mara (862) 555-0177. Please let us know what time we should expect the delivery.*\r\n\r\nThanks!"
     expect:
       contains: ["Mara's last name"]
-  - send: "Mara is not the customer.\r\n\r\n*Customer Name: *\r\nPat Example-Lee\r\n\r\n*Customer Email:*\r\npat@example-client.com\r\n\r\n*Customer Phone Number: *\r\n(862) 555-0142\r\n\r\n*Delivery date and time:*\r\nMonday, October 5th, between 5 to 6 PM"
+  - send: "Mara is not the customer.\r\n\r\n*Customer Name: *\r\nPat Example-Lee\r\n\r\n*Customer Email:*\r\npat@example-client.com\r\n\r\n*Customer Phone Number: *\r\n(862) 555-0142\r\n\r\n*Delivery date and time:*\r\nMonday, October 5th, between 5 to 6 PM ET"
     expect:
       not_contains: ["Mara's last name", "PDF proposal?"]
       contains: ["Pat Example-Lee", "Payment link"]
