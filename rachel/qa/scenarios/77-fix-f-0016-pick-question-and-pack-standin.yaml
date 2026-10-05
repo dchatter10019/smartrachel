@@ -1,0 +1,30 @@
+name: fix-f-0016-pick-question-and-pack-standin
+# Oct 5 nightly (F-0016). (1) Bacardi Superior 750 mL left the NYC store, so it was a pending not-carried line;
+# "Buffalo Trace Bourbon looks good. Do you have Casamigos Blanco?" was deferred by the pick resolver (more than a
+# pick) but then taken by the substitute merge: added 1x (not the 5 the Bacardi had), "not the same kind", and the
+# Casamigos question was dropped. (2) The Stella 24 x 11 oz and 6 x 11 oz packs left the SF store; only 12 x 12 oz
+# cans came back, and the line went UNAVAILABLE (pack mismatch) — the event's beer came up short.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "I need 5 Bacardi Superior White Rum 750ml and 4 Patron Silver 750ml"
+    expect: {matches: "(?i)4\\s*x[^\\n]*Patr"}
+  - send: "Instead of the Bacardi I'd like a higher end bourbon, same 5 bottles — show me a few options"
+    expect: {matches: "^\\s*2[.)] .*\\$"}
+    capture: listed_partial
+  - send: "{pick_full} looks good. Do you have Casamigos Blanco?"
+    expect:
+      contains: ["Casamigos"]
+      log_contains: ["[substitute-merge] skipped — the pick resolver handed this message to the LLM"]
+  - send: "show my basket"
+    expect: {matches: "(?i)\\b5\\s*x?\\b[^\\n]*{pick_re}", not_contains: ["Bacardi"]}
+  - send: reset
+  - send: "yes"
+  - send: "332 Pine St, San Francisco, CA 94104"
+  - send: "4 x Conundrum White 750 mL\n2 x Stella Artois Premium Lager Beer 24 x 11 oz Bottles\nthat's the list for 20 people, 3 hours, beer and wine only, equal"
+    expect:
+      contains: ["Stella"]
+      not_contains: ["Stella Artois Premium Lager Beer 24 x 11 oz Bottles isn't available"]
+      log_contains: ["[buildPackage] pack:"]
+      log_not_contains: ["UNAVAILABLE (pack mismatch): \"Stella"]

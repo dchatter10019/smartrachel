@@ -595,6 +595,19 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
               const po = pendingOriginalByType(state.pendingSubstitutes, replacementName);
               if (po) { originalItem = po; console.log('[confirm-substitute] no original given — ' + replacementName + ' stands in for the not-carried ' + JSON.stringify(po) + ' (same kind)'); }
             }
+            // Another kind, but the customer named the not-carried item with this one's type ("Instead of the Bacardi
+            // I'd like a higher end bourbon, same 5 bottles"). Real (Oct 5 nightly, F-0016): added at 1x beside nothing.
+            if (!originalItem && t && (state.pendingSubstitutes || []).length) {
+              const nrmP = x => String(x || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+              const linesP = (sessions[sessionKey] || []).filter(m => m.role === 'user' && typeof m.content === 'string').slice(-6).map(m => m.content)
+                .concat(state.currentUserMessage || '').flatMap(c => String(c).split(/\n+|•/)).map(nrmP);
+              const rWordsP = [t].concat(t === 'whiskey' ? ['whisky', 'bourbon', 'scotch', 'rye'] : []).concat(nrmP(replacementName).split(/[^a-z0-9']+/).filter(w => w.length >= 4).slice(0, 2));
+              const named = state.pendingSubstitutes.filter(p => {
+                const oW = nrmP(p).split(/[^a-z0-9']+/).find(w => w.length >= 3) || '';
+                return oW && linesP.some(l => new RegExp('\\b' + oW + '\\b').test(l) && rWordsP.some(w => new RegExp('\\b' + w + '\\b').test(l)));
+              });
+              if (named.length === 1) { originalItem = named[0]; console.log('[confirm-substitute] no original given — ' + replacementName + ' stands in for the not-carried ' + JSON.stringify(named[0]) + ' (the customer named it with "' + t + '")'); }
+            }
           } catch (e) {}
         }
         // A cross-type original must come from the customer. Real bug (Sep 29 QA, scenario 26): for
@@ -2468,6 +2481,7 @@ app.post('/chat', async (req, res) => {
     // the line = the section it was offered under, qty = the "need Nx" it was offered at); the rest go to the LLM
     // with what was already done, and the substitute heuristics are skipped for the turn.
     let skipSubMerge = false;
+    let pickDeferredToLLM = false;
     try {
       const AR = require('./annotated-reply.js');
       const lastRA = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
@@ -4913,7 +4927,10 @@ app.post('/chat', async (req, res) => {
           // a second pick, a swap instruction) goes to the LLM whole. Real bug (Sep 28): a pick +
           // "Do you have regular Don Julio blanco?" + "Casamigos look good" lost the last two.
           const leftover = require('./multipick.js').pickLeftover(msgClean, picked);
-          if (leftover.length) { console.log('[pick-list] DEFERRED to LLM — message is more than a pick of #' + picked.n + ' (leftover: ' + JSON.stringify(leftover.slice(0, 12)) + ')'); picked = null; }
+          // ...and the substitute merge below must not take it back. Real (Oct 5 nightly, F-0016): Bacardi 750 not
+          // carried (pending) -> "Buffalo Trace Bourbon looks good. Do you have Casamigos Blanco?" was merged at 1x,
+          // the Casamigos question dropped.
+          if (leftover.length) { console.log('[pick-list] DEFERRED to LLM — message is more than a pick of #' + picked.n + ' (leftover: ' + JSON.stringify(leftover.slice(0, 12)) + ')'); picked = null; pickDeferredToLLM = true; }
         }
         if (picked) {
           let already = false;
@@ -4991,7 +5008,8 @@ app.post('/chat', async (req, res) => {
     // added the item being REMOVED). Voluntary swaps and list selections now go to the
     // LLM's confirm_substitute, which resolves the real product and the right quantity.
     if (hasPendingSub && skipSubMerge) console.log('[substitute-merge] skipped — the annotated reply was read pair by pair this turn');
-    if (hasPendingSub && !skipSubMerge) {
+    if (hasPendingSub && !skipSubMerge && pickDeferredToLLM) console.log('[substitute-merge] skipped — the pick resolver handed this message to the LLM (more than a pick)');
+    if (hasPendingSub && !skipSubMerge && !pickDeferredToLLM) {
       console.log('[substitute-merge] gate: hasPendingSub:', hasPendingSub, '| looksLikeSelectionPrompt:', looksLikeSelectionPrompt, '| message:', JSON.stringify(message).slice(0, 100));
       // Real gap found tonight: options are sometimes offered several turns apart
       // (e.g. gin options in one turn, triple sec options several turns earlier),

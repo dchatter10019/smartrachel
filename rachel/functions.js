@@ -1359,7 +1359,13 @@ async function buildPackage(iv) {
         // 6 x 11 oz here = 4 six-packs per 24-pack. Real (Oct 4 nightly, SF): the 24-pack left the catalog and the line
         // went UNAVAILABLE (pack mismatch) — the event was left 124 beer servings short.
         var rpm = reqPK.match(/^(\d+)x(.+)$/), fpm = (foundPK || '').match(/^(\d+)x(.+)$/);
-        if (reqPK && foundPK && reqPK !== foundPK && rpm && fpm && rpm[2] === fpm[2] && +fpm[1] < +rpm[1] && +fpm[1] > 1 && !PM.fit(reqForFit, best).missing.filter(function(w){return PM.brandWords(reqForFit).indexOf(w)>=0;}).length) {
+        // A near container size counts as the same (11 oz bottles asked, 12 oz cans here). Real (Oct 5 nightly, SF,
+        // F-0016): the 6 x 11 oz Stella left too; only 12 x 12 oz cans came back and the line went UNAVAILABLE.
+        var unitSz = function(s){ var m = String(s || '').match(/^(\d+(?:\.\d+)?)(oz|ml)$/); return m ? { n: +m[1], u: m[2] } : null; };
+        var rU = rpm && unitSz(rpm[2]), fU = fpm && unitSz(fpm[2]);
+        var nearSz = !!(rU && fU && rU.u === fU.u && rpm[2] !== fpm[2] && Math.abs(rU.n - fU.n) / Math.max(rU.n, fU.n) <= 0.1);
+        if (nearSz) console.log('[buildPackage] pack: ' + JSON.stringify(np.name) + ' container ' + rpm[2] + ' asked, ' + fpm[2] + ' here (' + best.name + ') — near enough, counted as the same');
+        if (reqPK && foundPK && reqPK !== foundPK && rpm && fpm && (rpm[2] === fpm[2] || nearSz) && +fpm[1] < +rpm[1] && +fpm[1] > 1 && !PM.fit(reqForFit, best).missing.filter(function(w){return PM.brandWords(reqForFit).indexOf(w)>=0;}).length) {
           var packMult = Math.ceil(+rpm[1] / +fpm[1]);
           np._packMult = packMult;
           console.log('[buildPackage] pack: ' + JSON.stringify(np.name) + ' wanted ' + reqPK + ', only ' + foundPK + ' here (' + best.name + ') — ' + packMult + ' per requested pack');
