@@ -850,11 +850,8 @@ function zoneStatedIn(text) {
   const z = m[1].toUpperCase();
   return /^P/.test(z) ? 'America/Los_Angeles' : /^M/.test(z) ? 'America/Denver' : /^C/.test(z) ? 'America/Chicago' : 'America/New_York';
 }
-// ASSUMPTION (confirm with Bevvi): getDeliveryDateTimes windows are STORE-LOCAL wall-clock
-// times with a hardcoded "EST" label — the SF and NYC stores return identical window
-// strings, which fits a mislabeled local schedule far better than an SF store genuinely
-// opening at 8 AM Pacific. If Bevvi says windows are always Eastern, set this to
-// 'America/New_York' and the matching converts accordingly.
+// getDeliveryDateTimes windows are STORE-LOCAL wall-clock times with a hardcoded "EST" label — CONFIRMED by DC (Oct 5):
+// "Bevvi runs stores in their local time zones". The SF store's "11:00 AM - 12:00 PM EST" is 11 AM Pacific.
 const WINDOWS_ARE_STORE_LOCAL = true;
 // Wall-clock in an arbitrary IANA zone -> UTC ISO.
 function zonedToUtcIso(dateStr, hour, minute, zone) {

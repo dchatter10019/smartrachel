@@ -341,7 +341,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   lists the basket (before the closing question).
 - The LLM's generate_proposal/place_order use the LIVE basket (state.lastLineItems after this turn's edits) and the
   saved event date/client when it omits them. In a client edit the LAST client statement wins ("it should be just Goody").
-- Delivery windows (server.js validateDeliveryTime): the store's windows are store-local but always labeled "EST".
+- Delivery windows (server.js validateDeliveryTime): the store's windows are store-local but always labeled "EST"
+  (DC confirmed Oct 5: Bevvi runs stores in their local time zones; WINDOWS_ARE_STORE_LOCAL = true).
   No time zone stated or known -> Rachel ASKS which one (PT/MT/CT/ET) and holds the time (orderData.pendingWhen; email:
   od.pending_when / od.awaiting_zone; connector: a problem asking it) — DC, Oct 5. Every window and time is then shown in
   the CUSTOMER's zone only ("2:00 PM - 3:00 PM ET"). The zone (words too: "Pacific", "eastern time", "east coast") is kept
