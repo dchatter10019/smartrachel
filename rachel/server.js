@@ -1550,6 +1550,9 @@ app.post('/chat', async (req, res) => {
   // As a const this threw "Assignment to constant variable" at runtime — a TypeError
   // that node --check cannot catch — on exactly the path where both were remembered.
   let { message, context, gbrain_context, session_id, format = 'markdown', skip_gbrain = false, images = null } = req.body;
+  // A caller that sends no context object (Oct 5, F-0017: a hand-run curl) crashed the turn at context.saved_zip = ...
+  // and the customer got "I hit a snag". Every channel sends one; a missing one is now an empty one.
+  if (!context || typeof context !== 'object') { if (context !== undefined) console.log('[chat] context was not an object — treated as empty'); context = {}; }
   // Photos / scans of an order (from WhatsApp media or Slack file uploads): transcribe
   // with vision, show the customer what was read, and run the list through the normal
   // pipeline (age/address gating and the custom_list build all apply unchanged).
