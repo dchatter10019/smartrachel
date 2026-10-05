@@ -8,7 +8,7 @@ turns:
   - send: "332 Pine St, San Francisco, CA 94104"
   - send: "2 x Stella Artois Premium Lager Beer 24 x 11 oz Bottles"
     expect: {contains: ["Stella"]}
-  - send: "the Stella 12 pack works"
+  - send: "the Stella 12 pack bottles work"
     expect:
       log_contains: ["[confirm-substitute] pack: "]
   - send: "show my basket"
