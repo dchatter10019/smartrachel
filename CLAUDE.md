@@ -22,7 +22,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   "Cocktail mode" + 8.3 read live — no recipe table in code, DC: hundreds of cocktails; unknown name asked back; spend ledger
   kind cocktail-expand) -> custom_list (Wine/Beer lines + every ingredient), as Rachel's cocktail mode. rachel_chat: a connection
   that passed rachel_verify_age tells Rachel via POST /internal/age-verified {session_id, via:'rachel-mcp'} (refused when proxied
-  or after a refusal in 24h; an idle session is expired there first, else /chat's idle expiry wiped the check — Oct 4) -> that conversation only skips her age question, never the profile (DC approved, Oct 3). Clients never get product urls/slugs
+  or after a refusal in 24h; an idle session is expired there first, else /chat's idle expiry wiped the check — Oct 4) -> that conversation only skips her age question, never the profile (DC approved, Oct 3). Tool descriptions + server instructions OPEN with when to use them (drink recommendations, events, buying / delivery,
+  "even if they don't mention Bevvi") — claude.ai shows only a description's first line until a tool is loaded, and a plain
+  "recommend a wine" didn't reach Rachel (DC, Oct 5). Clients never get product urls/slugs
   (also inside JSON-text fields and chat text), buyer tier or reviewer notes; told not to judge prices (DC, Oct 3). Orders are two-step:
   rachel_place_order PREPARES (server /internal/order-preview: catalog linking, real delivery windows, totals) and returns
   a 15-min one-use confirmation_code bound to the key; rachel_confirm_order places it (QA identities dry-run). Streamable
