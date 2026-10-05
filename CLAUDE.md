@@ -346,6 +346,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   The zone the customer last stated (orderData.custZone) holds for later bare times ("2:00 PM" after ET windows = ET); a
   zone with no time ("I said PST not EST") lists the same date's windows again in that zone. (Oct 5, DC, SF: Pacific
   windows labeled EST, the correction re-asked the time, and a bare "2:00 PM" was read as Pacific — order 3h late.)
+  Every channel uses validateDeliveryTime: Slack/WhatsApp (/chat order flow; the "order placed" reply gets the zoned
+  window, never Bevvi's raw "EST" string), email (the stated zone + offered date ride on state.emailOrder across emails:
+  od.cust_zone / od.windows_date; zoneStatedIn ignores a bare "CT"/"MT" in addresses) and the connector
+  (/internal/order-preview; a time with no zone = local time at the address; delivery.window carries the real zone).
   "The name of the recipient is X but the email is Y" at the email step sets the order name (contacts.recipientNameIn).
   A pick with no original takes its count from the customer's own list line (ownListQtyFor) and a pick whose qty is
   known never asks "How many bottles?". basket-hygiene never clears a pending line by a line labeled with another

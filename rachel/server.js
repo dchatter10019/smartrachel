@@ -837,6 +837,16 @@ function explicitZoneIn(text) {
   const z = m[1].toUpperCase();
   return /^P/.test(z) ? 'America/Los_Angeles' : /^M/.test(z) ? 'America/Denver' : /^C/.test(z) ? 'America/Chicago' : 'America/New_York';
 }
+// A zone stated in a longer text (an email): next to a time ("2pm ET"), a full code (PST/EDT...) or "Pacific time" — a
+// bare CT / MT / PT / ET there is usually a state or a word ("Hartford, CT"), never read as a zone.
+function zoneStatedIn(text) {
+  const t = String(text || '');
+  const m = t.match(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)?\s*(PST|PDT|PT|MST|MDT|MT|CST|CDT|CT|EST|EDT|ET)\b/i) || t.match(/\b(PST|PDT|MST|MDT|CST|CDT|EST|EDT)\b/)
+    || t.match(/\b(Pacific|Mountain|Central|Eastern)\s+time\b/i);
+  if (!m) return '';
+  const z = m[1].toUpperCase();
+  return /^P/.test(z) ? 'America/Los_Angeles' : /^M/.test(z) ? 'America/Denver' : /^C/.test(z) ? 'America/Chicago' : 'America/New_York';
+}
 // ASSUMPTION (confirm with Bevvi): getDeliveryDateTimes windows are STORE-LOCAL wall-clock
 // times with a hardcoded "EST" label — the SF and NYC stores return identical window
 // strings, which fits a mislabeled local schedule far better than an SF store genuinely
@@ -1021,7 +1031,7 @@ function renderOrderSummary(state, email, format, res) {
 // handler. Returns a res.json(...) response when it must ask (unparseable / unavailable),
 // or null on success with the validated window stored on state.orderData.
 // The store's delivery windows on a date phrase ("Monday, October 5th"): { label, options, none }.
-async function deliveryWindowsOn(state, datePhrase) {
+async function deliveryWindowsOn(state, datePhrase, custZone) {
   const r = chrono.parse(String(datePhrase || ''), new Date(), { forwardDate: true })[0];
   if (!r) return { label: '', options: [], none: false };
   const d = r.start.date();
@@ -1032,7 +1042,7 @@ async function deliveryWindowsOn(state, datePhrase) {
   const avail = await checkDeliveryAvailability(est, dateStr);
   if (!avail || !Array.isArray(avail.deliveryTimes)) { console.log('[delivery-check] no windows offered for ' + dateStr + ': lookup returned nothing usable — the time is asked without them'); return { label, options: [], none: false }; }
   const windowZone = WINDOWS_ARE_STORE_LOCAL ? zoneForAddress(state.address) : 'America/New_York';
-  return { label, options: avail.deliveryTimes.map(w => fmtWindowInZone(w.displayTime, dateStr, windowZone, null)), none: avail.deliveryTimes.length === 0 };
+  return { label, options: avail.deliveryTimes.map(w => fmtWindowInZone(w.deliveryTime || w.displayTime, dateStr, windowZone, custZone || null)), none: avail.deliveryTimes.length === 0 };
 }
 async function validateDeliveryTime(state, message, email, format, res) {
   // Parse as WALL-CLOCK. If the customer typed a zone ("11 am PST"), record it but
@@ -2801,8 +2811,9 @@ app.post('/chat', async (req, res) => {
           if (evD && evD.date) { od.delivery_date = evD.text; console.log('[email-order] no delivery date given — the event date is used: ' + JSON.stringify(evD.text)); }
         }
         const whenPhrase = x.when || (x.time && od.delivery_date ? od.delivery_date + ' at ' + x.time : '');
+        { const zE = zoneStatedIn(message); if (zE) od.cust_zone = zE; }   // "times in PST please"
         if (!whenPhrase && od.delivery_date && !od.delivery_ok) {
-          const w = await deliveryWindowsOn(state, od.delivery_date);
+          const w = await deliveryWindowsOn(state, od.delivery_date, od.cust_zone);
           od.delivery_date_label = w.label || od.delivery_date;
           if (w.none) { problem = "There's no delivery availability on " + od.delivery_date_label + ' — which other date works?'; od.delivery_date = ''; od.delivery_date_label = ''; }
           else if (w.options.length) problem = 'Delivery windows on ' + od.delivery_date_label + ': ' + w.options.join(', ') + '. Which one works?';
@@ -2810,8 +2821,14 @@ app.post('/chat', async (req, res) => {
         if (whenPhrase) {
           // The store's real delivery windows (validateDeliveryTime), captured instead of sent: a problem goes
           // into the ONE reply with the other questions.
-          state.orderData = {}; let askedT = null;
+          // The customer's stated zone and the date whose windows were offered carry across the thread's emails (each
+          // email is a new turn) — "2 PM" after windows shown in ET is 2 PM ET, as on Slack (Oct 5, DC).
+          state.orderData = { custZone: od.cust_zone || '', windowsDate: od.windows_date || '' }; let askedT = null;
           await validateDeliveryTime(state, whenPhrase, email, format, { json: pl => { askedT = pl && (pl.text || pl.response); return null; } });
+          if (state.orderData.custZone) od.cust_zone = state.orderData.custZone;
+          if (state.orderData.windowsDate) od.windows_date = state.orderData.windowsDate;
+          // The date stands when only the time wasn't available: a reply with just a time ("5 PM") joins it.
+          if (askedT && state.orderData.windowsDate && !x.date) od.delivery_date = state.orderData.windowsDate;
           if (askedT) { problem = askedT; od.delivery_ok = false; }
           else {
             od.delivery_ok = true; od.delivery_iso = state.orderData.delivery_datetime_iso || ''; od.delivery_window = state.orderData.delivery_datetime || x.when;
@@ -4302,7 +4319,9 @@ app.post('/chat', async (req, res) => {
           account_email: od.account_email || email || '',   // top-level createCorpOrder email = the logged-in user
           tip_amount: typeof od.tip === 'number' ? od.tip : undefined,   // the customer's chosen tip (enforced in rachel.js)
           delivery_datetime: od.delivery_datetime_iso || od.delivery_datetime,
-          delivery_window: od.delivery_datetime,
+          // The window as the customer approved it (real zone). Bevvi's raw window says "EST" even for SF — the LLM
+          // quoted it in the "order placed" reply (Oct 5, DC: "2:00 PM - 3:00 PM EST" for a Pacific window).
+          delivery_window: [od.delivery_date_label, od.delivery_window_display].filter(Boolean).join(', ') || od.delivery_datetime,
           delivery_instructions: od.delivery_instructions || '',
           zip: state.zip,
           // The exact figures the customer just approved in the summary. The post-order
@@ -4322,7 +4341,7 @@ app.post('/chat', async (req, res) => {
         state.lastFingerprint = fp2;
         const gbrainCtx = email ? await getCustomerContext('', '', context?.client_id || 'airculinaire', email).catch(() => '') : '';
         context.saved_zip = state.zip;
-        const addrRule2 = '\n\n## DELIVERY\nZip: ' + state.zip + '. Address: ' + state.address + '. Age and address verified.\n\n## ORDER INSTRUCTION\nThe user message contains a JSON system instruction. Parse it and immediately call ShoppingAgent with intent=place_order using the line_items, customer, delivery_datetime, delivery_instructions and zip from the JSON (pass delivery_instructions through verbatim, even if empty). Do not ask for any more information. In your confirmation reply, quote the amounts from approved_totals EXACTLY (product total, tax, service charge, tip, grand total) — never recompute them; the tip is the customer\'s choice and may be $0.00. Label the delivery line "Estimated delivery: $25.00" (it is an estimate; the final delivery charge is confirmed at checkout); the API response does not include these figures and the customer already approved them.';
+        const addrRule2 = '\n\n## DELIVERY\nZip: ' + state.zip + '. Address: ' + state.address + '. Age and address verified.\n\n## ORDER INSTRUCTION\nThe user message contains a JSON system instruction. Parse it and immediately call ShoppingAgent with intent=place_order using the line_items, customer, delivery_datetime, delivery_instructions and zip from the JSON (pass delivery_instructions through verbatim, even if empty). Do not ask for any more information. In your confirmation reply, state the delivery time exactly as delivery_window (with its time zone) — never convert or relabel it. In your confirmation reply, quote the amounts from approved_totals EXACTLY (product total, tax, service charge, tip, grand total) — never recompute them; the tip is the customer\'s choice and may be $0.00. Label the delivery line "Estimated delivery: $25.00" (it is an estimate; the final delivery charge is confirmed at checkout); the API response does not include these figures and the customer already approved them.';
         const orderOutput = await callRachel({ sessionKey, message: placeMsg, context, format, gbrainContext: gbrainCtx, addressRule: addrRule2, email, alreadyConfirmed: true });
         // Persist the customer's contact details for repeat orders. GBrain stores no
         // name/phone, so the previous successful order is the only source — without
