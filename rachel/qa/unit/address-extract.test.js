@@ -34,5 +34,9 @@ const bway = C(['subpremise', '200'], ['street_number', '11'], ['route', 'Broadw
 eq('Suite kept as typed', formatGeocoded(bway, '11 Broadway Suite 200, New York, NY 10004'), '11 Broadway, Suite 200, New York, NY 10004');
 eq('no street number -> null (caller falls back)', formatGeocoded(C(['route', 'Broadway'], ['postal_code', '10004']), 'Broadway'), null);
 
+// No commas (Oct 5, DC): went to the LLM, which never changed the address.
+eq('no commas', findAddress('375 Revere St Revere MA 02151'), '375 Revere St, Revere, MA 02151');
+eq('no commas, inside a sentence', findAddress('i had changed it to 375 Revere St Revere MA 02151'), '375 Revere St, Revere, MA 02151');
+eq('a quantity line is not an address', findAddress('44 bottles of prosecco and the budget is 1000'), null);
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');

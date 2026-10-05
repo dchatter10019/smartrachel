@@ -41,7 +41,15 @@ function findAddress(text) {
     if (/[.!?]\s+[A-Z]/.test(a) || /¶/.test(a)) { RE.lastIndex = m.index + 1; continue; }
     found.push({ a, cue: CUE.test(t.slice(Math.max(0, m.index - 40), m.index)) });
   }
-  if (!found.length) return null;
+  if (!found.length) {
+    // No commas at all: "375 Revere St Revere MA 02151" — a street that ends in a street word, then the city, the state
+    // code and the zip. Real (Oct 5, DC): it went to the LLM, which rebuilt the basket for 02151 but never changed the
+    // address — proposals and the order still said 332 Pine St, SF.
+    const SFX = '(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Way|Pl|Place|Ct|Court|Pkwy|Parkway|Ter|Terrace|Sq|Square|Hwy|Highway|Cir|Circle|Plaza|Row|Wharf|Pier)';
+    const m2 = t.match(new RegExp('\\b(\\d{1,6}\\s+(?:[A-Za-z0-9\'.-]+\\s+){0,4}?' + SFX + '\\.?)\\s+((?:[A-Z][A-Za-z.\'-]+\\s+){1,3}?)([A-Z]{2})\\s+(\\d{5})(?:-\\d{4})?\\b'));
+    if (m2) return m2[1].trim() + ', ' + m2[2].trim() + ', ' + m2[3] + ' ' + m2[4];
+    return null;
+  }
   return (found.find(f => f.cue) || found[0]).a;
 }
 

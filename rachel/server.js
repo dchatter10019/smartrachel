@@ -28,7 +28,8 @@ async function checkStoreCoverage(zip) {
       if (Array.isArray(data) && data.length > 0) {
         zipClientCache[zip] = client;
         console.log('[coverage] zip', zip, 'served by client', client);
-        return { zip, store_count: 1, client, stores: [{ name: client }] };
+        const est0 = (data[0] && data[0].establishmentId) || '';
+        return { zip, store_count: 1, client, establishmentId: est0, stores: [{ name: client }] };
       }
     }
     console.log('[coverage] zip', zip, 'not served by any known client');
@@ -783,7 +784,10 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
         if (dupIdx >= 0) {
           const ex = items[dupIdx];
           // A replace sets the quantity; an add (no original) tops it up.
-          ex.qty = originalItem ? qtyToUse : ((ex.qty || ex.quantity || 1) + (qtyToUse || 1));
+          // Original not in the basket (already replaced) and no quantity known: the line keeps its own. Real (Oct 5, DC):
+          // the LLM re-sent "Ruffino -> La Marca" after the swap and 44x La Marca became 1x (the PDF showed 1 bottle).
+          ex.qty = originalItem ? (qtyKnown ? qtyToUse : (ex.qty || ex.quantity || 1)) : ((ex.qty || ex.quantity || 1) + (qtyToUse || 1));
+          if (originalItem && !qtyKnown) console.log('[confirm-substitute] ' + JSON.stringify(originalItem) + ' is not in the basket and ' + ex.name + ' already is — its qty ' + ex.qty + ' is kept');
           ex.quantity = ex.qty; ex.subst_at = Date.now();
           if (rp) ex.price = rp;
           console.log('[confirm-substitute] merge into existing line:', ex.name, '-> qty', ex.qty);
@@ -930,6 +934,20 @@ function listScaleFor(state, reqMsg, answerMsg, got) {
 }
 const LIST_SCALE_NOTE = 'The customer wants THEIR LISTED products sized for this event, with their serving preference. The system applies the preference and sizes every quantity. Build now with ONE call: intent=custom_list, every listed product (name + category), guests and hours from the request, NO qty. Do not call menu_build. In one short line, say the quantities are sized for the event and lean toward what they said.';
 
+// Estimated tax: 10%, or $0 once the customer said the tax is 0 / tax-exempt (state.taxExempt, tax-command.js).
+const taxRateFor = state => (state && state.taxExempt ? 0 : 0.10);
+const taxLabelFor = state => (state && state.taxExempt ? 'Estimated tax (exempt)' : 'Estimated tax (10%)');
+const TAXCMD = require('./tax-command.js');
+// The basket with every estimate line (show basket, tax change).
+function basketTotalsText(state, items, format) {
+  const lines = items.map(li => (li.qty || li.quantity || 1) + 'x ' + li.name + ' — $' + (parseFloat(li.price) || 0).toFixed(2) + ' ea = $' + ((li.qty || li.quantity || 1) * (parseFloat(li.price) || 0)).toFixed(2));
+  const tot = Math.round(items.reduce((a, li) => a + (li.qty || li.quantity || 1) * (parseFloat(li.price) || 0), 0) * 100) / 100;
+  const tax = Math.round(tot * taxRateFor(state) * 100) / 100, svc = Math.round(tot * 10) / 100, { tip, label: tipL } = tipFor(state, tot), del = 25.00;
+  const grand = Math.round((tot + tax + svc + tip + del) * 100) / 100;
+  const b = format === 'slack' ? '*' : '';
+  return lines.join('\n') + '\n\nProduct total: $' + tot.toFixed(2) + '\n' + taxLabelFor(state) + ': $' + tax.toFixed(2) + '\nService charge (10%): $' + svc.toFixed(2) +
+    '\n' + tipL + ': $' + tip.toFixed(2) + '\nEstimated delivery: $' + del.toFixed(2) + '\n' + b + 'Estimated grand total: $' + grand.toFixed(2) + b + '\n\nEstimates — actual totals may vary.';
+}
 function tipFor(state, base) {
   const c = (state.orderData && state.orderData.tipChoice) || state.savedTipChoice || null;
   if (!c) return { tip: Math.round(base * 5) / 100, label: 'Tip (5%)', choice: null };
@@ -993,7 +1011,7 @@ function renderOrderSummary(state, email, format, res) {
       return res.json({ text: askT, response: askT });
     }
     if (!state.orderData.tipChoice) state.orderData.tipChoice = state.savedTipChoice;
-    const tax = Math.round(productTotal * 0.10 * 100) / 100;
+    const tax = Math.round(productTotal * taxRateFor(state) * 100) / 100;
     const service = Math.round(productTotal * 0.10 * 100) / 100;
     const { tip, label: tipLabel } = tipFor(state, productTotal);
     const delivery = 25.00; // Quoted as an ESTIMATE only; not sent on the order (Bevvi backend to apply delivery)
@@ -1015,7 +1033,7 @@ function renderOrderSummary(state, email, format, res) {
         'Delivery: ' + (state.orderData.delivery_date_label ? state.orderData.delivery_date_label + ', ' : '') + (state.orderData.delivery_window_display || state.orderData.delivery_datetime) + '\n' +
         (state.orderData.delivery_instructions ? 'Delivery instructions: ' + state.orderData.delivery_instructions + '\n' : '') + '\n' +
         'Product total: $' + productTotal.toFixed(2) + '\n' +
-        'Estimated tax (10%): $' + tax.toFixed(2) + '\n' +
+        taxLabelFor(state) + ': $' + tax.toFixed(2) + '\n' +
         'Service charge (10%): $' + service.toFixed(2) + '\n' +
         tipLabel + ': $' + tip.toFixed(2) + '\n' +
         'Estimated delivery: $' + delivery.toFixed(2) + '\n' +
@@ -2479,13 +2497,49 @@ app.post('/chat', async (req, res) => {
         }
         const prevCov = state.zip ? await checkStoreCoverage(state.zip) : null;
         let items = []; try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
-        const storeChanged = !!(prevCov && cov && prevCov.client && cov.client && prevCov.client !== cov.client);
+        // The store, not the client: SF and Boston are both "bevvibot" (Oct 5, DC: 94104 -> 02151 kept the SF lines).
+        const basketEst = (items.find(li => li && li.establishmentId) || {}).establishmentId || '';
+        const storeChanged = cov && cov.establishmentId && basketEst ? cov.establishmentId !== basketEst
+          : !!(prevCov && cov && prevCov.client && cov.client && prevCov.client !== cov.client);
         console.log('[addr] address changed at ready: ' + JSON.stringify(state.address) + ' -> ' + JSON.stringify(am[1]) + ' | store changed: ' + storeChanged + ' | basket items: ' + items.length);
         state.address = am[1]; state.zip = newZip; state.addrConfirmed = true; state.geocoded = null;
-        if (storeChanged && items.length) { state.lastLineItems = '[]'; Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; }); }
+        // Another store: each line is found again there (same product by name) at that store's price; a line it
+        // doesn't carry is told and offered a stand-in. Before, the basket was emptied ("tell me what you'd like").
+        let moved = null;
+        if (storeChanged && items.length) {
+          moved = { kept: [], repriced: [], missing: [] };
+          const nkA = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          const out = [];
+          for (const li of items) {
+            let prods = []; try { prods = await catalogSearch(newZip, li.name || li.label, li.category || ''); } catch (e) { console.log('[addr] search failed for ' + JSON.stringify(li.name) + ': ' + e.message); }
+            const p = prods.find(x => nkA(x.name) === nkA(li.name));
+            if (!p) { moved.missing.push(li); continue; }
+            const np = parseFloat(p.salePrice || p.price) || parseFloat(li.price) || 0;
+            if (Math.abs(np - (parseFloat(li.price) || 0)) >= 0.01) moved.repriced.push({ name: li.name, from: parseFloat(li.price) || 0, to: np });
+            out.push(Object.assign({}, li, { price: np, product_id: (p.corpProductFilter && p.corpProductFilter.corpProductId) || p.product_id || p.id || li.product_id,
+              upc: p.upc || li.upc, establishmentId: p.establishmentId || cov.establishmentId, url: p.url || '' }));
+          }
+          state.lastLineItems = JSON.stringify(out);
+          Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; });
+          if (moved.missing.length) {
+            state.pendingSubstitutes = (state.pendingSubstitutes || []).concat(moved.missing.map(li => li.label || li.name));
+            state.unavailableQty = Object.assign({}, state.unavailableQty || {}, Object.fromEntries(moved.missing.map(li => [li.label || li.name, li.qty || li.quantity || 1])));
+          }
+          console.log('[addr] basket moved to the store for ' + newZip + ' (' + cov.establishmentId + '): ' + out.length + ' line(s) kept' + (moved.repriced.length ? ', repriced: ' + moved.repriced.map(r => r.name + ' $' + r.from.toFixed(2) + ' -> $' + r.to.toFixed(2)).join('; ') : '') + (moved.missing.length ? ', NOT CARRIED there: ' + moved.missing.map(li => li.name).join('; ') : ''));
+          if (email) { try { saveBasket(email, state.lastLineItems, '', format || 'slack').catch(() => {}); } catch (e) {} }
+        }
         saveFlowState();
         if (email) { try { const d2c = await getD2CSession(email) || {}; await saveD2CSession(email, Object.assign({}, d2c, { delivery_address: state.address, delivery_zip: newZip })); } catch (e) {} }
-        const rA = 'Updated — delivering to ' + state.address + '.' + (storeChanged && items.length ? ' That address is served by a different store, so your basket needs to be rebuilt — tell me what you\'d like and I\'ll put it together again.' : ' What can I get you?');
+        const usd2 = n => '$' + n.toFixed(2);
+        // The whole basket, one line too (basketAfterChange lists 2+ lines only).
+        const listB = () => { let b = []; try { b = JSON.parse(state.lastLineItems || '[]'); } catch (e) {} return b.length ? '\n\n' + b.map(li => (li.qty || li.quantity || 1) + 'x ' + li.name + ' — ' + usd2(parseFloat(li.price) || 0) + ' ea = ' + usd2((li.qty || li.quantity || 1) * (parseFloat(li.price) || 0))).join('\n') : ''; };
+        const rA = 'Updated — delivering to ' + state.address + '.' + (moved
+          ? ' That address is served by a different store, so I moved your basket there.'
+            + (moved.repriced.length ? ' Prices there: ' + moved.repriced.map(r => r.name + ' ' + usd2(r.from) + ' → ' + usd2(r.to)).join('; ') + '.' : '')
+            + listB()
+            + (moved.missing.length ? '\n\n' + moved.missing.map(li => (li.qty || li.quantity || 1) + 'x ' + li.name).join(', ') + (moved.missing.length === 1 ? ' isn\'t' : ' aren\'t') + ' carried at that store — want me to find an alternative?' : '\n\nAnything else, or ready to place the order?')
+          : items.length ? ' Your basket stays the same.' + listB() + '\n\nAnything else, or ready to place the order?' : ' What can I get you?')
+          + (state.lastProposalUrl && items.length ? '\n\n(Your earlier proposal shows the old address — say "send the proposal" for an updated one.)' : '');
         return res.json({ text: rA, response: rA });
       }
     }
@@ -3427,10 +3481,10 @@ app.post('/chat', async (req, res) => {
           const asksBasket = /\b(basket|cart|my order|order so far)\b/i.test(message);
           if (one && !isList && !asksBasket && !items.some(it => nk(it.name).indexOf(nk(one[1]).slice(0, 12)) >= 0)) {
             const pp = parseFloat(one[3].replace(/,/g, '')) || 0;
-            const tax1 = Math.round(pp * 10) / 100, svc1 = Math.round(pp * 10) / 100, { tip: tip1, label: tipL1 } = tipFor(state, pp), del1 = 25.00;
+            const tax1 = Math.round(pp * taxRateFor(state) * 100) / 100, svc1 = Math.round(pp * 10) / 100, { tip: tip1, label: tipL1 } = tipFor(state, pp), del1 = 25.00;
             const g1 = Math.round((pp + tax1 + svc1 + tip1 + del1) * 100) / 100;
             const r1 = 'Estimated all-in for 1x ' + one[1].trim() + (one[2] ? ' — ' + one[2].trim() : '') + ':\n\n' +
-              'Product: $' + pp.toFixed(2) + '\nEstimated tax (10%): $' + tax1.toFixed(2) + '\nService charge (10%): $' + svc1.toFixed(2) +
+              'Product: $' + pp.toFixed(2) + '\n' + taxLabelFor(state) + ': $' + tax1.toFixed(2) + '\nService charge (10%): $' + svc1.toFixed(2) +
               '\n' + tipL1 + ': $' + tip1.toFixed(2) + '\nEstimated delivery: $' + del1.toFixed(2) + '\n*Estimated total: $' + g1.toFixed(2) + '*' +
               '\n\nEstimates — actual totals may vary.' +
               (items.length ? '\n\n(Your basket has ' + items.length + ' other item' + (items.length === 1 ? '' : 's') + ' — say "show my basket" for that total.)' : '') +
@@ -3445,11 +3499,11 @@ app.post('/chat', async (req, res) => {
           // Full estimate, same math as the order summary. Real regression: 'estimated
           // price' routed here (show_basket 0.90) and got only the product total — no tax,
           // service, tip, or delivery.
-          const tax = Math.round(tot * 10) / 100, svc = Math.round(tot * 10) / 100, { tip, label: tipL } = tipFor(state, tot), del = 25.00;
+          const tax = Math.round(tot * taxRateFor(state) * 100) / 100, svc = Math.round(tot * 10) / 100, { tip, label: tipL } = tipFor(state, tot), del = 25.00;
           const grand = Math.round((tot + tax + svc + tip + del) * 100) / 100;
           const reply = 'Here\'s your current basket:\n\n' + lines.join('\n') +
             '\n\nProduct total: $' + tot.toFixed(2) +
-            '\nEstimated tax (10%): $' + tax.toFixed(2) +
+            '\n' + taxLabelFor(state) + ': $' + tax.toFixed(2) +
             '\nService charge (10%): $' + svc.toFixed(2) +
             '\n' + tipL + ': $' + tip.toFixed(2) +
             '\nEstimated delivery: $' + del.toFixed(2) +
@@ -4453,8 +4507,8 @@ app.post('/chat', async (req, res) => {
     let pfHandled = false;   // the request words ("send back an updated PDF") must not restart the flow below
     if (state.lastProposalUrl && !state.proposalStep && !state.orderStep) {
       let pfLines = []; try { pfLines = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
-      let pf = pfLines.length > 1 ? require('./event-date.js').parseProposalFieldEdit(message, state.savedEventDate) : null;
-      if (!pf && pfLines.length > 1 && (asksOptions || dropOptions)) pf = {};   // same client + date, options added/removed
+      let pf = pfLines.length >= 1 ? require('./event-date.js').parseProposalFieldEdit(message, state.savedEventDate) : null;
+      if (!pf && pfLines.length >= 1 && (asksOptions || dropOptions)) pf = {};   // same client + date, options added/removed
       if (pf) {
         console.log('[proposal] field edit on the sent proposal: ' + JSON.stringify(pf) + ' (was client ' + JSON.stringify(state.savedClientName || '') + ', date ' + JSON.stringify(state.savedEventDate || '') + ') — regenerating in code');
         if (pf.client) state.savedClientName = pf.client;
@@ -4463,6 +4517,35 @@ app.post('/chat', async (req, res) => {
         state.proposalStep = 'date';
         message = state.savedEventDate || 'skip';
         pfHandled = true;
+      }
+    }
+    // Tax set to $0 ("the tax should be 0", "Estimated tax (10%): $79.16 is 0", "tax exempt") and the delivery address
+    // left off the proposal ("take out the delivery address from the proposal"): kept for the session and applied in
+    // code — every estimate, the order summary and the PDF (regenerated when one was sent). Real (Oct 5, DC): the LLM
+    // zeroed the tax on one PDF only, the next estimate and PDF had 10% again; "take out the address" was refused.
+    const taxCmd = TAXCMD.read(message);
+    const addrCmd = TAXCMD.proposalAddress(message);
+    if ((taxCmd || addrCmd) && !pfHandled && !state.proposalStep && (!state.orderStep || state.orderStep === 'confirm')) {
+      if (taxCmd) {
+        state.taxExempt = taxCmd === 'zero';
+        state.proposalOpts = Object.assign({}, state.proposalOpts || {}, { tax_exempt: state.taxExempt });
+        state.eventParams = Object.assign({}, state.eventParams || {}, { proposalOpts: state.proposalOpts });
+      }
+      if (addrCmd) state.proposalHideAddress = addrCmd === 'hide';
+      saveFlowState();
+      const said = [taxCmd ? (taxCmd === 'zero' ? 'tax is set to $0' : 'the estimated 10% tax is back') : '', addrCmd ? (addrCmd === 'hide' ? 'the delivery address is left off the proposal' : 'the delivery address is back on the proposal') : ''].filter(Boolean).join(' and ');
+      console.log('[tax/address] ' + said + ' (' + JSON.stringify(message).slice(0, 60) + ')' + (state.lastProposalUrl ? ' — proposal regenerated' : ''));
+      if (state.orderStep === 'confirm' && taxCmd) return renderOrderSummary(state, email, format, res);
+      let tl = []; try { tl = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+      if (state.lastProposalUrl && tl.length) {
+        state.proposalPrefix = 'Done — ' + said + '.';
+        state.proposalData = { qty: null, client_name: state.savedClientName || '', event_date: state.savedEventDate || '' };
+        state.proposalStep = 'date';
+        message = state.savedEventDate || 'skip';
+        pfHandled = true;
+      } else {
+        const rTx = 'Done — ' + said + '.' + (tl.length ? '\n\n' + basketTotalsText(state, tl, format) : '') + '\n\nWould you like to place the order, or get a PDF proposal?';
+        return res.json({ text: rTx, response: rTx });
       }
     }
     if (isProposalTrigger && !pfHandled && state.proposalStep) {
@@ -4505,7 +4588,7 @@ app.post('/chat', async (req, res) => {
           existingItemCount = Array.isArray(existingItems) ? existingItems.length : 0;
         } catch(e) {}
       }
-      if (existingItemCount > 1) {
+      if (existingItemCount >= 1) {   // a one-line basket too (Oct 5, DC: 44 prosecco -> the LLM said "ready" with no PDF)
         // Issue C fix: if client name AND event date were already collected for an
         // earlier proposal in this session, don't re-ask — reuse them and go straight
         // to generating. The customer can still say "change the client/date" to update.
@@ -4519,14 +4602,14 @@ app.post('/chat', async (req, res) => {
           const dO = require('./event-date.js').findEventDateIn(state.originalRequest);
           if (dO) { state.savedEventDate = dO; console.log('[proposal] event date from the original request: ' + JSON.stringify(dO)); }
         }
-        if (state.savedClientName && state.savedEventDate) {
+        if (state.savedClientName && (state.savedEventDate || state.eventDateNone)) {
           // Falls through to the 'date' handler below. Real bug (Oct 1, DC): this fell into the single-item
           // path after the if-block, which reset proposalStep to 'qty' and asked "How many bottles?" for a
           // 15-line basket — every second proposal in a session.
           console.log('[proposal] ' + existingItemCount + '-line basket, reusing client ' + JSON.stringify(state.savedClientName) + ' + date ' + JSON.stringify(state.savedEventDate));
-          state.proposalData = { qty: null, client_name: state.savedClientName, event_date: state.savedEventDate };
+          state.proposalData = { qty: null, client_name: state.savedClientName, event_date: state.savedEventDate || '' };
           state.proposalStep = 'date';
-          message = state.savedEventDate;
+          message = state.savedEventDate || 'none';
         } else {
           state.proposalStep = 'client';
           state.proposalData = { qty: null };
@@ -4578,11 +4661,11 @@ app.post('/chat', async (req, res) => {
         state.savedClientName = state.proposalData.client_name;
       }
       // If the event date is already known from an earlier proposal, skip asking again.
-      if (state.savedEventDate) {
-        state.proposalData.event_date = state.savedEventDate;
+      if (state.savedEventDate || state.eventDateNone) {   // "none" is an answer too: never asked again (Oct 5, DC)
+        state.proposalData.event_date = state.savedEventDate || '';
         state.proposalStep = 'date';
         // Re-dispatch into the date handler with the remembered value.
-        message = state.savedEventDate;
+        message = state.savedEventDate || 'none';
       } else {
         state.proposalStep = 'date';
         saveFlowState();
@@ -4592,8 +4675,9 @@ app.post('/chat', async (req, res) => {
     }
     if (state.proposalStep === 'date') {
       if (isNonAnswer(message)) {
-        state.proposalData.event_date = '';
+        state.proposalData.event_date = ''; state.eventDateNone = true;
       } else {
+        state.eventDateNone = false;
         const ed = require('./event-date.js').normalizeEventDate(message);
         if (ed.changed) console.log('[proposal] event date ' + JSON.stringify(message.trim()) + ' -> ' + JSON.stringify(ed.text) + ' (' + ed.why + ')');
         state.proposalData.event_date = ed.text;
@@ -4620,7 +4704,7 @@ app.post('/chat', async (req, res) => {
           if (!Array.isArray(existingItemsForProposal)) existingItemsForProposal = [];
         } catch(e) {}
       }
-      const isMultiItemProposal = existingItemsForProposal.length > 1;
+      const isMultiItemProposal = existingItemsForProposal.length >= 1;   // any basket: built in code (one line too)
       // A basket proposal is generated IN CODE from the basket (generate_proposal, no LLM) and the reply, with the
       // real link, is written here. Real bug (Sep 30, DC): the LLM, handed "generate a proposal", stopped to ask about
       // La Crema — already replaced two turns earlier — and before that replied "<url|Download proposal>" with no URL.
@@ -4633,7 +4717,7 @@ app.post('/chat', async (req, res) => {
           const rrP = await fetch(STAGING.SA_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
             body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'generate_proposal', arguments: Object.assign({
               line_items: JSON.stringify(existingItemsForProposal), client_name: pd.client_name || '', event_date: pd.event_date || '', email, channel: format || 'slack',
-              notes: state.address ? 'Delivery: ' + state.address + '.' : '' }, altOpts.length ? { options: JSON.stringify(altOpts) } : {}, po.tax_exempt ? { tax_exempt: true } : {}, po.totals_only ? { totals_only: true } : {}, po.hide_subtotals ? { hide_subtotals: true } : {}) } }) });
+              notes: state.address && !state.proposalHideAddress ? 'Delivery: ' + state.address + '.' : '' }, altOpts.length ? { options: JSON.stringify(altOpts) } : {}, po.tax_exempt ? { tax_exempt: true } : {}, po.totals_only ? { totals_only: true } : {}, po.hide_subtotals ? { hide_subtotals: true } : {}) } }) });
           const rtP = await rrP.text(); const rlP = rtP.split('\n').find(l => l.startsWith('data:'));
           const rP = rlP ? JSON.parse(JSON.parse(rlP.replace('data:', '').trim()).result.content[0].text) : null;
           if (rP && rP.success && rP.download_url) {
@@ -4643,7 +4727,8 @@ app.post('/chat', async (req, res) => {
             const total = existingItemsForProposal.reduce((a, li) => a + (li.qty || li.quantity || 1) * (parseFloat(li.price) || 0), 0);
             console.log('[proposal] generated in code from the basket for ' + JSON.stringify(pd.client_name) + ' (' + existingItemsForProposal.length + ' lines, event ' + (pd.event_date || 'none') + '): ' + rP.download_url);
             const link = format === 'slack' ? '<' + rP.download_url + '|Download proposal>' : 'Download proposal: ' + rP.download_url;
-            const sumP = 'Your proposal is ready!\n\n' + (format === 'slack' ? '*Client:* ' : 'Client: ') + (pd.client_name || '—') + '\n' + (format === 'slack' ? '*Event Date:* ' : 'Event date: ') + (pd.event_date || '—') + '\n\n' +
+            const preP = state.proposalPrefix || ''; if (preP) { state.proposalPrefix = ''; saveFlowState(); }
+            const sumP = (preP ? preP + '\n\n' : '') + 'Your proposal is ready!\n\n' + (format === 'slack' ? '*Client:* ' : 'Client: ') + (pd.client_name || '—') + '\n' + (format === 'slack' ? '*Event Date:* ' : 'Event date: ') + (pd.event_date || '—') + '\n\n' +
               existingItemsForProposal.map(li => { const q = li.qty || li.quantity || 1, pr = parseFloat(li.price) || 0; return q + 'x ' + String(li.name || li.label || '').replace(/ \*$/, '') + ' — $' + pr.toFixed(2) + ' ea = $' + (q * pr).toFixed(2); }).join('\n') +
               '\n\nProduct total: $' + total.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' (tax, service, tip and delivery are itemized in the PDF)' +
               (altOpts.length ? '\n\n' + PO.describe(altOpts) + ' The total is for the items above; each option shows how it changes it.'
@@ -5545,18 +5630,30 @@ app.post('/chat', async (req, res) => {
     // dropped the Product total / grand total block entirely.
     try {
       const bt = getState(sessionKey).builtTotals;
+      if (bt && getState(sessionKey).taxExempt) { const g0 = parseFloat(bt.grand) - (parseFloat(bt.tax) || 0); bt.grand = (Math.round(g0 * 100) / 100).toFixed(2); bt.tax = '0.00'; bt.taxExempt = true; }
       // Only when the reply presents the package ("8x Name — $x" lines, also "Red: 8x ..."); an options list after a
       // build (reprice: "1. Name — $24.19") is not a package and gets no totals.
       const pkgLines = (output.match(/(?:^|[\s:])[*_]?\d{1,3}x\s[^\n]*\$\d/gm) || []).length;
       if (bt && pkgLines >= 2 && !/product total/i.test(output)) {
         const b = format === 'slack' ? '*' : '';
-        const block = 'Product total: $' + bt.pt + '\nEstimated Tax (10%): $' + bt.tax + '\nEstimated Delivery: $' + bt.del + '\nService Charge (10%): $' + bt.svc + '\nTip (5%): $' + bt.tip + '\n' + b + 'Estimated grand total: $' + bt.grand + (bt.budget ? ' of your $' + bt.budget + ' budget' : '') + b;
+        const block = 'Product total: $' + bt.pt + '\n' + (bt.taxExempt ? 'Estimated Tax (exempt)' : 'Estimated Tax (10%)') + ': $' + bt.tax + '\nEstimated Delivery: $' + bt.del + '\nService Charge (10%): $' + bt.svc + '\nTip (5%): $' + bt.tip + '\n' + b + 'Estimated grand total: $' + bt.grand + (bt.budget ? ' of your $' + bt.budget + ' budget' : '') + b;
         const paras = output.trimEnd().split(/\n\s*\n/);
         if (paras.length > 1 && /\?\s*\**\s*$/.test(paras[paras.length - 1])) paras.splice(paras.length - 1, 0, block); else paras.push(block);
         output = paras.join('\n\n');
         console.log('[reply] totals added in code — the LLM omitted them for this turn\'s build (product total $' + bt.pt + ')');
       }
     } catch (e) { console.error('[reply] totals insert failed:', e.message); }
+    // Tax set to $0 this session: an estimate the LLM wrote with tax is corrected in code (the tax line to $0.00, the
+    // grand total down by that amount). Real (Oct 5, DC): "Estimated tax (10%): $79.16" right after "the tax should be 0".
+    if (getState(sessionKey).taxExempt) {
+      const tm = output.match(/^([*_]*Estimated tax[^\n$]*?):?\s*\$([\d,]+\.\d{2})[*_]*\s*$/im);
+      const oldTax = tm ? parseFloat(tm[2].replace(/,/g, '')) : 0;
+      if (tm && oldTax > 0) {
+        output = output.replace(tm[0], 'Estimated tax (exempt): $0.00');
+        output = output.replace(/(Estimated grand total:?\s*\$)([\d,]+\.\d{2})/i, (m0, a, g) => a + (Math.round((parseFloat(g.replace(/,/g, '')) - oldTax) * 100) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+        console.log('[tax] the reply showed tax $' + oldTax.toFixed(2) + ' — set to $0 in code (tax-exempt this session)');
+      }
+    }
     // Category subtotals ("Wine total: $X") on every package reply — computed from the build, not left to
     // the LLM (it wrote them in about half the Sep 27-28 QA runs). See package-subtotals.js.
     try {

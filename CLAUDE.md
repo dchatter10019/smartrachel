@@ -357,6 +357,20 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   A pick with no original takes its count from the customer's own list line (ownListQtyFor) and a pick whose qty is
   known never asks "How many bottles?". basket-hygiene never clears a pending line by a line labeled with another
   request line (Oct 5: the Sonoma syrup pending was cleared by the mango syrup line).
+- Address change at ready (server.js, Oct 5 DC): a comma-less address ("375 Revere St Revere MA 02151") is read
+  (address-extract.js fallback) — it went to the LLM, which rebuilt the basket for the new zip but never changed
+  state.address (proposals/orders kept 332 Pine St). The store is compared by establishmentId (coverage now returns
+  it; SF and Boston are both client "bevvibot"); another store = each line found again there by exact name at its price
+  ([addr] basket moved ... repriced / NOT CARRIED -> pendingSubstitutes), never an emptied basket; the reply lists the
+  basket. Bevvi has no store for 02210 (Seaport) — a real coverage gap, not a Rachel bug.
+- Tax / proposal address (tax-command.js, Oct 5 DC): "the tax should be 0", "Estimated tax (10%): $79.16 is 0", "tax
+  exempt" -> state.taxExempt for the session: every estimate (basket, order summary, LLM-written totals corrected in
+  code [tax]), proposalOpts.tax_exempt on every PDF; "add the tax back" restores. "take out the delivery address from
+  the proposal" -> state.proposalHideAddress (in-code + LLM proposals). Either one regenerates a sent proposal in code.
+- Proposals: a ONE-line basket is generated in code too (the LLM said "ready" with no PDF); "None" as the event date is
+  remembered (state.eventDateNone) so a repeat proposal never re-asks client/date; the shopping-agent refuses a
+  proposal with no lines or a $0 line ([generate_proposal] REFUSED). A confirm_substitute whose original is no longer in
+  the basket keeps the replacement line's qty (44x La Marca became 1x).
 - Every order Rachel places (createCorpOrder) has top-level email = rachelai@getbevvi.com (DC, Oct 3; ORDER_ACCOUNT_EMAIL in
   store-agent/shopping-agent.js, env RACHEL_ORDER_ACCOUNT_EMAIL); customerData.email = the customer; who asked is kept
   in our order log (requested_by) and [place_order] account | customer email | requested by. Until Oct 3 the top-level

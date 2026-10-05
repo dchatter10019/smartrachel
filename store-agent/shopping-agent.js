@@ -1067,6 +1067,17 @@ async function executeTool(name, input) {
     let lineItems = input.line_items || null;
     if (!lineItems) lineItems = await getPackage(input.email, input.channel || 'slack');
     if (!lineItems) return { success: false, error: 'No active package. Provide line_items.' };
+    // A proposal is never built from lines with no price: an empty basket became "Products x44 — $0.00" (Oct 5, staging,
+    // after a proposal asked with nothing in the basket). Refused, with the reason, so the caller asks what to include.
+    try {
+      const liP = typeof lineItems === 'string' ? JSON.parse(lineItems) : lineItems;
+      const bad = Array.isArray(liP) ? liP.filter(li => !(parseFloat(li && li.price) > 0)) : [];
+      if (!Array.isArray(liP) || !liP.length || bad.length) {
+        const why = !Array.isArray(liP) || !liP.length ? 'no line items' : bad.length + ' line(s) with no price: ' + bad.map(li => JSON.stringify((li && (li.name || li.label)) || '?')).join(', ');
+        console.log('[generate_proposal] REFUSED — ' + why);
+        return { success: false, error: 'Cannot build a proposal: ' + why + '. Ask the customer which products (and how many) the proposal should include, search them, and add them to the basket first.' };
+      }
+    } catch (e) { console.log('[generate_proposal] line_items unreadable (' + e.message + ') — refused'); return { success: false, error: 'line_items unreadable' }; }
     if (input.line_items) {
       try { await saveBasket(input.email, input.line_items, '', input.channel || 'slack'); } catch(e) {}
     }

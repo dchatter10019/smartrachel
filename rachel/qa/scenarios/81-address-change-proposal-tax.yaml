@@ -1,0 +1,56 @@
+name: address-change-proposal-tax
+# Oct 5, DC (Slack). (1) "375 Revere St Revere MA 02151" (no commas) went to the LLM: the basket was rebuilt for 02151
+# but the address stayed 332 Pine St, SF — on the proposals and in "what's the delivery address". (2) A one-line basket
+# proposal went to the LLM, which said "Your proposal is ready!" with no PDF. (3) "send me the pdf proposal" asked the
+# client and date again after "None". (4) The LLM re-sent the done swap and 44x La Marca became 1x on the PDF.
+# (5) "the tax should be 0" held for one PDF; the next estimate and PDF had 10% again. (6) "take out the delivery
+# address from the proposal" was refused.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "375 Revere St, Revere, MA 02151"
+  - send: "need La Marca Prosecco 750ml"
+    expect: {contains: ["La Marca Prosecco - 750 ML"]}
+  - send: "La Marca Prosecco - 750 ML"
+  - send: "44"
+    expect: {matches: "(?i)44\\s*x\\s*La Marca Prosecco"}
+  # No commas: the address changes in code, and the basket moves to the SF store (repriced), never emptied.
+  - send: "332 Pine St San Francisco CA 94104"
+    expect:
+      contains: ["delivering to 332 Pine St, San Francisco, CA 94104"]
+      matches: "(?i)44\\s*x\\s*La Marca Prosecco"
+      not_contains: ["What can I get you?"]
+      log_contains: ["[addr] address changed at ready", "[addr] basket moved to the store for 94104"]
+  - send: "need to get a proposal"
+    expect: {contains: ["client"]}
+  - send: "Amazon"
+    expect: {contains: ["event date"]}
+  - send: "None"
+    expect:
+      contains: ["Download proposal", "Amazon"]
+      matches: "(?i)44x La Marca"
+      log_contains: ["[proposal] generated in code from the basket"]
+      pdf_contains: ["332 Pine St"]
+      pdf_not_contains: ["Revere"]
+  - send: "send me the pdf proposal"
+    expect:
+      contains: ["Download proposal"]
+      matches: "(?i)44x La Marca"
+      not_contains: ["client or company name", "event date?"]
+  - send: "the tax shouldbe 0"
+    expect:
+      contains: ["tax is set to $0", "Download proposal"]
+      matches: "(?i)44x La Marca"
+      log_contains: ["[tax/address] tax is set to $0"]
+  - send: "take out the deivery address from the propsal"
+    expect:
+      contains: ["delivery address is left off the proposal", "Download proposal"]
+      pdf_not_contains: ["332 Pine", "Revere"]
+  - send: "show me the basket"
+    expect:
+      contains: ["Estimated tax (exempt): $0.00"]
+      matches: "(?i)44x La Marca"
+  - send: "whats the delivery address"
+    expect:
+      contains: ["332 Pine St"]
+      not_contains: ["Revere"]

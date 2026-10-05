@@ -548,7 +548,10 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           }
           saInput.line_items = currentLineItems;
           // Same delivery line as the in-code proposal. Real bug (Oct 1, Sean): the LLM-built PDF had no "Delivery:" line.
-          if (saInput.intent === 'generate_proposal' && sessionState && sessionState.address && !/\bdeliver/i.test(saInput.notes || '')) {
+          if (saInput.intent === 'generate_proposal' && sessionState && sessionState.proposalHideAddress) {
+            saInput.notes = String(saInput.notes || '').replace(/[^.]*\b(deliver|address)[^.]*\.?/gi, '').trim();
+            console.log('[proposal] delivery address left off the LLM proposal (customer asked)');
+          } else if (saInput.intent === 'generate_proposal' && sessionState && sessionState.address && !/\bdeliver/i.test(saInput.notes || '')) {
             saInput.notes = 'Delivery: ' + sessionState.address + '.' + (saInput.notes ? ' ' + saInput.notes : '');
             console.log('[proposal] delivery address added to the LLM proposal notes');
           }
@@ -855,7 +858,9 @@ RULES:
   // cost). As a second system block they sat before the conversation and changed every turn, so the conversation cache
   // could never be reused on the next turn. They are sent with this turn's request only — never stored in the history.
   const sessionFacts = '## SESSION FACTS\n' + ['kitchen_location', 'user_email', 'client_id', 'account_id'].map(k => k + ': ' + ((context && context[k]) || '(none)')).join('\n')
-    + '\nage_verified: ' + (context && context.age_verified ? 'true' : 'false');
+    + '\nage_verified: ' + (context && context.age_verified ? 'true' : 'false')
+    + (sessionState && sessionState.taxExempt ? '\ntax: the customer set the tax to $0 — every estimate shows "Estimated tax: $0.00" and generate_proposal gets tax_exempt=true' : '')
+    + (sessionState && sessionState.address ? '\ndelivery_address: ' + sessionState.address + ' (the address change is done in code; never say you cannot change it)' : '');
   const turnNotes = '<rachel_system_notes>\nSession notes from Rachel\'s system for this turn (NOT written by the customer):\n\n'
     + [sessionFacts, address_rule, gbrain_context ? '## CUSTOMER CONTEXT FROM MEMORY\n' + gbrain_context : '', orderNote, listNote].filter(x => String(x || '').trim()).map(x => String(x).trim()).join('\n\n')
     + '\n</rachel_system_notes>';
