@@ -637,16 +637,14 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         // unrelated results are dropped (never presented as the product) and the original is kept on
         // the session, so "show me alternatives" can anchor to it (ALTERNATIVES ROUTING above).
         if (result.success && saInput.intent === 'product_query' && Array.isArray(result.results)) {
-          const GENERICW = /^(the|and|of|de|du|la|le|wine|wines|red|white|rose|rosé|sparkling|vineyard|vineyards|valley|estate|reserve|bottle|bottles|ml|l|oz|pack|case|chardonnay|cabernet|sauvignon|blanc|pinot|noir|grigio|gris|merlot|malbec|zinfandel|syrah|shiraz|riesling|champagne|prosecco|brut|vodka|gin|rum|tequila|whiskey|whisky|bourbon|scotch|beer|lager|ipa|seltzer|blanco|reposado|anejo|añejo|high|higher|end|top|shelf|premium|luxury|upscale|fancy|nice|good|best|great|cheap|budget|affordable|mid|quality|expensive|smooth|popular|regular|standard|classic|something|some|any|brewing|brewery|breweries|brewers|brewer|company|winery|wineries|cellars|cellar|distillery|distillers|distilling|non|alcoholic|nonalcoholic)$/i;   // company suffixes too: "Athletic Brewing" was flagged not-found 3x (Oct 1, DC) — the catalog says "Athletic N/A ..."; descriptors are not a producer: "high end whiskey" was flagged not-found (Sep 29) and hijacked every later search
-          const normW = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9' ]+/g, ' ');
+          const SM = require('./search-match.js');   // same match as the shopping-agent's product_query (rule 8)
           const notFound = [], checked = [];
           for (const r of result.results) {
             const qname = (r && (r.query || r.name)) || '';
-            const words = normW(qname).split(/\s+/).filter(w => w.length >= 3 && !/^\d/.test(w) && !GENERICW.test(w));
-            if (!words.length) continue;   // generic query ("Chardonnay", "red wine") — nothing to verify
+            const key = SM.keyOf(qname);
+            if (!key.length) continue;   // generic query ("Chardonnay", "red wine") — nothing to verify
             checked.push(qname);
-            const key = words.slice(0, 2);
-            const hit = (r.products || []).some(p => { const pn = ' ' + normW(p.name) + ' ', pn0 = pn.replace(/'/g, ''); return key.every(k => pn.includes(' ' + k + ' ') || pn0.includes(' ' + k.replace(/'/g, '') + ' ')); });   // "titos" = "Tito's" (Oct 2)
+            const hit = (r.products || []).some(p => SM.isMatch(qname, p.name));   // "titos" = "Tito's" (Oct 2)
             if (!hit) {
               try { require('./events.js').unmatched(qname); } catch (e) {}
               console.log('[not-found] ' + JSON.stringify(qname) + ' — no result carries "' + key.join(' ') + '"; dropped ' + (r.products || []).length + ' unrelated result(s): ' + (r.products || []).map(p => p.name).join(' | '));

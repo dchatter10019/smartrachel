@@ -48,11 +48,9 @@ console.log('classifier reply with text after the JSON');
   eq('clean JSON', firstJson('{"intent":"other"}'), { intent: 'other' });
 }
 
-console.log('descriptor words are not a producer (rachel.js not-found GENERICW)');
+console.log('descriptor words are not a producer (search-match.js GENERICW, used by rachel.js not-found + product_query)');
 {
-  const src = require('fs').readFileSync(require('path').join(__dirname, '../../rachel.js'), 'utf8');
-  const GENERICW = eval(src.match(/const GENERICW = (\/\^\(.*?\)\$\/i);/)[1]);
-  const distinctive = q => q.toLowerCase().split(/[^a-z0-9']+/).filter(w => w.length >= 3 && !/^\d/.test(w) && !GENERICW.test(w));
+  const distinctive = require('../../search-match.js').distinctiveWords;
   eq('"high end whiskey 750 mL" is generic', distinctive('high end whiskey 750 mL'), []);
   eq('"tequila mid top shelf" is generic', distinctive('tequila mid top shelf'), []);
   eq('"Macallan Scotch 750 mL" still checked', distinctive('Macallan Scotch 750 mL'), ['macallan']);

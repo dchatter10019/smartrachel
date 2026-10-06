@@ -506,7 +506,18 @@ async function executeTool(name, input) {
       // A brand's core expressions (the row is the query plus at most Blanco/Silver/Reposado/...)
       // come before its specialty bottles; price order is kept within each group.
       const coreRank = coreFirst(searchName, sorted);
-      const filtered = coreRank.slice(0, q.limit || 3).map(formatProduct);
+      // Relevance before price (search-match.js, shared with rachel.js): the catalog returns loose word matches, and a
+      // price-only order put them first — on the connector "Green Chartreuse" came back as Johnnie Walker Green, "Rioja"
+      // as an Argentine Malbec blend (DC, Oct 6). Results that don't carry the query's producer words are dropped; none
+      // left = not carried here.
+      const rm = require(RACHEL_DIR + '/search-match.js').rankByMatch(searchName, coreRank);
+      if (rm.unrelated && rm.unrelated.length) console.log('[product_query] ' + JSON.stringify(searchName) + ' — dropped ' + rm.unrelated.length + ' result(s) without "' + rm.key.join(' ') + '": ' + rm.unrelated.slice(0, 5).map(p => p.name).join(' | '));
+      if (!rm.found && coreRank.length) {
+        console.log('[product_query] NOT FOUND ' + JSON.stringify(searchName) + ' — no result carries "' + rm.key.join(' ') + '"');
+        results.push({ query: q.name, found: false, products: [], note: 'Not carried at this store — the search only returned unrelated products. Say it is not available here; do not offer the unrelated products as this one.' });
+        continue;
+      }
+      const filtered = rm.products.slice(0, q.limit || 3).map(formatProduct);
       results.push({ query: q.name, found: filtered.length > 0, products: filtered });
     }
     // Save first product as basket for proposal/order reuse — but ONLY if there isn't

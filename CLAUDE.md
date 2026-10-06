@@ -296,6 +296,11 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   CPU not accepting connections; every turn waited ~145s (QA stuck turns F-0020/F-0021); restarted Oct 6 (DC approved).
 - Proposal options from the alternatives search are kept too (proposal-options.js groupsFromResult labels by r.query);
   the in-code proposal retries a dropped shopping-agent fetch once (F-0021).
+- Search relevance (rachel/search-match.js, DC Oct 6 on claude.ai): product_query ranks results by the query's
+  distinctive words before price and drops rows without its producer key ([product_query] dropped / NOT FOUND -> found:false
+  + note); rachel.js [not-found] uses the same module. Was price-only: "Green Chartreuse" -> Johnnie Walker Green, "Rioja" ->
+  an Argentine blend first, and the connector (which calls product_query directly) showed them as found. The catalog has
+  no subcategory data (all None) — no category search; Veuve Clicquot 6 Liter is filed as Beer (catalog data).
 - Catalog 5xx/429: searchProducts retries twice; a build that still hit failures returns CATALOG_UNREACHABLE,
   never "isn't available at this store".
 - A conversation expires after RACHEL_IDLE_HOURS (4) idle, except email threads; age is re-asked. An email thread's
