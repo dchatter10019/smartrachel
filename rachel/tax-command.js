@@ -18,7 +18,8 @@ function proposalAddress(msg) {
   if (new RegExp('\\b(?:add|put|show|include)\\b[^.?!\\n]{0,25}\\baddress\\b[^.?!\\n]{0,25}\\bback\\b|\\b(?:add|put)\\s+(?:the\\s+)?(?:delivery\\s+)?address\\s+(?:back\\s+)?(?:on|in)(?:to)?\\s+(?:the\\s+)?' + doc, 'i').test(t)) return 'show';
   if (new RegExp('\\b(?:remove|take\\s+out|take\\s+off|drop|hide|leave\\s+(?:off|out)|delete)\\b[^.?!\\n]{0,40}\\baddress\\b[^.?!\\n]{0,40}\\b' + doc + '\\b'
     + '|\\b' + doc + '\\b[^.?!\\n]{0,30}\\b(?:without|no)\\s+(?:the\\s+)?(?:\\w+\\s+)?address\\b'
-    + '|\\b(?:don\'?t|do\\s+not)\\s+(?:show|include|put)\\s+(?:the\\s+)?(?:\\w+\\s+)?address\\b', 'i').test(t)) return 'hide';
+    + '|\\b(?:don\'?t|do\\s+not)\\s+(?:show|include|put)\\s+(?:the\\s+)?(?:\\w+\\s+)?address\\b'
+    + '|\\b(?:take|leave|keep)\\s+(?:the\\s+)?(?:\\w+\\s+)?address\\s+(?:off|out)\\b', 'i').test(t)) return 'hide';
   return null;
 }
 module.exports = { read, proposalAddress };

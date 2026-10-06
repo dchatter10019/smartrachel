@@ -2475,6 +2475,61 @@ app.post('/chat', async (req, res) => {
       console.log('[tip] still no tip amount after asking — handling the message normally');
     }
 
+    // ── A NEW ORDER: confirm the delivery address first (DC, Oct 5) ─────────────────
+    // "start a new order" kept the last address without a word (Oct 5: the prosecco order quietly went to 332 Pine St,
+    // SF). Now Rachel shows it and asks: "yes" keeps it, a new address replaces it (the address-change block below),
+    // "no" asks for the new one. Anything else the customer said with or before the answer is held and replayed after.
+    if (state.step === 'ready' && !state.orderStep && !state.proposalStep && state.address) {
+      const NEW_ORDER = /\b(?:new|separate|another|different|second|fresh) order\b|\bstart (?:a )?(?:new|fresh|over)\b/i;
+      const addrIn = require('./address-extract.js').findAddress(message);
+      if (state.newOrderAddrAsk) {
+        const yesA = /^\s*(?:yes|yep|yeah|yup|y|sure|correct|same|same (?:one|address|place)|that'?s (?:right|correct|fine)|ok(?:ay)?|use (?:it|that|the (?:old|same|previous) (?:one|address))|the (?:old|same|previous) (?:one|address)|keep it|please do)\b/i.test(message) && !/\b(?:no|not|different|change|new)\b/i.test(message);
+        const noA = !addrIn && /^\s*(?:no|nope|nah|different|change it|a different (?:one|address)|new (?:one|address)|not (?:that|the same))\b/i.test(message);
+        const held = state.newOrderHeld || '';
+        if (yesA) {
+          state.newOrderAddrAsk = false; state.newOrderHeld = ''; saveFlowState();
+          console.log('[new-order] address kept: ' + JSON.stringify(state.address) + (held ? ' — replaying the held request' : ''));
+          if (!held) { const rY = 'Great — delivering to ' + state.address + '. What are you looking for?'; return res.json({ text: rY, response: rY }); }
+          message = held; msgLower = held.toLowerCase().trim().replace(/\*/g, '').replace(/_/g, '');
+        } else if (addrIn) {
+          state.newOrderAddrAsk = false; saveFlowState();   // the address-change block below takes it (and replays nothing)
+          console.log('[new-order] new address given: ' + JSON.stringify(addrIn));
+        } else if (noA) {
+          saveFlowState();
+          const rN = 'No problem — what\'s the new delivery address? (street, city, state and zip)';
+          return res.json({ text: rN, response: rN });
+        } else {
+          if (!held) { state.newOrderHeld = message; saveFlowState(); }
+          console.log('[new-order] no answer to the address question in ' + JSON.stringify(message).slice(0, 60) + ' — held, asked again');
+          const bA = format === 'slack' ? '*' : '';
+          const rA = 'Before we start — should this order go to ' + bA + state.address + bA + ' again? Reply "yes", or send the new address.';
+          return res.json({ text: rA, response: rA });
+        }
+      } else if (NEW_ORDER.test(message) && !addrIn && !((/^email-/.test(sessionKey) || (context && context.email_subject)) && EO.isOrderCommand(message) && (() => { try { return JSON.parse(state.lastLineItems || '[]').length > 0; } catch (e) { return false; } })())) {
+        // (An email "please create a new order" for the thread's quote is an order command, not a fresh start.)
+        let cartN0 = 0; try { cartN0 = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
+        if (state.placedOrder && !state.placedOrder.resolved) {
+          state.placedOrder.resolved = true;
+          console.log('[order] customer asked for a new order; ' + state.placedOrder.order_id + ' left as placed: ' + JSON.stringify(message).slice(0, 80));
+        }
+        // A new order starts with an empty cart and nothing of the old one (DC, Oct 5): basket, not-carried lines,
+        // shown options, the original list / on-hand stock, and the proposal's client, date, tax and address choices.
+        if (cartN0) console.log('[new-order] cart cleared (' + cartN0 + ' line(s)): ' + String(state.lastLineItems).slice(0, 120));
+        state.lastLineItems = '[]'; state.pendingSubstitutes = []; state.unavailableQty = {}; state.pendingAddOffer = null; state.pendingQtyFor = null;
+        state.shownOptions = null; state.proposalWithOptions = false; state.originalRequest = ''; state.onHand = []; state.onHandReleased = [];
+        state.lastProposalUrl = ''; state.savedClientName = ''; state.savedEventDate = ''; state.eventDateNone = false;
+        state.taxExempt = false; state.proposalHideAddress = false; state.proposalOpts = {}; state.eventParams = isQA ? { qa: true } : {}; state.savedTipChoice = null;
+        if (email) { Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; }); try { clearBasket(email, format || 'slack'); } catch (e) {} }
+        // What else the message asks for ("new order: 10 Tito's") is held until the address is settled.
+        const rest = String(message).replace(NEW_ORDER, '').replace(/\b(?:i'?d like|i want|i need|let'?s|please|can (?:you|we)|to|a|an|the|for|place|make|create|do|start|begin)\b|[^a-z0-9]/gi, '');
+        state.newOrderAddrAsk = true; state.newOrderHeld = rest.length > 6 ? message : ''; saveFlowState();
+        console.log('[new-order] asking whether to use the previous address ' + JSON.stringify(state.address) + (state.newOrderHeld ? ' (request held: ' + JSON.stringify(message).slice(0, 60) + ')' : ''));
+        const bQ = format === 'slack' ? '*' : '';
+        const rQ = 'Sure — a new order!' + (cartN0 ? ' I\'ve cleared the previous cart.' : '') + ' Should it go to ' + bQ + state.address + bQ + ' again? Reply "yes", or send the new address.';
+        return res.json({ text: rQ, response: rQ });
+      }
+    }
+
     // ── STATE: ready — a new delivery address ──────────────────────────────
     // Real bug: after one address was set, a new full address went to the LLM, which said
     // "I'm not able to change the delivery address mid-conversation". Changing it is allowed:
@@ -3105,7 +3160,8 @@ app.post('/chat', async (req, res) => {
       const rr = await fetch(STAGING.SA_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'generate_proposal', arguments: {
           line_items: JSON.stringify(items), client_name: client, event_date: eventDate, email, channel: format || 'plain',
-          notes: (st.address ? 'Delivery: ' + st.address + '.' : '') + (inexactCount ? ' Some items are recommended alternatives to what was asked (see email).' : '')
+          tax_exempt: !!st.taxExempt,   // the session's tax / address choices hold on email quotes too (DC, Oct 5)
+          notes: (st.address && !st.proposalHideAddress ? 'Delivery: ' + st.address + '.' : '') + (inexactCount ? ' Some items are recommended alternatives to what was asked (see email).' : '')
             + (items.some(li => /\*\s*$/.test(String(li.name || ''))) ? ' * = recommended in place of a requested item this store does not carry.' : '') } } }) });
       const rt = await rr.text(); const rl = rt.split('\n').find(l => l.startsWith('data:'));
       const r = rl ? JSON.parse(JSON.parse(rl.replace('data:', '').trim()).result.content[0].text) : null;
@@ -3510,6 +3566,13 @@ app.post('/chat', async (req, res) => {
             '\n*Estimated grand total: $' + grand.toFixed(2) + '*' +
             '\n\nEstimates — actual totals may vary.\n\nWould you like to place the order, generate a PDF proposal, or make any changes?';
           return res.json({ text: reply, response: reply });
+        }
+        // An empty cart is said plainly, in code. Real (Oct 5, staging): after "start a new order" the LLM said the
+        // items "may not have saved properly" and listed the old order from the conversation.
+        if (state.lastLineItems === '[]') {
+          console.log('[show-basket] cart is empty');
+          const rE = 'Your cart is empty right now — what are you looking for?';
+          return res.json({ text: rE, response: rE });
         }
       } catch (e) {}
     }

@@ -146,6 +146,12 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 7. Log the reason for every discard/refusal (e.g. '[buildPackage] UNAVAILABLE (size mismatch)').
    A silent drop is a bug.
 
+8. EVERY CHANNEL, ALWAYS (DC, Oct 5 — "make this a rule, never to deviate"): every behavior change must work the same on
+   Slack, WhatsApp, email AND the MCP connector. Before deploying, trace each channel's path for the change (Slack and
+   WhatsApp share /chat; email = /chat plus the email-order / quote-pdf / quote-edits code; the connector = rachel-mcp.js
+   tools, /internal/order-preview, /internal/* and rachel_chat) and fix or extend the ones that miss it; test at least
+   one non-Slack channel (an email scenario, a direct /internal call or the connector test). Never ship a Slack-only fix.
+
 ## Debug-and-fix loop (spec: "Rachel — Automated Debug-and-Fix Loop", Sep 29)
 - Step 1 staging: done (see Staging above). Step 2 monitor: ops/monitor.py (thresholds ops/monitor.yaml) reads the logs,
   events.jsonl, qa/runs/*/summary.json, the watchdog log and the six services' state; appends findings to
@@ -371,6 +377,12 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   remembered (state.eventDateNone) so a repeat proposal never re-asks client/date; the shopping-agent refuses a
   proposal with no lines or a $0 line ([generate_proposal] REFUSED). A confirm_substitute whose original is no longer in
   the basket keeps the replacement line's qty (44x La Marca became 1x).
+- A new order ("start a new order", "separate order", "start over") clears the cart and everything of the old order
+  (not-carried lines, options, original list, proposal client/date/tax/address choices) and asks "Should it go to
+  <previous address> again? Reply "yes", or send the new address" (DC, Oct 5). "yes" keeps it (a request in the same
+  message is held and replayed), an address replaces it (address-change block), "no" asks for it. Email: "please create
+  a new order" for the thread's quote stays an order command. Connector: rachel_place_order's description says to
+  confirm the previous address. An empty cart's "show my basket" is answered in code.
 - Every order Rachel places (createCorpOrder) has top-level email = rachelai@getbevvi.com (DC, Oct 3; ORDER_ACCOUNT_EMAIL in
   store-agent/shopping-agent.js, env RACHEL_ORDER_ACCOUNT_EMAIL); customerData.email = the customer; who asked is kept
   in our order log (requested_by) and [place_order] account | customer email | requested by. Until Oct 3 the top-level

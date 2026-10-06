@@ -1,0 +1,24 @@
+name: new-order-address-and-cart
+# DC (Oct 5): "start a new order" kept the last address without a word and kept the cart. Now the cart is cleared, the
+# previous address is shown and confirmed: "yes" keeps it, a new address replaces it, "no" asks for the new one.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+    expect: {contains: ["Kim Crawford"]}
+  - send: "start a new order"
+    expect:
+      contains: ["cleared the previous cart", "425 W 53rd St", "again?"]
+      log_contains: ["[new-order] cart cleared", "[new-order] asking whether to use the previous address"]
+  - send: "no"
+    expect: {contains: ["new delivery address"]}
+  - send: "100 Federal St Boston MA 02110"
+    expect:
+      contains: ["delivering to 100 Federal St, Boston, MA 02110"]
+      not_contains: ["Kim Crawford"]
+      log_contains: ["[addr] address changed at ready"]
+  - send: "show my basket"
+    expect: {not_contains: ["Kim Crawford"]}

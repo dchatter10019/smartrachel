@@ -1,0 +1,27 @@
+name: email-tax-address-new-order
+fresh: true
+tags: [email]
+# Rule 8 (DC, Oct 5): every change works on every channel. Over email: "the tax should be 0" holds for the quote PDF,
+# the delivery address can be left off it, and "start a new order" clears the cart and confirms the address.
+format: plain
+context: {email_subject: "Drinks quote - Northwind QA", user_name: "QA Tester"}
+turns:
+  - send: "Hi,\r\n\r\nPlease send a quote for the items below.\r\n\r\nI am 21 years old. Deliver to 132 W 32nd St, New York, NY 10001\r\n\r\n2 x Corona Extra 12 pack\r\n2 Josh Cellars Cabernet Sauvignon\r\n\r\nThanks!"
+    expect:
+      contains: ["PDF proposal is attached"]
+  - send: "The tax should be 0. Please resend the quote."
+    expect:
+      contains: ["tax is set to $0"]
+      pdf_contains: ["Estimated tax (0%)"]
+      log_contains: ["[tax/address] tax is set to $0"]
+  - send: "Please take the delivery address off the proposal."
+    expect:
+      contains: ["delivery address is left off the proposal"]
+      pdf_not_contains: ["132 W 32nd"]
+  - send: "Start a new order please"
+    expect:
+      contains: ["cleared the previous cart", "132 W 32nd St", "again?"]
+      not_contains: ["Payment Link"]
+  - send: "yes"
+    expect:
+      contains: ["delivering to 132 W 32nd St"]

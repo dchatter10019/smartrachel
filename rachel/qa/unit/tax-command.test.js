@@ -18,6 +18,7 @@ eq('a 10% statement is not zero', T.read('the tax is 10%'), null);
 eq('a rate is not zero', T.read('tax rate is 0.0625'), null);
 eq('take out the deivery address from the propsal (DC, typos)', T.proposalAddress('take out the deivery address from the propsal'), 'hide');
 eq("don't show the address on the pdf", T.proposalAddress("don't show the address on the pdf"), 'hide');
+eq('take the delivery address off the proposal (verb split)', T.proposalAddress('Please take the delivery address off the proposal.'), 'hide');
 eq('put the address back on the proposal', T.proposalAddress('put the address back on the proposal'), 'show');
 eq('an address change is not about the proposal', T.proposalAddress('change the address'), null);
 if (failed) { console.log(failed + ' failed'); process.exit(1); }

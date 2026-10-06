@@ -93,7 +93,7 @@ const TOOLS = [
   },
   {
     name: 'rachel_place_order',
-    description: 'Step 1 of 2 — PREPARE an order (places nothing). Checks every line against the store catalog, the delivery time against the store\'s real delivery windows, and the customer details, and returns the full order summary with totals plus a confirmation_code (valid 15 minutes). Show the summary to the customer; only after they confirm, call rachel_confirm_order with the code. If problems are returned, fix them and prepare again.',
+    description: 'Step 1 of 2 — PREPARE an order (places nothing). Checks every line against the store catalog, the delivery time against the store\'s real delivery windows, and the customer details, and returns the full order summary with totals plus a confirmation_code (valid 15 minutes). Show the summary to the customer; only after they confirm, call rachel_confirm_order with the code. If problems are returned, fix them and prepare again. For a NEW order, first show the customer the delivery address used before and ask whether to use it again; use a new one only if they give it.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -122,7 +122,7 @@ const TOOLS = [
   },
   {
     name: 'rachel_generate_proposal',
-    description: 'Generate a PDF proposal from an active basket/package. Returns a download URL for the PDF.',
+    description: 'Generate a PDF proposal from an active basket/package. Returns a download URL for the PDF. If the customer says the tax should be 0 / tax-exempt, pass tax_exempt=true (on every proposal after that). Pass delivery_address to print it; leave it out when the customer asks for no address on the proposal.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -130,7 +130,9 @@ const TOOLS = [
         client_name: { type: 'string', description: 'Client/company name for the proposal' },
         event_date:  { type: 'string', description: 'Event date e.g. 2026-07-20' },
         line_items:  { type: 'string', description: 'JSON string of line_items (optional — uses active session if not provided)' },
-        notes:       { type: 'string', description: 'Any additional notes to include' }
+        notes:       { type: 'string', description: 'Any additional notes to include' },
+        tax_exempt:  { type: 'boolean', description: 'true when the customer said the tax is 0 / tax-exempt — the PDF shows $0 tax' },
+        delivery_address: { type: 'string', description: 'Delivery address printed on the proposal; omit when the customer asked to leave it off' }
       },
       required: ['email', 'client_name']
     }
@@ -472,6 +474,18 @@ async function runTool(name, input, callerEmail, apiKey) {
       lineItems = await getPackage(input.email, 'slack');
     }
     if (!lineItems) return { error: 'No active package found. Build a package first.' };
+    // Same rules as Slack / WhatsApp / email (DC, Oct 5: every change works on every channel): no empty or $0 lines.
+    try {
+      const liP = typeof lineItems === 'string' ? JSON.parse(lineItems) : lineItems;
+      const bad = Array.isArray(liP) ? liP.filter(li => !(parseFloat(li && li.price) > 0)) : [];
+      if (!Array.isArray(liP) || !liP.length || bad.length) {
+        const why = !Array.isArray(liP) || !liP.length ? 'no line items' : bad.length + ' line(s) with no price';
+        console.log('[mcp] rachel_generate_proposal REFUSED — ' + why);
+        return { error: 'Cannot build a proposal: ' + why + '. Search the products (rachel_search) and pass their real lines.' };
+      }
+    } catch (e) { return { error: 'line_items unreadable' }; }
+    const evMcp = input.event_date ? require('./event-date.js').normalizeEventDate(input.event_date).text : '';
+    const notesMcp = (input.delivery_address ? 'Delivery: ' + String(input.delivery_address).trim() + '. ' : '') + (input.notes || '');
 
     // Generate PDF
     const { generateProposal } = require('./generate-proposal.js');
@@ -480,9 +494,10 @@ async function runTool(name, input, callerEmail, apiKey) {
     const outputPath = `/home/ubuntu/logs/${filename}`;
     await generateProposal({
       client_name: input.client_name,
-      event_date: input.event_date || '',
+      event_date: evMcp,
       line_items: lineItems,
-      notes: input.notes || ''
+      notes: notesMcp.trim(),
+      tax_exempt: !!input.tax_exempt
     }, outputPath);
 
     return {

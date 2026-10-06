@@ -22,5 +22,8 @@ turns:
     expect: {matches: "placed|confirmed|submitted", log_contains: ["basket cleared"]}
   - send: "add a bottle of Veuve Clicquot"
     expect: {contains: ["support team has been made aware"], not_contains: ["reopen"]}
+  # A new order confirms the address first (DC, Oct 5); the request in the same message is held and replayed on "yes".
   - send: "start a new order please, I need a bottle of Veuve Clicquot"
-    expect: {contains: ["Veuve"], not_contains: ["Kim Crawford", "support team has been made aware"], log_contains: ["customer asked for a new order"]}
+    expect: {contains: ["425 W 53rd St", "again?"], not_contains: ["support team has been made aware"], log_contains: ["customer asked for a new order", "[new-order] asking whether to use the previous address"]}
+  - send: "yes"
+    expect: {contains: ["Veuve"], not_contains: ["Kim Crawford", "support team has been made aware"], log_contains: ["[new-order] address kept", "replaying the held request"]}
