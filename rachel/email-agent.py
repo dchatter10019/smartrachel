@@ -81,6 +81,22 @@ def get_unread(service):
     r = service.users().messages().list(userId='me', q=INBOX_QUERY, maxResults=50).execute()
     return [m for m in reversed(r.get('messages', [])) if m['id'] not in PROCESSED]
 
+# Bevvi's own order notifications ("Your Order is Updated / On its Way", "Corporate Order Fulfilled: BEVVI-...") come to
+# rachelai@ because every order Rachel places has it as the account email (Oct 3). They were run through Rachel as customer
+# mail: no reply, 3 retries, a Slack alert and a "a member of the team will follow up" email back to info@ (Oct 6).
+BEVVI_NOTIFY_SUBJECT = re.compile(r'\bBEVVI-[A-Z0-9-]+-\d{8}-\d+\b|\b(order|delivery)\b.{0,40}\b(updated|on its way|fulfilled|delivered|confirmed|cancel+ed|placed|received|out for delivery)\b', re.I)
+
+def automated_reason(headers):
+    # RFC 3834 auto-replies, bulk / list mail, and Bevvi's order notifications — never a customer to answer.
+    auto = headers.get('auto-submitted', '').strip().lower()
+    if auto and auto != 'no': return 'Auto-Submitted: ' + auto
+    # Not 'list' / List-Id: Google Groups adds them to real people's mail (a customer's team alias).
+    if headers.get('precedence', '').strip().lower() in ('bulk', 'junk', 'auto_reply'): return 'Precedence: ' + headers['precedence']
+    sender = headers.get('from', '').lower()
+    if 'info@getbevvi.com' in sender and BEVVI_NOTIFY_SUBJECT.search(headers.get('subject', '')): return 'Bevvi order notification'
+    if 'info@getbevvi.com' in sender and 'alcohol made easy' in sender: return 'Bevvi system email'   # password resets etc.
+    return ''
+
 def get_email(service, msg_id):
     msg = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
     headers = {h['name'].lower(): h['value'] for h in msg['payload']['headers']}
@@ -93,7 +109,25 @@ def get_email(service, msg_id):
             if data: body += base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
         for part in p.get('parts', []): get_body(part)
     get_body(msg['payload'])
+    if not body.strip():
+        # HTML-only mail (no text/plain part) read as empty: Rachel got nothing and never replied (Oct 6, Bevvi's own
+        # order notifications). The HTML part as text instead.
+        html = ''
+        def get_html(p):
+            nonlocal html
+            if p.get('mimeType') == 'text/html' and p.get('body', {}).get('data'):
+                html += base64.urlsafe_b64decode(p['body']['data']).decode('utf-8', errors='ignore')
+            for part in p.get('parts', []): get_html(part)
+        get_html(msg['payload'])
+        if html:
+            import html as _h
+            t = re.sub(r'(?is)<(script|style|head)\b.*?</\1>', ' ', html)
+            t = re.sub(r'(?i)<br\s*/?>|</(p|div|tr|li|h\d)>', '\n', t)
+            t = _h.unescape(re.sub(r'<[^>]+>', ' ', t))
+            body = '\n'.join(re.sub(r'[ \t\xa0]+', ' ', l).strip() for l in t.splitlines() if l.strip())
+            log.info(f'[html-body] no text/plain part — read the HTML part ({len(body)} chars)')
     return {'id': msg_id, 'thread_id': msg['threadId'], 'unread': 'UNREAD' in (msg.get('labelIds') or []),
+            'auto': automated_reason(headers),
             'from': headers.get('from', ''), 'subject': headers.get('subject', ''), 'body': body.strip(),
             'message_id': headers.get('message-id', ''), 'references': headers.get('references', ''),
             'to': headers.get('to', ''), 'cc': headers.get('cc', ''), 'attachments': attachments}
@@ -301,8 +335,8 @@ def process(service, email):
     sender_name = sender.split('<')[0].strip().strip('"') if '<' in sender else ''
 
     skip_senders = ['noreply', 'no-reply', 'mailer-daemon', 'postmaster', 'mail-noreply']
-    if any(s in sender_email.lower() for s in skip_senders):
-        log.info(f'Skipping automated email from {sender_email}')
+    if any(s in sender_email.lower() for s in skip_senders) or email.get('auto'):
+        log.info(f'Skipping automated email from {sender_email} ({email.get("auto") or "sender"}): {email["subject"]}')
         service.users().messages().modify(userId='me',id=email['id'],body={'removeLabelIds':['UNREAD']}).execute()
         mark_processed(email['id'])
         return

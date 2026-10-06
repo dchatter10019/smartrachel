@@ -51,6 +51,12 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   continuation the agent sends the thread's first non-Rachel email (context.thread_first_body); a session with no
   originalRequest takes it from there (threads older than the feature), and a later email never becomes the original.
   Replies are reply-all (To + Cc of the incoming email, minus rachelai@ and the sender).
+  Automated mail is skipped and marked read, never run through Rachel (email-agent automated_reason, "Skipping automated
+  email ... (<reason>)"): Bevvi's own notifications from info@getbevvi.com ("Your Order is Updated / On its Way", "Corporate
+  Order Fulfilled: BEVVI-...", password resets — they reach rachelai@ because it is every order's account email), and
+  Auto-Submitted / Precedence bulk|junk|auto_reply (not List-Id: Google Groups). Until Oct 6 each got 3 retries, a
+  Slack "needs a person" alert and a holding email back to info@. An HTML-only email (no text/plain) is read from its
+  HTML part ([html-body]); it used to reach Rachel empty.
   A payment-link reply for a customer ("send the link to inge@... and copy Sean and me") goes To the customer, Cc the sender
   + the thread (server email_to -> email-agent recipients()). Every email has an HTML part (email-agent to_html): a payment link shows as a clickable "Payment Link",
   never the token URL (DC, Oct 3; Slack: <url|Payment Link>); the plain part keeps full URLs. Every email opens "Hi <first name>," and ends "Warmly, Rachel /
