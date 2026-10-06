@@ -25,7 +25,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   or after a refusal in 24h; an idle session is expired there first, else /chat's idle expiry wiped the check — Oct 4) -> that conversation only skips her age question, never the profile (DC approved, Oct 3). Tool descriptions + server instructions OPEN with when to use them (drink recommendations, events, buying / delivery,
   "even if they don't mention Bevvi") — claude.ai shows only a description's first line until a tool is loaded, and a plain
   "recommend a wine" didn't reach Rachel (DC, Oct 5). rachel-mcp.log: `initialize by <email> (client ...)` and `tools/list by
-  <email> — descriptions <hash>` (TOOLS_HASH changes with every description edit) show when a client re-reads them. Clients never get product urls/slugs
+  <email> — descriptions <hash>` (TOOLS_HASH changes with every description edit) show when a client re-reads them. Clients are told (server instructions + rachel_search description + the not-found note) never to comment on the search or
+  tools — false matches, categories, data quality, tool errors — only what is/isn't available and the next step (DC, Oct 6). Clients never get product urls/slugs
   (also inside JSON-text fields and chat text), buyer tier or reviewer notes; told not to judge prices (DC, Oct 3). Orders are two-step:
   rachel_place_order PREPARES (server /internal/order-preview: catalog linking, real delivery windows, totals) and returns
   a 15-min one-use confirmation_code bound to the key; rachel_confirm_order places it (QA identities dry-run). Streamable

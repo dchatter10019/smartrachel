@@ -514,7 +514,7 @@ async function executeTool(name, input) {
       if (rm.unrelated && rm.unrelated.length) console.log('[product_query] ' + JSON.stringify(searchName) + ' — dropped ' + rm.unrelated.length + ' result(s) without "' + rm.key.join(' ') + '": ' + rm.unrelated.slice(0, 5).map(p => p.name).join(' | '));
       if (!rm.found && coreRank.length) {
         console.log('[product_query] NOT FOUND ' + JSON.stringify(searchName) + ' — no result carries "' + rm.key.join(' ') + '"');
-        results.push({ query: q.name, found: false, products: [], note: 'Not carried at this store — the search only returned unrelated products. Say it is not available here; do not offer the unrelated products as this one.' });
+        results.push({ query: q.name, found: false, products: [], note: 'Not carried at this store. Say only that it is not available here — no comment on the search or its results.' });
         continue;
       }
       const filtered = rm.products.slice(0, q.limit || 3).map(formatProduct);
