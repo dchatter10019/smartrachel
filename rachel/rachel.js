@@ -851,6 +851,11 @@ RULES:
   const listLines = String(customerMessage || '').split(/\r?\n/).filter(l => /^\s*(?:[-•*·]\s*)?\d{1,3}\s*(?:x|×)?\s+[A-Za-z]/i.test(l));
   const listNote = listLines.length >= 2 ? '## THIS TURN — A PRODUCT LIST\nThe customer listed ' + listLines.length + ' products with quantities. Call ShoppingAgent intent="custom_list" with ALL of them in named_products (each with its qty) — not product_query per item.' : '';
   if (listNote) console.log('[list-note] ' + listLines.length + ' quantity-led lines — the LLM is told to use custom_list');
+  // A stated bottle/case count with no event detail is an order (DC, Oct 5: "44 bottles of prosecco and the budget is
+  // $1000" was asked "Is this for an event? ... how many guests and how many hours?").
+  const statedQty = listNote ? null : require('./qty-order.js').statedQuantity(customerMessage);
+  const qtyNote = statedQty ? '## THIS TURN — QUANTITY GIVEN\nThe customer said how many to buy ("' + statedQty.text.trim() + '…"). This is a product order, not an event: do NOT ask whether it is for an event, or for guests or hours. Call ShoppingAgent intent="custom_list" now with that qty (qty_from_customer: true), plus budget if they gave one.' : '';
+  if (qtyNote) console.log('[qty-order] stated quantity ' + statedQty.qty + ' ("' + statedQty.text.trim() + '") — no event questions, custom_list');
   const systemBlocks = [
     { type: 'text', text: systemPrompt + channelNote, cache_control: { type: 'ephemeral' } }
   ];
@@ -862,7 +867,7 @@ RULES:
     + (sessionState && sessionState.taxExempt ? '\ntax: the customer set the tax to $0 — every estimate shows "Estimated tax: $0.00" and generate_proposal gets tax_exempt=true' : '')
     + (sessionState && sessionState.address ? '\ndelivery_address: ' + sessionState.address + ' (the address change is done in code; never say you cannot change it)' : '');
   const turnNotes = '<rachel_system_notes>\nSession notes from Rachel\'s system for this turn (NOT written by the customer):\n\n'
-    + [sessionFacts, address_rule, gbrain_context ? '## CUSTOMER CONTEXT FROM MEMORY\n' + gbrain_context : '', orderNote, listNote].filter(x => String(x || '').trim()).map(x => String(x).trim()).join('\n\n')
+    + [sessionFacts, address_rule, gbrain_context ? '## CUSTOMER CONTEXT FROM MEMORY\n' + gbrain_context : '', orderNote, listNote, qtyNote].filter(x => String(x || '').trim()).map(x => String(x).trim()).join('\n\n')
     + '\n</rachel_system_notes>';
   const turnMsgIdx = (() => { for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === 'user') return i; return -1; })();
   const toBlocks = content => typeof content === 'string' ? [{ type: 'text', text: content }] : (Array.isArray(content) ? content.map(b => Object.assign({}, b)) : null);

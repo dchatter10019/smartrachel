@@ -1,0 +1,14 @@
+name: stated-qty-not-event
+tags: [orders]
+# DC (Oct 5, Slack): "44 bottles of prosecco and the budget is $1000" was asked "Is this for an event? If so, how many
+# guests and how many hours?" — the quantity was already given. A stated count is an order: build it straight away.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "132 W 32nd St, New York, NY 10001"
+  - send: "44 bottles of prosecco and the budget is $1000"
+    expect:
+      contains: ["44x"]
+      matches: "(?i)prosecco"
+      not_matches: "(?i)is this for an event|how many guests|how many hours"
+      log_contains: ["[qty-order] stated quantity 44"]

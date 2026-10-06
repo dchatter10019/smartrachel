@@ -5,6 +5,9 @@
 
 const GBRAIN_URL = 'http://127.0.0.1:7700';
 const GBRAIN_TOKEN = process.env.GBRAIN_TOKEN || '';  // /etc/gbrain.env
+// Memory is optional for a turn: a wedged gbrain (Oct 5-6: 100% CPU, not accepting) made every call wait ~145s for the
+// socket to give up, so turns hung past the QA timeout. Give up after this and carry on without memory.
+const GBRAIN_TIMEOUT_MS = Number(process.env.GBRAIN_TIMEOUT_MS) || 15000;
 
 async function gbrainCall(toolName, args) {
   try {
@@ -19,7 +22,8 @@ async function gbrainCall(toolName, args) {
         jsonrpc: '2.0', id: 1,
         method: 'tools/call',
         params: { name: toolName, arguments: args }
-      })
+      }),
+      signal: AbortSignal.timeout(GBRAIN_TIMEOUT_MS)
     });
     const text = await res.text();
     const line = text.split('\n').find(l => l.startsWith('data:'));
@@ -27,7 +31,7 @@ async function gbrainCall(toolName, args) {
     const msg = JSON.parse(line.replace('data:', '').trim());
     return msg.result?.content?.[0]?.text || null;
   } catch(e) {
-    console.error('[gbrain] error:', e.message);
+    console.error('[gbrain] error:', e.name === 'TimeoutError' ? 'no answer in ' + GBRAIN_TIMEOUT_MS + 'ms (' + toolName + ') — turn continues without memory' : e.message);
     return null;
   }
 }

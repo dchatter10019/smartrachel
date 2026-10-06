@@ -22,7 +22,9 @@ turns:
   - send: "do you think the quantities are enough for 50 guests?"
     expect: {matches: "\\S{3,}"}
   - send: "no"
-    # never a dead end with a basket: offer the order or a PDF proposal (DC, Sep 29)
-    expect: {matches: "(?i)PDF proposal|place the order"}
+    # never a dead end with a basket: offer the order or a PDF proposal (DC, Sep 29). When the previous reply already
+    # offered them, this "no" declines that offer and the CTA layer rightly doesn't repeat it (cta-declined-not-repeated)
+    # — then an open "what else" is the correct non-empty reply (F-0021: nightly Oct 6 flaked on which turn offered).
+    expect: {matches: "(?i)PDF proposal|place the order|what else can I"}
   - send: "I see no replies"
     expect: {matches: "\\S{3,}"}

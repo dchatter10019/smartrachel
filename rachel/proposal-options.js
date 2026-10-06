@@ -29,7 +29,9 @@ function countAsked(msg) {
 function groupsFromResult(queries, result) {
   if (!result || !Array.isArray(result.results)) return [];
   return result.results.map((r, i) => ({
-    label: String((queries && queries[i] && (queries[i].label || queries[i].term || queries[i].name)) || r.label || '').trim(),
+    // product_query results are labeled by their query; the alternatives intent has no queries — each result names the
+    // original it replaces in r.query (F-0021: those options were never kept, the PDF said none were shown)
+    label: String((queries && queries[i] && (queries[i].label || queries[i].term || queries[i].name)) || r.label || r.query || '').trim(),
     products: (r && Array.isArray(r.products) ? r.products : []).map(p => ({
       name: p.name || '', size: p.size || p.sizeStr || '', price: Number(p.salePrice || p.price) || 0,
       url: p.url || '', product_id: p.product_id || p.id || '', upc: p.upc || '', establishmentId: p.establishmentId || '' })),

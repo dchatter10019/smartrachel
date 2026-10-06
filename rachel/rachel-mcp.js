@@ -59,7 +59,7 @@ const TOOLS = [
   },
   {
     name: 'rachel_build_package',
-    description: 'Use when the user is planning drinks for an event or a group (a party, wedding, office happy hour, "drinks for 20 people"), even if they don\'t mention Bevvi. Builds a priced beverage package for delivery — the same builder and the same questions as Rachel on Slack and email. Pass ONLY what the customer actually said: never assume or default guests, duration, budget, drink types or what guests drink most. If something is missing the tool returns needs_info with ask_customer: ask the customer exactly that, then call again with everything they have told you.',
+    description: 'Use when the user is planning drinks for an event or a group (a party, wedding, office happy hour, "drinks for 20 people"), even if they don\'t mention Bevvi. Builds a priced beverage package for delivery — the same builder and the same questions as Rachel on Slack and email. Not for a stated quantity to buy ("44 bottles of prosecco, budget $1000" is an order, not an event): send that to rachel_chat. Pass ONLY what the customer actually said: never assume or default guests, duration, budget, drink types or what guests drink most. If something is missing the tool returns needs_info with ask_customer: ask the customer exactly that, then call again with everything they have told you.',
     inputSchema: {
       type: 'object',
       properties: {

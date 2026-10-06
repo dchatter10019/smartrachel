@@ -288,6 +288,14 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   to its web market price (±30% first). An exact
   product filed under another category (Lillet = Liquor/Aperitif) is kept. In an event list, aperitif/fortified
   wines (Lillet, vermouth, sherry, port...) get 1/4 of a table wine's share of the wine servings (DC). Pack size comes from the name ("6PKC").
+- A stated quantity to buy ("44 bottles of prosecco and the budget is $1000", "3 cases of Stella") with no guests / hours /
+  event word is an ORDER: rachel/qty-order.js -> rachel.js note "QUANTITY GIVEN" ([qty-order]) -> custom_list at that qty
+  + budget, never "is this for an event?" (prompt.md PRIORITY 0-PRE fired on the budget; DC, Oct 5). Connector:
+  rachel_build_package's description sends a stated quantity to rachel_chat.
+- gbrain calls give up after 15s (GBRAIN_TIMEOUT_MS; the turn continues without memory). Oct 5-6: gbrain-mcp sat at 100%
+  CPU not accepting connections; every turn waited ~145s (QA stuck turns F-0020/F-0021); restarted Oct 6 (DC approved).
+- Proposal options from the alternatives search are kept too (proposal-options.js groupsFromResult labels by r.query);
+  the in-code proposal retries a dropped shopping-agent fetch once (F-0021).
 - Catalog 5xx/429: searchProducts retries twice; a build that still hit failures returns CATALOG_UNREACHABLE,
   never "isn't available at this store".
 - A conversation expires after RACHEL_IDLE_HOURS (4) idle, except email threads; age is re-asked. An email thread's

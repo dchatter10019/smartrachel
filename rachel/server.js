@@ -4777,10 +4777,17 @@ app.post('/chat', async (req, res) => {
           if (Object.keys(po).length) console.log('[proposal] options injected into generate_proposal (in code):', JSON.stringify(po));
           const altOpts = state.proposalWithOptions ? PO.buildOptions(state.shownOptions, existingItemsForProposal, basketLineFor) : [];
           if (state.proposalWithOptions) console.log('[options] ' + (altOpts.length ? 'listed in the PDF: ' + altOpts.map(o => o.label + ' -> ' + o.alternatives.map(a => a.name).join(' / ')).join(' | ') : 'asked for, but none were shown in this session — the reply says so'));
-          const rrP = await fetch(STAGING.SA_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+          const reqP = { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
             body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'generate_proposal', arguments: Object.assign({
               line_items: JSON.stringify(existingItemsForProposal), client_name: pd.client_name || '', event_date: pd.event_date || '', email, channel: format || 'slack',
-              notes: state.address && !state.proposalHideAddress ? 'Delivery: ' + state.address + '.' : '' }, altOpts.length ? { options: JSON.stringify(altOpts) } : {}, po.tax_exempt ? { tax_exempt: true } : {}, po.totals_only ? { totals_only: true } : {}, po.hide_subtotals ? { hide_subtotals: true } : {}) } }) });
+              notes: state.address && !state.proposalHideAddress ? 'Delivery: ' + state.address + '.' : '' }, altOpts.length ? { options: JSON.stringify(altOpts) } : {}, po.tax_exempt ? { tax_exempt: true } : {}, po.totals_only ? { totals_only: true } : {}, po.hide_subtotals ? { hide_subtotals: true } : {}) } }) };
+          // A dropped connection ("fetch failed") is retried once before the LLM fallback (F-0021: the fallback's
+          // reply had no basket lines and no in-code PDF checks).
+          let rrP;
+          try { rrP = await fetch(STAGING.SA_URL, reqP); } catch (e) {
+            console.log('[proposal] in-code generation: ' + e.message + ' — retrying once');
+            rrP = await fetch(STAGING.SA_URL, reqP);
+          }
           const rtP = await rrP.text(); const rlP = rtP.split('\n').find(l => l.startsWith('data:'));
           const rP = rlP ? JSON.parse(JSON.parse(rlP.replace('data:', '').trim()).result.content[0].text) : null;
           if (rP && rP.success && rP.download_url) {

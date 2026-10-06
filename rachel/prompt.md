@@ -258,7 +258,9 @@ immediately (add it to the order, confirm it, and move the conversation forward)
 ### 4.1 — Router
 
 **PRIORITY 0-PRE — Budget stated but no event logistics:**
-Customer states a budget with NO guest count AND NO duration AND no event word.
+Customer states a budget with NO guest count AND NO duration AND no event word AND no quantity to buy.
+A stated quantity ("44 bottles of prosecco", "3 cases of Stella") is an order — never ask this; build it with custom_list
+at that qty and budget.
 Ask: "Happy to help! Quick check — is this for an event, or are you just looking to buy or price these?"
 - "just buying/looking" → product search
 - "event" with no headcount → ask "About how many people?"

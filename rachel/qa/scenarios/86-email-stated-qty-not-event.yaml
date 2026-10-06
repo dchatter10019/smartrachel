@@ -1,0 +1,12 @@
+name: email-stated-qty-not-event
+fresh: true
+tags: [email]
+# Rule 8: the same over email — a stated bottle count with a budget is built, never asked "is this for an event?".
+format: plain
+context: {email_subject: "Prosecco for gifting", user_name: "QA Tester"}
+turns:
+  - send: "Hi Rachel,\r\n\r\nI am 21 years old. Deliver to 132 W 32nd St, New York, NY 10001\r\n\r\nWe need 24 bottles of prosecco, budget is $600.\r\n\r\nThanks!"
+    expect:
+      contains: ["24x"]
+      not_matches: "(?i)is this for an event|how many guests|how many hours"
+      log_contains: ["[qty-order] stated quantity 24"]
