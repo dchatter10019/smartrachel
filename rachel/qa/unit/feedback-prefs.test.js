@@ -16,6 +16,12 @@ eq('"you have the name from before ... X is not the customer" is a correction', 
 for (const t of ['I already told you the date is Oct 6', "That's wrong, I asked for cans", 'Why do you keep asking for Jordan']) eq('correction: ' + t, !!F.correctionIn(t), true);
 for (const t of ['please place the order', 'Can you add 2 more?', 'we have the below inventory from last time', 'Yes place the order and send the payment link'])
   eq('not a correction: ' + t, F.correctionIn(t), '');
+// unhappy in any words (DC, Oct 7: people won't write "Rachel feedback")
+for (const t of ["I asked you for Tito's but you provided Absolut", 'you answered wrong', 'this is not what I expected', 'You gave me the wrong wine',
+  "That's not it", "you didn't answer my question", 'you forgot the ice', 'This makes no sense', 'Honestly this is frustrating',
+  'why did you swap the prosecco?', 'where is the tequila I asked for', 'I asked for 4 bottles, not 2', 'you misunderstood']) eq('unhappy: ' + t, !!F.unhappyIn(t), true);
+for (const t of ['please place the order', 'Can you add 2 more?', 'I asked my team and they want wine', 'Why is delivery $25?', 'what do you recommend?',
+  'nope, 19. is that ok?', 'Is that the right size?', 'Can you send the payment link']) eq('not unhappy: ' + t, F.unhappyIn(t), '');
 eq('"Rachel feedback:" line split from the rest', F.feedbackLine('Thanks!\nRachel feedback: the PDF had the wrong date\nAlso add 2 Titos'), { text: 'the PDF had the wrong date', rest: 'Thanks!\nAlso add 2 Titos' });
 F.record({ kind: 'correction', session: 'email-x', who: 'pat@example.com', text: 'I already told you' }, quiet);
 const rec = fs.readFileSync(F.FILE, 'utf8').trim().split('\n').map(JSON.parse);

@@ -4,6 +4,8 @@
 //   correction  — a message that corrects Rachel ("I already told you", "Mara is not the customer", "you have the
 //                 name from before"). Real (Oct 3, Foodie For All): DC corrected Rachel 3 times; nothing recorded it.
 //   feedback    — a "Rachel feedback: ..." line in any message (email or chat).
+//   unhappy     — dissatisfaction in any words ("you answered wrong", "not what I expected"; unhappyIn below, and the
+//                 nightly conversation review for whatever the words miss — source "review").
 //   thumbs_down — a 👎 on a Rachel reply in Slack (rachel_slack_bot.py writes it).
 // Every entry keeps what Rachel said just before, so the fixer can see the mistake. QA sessions are marked qa:true
 // (the monitor skips them).
@@ -20,6 +22,35 @@ const CORRECTION = new RegExp([
   '\\bplease (?:re-?read|read (?:my|the) (?:email|message))\\b', '\\bfor the (?:second|third|fourth|\\d+(?:st|nd|rd|th)) time\\b',
   '\\b(?:still|again) (?:asking|wrong|missing)\\b', "\\bi (?:did ?n[o']t|never) (?:ask|say|order)\\b", '\\bwhy (?:did|do|are) you (?:keep|still)\\b',
 ].join('|'), 'i');
+
+// Unhappy, however it is put (DC, Oct 7: "people won't write 'Rachel feedback' — they'll say I asked you this but you
+// gave me something else, you answered wrong, this is not what I expected"). Kind "unhappy"; the nightly conversation
+// review (ops/conversation-review.py unhappy_messages) catches what these words miss.
+const UNHAPPY = new RegExp([
+  "\\bi asked (?:you )?(?:for|about|to)\\b[^.?!\\n]{0,80}\\b(?:but|not|instead|and you|yet)\\b",
+  "\\b(?:you |u )?(?:gave|sent|showed|provided|offered|got|answered|did|added|put) (?:me )?(?:\\w+ )?(?:the )?(?:wrong|incorrect)\\b",
+  "\\b(?:answered|got (?:it|this|that)|did (?:it|this|that)) wrong\\b", "\\bwrong answer\\b",
+  "\\bnot (?:what i (?:expected|was expecting|was looking for|need(?:ed)?|requested|ordered)|even close|right at all|helpful)\\b",
+  "\\b(?:that'?s|this is|that is|it'?s) not (?:it|right|correct|what i)\\b",
+  "\\byou (?:didn'?t|did not|never) (?:\\w+ )?(?:answer|listen|read|include|add|follow|understand|do what)\\b",
+  "\\byou(?:'re| are) not (?:listening|understanding|reading|getting it|helping)\\b",
+  "\\byou (?:missed|forgot|ignored|left out|skipped|dropped|misunderstood|misread|messed up|screwed up)\\b",
+  "\\b(?:misunderstood|makes no sense|doesn'?t make (?:any )?sense|not making sense|confusing|confused me)\\b",
+  "\\b(?:useless|unhelpful|frustrat\\w*|annoy\\w*|disappoint\\w*|terrible|awful|horrible|ridiculous|waste of (?:my )?time)\\b",
+  "\\bwhy (?:would|did|do|are|is) (?:you|it|this|that)\\b[^.?!\\n]{0,60}\\b(?:wrong|instead|again|not|different|change|swap|remove|add)",
+  "\\bwhere (?:is|are|did) (?:the|my)\\b[^.?!\\n]{0,40}\\bi (?:asked|ordered|wanted|requested)\\b",
+  "\\b(?:that|this) (?:is|was) (?:not|n'?t) what\\b", "\\bwtf\\b", "\\bseriously\\s*\\?", "^\\s*(?:ugh|smh|no no)\\b", "\\?{3,}",
+].join('|'), 'i');
+
+function unhappyIn(message) {
+  const t = String(message || '');
+  if (t.length > 4000) return '';
+  for (const line of t.replace(/\r/g, '').split('\n')) {
+    if (/^\s*>/.test(line)) continue;
+    if (UNHAPPY.test(line)) return line.trim().slice(0, 300);
+  }
+  return '';
+}
 
 // The correction phrase in a message, or '' (quoted history is cut before this is called).
 function correctionIn(message) {
@@ -49,4 +80,4 @@ function record(entry, log = console.log) {
   log('[feedback] ' + e.kind + ' recorded' + (e.qa ? ' (QA)' : '') + ': ' + JSON.stringify(String(e.text || '').slice(0, 120)));
 }
 
-module.exports = { correctionIn, feedbackLine, record, FILE };
+module.exports = { correctionIn, unhappyIn, feedbackLine, record, FILE };

@@ -208,7 +208,7 @@ class Monitor:
     def feedback(self, e, t=None):
         # A person told Rachel she got something wrong (DC, Oct 3). One finding per conversation (repeats count up).
         if e.get('qa'): return
-        kinds = {'correction': 'customer corrected Rachel', 'feedback': 'feedback about Rachel', 'thumbs_down': '👎 on a Rachel reply'}
+        kinds = {'correction': 'customer corrected Rachel', 'unhappy': 'customer unhappy with Rachel', 'feedback': 'feedback about Rachel', 'thumbs_down': '👎 on a Rachel reply'}
         sess = e.get('session', '')
         ev = '%s | %s said: %s | Rachel had said: %s' % (e.get('kind'), e.get('who', '?'), str(e.get('text', ''))[:300], str(e.get('rachel_said', ''))[:600].replace('\n', ' / '))
         self.store.record('feedback', self.d.get('feedback', {}).get('severity', 'high'), '%s (%s)' % (kinds.get(e.get('kind'), 'feedback'), sess), [ev], [sess], t or self.now())

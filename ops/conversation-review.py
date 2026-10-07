@@ -24,6 +24,8 @@ TRANSCRIPTS = os.environ.get('RACHEL_TRANSCRIPTS_FILE', LOGS + '/transcripts.jso
 OUT = os.environ.get('REVIEW_OUT', LOGS)   # outputs elsewhere for a test run (nothing reaches the monitor)
 OUT_DIR = OUT + '/conversation-reviews'
 ISSUES = OUT + '/review-issues.jsonl'
+FEEDBACK = os.path.join(os.environ.get('RACHEL_DATA_DIR', '/home/ubuntu/logs'), 'feedback.jsonl')   # feedback.js FILE (read: what the live check caught)
+FEEDBACK_OUT = OUT + '/feedback.jsonl' if os.environ.get('REVIEW_OUT') else FEEDBACK   # a test run never reaches the monitor
 STATE = OUT + '/conversation-review-state.json'
 SPEND = os.environ.get('AI_SPEND_FILE', LOGS + '/ai-spend.jsonl')
 CFG = '/home/ubuntu/ops/monitor.yaml'
@@ -104,6 +106,7 @@ Reply with JSON only:
 {"customer_goal": "<one line>",
  "outcome": "ordered|proposal|quote_sent|answered|abandoned|ongoing",
  "customer_satisfied": true|false|null,
+ "unhappy_messages": [{"customer_said": "<exact quote>", "about": "<what they were unhappy with, one line>"}],
  "issues": [{"severity": "high|medium|low",
              "category": "wrong_product|wrong_quantity|wrong_price|ignored_instruction|repeated_question|false_unavailable|dead_end|loop|tone|rule_broken|other",
              "what_happened": "<plain English, one or two sentences, for a non-engineer>",
@@ -111,7 +114,10 @@ Reply with JSON only:
              "customer_said": "<short exact quote from the customer, if relevant>",
              "should_have": "<what Rachel should have done>",
              "fix_area": "code|prompt|catalog|none"}]}
-high = customer got something wrong or was lost; medium = friction a customer noticed; low = could be better."""
+high = customer got something wrong or was lost; medium = friction a customer noticed; low = could be better.
+unhappy_messages: EVERY customer message (after the marker) that shows dissatisfaction with Rachel, however it is put —
+"I asked for X but got Y", "you answered wrong", "this is not what I expected", impatience, sarcasm, repeating themselves,
+polite disappointment, any language. Empty list when there is none; never a neutral question or a plain change request."""
 
 def call(model, text, key):
     body = json.dumps({'model': model, 'max_tokens': 1500, 'temperature': 0,
@@ -145,6 +151,11 @@ def summary(day, reviewed, skipped, spent, convs):
         lines.append('Problems found: %d serious, %d noticeable, %d minor' % (len(hi), len(med), len(issues) - len(hi) - len(med)))
         for r, i in (hi + med)[:6]:
             lines.append('• %s (%s, %s): %s' % ('🔴' if i.get('severity') == 'high' else '🟠', r['customer'] or r['session'], CH.get(r['channel'], r['channel']), i.get('what_happened', '')))
+        unhappy = [(r, u) for r in reviewed for u in (r.get('review') or {}).get('unhappy_messages') or []]
+        if unhappy:
+            lines.append('😠 Unhappy customer messages: %d' % len(unhappy))
+            for r, u in unhappy[:4]:
+                lines.append('   "%s" (%s) — %s' % (str(u.get('customer_said', ''))[:140], r['customer'] or r['session'], u.get('about', '')))
         if hi or med: lines.append('Serious and noticeable problems go to the fixer tonight; anything that changes how Rachel talks comes to you as "Needs a decision".')
     if skipped: lines.append('_%d conversation(s) not reviewed (nightly limit)_' % skipped)
     lines.append('_Review cost: $%.2f_' % spent)
@@ -188,6 +199,26 @@ def main():
                 n_iss += 1
                 fh.write(json.dumps(dict(i, ts=time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), session=r['session'], channel=r['channel'],
                                          customer=r['customer'], qa=False, day=day)) + '\n')
+    # Unhappy customer messages the live words missed (feedback.js unhappyIn) -> logs/feedback.jsonl kind "unhappy", source
+    # "review" -> monitor detector feedback (DC, Oct 7: "capture the negative sentiments"). Skipped when the live check already
+    # recorded it or one of this review's issues quotes it (that issue already goes to the fixer — never paid twice).
+    n_unhappy = 0
+    live = [json.loads(l) for l in open(FEEDBACK)] if os.path.exists(FEEDBACK) else []
+    norm = lambda x: re.sub(r'\W+', ' ', str(x or '').lower()).strip()
+    same = lambda a, b: bool(a and b) and (a in b or b in a)
+    with open(FEEDBACK_OUT, 'a') as fh:
+        for r in reviewed:
+            rv = r.get('review') or {}
+            quoted = [norm(i.get('customer_said')) for i in rv.get('issues', []) if i.get('severity') in ('high', 'medium')]
+            caught = [norm(e.get('text')) for e in live if e.get('session') == r['session']]
+            for u in rv.get('unhappy_messages') or []:
+                q = norm(u.get('customer_said'))
+                if not q or any(same(q, x) for x in quoted + caught): continue
+                n_unhappy += 1
+                fh.write(json.dumps({'ts': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()), 'kind': 'unhappy', 'source': 'review',
+                                     'session': r['session'], 'who': r['customer'], 'channel': r['channel'], 'text': str(u.get('customer_said'))[:300],
+                                     'about': str(u.get('about', ''))[:200], 'qa': False}) + '\n')
+    if n_unhappy: log('%d unhappy message(s) the live check missed -> %s' % (n_unhappy, FEEDBACK_OUT))
     if not a.hours:
         st['last_ts'] = now; json.dump(st, open(STATE, 'w'))
     log('reviewed %d, skipped %d, %d issue(s) for the monitor, $%.3f' % (len(reviewed), skipped, n_iss, spent))

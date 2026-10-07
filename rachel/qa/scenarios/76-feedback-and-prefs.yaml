@@ -26,3 +26,7 @@ turns:
   - send: "do you have Corona?"
     expect:
       log_contains: ["[prefs] 1 preference(s) shown to the LLM"]
+  # dissatisfaction in plain words, no "Rachel feedback:" (DC, Oct 7: "capture the negative sentiments")
+  - send: "I asked for Corona but you showed me something else, this is not what I expected"
+    expect:
+      log_contains: ["[feedback] unhappy recorded (QA)"]

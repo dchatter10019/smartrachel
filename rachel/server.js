@@ -1834,8 +1834,8 @@ app.post('/chat', async (req, res) => {
         }
         message = fl.rest;   // the rest of the message is handled as usual
       } else {
-        const c = FB.correctionIn(message);
-        if (c) FB.record({ kind: 'correction', session: sessionKey, who, channel: format, text: c, message: String(message).slice(0, 1500), rachel_said: lastSaid, qa: isQA });
+        const c = FB.correctionIn(message), u = c ? '' : FB.unhappyIn(message);
+        if (c || u) FB.record({ kind: c ? 'correction' : 'unhappy', source: 'live', session: sessionKey, who, channel: format, text: c || u, message: String(message).slice(0, 1500), rachel_said: lastSaid, qa: isQA });
       }
       {
         const stP = getState(sessionKey);
