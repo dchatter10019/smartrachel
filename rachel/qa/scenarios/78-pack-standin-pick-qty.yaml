@@ -2,16 +2,24 @@ name: pack-standin-pick-qty
 # Oct 5 (DC asked, checked live): "2 x Stella Artois Premium Lager Beer 24 x 11 oz Bottles" in SF — the 24-pack isn't
 # carried, Rachel listed the 12-packs, the customer picked one and the basket got 1x (she only ASKED whether to make
 # it 4). A picked pack stand-in now keeps the units asked for: 2 x 24 = 4 x 12-pack (pack-standin.js).
+# Oct 7: the cans were picked first although the 12-pack bottles are carried; the bottles come first now, and a
+# switch to the cans keeps the 48 units.
 turns:
   - send: reset
   - send: "yes"
   - send: "332 Pine St, San Francisco, CA 94104"
   - send: "2 x Stella Artois Premium Lager Beer 24 x 11 oz Bottles"
-    expect: {contains: ["Stella"]}
-  - send: "the Stella 12 pack bottles work"
+    # Oct 7 nightly: the bottles were asked, the 12-pack BOTTLES are carried — 4 of them, never the cans first
     expect:
-      log_contains: ["[confirm-substitute] pack: "]
+      matches: "(?i)\\b4\\s*x\\s*Stella Artois 12pk[^\\n]*Btl"
+      contains: ["48 bottles"]
+      not_contains: ["no lager in stock"]
+      log_contains: ["[buildPackage] container: "]
+  - send: "actually cans are fine, the Stella 12 x 12 oz cans work"
+    # the switch keeps the 48 units (4 x 12-pack), whichever path applies it
+    expect:
+      matches: "(?i)\\b4\\s*x\\s*\\*?Stella[^\\n]*12 x 12 OZ Can"
   - send: "show my basket"
     expect:
-      matches: "(?i)\\b4\\s*x?\\s*[^\\n]*Stella[^\\n]*12"
-      not_matches: "(?i)\\b1\\s*x\\s*Stella"
+      matches: "(?i)\\b4\\s*x?\\s*[^\\n]*Stella[^\\n]*12 x 12 OZ Can"
+      not_matches: "(?i)\\b[128]\\s*x\\s*Stella"

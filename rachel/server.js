@@ -914,7 +914,7 @@ function parseTip(raw) {
 // Keys are the package builder's categories: wine, beer (seltzer/cider count as beer),
 // spirits (liquor, cocktails, mixed drinks).
 // The parser lives in serving-mix.js, shared with the Rachel connector (rachel-mcp.js rachel_build_package).
-const { MIX_SYN, eventDrinkCats, parseServingMix, mixText } = require('./serving-mix.js');
+const { MIX_SYN, eventDrinkCats, parseServingMix, mixText, cocktailsUnnamed, COCKTAIL_ASK } = require('./serving-mix.js');
 // A product list + a guest count, with the serving mix known: the listed products are sized for the event
 // (rachel.js [list-scale]) — unless the customer says to keep the quantities. Sets eventParams.list_scale.
 function listScaleFor(state, reqMsg, answerMsg, got) {
@@ -2423,13 +2423,29 @@ app.post('/chat', async (req, res) => {
     // (not isInternalMsg: that const is declared further down — referencing it here threw a TDZ ReferenceError on every turn)
     if (state.eventParams && state.eventParams.list_scale) { delete state.eventParams.list_scale; saveFlowState(); }   // one turn only (rachel.js [list-scale])
     if (state.step === 'ready' && !state.orderStep && !state.proposalStep && !state.pendingQtyFor && !/^__/.test(message)) {
-      if (state.pendingMenu) {
+      if (state.pendingCocktails) {
+        // The answer to "which cocktails?" (asked in code below): the held event request + the names, built as ONE list.
+        const pc = state.pendingCocktails;
+        state.pendingCocktails = null; saveFlowState();
+        console.log('[menu] cocktails answered: ' + JSON.stringify(message).slice(0, 80) + ' — building the held request: ' + JSON.stringify(pc.message).slice(0, 80));
+        const answer = message;
+        message = pc.message + '\nCocktails: ' + answer; msgLower = message.toLowerCase().trim();
+        context.order_change_note = 'The customer was asked which cocktails they want for this event and answered ' + JSON.stringify(answer).slice(0, 200) +
+          '. If they named cocktails: build the WHOLE event now in ONE custom_list (Cocktail mode) — the event\'s wine and beer lines AND every ingredient of each named cocktail (spirits + mixers), with guests/hours/budget; not a full bar, no category_splits; the serving mix is applied automatically. If they declined cocktails: build with intent=menu_build without cocktails.';
+      } else if (state.pendingMenu) {
         const pm = state.pendingMenu;
         const got = parseServingMix(message, pm.cats, false);
         if (got) {
           state.eventParams = Object.assign({}, state.eventParams || {}, { serving_mix: JSON.stringify(got.mix), serving_mix_text: String(message).slice(0, 500) });   // the words too: mixers named in the answer (mixers.js, Oct 7)
           state.pendingMenu = null; saveFlowState();
           console.log('[menu] serving mix (' + got.why + '): ' + mixText(got.mix) + ' — building the held request: ' + JSON.stringify(pm.message).slice(0, 80));
+          // Cocktails asked for but never named: ask which, in code, before any build (prompt COCKTAIL NAMES gate; the LLM
+          // sometimes built a full bar, and the names given next replaced the package with their ingredients — Oct 7).
+          if ((got.mix.spirits || 0) > 0 && cocktailsUnnamed(pm.message + '\n' + message)) {
+            state.pendingCocktails = { message: pm.message }; saveFlowState();
+            console.log('[menu] cocktails requested without names — asking which before building');
+            return res.json({ text: COCKTAIL_ASK, response: COCKTAIL_ASK });
+          }
           // A held PRODUCT LIST + a guest count: the answer asks for the listed products sized for the event
           // (rachel.js [list-scale]: calculator quantities, left-out categories dropped) — unless it says to
           // keep the quantities. Real case (Sep 30, DC): "take the same ones listed but change the quantities".
@@ -2458,6 +2474,11 @@ app.post('/chat', async (req, res) => {
           if (stated) {
             saveFlowState();
             console.log('[menu] serving mix stated in the request (' + stated.why + '): ' + mixText(stated.mix));
+            if ((stated.mix.spirits || 0) > 0 && cocktailsUnnamed(message)) {
+              state.pendingCocktails = { message }; saveFlowState();
+              console.log('[menu] cocktails requested without names — asking which before building');
+              return res.json({ text: COCKTAIL_ASK, response: COCKTAIL_ASK });
+            }
             // A product list + a guest count + the mix in ONE message ("create a menu for 100 people, only beer and
             // wine, make it equal" with a photo of an invoice): the listed products sized for the event, as when the
             // mix is answered separately. Real bug (Sep 30, DC): the photo's own quantities came back, vodka and gin in.

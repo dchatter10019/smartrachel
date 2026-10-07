@@ -74,5 +74,9 @@ eq('non-alcoholic = NA', verdict('Heineken non-alcoholic', P('Heineken 0.0 N/A 6
 eq('"Athletic Brewing" = Athletic', verdict('Athletic Brewing Non-Alcoholic Beer', P('Athletic N/A Upside Dawn Golden 12x12 OZ Can')).kind, 'exact');
 eq('an Athletic Paloma is not the NA beer', verdict('Athletic Brewing Non-Alcoholic Beer', P('Athletic Non-Alcoholic Paloma 4pk 12oz Can')).kind, 'closest');
 
+// A plain descriptor the brand implies (Oct 7 nightly, SF): the Stella bottle 12-pack's name has no "Lager".
+eq('"Stella Artois Premium Lager Beer" -> Stella 12pk Btl: no false "no lager in stock"', verdict('Stella Artois Premium Lager Beer 24 x 11 oz Bottles', P('Stella Artois 12pk 11.2 OZ Btl 5.0% ABV')).note, '12-pack, not 24');
+eq('a lager is still missing on another style of the brand', verdict('Samuel Adams Boston Lager', P('Samuel Adams Octoberfest 12pk')).note.includes('lager'), true);
+eq('...and on another brand', verdict('Stella Artois Lager', P('Heineken 12pk Btl')).note.includes('stella'), true);
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');

@@ -260,9 +260,12 @@ def save_state(st):
     tmp = STATE + '.tmp'; json.dump(st, open(tmp, 'w')); os.replace(tmp, STATE)
 
 def new_lines(path, st, key):
-    """Lines appended since the last pass. First sight of a file = start at its end (history is for --replay)."""
+    """Lines appended since the last pass. First sight of a file = start at its end (history is for --replay).
+    A file that did not exist yet starts at 0: everything written to it is new (Oct 7: review-issues.jsonl was created
+    after the monitor started, so its first 3 issues were skipped as history and never reached the fixer)."""
     try: size = os.path.getsize(path)
-    except OSError: return []
+    except OSError:
+        st.setdefault(key, 0); return []
     off = st.get(key)
     if off is None or off > size: st[key] = size if off is None else 0   # first sight: skip history; truncated: start over
     if off is None: return []

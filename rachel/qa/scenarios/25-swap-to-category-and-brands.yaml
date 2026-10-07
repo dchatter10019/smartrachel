@@ -15,7 +15,8 @@ turns:
     expect: {contains: ["Bacardi", "Patron"]}
   - send: "• Instead of Bacardi – please replace with a higher end whiskey\n• For tequila, they would like Don Julio and Casa Migos as their two options."
     expect:
-      matches: "(?i)don julio (blanco|reposado)"
+      # Blanco/Reposado on the same line or listed under a "Don Julio:" heading (nightly 20261007: "*Don Julio:*\n- Blanco")
+      matches: "(?is)don julio\\W{0,8}(blanco|reposado)"
       contains: ["Casamigos"]
       not_contains: ["search issue", "trouble pulling", "bevvi-support"]
       log_contains: ["[tool] ShoppingAgent"]

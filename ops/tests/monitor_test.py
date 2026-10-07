@@ -88,5 +88,13 @@ check('store: the monitor sees it too (no stale copy)', [f for f in store.items 
 crash = [f for f in on_disk.values() if f['detector'] == 'crash'][0]
 check('store: the monitor\'s own update still lands', crash['count'] >= 3)
 os.remove(tmp)
+# new_lines: a file already there on first sight skips its history; a file created later is read from its first line
+st = {}; pre = tempfile.mktemp(suffix='.jsonl'); late = tempfile.mktemp(suffix='.jsonl')
+open(pre, 'w').write('old\n')
+check('new_lines: history of a file present on first sight is skipped', M.new_lines(pre, st, 'p') == [] and M.new_lines(late, st, 'l') == [])
+open(pre, 'a').write('new\n'); open(late, 'w').write('first\nsecond\n')
+check('new_lines: later lines of a known file are read', M.new_lines(pre, st, 'p') == ['new'])
+check('new_lines: a file created after the first pass is read from line 1', M.new_lines(late, st, 'l') == ['first', 'second'])
+os.remove(pre); os.remove(late)
 print('monitor test: ' + ('all passed' if not fails else '%d FAILED' % fails))
 sys.exit(1 if fails else 0)

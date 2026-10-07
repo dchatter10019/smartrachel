@@ -67,7 +67,11 @@ function fit(request, product) {
   const others = distinct.filter(w => !SPIRIT_TYPE.has(w));
   const reqW = new Set(req), prodOwn = words(product && product.name).filter(w => !FILLER.has(w) && !/^\d/.test(w) && w.length >= 2 && !reqW.has(w));
   const typeImplied = others.length && others.every(has) && !prodOwn.length;
-  const missing = distinct.filter(w => !has(w) && !(SPIRIT_TYPE.has(w) && typeImplied));
+  // A plain beer descriptor (lager, ale) the brand implies is not missing either, when the product names no other style:
+  // "Stella Artois 12pk 11.2 OZ Btl" for "Stella Artois Premium Lager Beer" (Oct 7: the note said "no lager in stock").
+  const PLAIN_BEER = new Set(['lager', 'ale']), notPlain = distinct.filter(w => !PLAIN_BEER.has(w));
+  const plainImplied = notPlain.length && notPlain.every(has) && !words(product && product.name).some(w => STYLE.includes(w));
+  const missing = distinct.filter(w => !has(w) && !(SPIRIT_TYPE.has(w) && typeImplied) && !(PLAIN_BEER.has(w) && plainImplied));
   const reqSet = new Set(req);
   const extra = CHANGERS.filter(w => pn.includes(' ' + w + ' ') && !reqSet.has(w));
   const want = packCount(request), got = packCount((product && product.name) + ' ' + (product && (product.sizeStr || product.size) || ''));

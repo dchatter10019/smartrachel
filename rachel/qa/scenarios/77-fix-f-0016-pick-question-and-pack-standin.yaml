@@ -26,5 +26,6 @@ turns:
     expect:
       contains: ["Stella"]
       not_contains: ["Stella Artois Premium Lager Beer 24 x 11 oz Bottles isn't available"]
-      log_contains: ["[buildPackage] pack:"]
+      # Oct 7: the 12-pack bottles are picked (container asked) — no pack: conversion line then; either way a closest match
+      log_contains: ["[buildPackage] NOT EXACT (closest): \"Stella"]
       log_not_contains: ["UNAVAILABLE (pack mismatch): \"Stella"]

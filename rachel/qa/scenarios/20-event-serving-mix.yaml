@@ -12,10 +12,12 @@ turns:
   - send: "planning a party for 40 guests, 3 hours, budget $2500 — we want wine, beer and cocktails"
     expect: {contains: ["drink most", "wine", "beer", "cocktails"], not_contains: ["Product total"], log_contains: ["[menu] mixed event"]}
   - send: "mostly wine"
-    expect: {matches: "cocktail|Product total", log_contains: ["[menu] serving mix (most: wine)"]}
+    # Oct 7: cocktails with no names are asked in code — the LLM sometimes built a full 5-spirit bar here, and the
+    # names given next replaced the whole package with 7 Cointreau + 11 lime juice (staging smoke, twice)
+    expect: {contains: ["which cocktails"], not_contains: ["Product total"], log_contains: ["[menu] serving mix (most: wine)", "[menu] cocktails requested without names"]}
   - send: "Margarita and Moscow Mule"
     # Sep 27: one generic "Wine" line -> 16 of one Chardonnay; 1 bottle per spirit (32 pours for 40
     # cocktails); White Claw as lime juice. The custom_list package must pass its supply check.
-    expect: {contains: ["Product total"], log_contains: ["serving_mix=", "[buildPackage] serving mix from customer (custom_list)", "custom_list supply check OK"], log_not_contains: ["custom_list supply check FAILED"]}
+    expect: {contains: ["Product total"], matches: "(?i)wine|cabernet|chardonnay|pinot|sauvignon", log_contains: ["[menu] cocktails answered", "serving_mix=", "[buildPackage] serving mix from customer (custom_list)", "custom_list supply check OK"], log_not_contains: ["custom_list supply check FAILED"]}
   - send: "change the budget to $3000"
     expect: {contains: ["Product total"], log_contains: ["serving_mix="]}

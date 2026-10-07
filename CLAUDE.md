@@ -174,7 +174,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 ## Debug-and-fix loop (spec: "Rachel — Automated Debug-and-Fix Loop", Sep 29)
 - Step 1 staging: done (see Staging above). Step 2 monitor: ops/monitor.py (thresholds ops/monitor.yaml) reads the logs,
   events.jsonl, qa/runs/*/summary.json, the watchdog log and the six services' state; appends findings to
-  logs/findings.jsonl (deduped 7 days; evidence redacted). `ops/monitor.py --status` lists open findings, `--replay <log>`
+  logs/findings.jsonl (deduped 7 days; evidence redacted; a log file created after the monitor started is read from line 1 — Oct 7:
+  review-issues.jsonl's first 3 issues were skipped as history). `ops/monitor.py --status` lists open findings, `--replay <log>`
   tunes thresholds, `--once` one pass. Customer-facing detectors skip QA (tag «qa-», events qa:true, qa- session ids).
   Runs as rachel-monitor (unit in ops/systemd/, installed by DC). Critical findings post to OPS_SLACK_CHANNEL once set.
   ops/tests/monitor_test.py runs in the nightly QA. Interactive sessions: check `ops/monitor.py --status` first.
@@ -266,6 +267,12 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   calculator quantities, 0% categories dropped and listed in the reply, no re-adds that turn) — also when the mix
   is stated in the same message ("only beer and wine, make it equal"). An aperitif (Lillet, vermouth) counts as liquor;
   "just/only beer and wine" also leaves hard seltzer out (DC) unless the customer's own words mention seltzer.
+  Cocktails asked for with no names ("wine, beer and cocktails", "2 signature cocktails") are asked in code on /chat
+  (Slack, WhatsApp, email) right after the serving-mix answer, or when the mix is stated in the request
+  (serving-mix.js cocktailsUnnamed + COCKTAIL_ASK; names from prompt.md 8.3 read live, or any name after "cocktails:" /
+  "like"; "3 x ... Cocktail" item lines never count; state.pendingCocktails; [menu] cocktails requested without names /
+  answered). The answer = the held request + "Cocktails: ..." built as ONE custom_list. (Oct 7: the LLM sometimes built a
+  full bar, and the names given next replaced the whole package with 7 Cointreau + 11 lime juice.) The connector already asked.
   Mix percentages: "60 pct / percent wine", "60/40 wine/beer", "wine 70%" (that form read NaN until Oct 4) (serving-mix.js).
   An event's beer packs are sized across the beer lines together on the real pack sizes to >= 95% of the need ([buildPackage]
   beer packs sized together; Oct 4: two lines each rounded up = 72 bottles for 50), and the "Beer" slot skips cider.
@@ -351,7 +358,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   "a case" with no count = 24 units (a 12-pack is fine, DC); not wine/spirits. Plain water ("bottled water case") = the store's plain
   still water ([doSearch] plain water; a 24ct pack first for a case), never a word match (Oct 4: FIJI left SF and "Bottled"
   found port/bourbon). A requested pack not carried, with a smaller pack of the same product + container here, takes enough
-  of those ("Stella 24 x 11 oz" -> 4 six-packs each; [buildPackage] pack:; a container within 10% counts, 11 vs 12 oz). A PICKED
+  of those ("Stella 24 x 11 oz" -> 4 six-packs each; [buildPackage] pack:; a container within 10% counts, 11 vs 12 oz). The
+  container the customer names (bottles / cans) wins over the other of the same brand ([buildPackage] container:; the brand
+  is searched when the top-3 fuzzy fallback lacks it; never an NA 0.0 row; Oct 7: 4 x 12-pack CANS for "24 x 11 oz Bottles"
+  with the 12pk Btl on the shelf); "lager"/"ale" the brand implies is not "missing" (no false "no lager in stock"). A PICKED
   pack stand-in keeps the units too (pack-standin.js in applyBasketSubstitute, every pick/swap path; with no original named,
   the customer's own counted pack line of that brand is the original): 2 x 24-pack -> 4 x 12pk ([confirm-substitute] pack:;
   Oct 5: the picked 12-pack went in at 1x). A smaller stand-in for a not-carried

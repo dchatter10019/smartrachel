@@ -1346,6 +1346,22 @@ async function buildPackage(iv) {
         if (withPack.length) { console.log('[buildPackage] pack size unknown: '+best.name+' (no pack in its name) for '+JSON.stringify(np.name)+' — using '+withPack[0].name+' (pack in its name)'); best=withPack[0]; }
         else console.log('[buildPackage] pack size unknown: '+best.name+' for '+JSON.stringify(np.name)+' — no candidate names its pack; kept (flagged)');
       }
+      // The container the customer named (bottles / cans) wins over the other one of the same brand. Real bug (Oct 7
+      // nightly, SF): "2 x Stella ... 24 x 11 oz Bottles" got 4 x 12-pack CANS with "Stella Artois 12pk 11.2 OZ Btl" on
+      // the shelf; the customer then asked for the bottles and the LLM offered 2x of them.
+      var contOf=function(s){ s=String(s||'').toLowerCase(); return /\b(bottles?|btls?)\b/.test(s)?'bottle':/\bcans?\b/.test(s)?'can':''; };
+      var reqC=contOf(np.name), bestC=contOf(best.name+' '+(best.sizeStr||''));
+      if (reqC && bestC && reqC!==bestC) {
+        var naRe=/\b0\.0\b|non[- ]?alc|alcohol[- ]free|\bn\/?a\b/i, bw0=PM.brandWords(reqForFit);
+        var whyNotC=function(p){ return p.product_id===best.product_id||contOf(p.name+' '+(p.sizeStr||''))!==reqC ? 'container' : isMini(p) ? 'mini' : !altSane(p)||!categorySane(p,catN) ? 'category' : !naRe.test(np.name)&&naRe.test(p.name) ? 'non-alcoholic'
+          : fwP.pack&&fwP.pack.want&&!((PM.packCount(p.name)||PM.packCount(p.sizeStr))>1) ? 'no pack' : PM.fit(reqForFit,p).missing.some(function(w){return bw0.indexOf(w)>=0;}) ? 'other brand'
+          : lineItems.some(function(li){return li.product_id===p.product_id;}) ? 'already a line' : ''; };
+        var okC=function(p){ return !whyNotC(p); }, sameC=found.filter(okC), pool=found;
+        // The broad fallback keeps only its top 3 word matches ("12pk 11.2 OZ Btl" scored below a keg): ask for the brand.
+        if (!sameC.length && bw0.length) { pool=await doSearch(bw0.join(' '), catN); sameC=pool.filter(okC); if (sameC.length) console.log('[buildPackage] container: searched "'+bw0.join(' ')+'" for '+reqC+'s'); }
+        if (sameC.length) { console.log('[buildPackage] container: '+JSON.stringify(np.name)+' asks for '+reqC+'s — '+sameC[0].name+' instead of '+best.name); best=sameC[0]; }
+        else console.log('[buildPackage] container: '+JSON.stringify(np.name)+' asks for '+reqC+'s, none of this brand here — kept '+best.name+' ('+bestC+'s); looked at '+pool.length+': '+pool.filter(function(p){return contOf(p.name+' '+(p.sizeStr||''))===reqC;}).map(function(p){return p.name+': '+whyNotC(p);}).join(', '));
+      }
       // Two requests never silently become the same product. Real bug: "Sun Cruiser Iced Tea" and "Sun Cruiser
       // Lemonade" were both the Iced Tea pack. Next best unused candidate; flagged either way.
       var dupOf=lineItems.find(function(li){return li.product_id&&li.product_id===best.product_id;});
@@ -1447,7 +1463,7 @@ async function buildPackage(iv) {
         if (packMultFrom) { console.log('[buildPackage] pack size: '+JSON.stringify(np.name)+' already converted ('+packMultFrom+' -> '+qty+') — counted from the customer\'s '+packMultFrom); qty=packMultFrom; }
         var q3=Math.ceil(qty*fw.pack.want/fw.pack.got);
         console.log('[buildPackage] pack size: '+JSON.stringify(np.name)+' asked '+qty+' x '+fw.pack.want+' = '+(qty*fw.pack.want)+' units; '+best.name+' is a '+fw.pack.got+'-pack -> '+q3);
-        var packNote=fw.pack.got+'-packs here: '+q3+' = '+(q3*fw.pack.got)+' cans'+(q3*fw.pack.got===qty*fw.pack.want?', as asked':' (you asked for '+(qty*fw.pack.want)+')');
+        var packNote=fw.pack.got+'-packs here: '+q3+' = '+(q3*fw.pack.got)+' '+({bottle:'bottles',can:'cans'}[contOf(best.name+' '+(best.sizeStr||''))]||'units')+(q3*fw.pack.got===qty*fw.pack.want?', as asked':' (you asked for '+(qty*fw.pack.want)+')');
         qty=q3;
       }
       // "a case" with no count = 24 units; a 12-pack is fine when that is what the store has (DC, Oct 2). Real case

@@ -76,4 +76,24 @@ function parseServingMix0(msg, cats, requireCue) {
 }
 const mixText = mx => Object.entries(mx).map(([k, v]) => (k === 'spirits' ? 'liquor/cocktails' : k) + ' ' + Math.round(v * 100) + '%').join(' / ');
 
-module.exports = { MIX_SYN, eventDrinkCats, parseServingMix, mixText };
+// Rachel's COCKTAIL NAMES gate (prompt.md), decided in code (Oct 7): cocktails asked for with no names ("wine, beer and
+// cocktails", "2 signature cocktails") are asked before any build. The LLM sometimes built a full 5-spirit bar instead,
+// and the cocktails named next replaced the whole package with their ingredients (event-serving-mix, staging Oct 7).
+// Names come from prompt.md 8.3, read live (one copy); a name after "cocktails:" / "like" / "such as" counts as named.
+const COCKTAIL_ASK = 'Great — which cocktails would you like? Popular picks:\n1. Margarita (tequila, triple sec, lime)\n2. Moscow Mule (vodka, ginger beer, lime)\n3. Old Fashioned (bourbon, bitters)\n4. Aperol Spritz (prosecco, Aperol, soda)\n5. Espresso Martini (vodka, Kahlua, espresso)\n6. Paloma (tequila, grapefruit soda, lime)\nOr name any others you have in mind.';
+function knownCocktails() {
+  try {
+    const p = require('fs').readFileSync(require('path').join(__dirname, 'prompt.md'), 'utf8');
+    const t = p.indexOf('### 8.3'), u = p.indexOf('### 8.4');
+    return p.slice(t, u).split('\n').map(l => (l.match(/^\|\s*([^|]+?)\s*\|/) || [])[1]).filter(n => n && !/^(cocktail|-+)$/i.test(n));
+  } catch (e) { return []; }
+}
+function cocktailsUnnamed(text) {
+  // The customer's own words only: an item line ("3 x Jack Daniel's & Coca-Cola Cocktail 4-Pack") is a product, not a request
+  const t = String(text || '').split('\n').filter(l => !/^\s*[-•*]?\s*\d+\s*(?:x|×)\s*\S/i.test(l)).join('\n');
+  if (!/\b(cocktails?|mixed drinks?)\b/i.test(t)) return false;
+  if (/\b(cocktails?|mixed drinks?)\s*(?::|—|\(|-\s|like\b|such as\b|e\.g\.|including\b|namely\b)/i.test(t)) return false;
+  return !knownCocktails().some(n => new RegExp('\\b' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s*&\s*/g, '\\s*(?:&|and)\\s*') + 's?\\b', 'i').test(t));
+}
+
+module.exports = { MIX_SYN, eventDrinkCats, parseServingMix, mixText, cocktailsUnnamed, knownCocktails, COCKTAIL_ASK };
