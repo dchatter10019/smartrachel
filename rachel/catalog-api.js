@@ -24,6 +24,9 @@ function catalogUrl(o) {
 // The response body -> legacy-shaped rows (array). getProducts: unwrap, rewrite links, price window applied here.
 function rowsFrom(body, m, o) {
   if (m === 'legacy') return Array.isArray(body) ? body : [];
+  // Every getProducts search is logged (zip, words, rows) so a staging run gives the list of searches (DC, Oct 7)
+  const n = body && Array.isArray(body.products) ? body.products.length : 0;
+  console.log('[catalog-api] getProducts zip=' + (o.zip || '') + ' name=' + JSON.stringify(String(o.q || '')) + ' -> ' + n + ' row(s)');
   if (!body || body.success === false || !Array.isArray(body.products)) {
     if (body && body.message) console.log('[catalog-api] getProducts: ' + String(body.message).slice(0, 120) + ' (' + (o.zip || '') + ' ' + JSON.stringify(String(o.q || '')).slice(0, 60) + ')');
     return [];

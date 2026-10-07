@@ -52,6 +52,7 @@ launch() {
   local -a envs=() over=()
   while [ $# -gt 0 ] && [ "$1" != "--" ]; do over+=("$1"); shift; done; shift
   while IFS= read -r -d '' kv; do envs+=("$kv"); done < <(env_of "$unit")
+  [ -s "$log" ] && mv -f "$log" "$log.prev"   # the last run's log is kept one start (Oct 7: a deploy's staging start wiped a suite's search log)
   : > "$log"
   setsid env "${envs[@]}" QA_MODE=1 "${over[@]}" "$@" >> "$log" 2>&1 < /dev/null &
   echo $! > "$pidf"
