@@ -15,6 +15,10 @@ const { expandCocktails } = require('./cocktail-expand.js');
 const OAUTH = require('./mcp-oauth.js');   // claude.ai connector sign-in (OAuth 2.1 + PKCE); API keys keep working
 const callerFor = token => resolveEmailForKey(token) || OAUTH.emailForToken(token);
 const RACHEL_URL = 'http://127.0.0.1:3500';
+const transcripts = require('./transcripts.js');
+// Every log line carries its time (Oct 7: the connector's log had none, so a conversation's timing had to be pieced
+// together from rachel.log).
+{ const _log = console.log.bind(console); console.log = (...a) => _log(new Date().toISOString(), ...a); }
 
 const TOOLS = [
   {
@@ -165,7 +169,8 @@ async function callRachel(message, email, zip, session_id, channel) {
         kitchen_location: '',
         client_id: 'airculinaire',
         account_id: '',
-        user_email: email || ''
+        user_email: email || '',
+        channel: 'mcp'   // events / transcripts label connector turns as their own channel (was counted as email)
       }
     })
   });
@@ -254,7 +259,21 @@ function stripProductLinks(text) {
 }
 
 async function executeTool(name, input, callerEmail, apiKey) {
-  return stripProductUrls(await runTool(name, input, callerEmail, apiKey));
+  const t0 = Date.now();
+  let result, err;
+  try { result = stripProductUrls(await runTool(name, input, callerEmail, apiKey)); return result; }
+  catch (e) { err = e; throw e; }
+  finally {
+    // Transcript of every connector tool call (transcripts.js, Oct 7) — what the client asked for and what it was shown.
+    // rachel_chat's words are already written by /chat (channel mcp); here only that the tool ran.
+    try {
+      const who = String(callerEmail || (input && input.email) || '').toLowerCase();
+      const args = Object.assign({}, input || {}); delete args.email;
+      transcripts.write({ session: (input && input.session_id) || 'mcp-' + (who || 'anon'), channel: 'mcp', customer: who, qa: QA_RE.test(who),
+        tool: name, message: JSON.stringify(args), latency_ms: Date.now() - t0,
+        result: err ? 'ERROR: ' + err.message : name === 'rachel_chat' ? undefined : (transcripts.productSummary(result) || result) });
+    } catch (e) {}
+  }
 }
 
 async function runTool(name, input, callerEmail, apiKey) {

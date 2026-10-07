@@ -18,6 +18,9 @@ STATUS=$([ $RC -eq 0 ] && echo "✅ PASS" || echo "❌ FAIL")
 TEXT="*Rachel nightly QA — $STATUS*"$'\n'"$SUMMARY"$'\n'"_${CHANGES} scenario(s) had reply changes vs the previous run_"
 # AI spend, yesterday + month to date: customers / tests / auto-fixer (ops/ai-spend.py; DC, Oct 3)
 SPEND=$(python3 /home/ubuntu/ops/ai-spend.py 2>/dev/null) && TEXT="$TEXT"$'\n'"$SPEND"
+# Conversation review (DC, Oct 7): yesterday's real conversations read by Claude; problems -> logs/review-issues.jsonl ->
+# the monitor pass below makes them findings -> the fixer. Its plain-language summary rides on this Slack post.
+REVIEW=$(python3 /home/ubuntu/ops/conversation-review.py 2>>/home/ubuntu/logs/conversation-review.log) && [ -n "$REVIEW" ] && TEXT="$TEXT"$'\n\n'"$REVIEW"
 echo "$OUT" >> /home/ubuntu/logs/qa-nightly.log; echo "$TEXT" >> /home/ubuntu/logs/qa-nightly.log
 if [ -n "$QA_SLACK_CHANNEL" ] && [ -n "$SLACK_BOT_TOKEN" ]; then
   curl -s -X POST https://slack.com/api/chat.postMessage -H "Authorization: Bearer $SLACK_BOT_TOKEN" -H "Content-Type: application/json" \

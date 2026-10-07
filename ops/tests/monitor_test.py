@@ -69,6 +69,12 @@ mon.side_test({'test': 'mcp_connector_test', 'ok': False, 'detail': ['  ✗ conn
 mon.side_test({'test': 'monitor_test', 'ok': True, 'detail': []}, T)
 st_ = found('side_test')
 check('side test: a failure is one finding with the failing step, a pass is none', len(st_) == 1 and 'ASKED AGAIN' in st_[0]['evidence'][0])
+# conversation review (Oct 7): a high / medium issue from the nightly review is a finding with what Rachel said; low and QA are not
+mon.review_issue({'severity': 'high', 'category': 'dead_end', 'what_happened': 'Asked for an address and never showed the reds', 'rachel_said': 'What is your delivery address?', 'session': 'mcp-x@y.com', 'qa': False}, T)
+mon.review_issue({'severity': 'low', 'category': 'tone', 'what_happened': 'A bit long', 'session': 'slack-x', 'qa': False}, T)
+mon.review_issue({'severity': 'high', 'category': 'dead_end', 'what_happened': 'QA one', 'session': 'qa-1', 'qa': True}, T)
+cr = found('conversation_review')
+check('conversation review: a high issue is one high finding with what Rachel said; low and QA ignored', len(cr) == 1 and cr[0]['severity'] == 'high' and 'delivery address' in cr[0]['evidence'][0])
 check('findings file written', sum(1 for _ in open(tmp)) == len(store.items))
 # two writers (Oct 3): a status set by another process (fixer / deploy-fix / Slack ❌ / by hand) survives the long-running
 # monitor's next save, and the monitor's own update to a finding still lands

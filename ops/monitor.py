@@ -29,6 +29,7 @@ TEXT_LOGS = {   # source -> path; lines have no timestamp unless the format give
 }
 EVENTS = LOGS + '/events.jsonl'
 FEEDBACK = LOGS + '/feedback.jsonl'   # corrections, 'Rachel feedback:' lines, Slack 👎 (rachel/feedback.js, rachel_slack_bot.py)
+REVIEW_ISSUES = LOGS + '/review-issues.jsonl'   # nightly conversation review (ops/conversation-review.py, Oct 7)
 SIDE_TESTS = LOGS + '/side-tests.jsonl'   # nightly side tests (connector, monitor self-test) — rachel/qa/nightly.sh
 QA_RUNS = HOME + '/rachel/qa/runs'
 
@@ -212,6 +213,17 @@ class Monitor:
         ev = '%s | %s said: %s | Rachel had said: %s' % (e.get('kind'), e.get('who', '?'), str(e.get('text', ''))[:300], str(e.get('rachel_said', ''))[:600].replace('\n', ' / '))
         self.store.record('feedback', self.d.get('feedback', {}).get('severity', 'high'), '%s (%s)' % (kinds.get(e.get('kind'), 'feedback'), sess), [ev], [sess], t or self.now())
 
+    def review_issue(self, e, t=None):
+        # The nightly conversation review found a problem in a real conversation (Oct 7). One finding per problem (the
+        # reviewer's own words, so the same problem in two conversations is usually two findings; the fixer's 3-a-night cap holds).
+        if e.get('qa') or e.get('severity') not in ('high', 'medium'): return
+        sess = e.get('session', '')
+        ev = '%s | %s | Rachel said: %s | customer said: %s | should have: %s | fix area: %s' % (
+            e.get('category', '?'), e.get('what_happened', ''), str(e.get('rachel_said', ''))[:400], str(e.get('customer_said', ''))[:300],
+            str(e.get('should_have', ''))[:300], e.get('fix_area', '?'))
+        sev = e['severity'] if e['severity'] == 'high' else self.d.get('conversation_review', {}).get('severity', 'medium')
+        self.store.record('conversation_review', sev, '%s: %s (%s)' % (e.get('category', 'other'), str(e.get('what_happened', ''))[:120], sess), [ev], [sess], t or self.now())
+
     def side_test(self, e, t=None):
         # A nightly side test (connector test, monitor self-test) failed: qa/nightly.sh -> logs/side-tests.jsonl (Oct 4).
         if e.get('ok'): return
@@ -267,6 +279,9 @@ def one_pass(mon, st):
     for line in new_lines(FEEDBACK, st, 'off:' + FEEDBACK):
         try: mon.feedback(json.loads(line))
         except Exception: pass
+    for line in new_lines(REVIEW_ISSUES, st, 'off:' + REVIEW_ISSUES):
+        try: mon.review_issue(json.loads(line))
+        except Exception: pass
     for line in new_lines(SIDE_TESTS, st, 'off:' + SIDE_TESTS):
         try: mon.side_test(json.loads(line))
         except Exception: pass
@@ -310,6 +325,8 @@ PLAIN = {   # detector -> (what it means for customers, what a person could do).
     'escalation_request': ('A customer asked to talk to a person.', 'Someone should reach out to that customer.'),
     'feedback':           ('Someone told Rachel she got something wrong — a correction in their message ("I already told you…"), a "Rachel feedback:" note, or a 👎 on her reply in Slack.',
                            'Read what they said and what Rachel had said just before; the fixer turns it into a test and a fix.'),
+    'conversation_review': ("The nightly read-through of yesterday's real conversations found a place where Rachel let a customer down (wrong item, ignored what they said, a dead end, a lost customer).",
+                           'Read what happened below. The fixer tries a code fix; a change to how Rachel talks comes to you as a decision.'),
     'watchdog_alert':     ('The nightly health check found something wrong.', 'See the technical details below.'),
 }
 

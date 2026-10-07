@@ -11,7 +11,7 @@ import argparse, collections, datetime, json
 LEDGER = '/home/ubuntu/logs/ai-spend.jsonl'
 FIXER = '/home/ubuntu/logs/fixer/spend.jsonl'
 KIND = {'rachel': "Rachel's replies", 'classifier': 'message sorting', 'reviewer': 'package checks', 'web-price': 'web price lookups',
-        'image': 'reading photos', 'qa-judge': 'test grading', 'fixer': 'auto-fixer'}
+        'image': 'reading photos', 'qa-judge': 'test grading', 'fixer': 'auto-fixer', 'conversation-review': 'nightly conversation review'}
 
 def rows():
     for path, fixer in ((LEDGER, False), (FIXER, True)):

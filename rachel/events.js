@@ -50,7 +50,7 @@ function inferAction(ev, before, after, reply) {
 }
 
 // Called by the wrapper with the final reply. Returns the event written (or null).
-function finish({ st, stateIn, basketBefore, sessionKey, format, context, email, isQA, reply, extra }) {
+function finish({ st, stateIn, basketBefore, sessionKey, format, context, email, isQA, reply, extra, message }) {
   const s = cur();
   if (!s) return null;
   try {
@@ -72,6 +72,10 @@ function finish({ st, stateIn, basketBefore, sessionKey, format, context, email,
     if (isQA) ev.dry_run = true;
     for (const k of Object.keys(ev)) if (ev[k] === null || ev[k] === undefined || ev[k] === '') delete ev[k];
     write(ev);
+    // The turn's words too (transcripts.js, DC Oct 7): every channel, every outcome — the nightly review reads them.
+    s.transcribed = true;
+    try { require('./transcripts.js').write({ ts: ev.ts, session: sessionKey, channel: ev.channel, customer: ev.customer, qa: ev.qa, message, reply,
+      action: ev.action, intent: ev.intent, state_out: ev.state_out, basket_items: ev.basket_items, basket_total: ev.basket_total, latency_ms: ev.latency_ms }); } catch (e) { warnOnce('transcript', e); }
     return ev;
   } catch (e) { warnOnce('build', e); return null; }
 }

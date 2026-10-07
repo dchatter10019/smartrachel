@@ -1656,6 +1656,22 @@ app.post('/chat', async (req, res) => {
   // (Sep 29): Sean's email timed out on the agent's side while Rachel finished; the retry fed the same email
   // into the session again and Rachel replied to it as edits ("couldn't find 1x Oyster Bay"). A repeat gets
   // the first run's reply — waiting for it if it's still running.
+  // TRANSCRIPT for replies sent before the EVENT LOG wrapper below is installed (email "which proposal?", the feedback
+  // thank-you, a photo with no list): the event wrapper marks the turn transcribed; anything else is written here (Oct 7).
+  {
+    const trMsg = message, _jT = res.json.bind(res);
+    res.json = (payload) => {
+      try {
+        const c = events.ctx();
+        if (!(c && c.transcribed) && trMsg && !/^__/.test(String(trMsg))) {
+          require('./transcripts.js').write({ session: session_id, channel: events.channelOf(format, context), customer: String((context && context.user_email) || '').toLowerCase(), qa: isQA,
+            message: trMsg, reply: payload && (payload.text || payload.response), action: 'early_reply' });
+          if (c) c.transcribed = true;
+        }
+      } catch (e) {}
+      return _jT(payload);
+    };
+  }
   const reqId = req.body.request_id ? String(session_id || '') + '|' + String(req.body.request_id) : '';
   if (reqId) {
     const prev = REQUEST_REPLIES.get(reqId);
@@ -1862,11 +1878,11 @@ app.post('/chat', async (req, res) => {
   // EVENT LOG (events.js): one line per turn to logs/events.jsonl. Installed before the other reply
   // wrappers so it sees the final text; state_in is taken after the idle reset.
   {
-    const evSt0 = getState(sessionKey), evIn = events.stateLabel(evSt0), evBasket0 = events.basketOf(evSt0);
+    const evSt0 = getState(sessionKey), evIn = events.stateLabel(evSt0), evBasket0 = events.basketOf(evSt0), evMsg = message;
     if (events.ctx()) events.ctx().basket0 = evBasket0;
     const _jE = res.json.bind(res);
     res.json = (payload) => {
-      try { if (message !== '__greeting__') events.finish({ st: flowState[sessionKey], stateIn: evIn, basketBefore: evBasket0, sessionKey, format, context, email, isQA, reply: payload && (payload.text || payload.response) }); } catch (e) {}
+      try { if (message !== '__greeting__') events.finish({ st: flowState[sessionKey], stateIn: evIn, basketBefore: evBasket0, sessionKey, format, context, email, isQA, reply: payload && (payload.text || payload.response), message: evMsg }); } catch (e) {}
       return _jE(payload);
     };
   }

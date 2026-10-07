@@ -94,6 +94,18 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   message (next turn reuses the whole earlier conversation), the last tool result. Before: the customer's details were in
   the cached block -> 138/146 conversations rebuilt ~20k tokens; after: 0 cold starts, $0.036 -> $0.017 per call. Every
   call logs `[usage] rachel iteration N: input, cache read, cache write, output`. The classifier prompt is too small to cache.
+- Transcripts + nightly conversation review (DC, Oct 7: "log every conversation and analyze end of the night"):
+  every /chat turn on every channel -> RACHEL_DATA_DIR/transcripts.jsonl (rachel/transcripts.js, written from events.finish;
+  replies sent before the event wrapper by a fallback in /chat; customer message, Rachel's reply, action/state/basket), and
+  every connector tool call with what the client was shown (rachel-mcp.js executeTool; search/recommend/build = product
+  name, size, price). conversations.jsonl (order/proposal only) is unchanged. Connector /chat turns are channel "mcp" (were
+  counted as email); rachel-mcp.log lines carry timestamps. Nightly (qa/nightly.sh, before the monitor pass):
+  ops/conversation-review.py reads the conversations since the last review (QA skipped), Sonnet 4.6 reviews each (no-order /
+  pushback first; ops/monitor.yaml conversation_review: max_usd 3, max_conversations 40; ~$0.01 per conversation; ai-spend
+  kind conversation-review) -> logs/conversation-reviews/<date>.json + high/medium issues -> logs/review-issues.jsonl ->
+  monitor detector conversation_review -> fixer (in scope.yaml fix_detectors; prompt.md stays protected, so a prompt change
+  comes back as "Needs a decision"). The summary rides on the nightly QA Slack post. `--dry` lists, `--hours N` re-runs a
+  window without moving the bookmark, REVIEW_OUT / RACHEL_TRANSCRIPTS_FILE for test runs.
 - AI spend ledger (DC, Oct 3): every Anthropic call (rachel.js main, classifier, image reading, reviewer, catalog-guard web
   prices, QA judge) appends {ts, kind, model, test, env, tokens, usd} to logs/ai-spend.jsonl via rachel/ai-spend.js (price
   table there — update it when prices/models change; an unknown model logs [ai-spend] no price). test = staging, a «qa-»
