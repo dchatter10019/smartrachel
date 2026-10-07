@@ -1,0 +1,20 @@
+name: fix-f-0022-search-filler-words
+# Real (Oct 7 nightly, F-0022): the search relevance check (Oct 6) required every non-type word of the query to be in
+# the product name. "please add 4 Conundrum White 750 ML too" searched "Conundrum White 750 ML too" and dropped
+# Conundrum White because it lacks "too"; "hola, quiero vino tinto" dropped all 12 red wines for lacking "vino tinto".
+# Both answered "I couldn't find ... at this store". Filler words and Spanish type words are not producer words.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "332 Pine St, San Francisco, CA 94104"
+  - send: "2 x Tito's Handmade Vodka 1.75L"
+    expect: {contains: ["Tito"]}
+  - send: "please add 4 Conundrum White 750 ML too"
+    expect:
+      matches: "(?i)Conundrum White"
+      not_contains: ["couldn't find"]
+      log_not_contains: ["NOT FOUND \"Conundrum White 750 ML too\""]
+  - send: "hola, quiero vino tinto"
+    expect:
+      not_contains: ["couldn't find vino tinto"]
+      log_not_contains: ["NOT FOUND \"vino tinto\""]

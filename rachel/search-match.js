@@ -7,11 +7,15 @@
 // Words that don't name a producer: types, grapes, descriptors, company suffixes (moved from rachel.js, Sep 29 - Oct 2).
 const GENERICW = /^(the|and|of|de|du|la|le|wine|wines|red|white|rose|rosé|sparkling|vineyard|vineyards|valley|estate|reserve|bottle|bottles|ml|l|oz|pack|case|chardonnay|cabernet|sauvignon|blanc|pinot|noir|grigio|gris|merlot|malbec|zinfandel|syrah|shiraz|riesling|champagne|prosecco|brut|vodka|gin|rum|tequila|whiskey|whisky|bourbon|scotch|beer|lager|ipa|seltzer|blanco|reposado|anejo|añejo|high|higher|end|top|shelf|premium|luxury|upscale|fancy|nice|good|best|great|cheap|budget|affordable|mid|quality|expensive|smooth|popular|regular|standard|classic|something|some|any|brewing|brewery|breweries|brewers|brewer|company|winery|wineries|cellars|cellar|distillery|distillers|distilling|non|alcoholic|nonalcoholic)$/i;
 
+// Filler and other-language type words aren't producer words either (Oct 7 nightly, F-0022: "Conundrum White 750 ML too"
+// dropped Conundrum White for lacking "too"; "vino tinto" dropped every red wine; "Modelo can" dropped every Modelo).
+const FILLERW = /^(too|also|please|pls|thanks|more|another|extra|additional|few|couple|bottled|can|cans|canned|btl|btls|keg|kegs|vino|vinos|tinto|tintos|blanca|rosado|espumoso|cerveza|cervezas|french|italian|spanish|american|californian)$/i;
+
 const normW = x => String(x || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9' ]+/g, ' ');
 
 // The query's distinctive words ("Green Chartreuse" -> green, chartreuse; "red wine" -> none: nothing to verify).
 function distinctiveWords(query) {
-  return normW(query).split(/\s+/).filter(w => w.length >= 3 && !/^\d/.test(w) && !GENERICW.test(w));
+  return normW(query).split(/\s+/).filter(w => w.length >= 3 && !/^\d/.test(w) && !GENERICW.test(w) && !FILLERW.test(w));
 }
 
 // A word is in a product name as a whole word, without apostrophes ("titos" = "Tito's"), or — 5+ letters — run

@@ -32,4 +32,13 @@ r = rankByMatch('Génépy', P('Dolin Genepy Le Chamois 750 ML'));
 eq('accents', r.found, true);
 r = rankByMatch('sparkling rose', P('Veuve Clicquot Brut Rose Champagne 750ml', 'Cuvee 89 Sparkling Rose 750 ML'));
 eq('a generic query is not filtered', [r.found, names(r).length], [true, 2]);
+// F-0022 (Oct 7 nightly): filler / container / Spanish type words were required in the product name.
+r = rankByMatch('Conundrum White 750 ML too', P('Conundrum White - 750 ML'));
+eq('"too" is filler', r.found, true);
+r = rankByMatch('vino tinto', P('Mondavi Napa Cabernet - 750 ML', "Stag's Leap Merlot - 750 ML"));
+eq('"vino tinto" is a type, not a producer', [r.found, names(r).length], [true, 2]);
+r = rankByMatch('Modelo can', P('Modelo Especial 24x12 Oz Bottle'));
+eq('"can" is a container', r.found, true);
+r = rankByMatch('Green Chartreuse', P('Johnnie Walker Green 15yr - 750 ML'));
+eq('a real producer word still required', r.found, false);
 process.exit(failed ? 1 : 0);
