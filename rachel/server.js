@@ -1451,8 +1451,14 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
         const stO = getState(sessionKey); let bk = []; try { bk = JSON.parse(stO.lastLineItems || '[]'); } catch (e) {}
         if (Array.isArray(groups) && groups.length && bk.length) {
           const want = require('./proposal-options.js').countAsked(message);
-          stO.shownOptions = { groups, want, reply: null, at: Date.now() };
-          console.log('[options] kept for a proposal: ' + groups.map(g => g.label + ' (' + g.products.length + ')').join(', ') + (want ? ' — ' + want + ' asked per item' : ''));
+          // Searches in the same turn accumulate (F-0022, Oct 7 nightly: the LLM searched prosecco, sauv blanc and rose
+          // in three calls and only the rose options reached the PDF). Same label = the newer search.
+          const prevO = stO.shownOptions;
+          const sameTurn = prevO && prevO.msg === message && Date.now() - (prevO.at || 0) < 120000 && Array.isArray(prevO.groups);
+          const merged = sameTurn ? prevO.groups.filter(g => !groups.some(n => n.label === g.label)).concat(groups) : groups;
+          if (sameTurn) console.log('[options] same turn — added to the ' + prevO.groups.length + ' group(s) already kept');
+          stO.shownOptions = { groups: merged, want, reply: null, at: Date.now(), msg: message };
+          console.log('[options] kept for a proposal: ' + merged.map(g => g.label + ' (' + g.products.length + ')').join(', ') + (want ? ' — ' + want + ' asked per item' : ''));
         }
       } catch (e) { console.log('[options] not kept: ' + e.message); }
       // Remember the products just SHOWN (real catalog names, ids, prices), separately from the

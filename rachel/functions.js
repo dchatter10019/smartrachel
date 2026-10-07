@@ -1423,8 +1423,8 @@ async function buildPackage(iv) {
           continue;
         }
       }
-      var pq=plannedQty[n], qty=pq.qty;
-      if (np._packMult && !(!pq.hasExplicitQty && !pq.mod && (catN==='wine'||catN==='beer'||catN==='spirits') && pq.servings>0)) { console.log('[buildPackage] pack: ' + qty + ' x ' + JSON.stringify(np.name) + ' -> ' + (qty * np._packMult) + ' x ' + best.name); qty = qty * np._packMult; }
+      var pq=plannedQty[n], qty=pq.qty, packMultFrom=0;
+      if (np._packMult && !(!pq.hasExplicitQty && !pq.mod && (catN==='wine'||catN==='beer'||catN==='spirits') && pq.servings>0)) { console.log('[buildPackage] pack: ' + qty + ' x ' + JSON.stringify(np.name) + ' -> ' + (qty * np._packMult) + ' x ' + best.name); packMultFrom = qty; qty = qty * np._packMult; }
       // Size the line on the product actually picked (a 1 L bottle, a 24-pack) — the plan assumed
       // 750 mL and the default pack. Real bug: 40 beer servings bought 4x 24-packs (96).
       if (!pq.hasExplicitQty && !pq.mod && (catN==='wine'||catN==='beer'||catN==='spirits') && pq.servings>0) {
@@ -1442,6 +1442,9 @@ async function buildPackage(iv) {
       var vd=PM.verdict(reqForFit,best), fw=PM.fit(reqForFit,best);
       // A different pack size keeps the customer's unit count: 8 x 12-can packs asked, 8-can packs in stock -> 12.
       if (pq.hasExplicitQty && fw.pack.want && fw.pack.got && fw.pack.want!==fw.pack.got) {
+        // The pack step above already converted the count: convert from the customer's own count, never twice. Real
+        // (Oct 7 nightly, F-0022, pack-standin-pick-qty): 2 x 24-pack -> 4 x 12-pack -> read as 4 x 24 -> 8 x 12-pack.
+        if (packMultFrom) { console.log('[buildPackage] pack size: '+JSON.stringify(np.name)+' already converted ('+packMultFrom+' -> '+qty+') — counted from the customer\'s '+packMultFrom); qty=packMultFrom; }
         var q3=Math.ceil(qty*fw.pack.want/fw.pack.got);
         console.log('[buildPackage] pack size: '+JSON.stringify(np.name)+' asked '+qty+' x '+fw.pack.want+' = '+(qty*fw.pack.want)+' units; '+best.name+' is a '+fw.pack.got+'-pack -> '+q3);
         var packNote=fw.pack.got+'-packs here: '+q3+' = '+(q3*fw.pack.got)+' cans'+(q3*fw.pack.got===qty*fw.pack.want?', as asked':' (you asked for '+(qty*fw.pack.want)+')');
