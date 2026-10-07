@@ -251,6 +251,14 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 
 ## Known-good facts
 - Search: api-client.getbevvi.com with client=bevvibot and zipcode=; the location= variant returns nothing.
+  Every live caller goes through rachel/catalog-api.js (Rachel buildPackage, coverage, shopping-agent searchProducts,
+  catalog-sweep, ops/catalog-search.py). CATALOG_API=getproducts switches to dev-api-lb4.getbevvi.com/.../getProducts
+  (a PRODUCTION server despite "dev"; GET zipcode/name/page/limit, rows unwrapped + links rewritten to bevvibot);
+  default legacy. Staging: `CATALOG_API=getproducts ops/staging.sh start --with-shopping-agent`. Oct 7 staging suite on
+  getProducts: 70/76 — better: fuzzy ("Titos", "Fever Tree" without the hyphen retry), the SF Stella 24 x 11 oz bottles
+  found (legacy hides it); worse: rows legacy returns are MISSING even by exact name (NYC "Cocktail Essent Lime Juice 1%
+  - 375 ML", SF "Fort Point Beer Co. KSA Kolsch Non-Alcoholic (6PKC 12 OZ)"), noisier broad words ("Lime" -> Miller High
+  Life), ~0.2-0.3s slower a search (a 22-line email quote ran past the QA turn limit). Production NOT switched (DC decides).
   NYC 10019 store 5f4d1e12…, Boston 02110 689fa0c7…, SF 94104 679dadac….
   The search needs the possessive apostrophe ("Titos" finds nothing, "Tito's" does): searchWithFallbacks retries
   "<word>s" as "<word>'s" ([searchWithFallbacks] apostrophe retry); rachel.js [not-found] compares without apostrophes.

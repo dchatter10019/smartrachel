@@ -39,9 +39,10 @@ const SLACK_TOKEN = process.env.SLACK_BOT_TOKEN || env.SLACK_BOT_TOKEN || '';
 const SLACK_CHANNEL = process.env.QA_SLACK_CHANNEL || env.QA_SLACK_CHANNEL || '';
 
 async function search(zip, q) {
-  const url = 'https://api-client.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode=' + zip + '&searchBy=' + encodeURIComponent(q) + '&client=bevvibot&limit=50';
+  const CATALOG = require(require('path').join(__dirname, '..', 'rachel', 'catalog-api.js'));   // legacy or getProducts (CATALOG_API)
+  const catQ = { zip, q, limit: 50 }, cu = CATALOG.catalogUrl(catQ), url = cu.url;
   for (let a = 0; a < 2; a++) {
-    try { const r = await fetch(url); const d = await r.json(); return Array.isArray(d) ? d : []; } catch (e) { if (a) console.error('[sweep] search failed', zip, q, e.message); }
+    try { const r = await fetch(url); return CATALOG.rowsFrom(await r.json(), cu.mode, catQ); } catch (e) { if (a) console.error('[sweep] search failed', zip, q, e.message); }
   }
   return [];
 }

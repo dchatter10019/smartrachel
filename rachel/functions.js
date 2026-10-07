@@ -3,7 +3,8 @@
  * GetProductURL, AddToCart, CalculateQuantities, CalculateBasket
  */
 
-const PM = require('./product-match.js');   // request -> product fit, per list line (buildPackage named products)
+const PM = require('./product-match.js');
+const CATALOG = require('./catalog-api.js');   // the catalog search (legacy searchCorpProducts or getProducts)   // request -> product fit, per list line (buildPackage named products)
 
 // ─── GET PRODUCT URL ─────────────────────────────────────────────────────────
 
@@ -476,12 +477,11 @@ async function buildPackage(iv) {
 
   async function rawSearch(term) {
     var isZipSentinel = kitchenLocation.indexOf('zip:') === 0;
-    var url = isZipSentinel
-      ? "https://api-client.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode="+encodeURIComponent(kitchenLocation.slice(4))+"&searchBy="+encodeURIComponent(term)+"&limit=100&client="+encodeURIComponent(clientName)
-      : "https://api-client.getbevvi.com/api/corpproducts/searchCorpProducts?location="+encodeURIComponent(kitchenLocation)+"&searchBy="+encodeURIComponent(term)+"&limit=100&client="+encodeURIComponent(clientName);
+    var catQ = isZipSentinel ? { zip: kitchenLocation.slice(4), q: term, limit: 100, client: clientName } : { location: kitchenLocation, q: term, limit: 100, client: clientName };
+    var cu = CATALOG.catalogUrl(catQ), url = cu.url;   // legacy or getProducts (catalog-api.js)
     var res=await fetch(url);
     if (!res.ok) return [];
-    var data=await res.json();
+    var data=CATALOG.rowsFrom(await res.json().catch(function(){ return null; }), cu.mode, catQ);
     if (!Array.isArray(data)) return [];
     // Catalog guard on the package builder's searches too (bad rows, duplicate listings decided on
     // the market price, size conflicts). DC, Sep 27: only shopping-agent searches were guarded, so

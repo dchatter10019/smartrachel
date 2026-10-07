@@ -14,6 +14,7 @@ const { guardAsync: guardCatalog } = require('./catalog-guard.js');
 // Rachel's modules from THIS tree's rachel/ (production: /home/ubuntu/rachel) — a staging shopping-agent run from a
 // worktree must load the worktree's code, not production's.
 const RACHEL_DIR = require('path').join(__dirname, '..', 'rachel');
+const CATALOG = require(RACHEL_DIR + '/catalog-api.js');   // the catalog search: legacy searchCorpProducts or getProducts (CATALOG_API)
 const packageModel = require(RACHEL_DIR + '/package-model.js');
 const { classifyProduct } = require(RACHEL_DIR + '/brand-lists.js');
 
@@ -308,15 +309,9 @@ function catalogOutage(before, result) {
 }
 async function searchProducts(location, client, query, limit, minPrice, maxPrice) {
   try {
-    let url;
-    if (location && location.indexOf('zip:') === 0) {
-      const zipVal = location.slice(4);
-      url = BEVVI_API + '/api/corpproducts/searchCorpProducts?zipcode=' + encodeURIComponent(zipVal) + '&searchBy=' + encodeURIComponent(query) + '&client=bevvibot' + '&limit=' + (limit || 10);
-    } else {
-      url = BEVVI_API + '/api/corpproducts/searchCorpProducts?location=' + encodeURIComponent(location) + '&searchBy=' + encodeURIComponent(query) + '&client=bevvibot' + '&limit=' + (limit || 10);
-    }
-    if (minPrice !== undefined && minPrice > 0) url += '&min=' + minPrice;
-    if (maxPrice !== undefined && maxPrice < 10000) url += '&max=' + maxPrice;
+    // legacy searchCorpProducts or getProducts (rachel/catalog-api.js, CATALOG_API)
+    const catQ = Object.assign(location && location.indexOf('zip:') === 0 ? { zip: location.slice(4) } : { location }, { q: query, limit: limit || 10, client: 'bevvibot', min: minPrice, max: maxPrice });
+    const cu = CATALOG.catalogUrl(catQ), url = cu.url;
     console.log('[searchProducts]', url);
     // Bevvi's search answers 503/429 in bursts (Sep 30: fast 503s mid-build). Retry twice with backoff; if it
     // still fails, count it — a build that hit failures says the catalog was unreachable instead of calling
@@ -328,7 +323,7 @@ async function searchProducts(location, client, query, limit, minPrice, maxPrice
       if (attempt < 3) { console.log('[searchProducts] ' + why + ' — retry ' + attempt + '/2'); await new Promise(r => setTimeout(r, attempt * 600)); }
     }
     if (!res || !res.ok) { SEARCH_FAILURES.n++; SEARCH_FAILURES.last = why; console.log('[searchProducts] HTTP error:', why, '— gave up (catalog unreachable for ' + JSON.stringify(query) + ')'); return []; }
-    const data = await res.json();
+    const data = CATALOG.rowsFrom(await res.json().catch(() => null), cu.mode, catQ);
     console.log('[searchProducts] results:', Array.isArray(data) ? data.length : 'not array');
     // Every search path (query, recommendation, custom list, menu build) comes through here:
     // rows whose price/name/size look wrong are dropped (logged) and reported to QA Slack.

@@ -69,14 +69,17 @@ start() {
   local sa_url=http://127.0.0.1:8300/mcp
   if [ $with_sa = 1 ]; then
     if port_busy $SAPORT; then echo "staging shopping-agent port $SAPORT is busy"; return 1; fi
-    (cd "$tree/store-agent" && launch shopping-agent "$SALOG" "$BASE/shopping-agent.pid" SHOPPING_AGENT_PORT=$SAPORT -- node "$tree/store-agent/shopping-agent.js")
+    (cd "$tree/store-agent" && launch shopping-agent "$SALOG" "$BASE/shopping-agent.pid" SHOPPING_AGENT_PORT=$SAPORT \
+      ${CATALOG_API:+CATALOG_API=$CATALOG_API} ${CATALOG_API_URL:+CATALOG_API_URL=$CATALOG_API_URL} -- node "$tree/store-agent/shopping-agent.js")
     for i in $(seq 1 30); do http_up http://127.0.0.1:$SAPORT/ && break; sleep 1; done
     http_up http://127.0.0.1:$SAPORT/ || { echo "staging shopping-agent did not come up — see $SALOG"; stop; return 1; }
     sa_url=http://127.0.0.1:$SAPORT/mcp
   fi
+  # CATALOG_API=getproducts (+ CATALOG_API_URL) from the caller's env: staging searches the getProducts API (rachel/catalog-api.js)
   # RACHEL_MODEL / RACHEL_EFFORT from the caller's env reach staging only (model A/B: RACHEL_MODEL=claude-sonnet-4-6 ops/staging.sh start)
   (cd "$tree/rachel" && launch rachel "$LOG" "$BASE/rachel.pid" RACHEL_PORT=$PORT RACHEL_DATA_DIR=$DATA SHOPPING_AGENT_URL=$sa_url \
-    ${RACHEL_MODEL:+RACHEL_MODEL=$RACHEL_MODEL} ${RACHEL_EFFORT:+RACHEL_EFFORT=$RACHEL_EFFORT} -- node "$tree/rachel/server.js")
+    ${RACHEL_MODEL:+RACHEL_MODEL=$RACHEL_MODEL} ${RACHEL_EFFORT:+RACHEL_EFFORT=$RACHEL_EFFORT} \
+    ${CATALOG_API:+CATALOG_API=$CATALOG_API} ${CATALOG_API_URL:+CATALOG_API_URL=$CATALOG_API_URL} -- node "$tree/rachel/server.js")
   echo "$tree" > "$BASE/tree"
   for i in $(seq 1 45); do http_up http://127.0.0.1:$PORT/health && break; sleep 1; done
   if ! http_up http://127.0.0.1:$PORT/health; then echo "staging rachel did not come up — see $LOG"; tail -5 "$LOG"; stop; return 1; fi

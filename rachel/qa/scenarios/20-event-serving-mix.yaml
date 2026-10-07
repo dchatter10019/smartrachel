@@ -18,6 +18,6 @@ turns:
   - send: "Margarita and Moscow Mule"
     # Sep 27: one generic "Wine" line -> 16 of one Chardonnay; 1 bottle per spirit (32 pours for 40
     # cocktails); White Claw as lime juice. The custom_list package must pass its supply check.
-    expect: {contains: ["Product total"], matches: "(?i)wine|cabernet|chardonnay|pinot|sauvignon", log_contains: ["[menu] cocktails answered", "serving_mix=", "[buildPackage] serving mix from customer (custom_list)", "custom_list supply check OK"], log_not_contains: ["custom_list supply check FAILED"]}
+    expect: {contains: ["Product total"], matches: "(?i)wine|cabernet|chardonnay|pinot|sauvignon|red blend|fuiss|chablis|merlot|malbec|riesling|ros[eé]", log_contains: ["[menu] cocktails answered", "serving_mix=", "[buildPackage] serving mix from customer (custom_list)", "custom_list supply check OK"], log_not_contains: ["custom_list supply check FAILED"]}
   - send: "change the budget to $3000"
     expect: {contains: ["Product total"], log_contains: ["serving_mix="]}

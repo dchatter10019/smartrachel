@@ -10,7 +10,7 @@ const zipClientCache = {};
 async function checkStoreCoverage(zip) {
   try {
     for (const client of ['bevvibot']) {   // single probe: the backend resolves the store from the zip
-      const url = 'https://api-client.getbevvi.com/api/corpproducts/searchCorpProducts?zipcode=' + encodeURIComponent(zip) + '&searchBy=' + encodeURIComponent('wine') + '&client=bevvibot' + '&limit=1';
+      const covQ = { zip, q: 'wine', limit: 1 }, cu = require('./catalog-api.js').catalogUrl(covQ), url = cu.url;   // legacy or getProducts (catalog-api.js)
       // Bevvi's search answers 503/429 in bursts (Sep 30: 17 sessions were told "we don't serve 10019" during
       // one). Retry twice; still failing = coverage UNKNOWN (null: the address is accepted, search retries later),
       // or the zip's earlier answer — never "no store".
@@ -24,7 +24,7 @@ async function checkStoreCoverage(zip) {
         console.log('[coverage] zip', zip, 'catalog unreachable (' + why + ') — coverage unknown, not refused' + (zipClientCache[zip] ? ' (served earlier)' : ''));
         return zipClientCache[zip] ? { zip, store_count: 1, client: zipClientCache[zip], stores: [{ name: zipClientCache[zip] }] } : null;
       }
-      const data = await res.json().catch(() => []);
+      const data = require('./catalog-api.js').rowsFrom(await res.json().catch(() => null), cu.mode, covQ);
       if (Array.isArray(data) && data.length > 0) {
         zipClientCache[zip] = client;
         console.log('[coverage] zip', zip, 'served by client', client);
