@@ -17,7 +17,8 @@ turns:
     expect:
       not_contains: ["isn't available at this store", "What is the client", "client or company name", "What is the event date", "How many bottles"]
       contains: ["proposal"]
-      log_contains: ["[quote-pdf] email quote request -> proposal generated in code for \"Goody\"", "event October 6, 2026", "[list-reconcile] \"3L mango", "asked 3000 mL"]
+      log_contains: ["[quote-pdf] email quote request -> proposal generated in code for \"Goody\"", "event October 6, 20", "[list-reconcile] \"3L mango", "asked 3000 mL"]
       log_not_contains: ["[proposal] request recognised", "UNAVAILABLE (size mismatch): \"Lemon Juice", "UNAVAILABLE (size mismatch): \"Simple Syrup"]
-      pdf_contains: ["Goody", "October 6, 2026"]
+      # Year not pinned: "Tue 10/6" with no year = the next Oct 6 (2027 once Oct 6, 2026 has passed; F-0022).
+      pdf_contains: ["Goody", "October 6, 20"]
       pdf_not_contains: ["CEO |", "La Crema", "Conundrum", "Prisoner"]
