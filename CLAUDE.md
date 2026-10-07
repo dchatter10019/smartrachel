@@ -215,6 +215,12 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   wrong"; feedback.js correctionIn), a "Rachel feedback: ..." line (recorded + thanked in code, the rest of the message
   handled as usual) and a Slack 👎 on a Rachel reply (rachel_slack_bot.py, thanked in the thread) -> logs/feedback.jsonl
   with what Rachel said before -> monitor detector `feedback` (QA skipped) -> finding -> nightly fixer (fix_detectors).
+  Dissatisfaction in any words (DC, Oct 7: people won't write "Rachel feedback") = kind "unhappy": live, feedback.js unhappyIn
+  ("I asked for X but you...", "you answered wrong", "not what I expected", "you forgot", "makes no sense", frustrated...;
+  0 false hits on 449 scenario/real messages); nightly, the conversation review lists EVERY unhappy customer message
+  (unhappy_messages, any phrasing/language) and writes the ones the live words missed to feedback.jsonl (source "review"),
+  unless one of its own high/medium issues already quotes it (never two fixer runs for one problem); the Slack summary
+  shows them. Rachel's reply is unchanged.
 - Customer preferences (customer-prefs.js -> RACHEL_DATA_DIR/customer-prefs.json): lasting statements ("we always do cans",
   "from now on...", "we never serve red", "can you always...") saved per customer email and per client ("client:goody");
   Bevvi staff in a client's email thread -> the client only; a QA identity -> its own address only. Shown to the LLM on
