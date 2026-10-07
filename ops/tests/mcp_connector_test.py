@@ -106,6 +106,12 @@ def apikey():
     print('proposal $0 line ->', 'refused' if z.get('error') else 'BUILT', '|', str(z.get('error') or z.get('download_url'))[:80])
     t,_=tool('rachel_generate_proposal',{'email':'qa-mcp@getbevvi.com','client_name':'QA Co','line_items':li,'tax_exempt':True,'event_date':'none'})
     print('proposal tax-exempt ->', 'built' if t.get('download_url') else 'FAILED', '|', str(t.get('download_url') or t.get('error'))[:80])
+    # A complaint the client passes on (DC, Oct 7) is recorded for the fixer; the QA identity's entry is marked qa (monitor skips it)
+    f,ferr=tool('rachel_feedback',{'customer_said':'I asked for Tito\'s 1.75 but you gave me a different size','about':'connector test'})
+    print('feedback ->', 'recorded' if (f.get('recorded') and not ferr) else 'NOT RECORDED', '|', f)
+    tl=[t['name'] for t in call('tools/list')[1][0]['result']['tools']]
+    ins=call('initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'t','version':'1'}})[1][0]['result'].get('instructions','')
+    print('feedback told ->', 'yes' if ('rachel_feedback' in tl and 'rachel_feedback' in ins) else 'NO')
 
 if __name__ == '__main__':
     import io, contextlib, traceback
@@ -114,7 +120,7 @@ if __name__ == '__main__':
         try:
             with contextlib.redirect_stdout(buf): fn()
             out = buf.getvalue()
-            bad = [l for l in out.splitlines() if l.startswith('confirm ->') and ' True ' not in l] + [l for l in out.splitlines() if 'forged token ->' in l and '401' not in l] + [l for l in out.splitlines() if l.startswith(('search urls ->', 'package urls ->')) and '-> none' not in l] + [l for l in out.splitlines() if l.startswith(('chat after age ->', 'package intake ->', 'package mix question ->', 'package cocktail question ->', 'package cocktails built ->')) and '-> asks' not in l and '-> no re-ask' not in l] + [l for l in out.splitlines() if l.startswith('search before age ->') and not l.startswith('search before age -> held | isError: False')] + [l for l in out.splitlines() if l.startswith('proposal $0 line ->') and '-> refused' not in l] + [l for l in out.splitlines() if l.startswith('proposal tax-exempt ->') and '-> built' not in l]
+            bad = [l for l in out.splitlines() if l.startswith('confirm ->') and ' True ' not in l] + [l for l in out.splitlines() if 'forged token ->' in l and '401' not in l] + [l for l in out.splitlines() if l.startswith(('search urls ->', 'package urls ->')) and '-> none' not in l] + [l for l in out.splitlines() if l.startswith(('chat after age ->', 'package intake ->', 'package mix question ->', 'package cocktail question ->', 'package cocktails built ->')) and '-> asks' not in l and '-> no re-ask' not in l] + [l for l in out.splitlines() if l.startswith('search before age ->') and not l.startswith('search before age -> held | isError: False')] + [l for l in out.splitlines() if l.startswith('proposal $0 line ->') and '-> refused' not in l] + [l for l in out.splitlines() if l.startswith('proposal tax-exempt ->') and '-> built' not in l] + [l for l in out.splitlines() if l.startswith('feedback ->') and '-> recorded' not in l] + [l for l in out.splitlines() if l.startswith('feedback told ->') and '-> yes' not in l]
             print(('  ✗ ' if bad else '  ✓ ') + 'connector ' + name + (': ' + '; '.join(bad) if bad else ''))
             if bad: FAILS.append(name)
         except Exception as e:
