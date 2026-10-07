@@ -259,7 +259,7 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - Events: a request mixing drink types asks "what will your guests drink most?" (server.js parseServingMix)
   -> eventParams.serving_mix -> buildPackage serving_mix (menu_build and cocktail custom_list). Drinks per
   guest = rule of thumb (2 first hour + 1/hour). Quantities use real bottle sizes; a full bar (1 bottle per
-  spirit type) is kept and stated (never an offer to trim). Packages spend the whole budget: no downsell,
+  spirit type) is kept and stated (never an offer to trim). Packages spend toward the budget: no downsell,
   price-tier critic notes are dropped (rachel.js), prompt SPEND-THE-BUDGET rule. Every menu_build logs a supply check (OK/FAILED).
   "just/only beer + wine", "no liquor" set the other categories to 0%. A held PRODUCT LIST + guest count answered
   with the mix = the listed products sized for the event (eventParams.list_scale -> rachel.js [list-scale]:
@@ -307,6 +307,21 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   to its web market price (±30% first). An exact
   product filed under another category (Lillet = Liquor/Aperitif) is kept. In an event list, aperitif/fortified
   wines (Lillet, vermouth, sherry, port...) get 1/4 of a table wine's share of the wine servings (DC). Pack size comes from the name ("6PKC").
+- Event ceilings + mixers (DC, Oct 7: "you are the expert, make it easy, not too many back and forth"; claude.ai: 30
+  guests / $4,000 / "mostly spirits mixed with coke and oj" got Opus One $1,100, Clase Azul, Weller — targets were $407 a
+  spirit, $204 a wine — no Coke/OJ, and Claude listed changes to approve). rachel/event-ceiling.js: per-bottle ceilings for
+  event packages (wine $80, sparkling $100, spirits $90 sipping / $50 mixed) on the first pick (functions.js target, logged
+  [buildPackage] event ceiling) and both budget-upgrade passes (shopping-agent menu_build, and custom_list events as mixed);
+  money left is stated plainly (budget_note, never an upsell). rachel/mixers.js reads mixers the customer names (Coke, OJ,
+  tonic, soda, cranberry, ginger beer...) from their own words — Slack/email/WhatsApp: rachel.js from everything they said
+  + eventParams.serving_mix_text (the serving-mix answer is handled in server.js, not in LLM history); connector:
+  rachel_build_package serving_mix + request -> menu_build mixers / mixed_drinks: lines sized ~4 oz per spirit drink, best
+  value per ml, never alcoholic/diet unless asked; not carried -> mixers_not_carried, said plainly ([menu_build] mixer added /
+  NOT CARRIED). With mixers in the basket the "add mixers, water, soda, ice, or cups?" question is skipped (state.mixerAsked
+  + [cta] removed). Spirit slots never pick a flavoured bottle. Connector: build_package results carry `presentation` and
+  the server instructions say present Rachel's package as finished, one question (order or proposal). Tool annotations:
+  search / recommend / build_package / get_session are readOnlyHint (claude.ai "always allow"-able as read-only);
+  rachel_confirm_order is destructiveHint (keeps asking). Scenario 95-event-mixers-expert.
 - A stated quantity to buy ("44 bottles of prosecco and the budget is $1000", "3 cases of Stella") with no guests / hours /
   event word is an ORDER: rachel/qty-order.js -> rachel.js note "QUANTITY GIVEN" ([qty-order]) -> custom_list at that qty
   + budget, never "is this for an event?" (prompt.md PRIORITY 0-PRE fired on the budget; DC, Oct 5). Connector:

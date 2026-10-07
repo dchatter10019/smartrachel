@@ -585,6 +585,7 @@ async function executeTool(name, input) {
       client_name: loc.client,
       category_splits: input.category_splits || '',
       serving_mix: input.serving_mix || '',   // customer's "what will they drink most" answer
+      mixed_drinks: !!(input.mixed_drinks || (input.mixers && input.mixers.length)),   // event-ceiling.js: mixing-grade spirits
       category_brands: input.category_brands || '',
       wine_price_target: input.wine_price_target || 0,
       beer_max_price: input.beer_max_price || input.max_price || 0,
@@ -594,6 +595,42 @@ async function executeTool(name, input) {
     { const outage = catalogOutage(failBefore, result); if (outage) return outage; }
     if (result.success !== 'true') return { success: false, error: result.error };
 
+    // MIXERS the customer named (rachel/mixers.js, DC Oct 7): added in code, sized to the spirit drinks (~4 oz of mixer each,
+    // split across the mixers), before the budget upgrades so they count against the budget. One the store doesn't carry is
+    // reported in mixers_not_carried — the reply says so plainly, never a question.
+    const mixersNotCarried = [];
+    if (Array.isArray(input.mixers) && input.mixers.length) {
+      try {
+        const { MIXERS } = require(RACHEL_DIR + '/mixers.js');
+        const items0 = JSON.parse(result.line_items || '[]');
+        let spiritDrinks = 0; try { spiritDrinks = +(JSON.parse(result.category_needs || '{}').spirits) || 0; } catch (e) {}
+        if (!spiritDrinks) spiritDrinks = Math.round((+result.total_drinks || (input.guests || 0) * 3) / 2);
+        const perMixerMl = spiritDrinks * 118 / input.mixers.length;
+        const mlOf = (t) => { t = String(t || '').toLowerCase(); let m = t.match(/(\d+)\s*x\s*(\d+(?:\.\d+)?)\s*(ml|l|oz)\b/); let n = 1;
+          if (m) { n = +m[1]; m = [null, m[2], m[3]]; } else m = t.match(/(\d+(?:\.\d+)?)\s*(ml|l|oz|liter|litre)\b/);
+          if (!m) return 0; const v = +m[1], u = m[2]; return n * (u === 'ml' ? v : u === 'oz' ? v * 29.57 : v * 1000); };
+        const ALC = /\b(vodka|rum|gin|tequila|whiske?y|bourbon|liqueur|wine|beer|seltzer|hard|spiked|cocktail|margarita|nutrl|ipa|lager|ale)\b/i;
+        for (const key of input.mixers) {
+          const mx = MIXERS.find(m => m.key === key); if (!mx) continue;
+          const cands = (await searchWithFallbacks(loc.kitchen, loc.client, mx.search, 20))
+            .map(p => ({ name: p.name, price: p.salePrice || p.price || 0, upc: p.upc || '', url: p.url || '', product_id: (p.corpProductFilter && p.corpProductFilter.corpProductId) || p.id || '',
+              establishmentId: p.establishmentId || '', size: (p.size && p.units ? p.size + p.units : (p.sizeStr || '')), ml: mlOf(p.name) || mlOf(p.size && p.units ? p.size + ' ' + p.units : p.sizeStr) }))
+            .filter(p => p.price > 0 && p.ml > 0 && mx.re.test(p.name) && !ALC.test(p.name.replace(/\bginger\s+(beer|ale)\b/gi, ' ')) && (key === 'diet_cola' || !/\b(diet|zero)\b/i.test(p.name)));
+          if (!cands.length) { mixersNotCarried.push(mx.label); console.log('[menu_build] mixer NOT CARRIED here: ' + mx.label + ' (searched "' + mx.search + '")'); continue; }
+          cands.sort((a, b) => (a.price / a.ml) - (b.price / b.ml));   // best value per ml (a 2 L over cans)
+          const pick = cands[0], qty = Math.max(1, Math.ceil(perMixerMl / pick.ml));
+          items0.push({ label: 'Mixer: ' + mx.label, name: pick.name, qty, price: pick.price, size: pick.size, url: pick.url, product_id: pick.product_id, establishmentId: pick.establishmentId, upc: pick.upc, category: 'mixer' });
+          console.log('[menu_build] mixer added: ' + qty + 'x ' + pick.name + ' $' + pick.price + ' (' + Math.round(perMixerMl) + ' ml for ~' + spiritDrinks + ' spirit drinks / ' + input.mixers.length + ' mixer(s))');
+        }
+        result.line_items = JSON.stringify(items0);
+        { const t = Math.round(items0.reduce((sum, p) => sum + p.qty * p.price, 0) * 100) / 100;   // totals with the mixers (the upgrade pass may not run)
+          result.product_total = t.toFixed(2); result.estimated_tax = (Math.round(t * 0.10 * 100) / 100).toFixed(2); result.estimated_service = result.estimated_tax;
+          result.estimated_tip = (Math.round(t * 0.05 * 100) / 100).toFixed(2); result.estimated_grand_total = (t * 1.25 + 25).toFixed(2); }
+      } catch (e) { console.error('[menu_build] mixers error:', e.message); }
+    }
+    if (mixersNotCarried.length) result.mixers_not_carried = mixersNotCarried.join(', ');
+    const { eventCeiling } = require(RACHEL_DIR + '/event-ceiling.js');
+    const mixedEv = !!(input.mixed_drinks || (input.mixers && input.mixers.length));
     // Price scaling: upgrade products to fill budget
     const swaps = [];
     if (input.budget && input.budget > 0) {
@@ -614,6 +651,7 @@ async function executeTool(name, input) {
         let runningTotalUp = currentTotal;
         for (var ii = 0; ii < items.length; ii++) {
           const item = items[ii];
+          if (item.category === 'mixer') continue;   // mixers are never upgraded
           const lineSpend = item.qty * item.price;
           const headroomLeft = productBudget - runningTotalUp;
           if (headroomLeft <= 30) break;
@@ -636,12 +674,13 @@ async function executeTool(name, input) {
                 const n=(p.name||'').toLowerCase();
                 const sub=(p.subCategory||p.subcategory||'').toLowerCase();
                 if (p.price <= item.price || p.price > targetPrice || usedNamesPass1.has(p.name)) return false;
+                { const ceil = eventCeiling(item.category, item.label, mixedEv); if (ceil && p.price > ceil) return false; }   // event ceiling (event-ceiling.js)
                 // Same bottle/pack size only — an upgrade is a better product, not a bigger bottle at the
                 // same qty. Real bug (event-serving-mix): 2x Mi Campo 750 mL became 2x Cazadores 1.75 L and
                 // the line kept size '750 ML', so the supply check counted 48 spirit servings for ~95.
                 { const was = sizeKey(item.name) || sizeKey(item.size), now = sizeKey(p.name) || sizeKey(p.size); if (was && now !== was) return false; }   // name first: catalog size fields can be wrong ('Belvedere Vodka - 1 L' has size 750 ML)
                 // No flavoured/spiced upgrade for a classic spirit (real bug: Mi Campo Blanco -> Ghost Blanco Spicy).
-                { const FLV = /\b(coconut|vanilla|citrus|citron|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i; if (FLV.test(p.name || '') && !FLV.test(item.name || '')) return false; }
+                { const FLV = /\b(coconut|vanilla|citrus|citron|mandrin|mandarin|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i; if (FLV.test(p.name || '') && !FLV.test(item.name || '')) return false; }
                 if (n.includes('port') || sub.includes('port') || n.includes('tawny') || n.includes('sherry') || n.includes('sake') || sub.includes('fortified')) return false;
                 if (itemLabel === 'red wine' && sub && !sub.includes('red') && !sub.includes('cabernet') && !sub.includes('merlot') && !sub.includes('pinot noir') && !sub.includes('blend') && !sub.includes('chianti') && !sub.includes('bordeaux') && !sub.includes('barolo')) return false;
                 if (itemLabel === 'white wine' && sub && (sub.includes('red') || sub.includes('champagne') || sub.includes('sparkling') || sub.includes('sake') || sub.includes('port'))) return false;
@@ -673,6 +712,7 @@ async function executeTool(name, input) {
             const itemCat2 = (item.category || item.label || '').toLowerCase();
             // Skip beer upgrades — keep beer as beer
             if (itemCat2.includes('beer') || itemCat2.includes('lager') || itemCat2.includes('ale')) continue;
+            if (/^mixer/.test(itemCat2)) continue;
             const maxForItem = item.price + remaining2 / item.qty;
             const itemLabel2 = (item.label || item.category || '').toLowerCase();
             const term2 = itemLabel2 === 'red wine' ? 'Red Wine' :
@@ -686,12 +726,13 @@ async function executeTool(name, input) {
                 const n=(p.name||'').toLowerCase();
                 const sub=(p.subCategory||p.subcategory||'').toLowerCase();
                 if (p.price <= item.price || p.price > maxForItem || usedNames.has(p.name)) return false;
+                { const ceil = eventCeiling(item.category, item.label, mixedEv); if (ceil && p.price > ceil) return false; }   // event ceiling (event-ceiling.js)
                 // Same bottle/pack size only — an upgrade is a better product, not a bigger bottle at the
                 // same qty. Real bug (event-serving-mix): 2x Mi Campo 750 mL became 2x Cazadores 1.75 L and
                 // the line kept size '750 ML', so the supply check counted 48 spirit servings for ~95.
                 { const was = sizeKey(item.name) || sizeKey(item.size), now = sizeKey(p.name) || sizeKey(p.size); if (was && now !== was) return false; }   // name first: catalog size fields can be wrong ('Belvedere Vodka - 1 L' has size 750 ML)
                 // No flavoured/spiced upgrade for a classic spirit (real bug: Mi Campo Blanco -> Ghost Blanco Spicy).
-                { const FLV = /\b(coconut|vanilla|citrus|citron|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i; if (FLV.test(p.name || '') && !FLV.test(item.name || '')) return false; }
+                { const FLV = /\b(coconut|vanilla|citrus|citron|mandrin|mandarin|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i; if (FLV.test(p.name || '') && !FLV.test(item.name || '')) return false; }
                 if (n.includes('port') || sub.includes('port') || n.includes('tawny') || n.includes('sherry') || n.includes('sake') || sub.includes('fortified')) return false;
                 if (itemLabel2 === 'red wine' && sub && !sub.includes('red') && !sub.includes('cabernet') && !sub.includes('merlot') && !sub.includes('pinot noir') && !sub.includes('blend') && !sub.includes('chianti') && !sub.includes('bordeaux') && !sub.includes('barolo')) return false;
                 if (itemLabel2 === 'white wine' && sub && (sub.includes('red') || sub.includes('champagne') || sub.includes('sparkling') || sub.includes('sake') || sub.includes('port'))) return false;
@@ -733,8 +774,8 @@ async function executeTool(name, input) {
     const finalTotal = parseFloat(result.product_total || 0);
     const productBudgetFinal = input.budget ? Math.round((input.budget - 25) / 1.25 * 100) / 100 : 0;
     const utilizationPct = productBudgetFinal > 0 ? Math.round(finalTotal / productBudgetFinal * 100) : 100;
-    const budgetNote = utilizationPct < 70 && input.budget > 200
-      ? 'Note: Only ' + utilizationPct + '% of budget utilized — the catalog at this location has limited premium options for the requested categories. Consider adding spirits or champagne to fill the remaining $' + Math.round(productBudgetFinal - finalTotal) + ' budget.'
+    const budgetNote = utilizationPct < 90 && productBudgetFinal - finalTotal > 100 && input.budget > 200
+      ? 'Comes in under budget on purpose: every bottle is already at the top of what suits an event, and the remaining ~$' + Math.round(productBudgetFinal - finalTotal) + ' would only buy luxury bottles. State this plainly as part of the package — do not offer to spend it, rebuild, or ask a question about it.'
       : '';
 
     // Save package to GBrain
@@ -746,6 +787,7 @@ async function executeTool(name, input) {
       success: true, kitchen: loc.kitchen, client: loc.client, store: friendlyStore(loc.kitchen),
       buyer_tier: buyer.tier, buyer_discount: buyer.discount,
       budget_note: budgetNote,
+      mixers_not_carried: result.mixers_not_carried ? 'This store does not carry: ' + result.mixers_not_carried + '. Say so in one plain line (the customer can pick those up locally) — no question.' : '',
       line_items: result.line_items,
       product_total: result.product_total,
       estimated_tax: result.estimated_tax,
@@ -834,12 +876,13 @@ async function executeTool(name, input) {
               .map(function(p) { return { name: p.name, price: p.salePrice||p.price||0, upc: p.upc||'', url: p.url||'', product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'', establishmentId: p.establishmentId||'', size: (p.size&&p.units?p.size+p.units:(p.sizeStr||'')) }; })
               .filter(function(p) {
                 if (!(p.price > item.price && p.price <= targetPrice * 1.2)) return false;
+                { const ceil = input.guests ? require(RACHEL_DIR + '/event-ceiling.js').eventCeiling(item.category, item.label, true) : 0; if (ceil && p.price > ceil) return false; }   // event ceiling (cocktail events mix their spirits)
                 // Same bottle/pack size only — an upgrade is a better product, not a bigger bottle at the
                 // same qty. Real bug (event-serving-mix): 2x Mi Campo 750 mL became 2x Cazadores 1.75 L and
                 // the line kept size '750 ML', so the supply check counted 48 spirit servings for ~95.
                 { const was = sizeKey(item.name) || sizeKey(item.size), now = sizeKey(p.name) || sizeKey(p.size); if (was && now !== was) return false; }   // name first: catalog size fields can be wrong ('Belvedere Vodka - 1 L' has size 750 ML)
                 // No flavoured/spiced upgrade for a classic spirit (real bug: Mi Campo Blanco -> Ghost Blanco Spicy).
-                { const FLV = /\b(coconut|vanilla|citrus|citron|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i; if (FLV.test(p.name || '') && !FLV.test(item.name || '')) return false; }
+                { const FLV = /\b(coconut|vanilla|citrus|citron|mandrin|mandarin|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i; if (FLV.test(p.name || '') && !FLV.test(item.name || '')) return false; }
                 // Same style as the line it upgrades (menu_build has the same guard). Real bug
                 // (event-serving-mix, Sep 27): custom_list upgraded the "Red Wine" line from The
                 // Prisoner Red Blend to Taylor Fladgate 20 Year Tawny Port — a dessert wine.

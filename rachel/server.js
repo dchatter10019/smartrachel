@@ -1334,6 +1334,9 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       // Full-bar note (DC: keep one bottle of each spirit type, but tell the customer when that's
       // more than they need). Appended to this turn's reply in code — not left to the LLM.
       try { if (saResult && saResult.full_bar_note) { getState(sessionKey).replyNote = saResult.full_bar_note; } } catch (e) {}
+      // The customer's mixers are already in the package (shopping-agent menu_build, mixers.js; DC Oct 7: fewer back-and-forths):
+      // no "would you also like to add mixers...?" question after it — the follow-up is order or proposal.
+      try { const li = typeof lineItems === 'string' ? JSON.parse(lineItems || '[]') : (lineItems || []); if (li.some(x => x && x.category === 'mixer')) { getState(sessionKey).mixerAsked = true; console.log('[mixers] package has the customer\'s mixers — no mixers question'); } } catch (e) {}
       // The totals of the latest build this turn, so the reply always shows them (see [reply] totals below).
       try { if (saResult && saResult.product_total) { getState(sessionKey).builtTotals = { pt: saResult.product_total, tax: saResult.estimated_tax, svc: saResult.estimated_service, tip: saResult.estimated_tip, del: saResult.delivery_fee, grand: saResult.estimated_grand_total, budget: saInput && saInput.budget, lineItems: saResult.line_items }; } } catch (e) {}
       // A successful build supersedes any prior "unavailable" state. Real bug: two
@@ -2418,7 +2421,7 @@ app.post('/chat', async (req, res) => {
         const pm = state.pendingMenu;
         const got = parseServingMix(message, pm.cats, false);
         if (got) {
-          state.eventParams = Object.assign({}, state.eventParams || {}, { serving_mix: JSON.stringify(got.mix) });
+          state.eventParams = Object.assign({}, state.eventParams || {}, { serving_mix: JSON.stringify(got.mix), serving_mix_text: String(message).slice(0, 500) });   // the words too: mixers named in the answer (mixers.js, Oct 7)
           state.pendingMenu = null; saveFlowState();
           console.log('[menu] serving mix (' + got.why + '): ' + mixText(got.mix) + ' — building the held request: ' + JSON.stringify(pm.message).slice(0, 80));
           // A held PRODUCT LIST + a guest count: the answer asks for the listed products sized for the event
@@ -2445,7 +2448,7 @@ app.post('/chat', async (req, res) => {
         const cats = eventDrinkCats(message);
         if (cats) {
           const stated = parseServingMix(message, cats, true);
-          state.eventParams = Object.assign({}, state.eventParams || {}, { serving_mix: stated ? JSON.stringify(stated.mix) : null });   // a new event never inherits an old mix
+          state.eventParams = Object.assign({}, state.eventParams || {}, { serving_mix: stated ? JSON.stringify(stated.mix) : null, serving_mix_text: null });   // a new event never inherits an old mix (or its words)
           if (stated) {
             saveFlowState();
             console.log('[menu] serving mix stated in the request (' + stated.why + '): ' + mixText(stated.mix));
@@ -3119,6 +3122,15 @@ app.post('/chat', async (req, res) => {
               t = t.replace(/[^\n.!?]*\badd mixers, water, soda[^?\n]*\?[*_]*/i, '').replace(/\n{3,}/g, '\n\n').trimEnd();
               console.log('[cta] removed the package mixers question from a single-product search reply — the table decides the follow-up');
             }
+            // The package already has the customer's mixers (mixers.js, DC Oct 7: "not too many back and forth"): the LLM's
+            // "would you also like to add (mixers,) water, soda, ice, or cups?" goes — the follow-up is order or proposal.
+            try {
+              const liM = JSON.parse((st && st.lastLineItems) || '[]');
+              if (liM.some(x => x && x.category === 'mixer') && /would you (?:also )?like to add[^?\n]*\b(?:water|soda|ice|cups)\b[^?\n]*\?/i.test(t)) {
+                t = t.replace(/[^\n.!?]*would you (?:also )?like to add[^?\n]*\b(?:water|soda|ice|cups)\b[^?\n]*\?[*_]*/i, '').replace(/\n{3,}/g, '\n\n').trimEnd();
+                console.log('[cta] removed the add-mixers/water/ice question — the package already has the customer\'s mixers');
+              }
+            } catch (e) {}
             const ga = cta.trimGenericAlternative(t);
             if (ga.cut.length) { t = ga.text; console.log('[cta] cut the generic alternative off a real question: ' + JSON.stringify(ga.cut.join(' | ').slice(0, 100))); }
             const cl = cta.splitCloser(t);

@@ -1245,7 +1245,7 @@ async function buildPackage(iv) {
       if (catN==='spirits' && GENERIC_LINE.test(String(np.name||''))) {
         // A generic spirit ("Vodka", "Tequila Blanco") is the classic, not a flavour. Real bug
         // (event-serving-mix): "Vodka" for Moscow Mules picked Cîroc Coconut.
-        var FLAV=/\b(coconut|vanilla|citrus|citron|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i;
+        var FLAV=/\b(coconut|vanilla|citrus|citron|mandrin|mandarin|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i;
         var plain=found.filter(function(p){ return !FLAV.test(String(p.name||'')) || FLAV.test(String(np.name||'')); });
         if (plain.length) { if (plain.length<found.length) console.log('[buildPackage] generic '+JSON.stringify(np.name)+': dropped '+(found.length-plain.length)+' flavoured match(es)'); found=plain; }
       }
@@ -1660,6 +1660,14 @@ async function buildPackage(iv) {
     var wMin=capWineMin||wineTarget*0.6,wMax=capWineMax||wineTarget*1.4;
     var sMin=capSpiritMin||spiritTarget2*0.6,sMax=capSpiritMax||spiritTarget2*1.4;
     var bMin=capBeerMin||(beerTarget>80?0:beerTarget*0.6),bMax=capBeerMax||(beerTarget>80?999999:beerTarget*1.4);
+    // EVENT CEILINGS (event-ceiling.js, DC Oct 7): a big budget per bottle never picks luxury bottles for a party — wine
+    // under ~$80, spirits under $90 (sipping) / $50 (mixed with the customer's mixers). The customer's own caps win.
+    {
+      var EC=require('./event-ceiling.js'), mixedEv=!!iv.mixed_drinks;
+      var wC=EC.eventCeiling('wine','Red Wine',mixedEv), sC=EC.eventCeiling('spirits','Vodka',mixedEv);
+      if (!capWineMax && !wineTargetInput && wineTarget>wC*0.75) { console.log('[buildPackage] event ceiling: wine target $'+wineTarget.toFixed(2)+' -> $'+(wC*0.75).toFixed(2)+' (max $'+wC+' a bottle)'); wineTarget=wC*0.75; wMin=wineTarget*0.6; wMax=wC; }
+      if (!capSpiritMax && spiritTarget2>sC*0.75) { console.log('[buildPackage] event ceiling: spirit target $'+spiritTarget2.toFixed(2)+' -> $'+(sC*0.75).toFixed(2)+' (max $'+sC+' a bottle, '+(mixedEv?'mixed drinks':'sipping')+')'); spiritTarget2=sC*0.75; sMin=spiritTarget2*0.5; sMax=sC; }
+    }
     if (isQuoteMode&&!hasPriceCaps){wMin=0;wMax=999999;sMin=0;sMax=999999;bMin=0;bMax=999999;}
     if (isQuoteMode&&hasPriceCaps){
       wMin=capWineMin||0;wMax=capWineMax||999999;wineTarget=capWineMax||0;
@@ -1716,9 +1724,18 @@ async function buildPackage(iv) {
         var noCider=(resAll[pIdx]||[]).filter(function(p){return !/\bcider\b/i.test(p.name||'');});
         if (noCider.length && noCider.length<(resAll[pIdx]||[]).length) { console.log('[buildPackage] beer slot: '+((resAll[pIdx]||[]).length-noCider.length)+' cider(s) left out — beer was asked for'); resAll[pIdx]=noCider; }
       }
+      // A spirit-type slot ("Vodka") is the classic, never a flavour (Oct 7: Absolut Mandrin for a mixed-drinks party).
+      if (pl.cat==="spirits"&&pl.slot!=="mixer") {
+        var FLAVE=/\b(coconut|vanilla|citrus|citron|mandrin|mandarin|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i;
+        var plainE=(resAll[pIdx]||[]).filter(function(p){return !FLAVE.test(p.name||'');});
+        if (plainE.length && plainE.length<(resAll[pIdx]||[]).length) { console.log('[buildPackage] '+pl.slot+' slot: '+((resAll[pIdx]||[]).length-plainE.length)+' flavoured bottle(s) left out'); resAll[pIdx]=plainE; }
+      }
       var picks=pick(resAll[pIdx],pl.slot,pl.target,pl.min,pl.max,pl.qty,pl.uniq);
       if (picks.length===0&&pl.slot!=="mixer"&&!(pl.cat==="wine"&&capWineMax)&&!(pl.cat==="beer"&&capBeerMax)&&!(pl.cat==="spirits"&&capSpiritMax)) {
-        picks=pick(resAll[pIdx],pl.slot,0,0,999999,pl.qty,pl.uniq);
+        // Nothing in the target range: the closest price wins — still under the event ceiling when one fits (event-ceiling.js).
+        var ceilF=(pl.cat==="wine"||pl.cat==="spirits")?pl.max:0;
+        if (ceilF&&ceilF<999999) picks=pick(resAll[pIdx],pl.slot,0,0,ceilF,pl.qty,pl.uniq);
+        if (picks.length===0) picks=pick(resAll[pIdx],pl.slot,0,0,999999,pl.qty,pl.uniq);
       }
       addLines(picks,pl.label,pl.cat,pl.slot==="beer"&&!hardSeltzer&&!naBeer?beerDrinks:0);
     }

@@ -360,6 +360,18 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           }
           if (filled.length) console.log('[ShoppingAgent] filled missing params from persisted eventParams:', filled.join(', '));
         }
+        // MIXERS + MIXED DRINKS (mixers.js, DC Oct 7) for Slack / email / WhatsApp event builds — read in code from what the
+        // customer said ("mixed with coke and oj"): menu_build adds those mixers and keeps the spirits at mixing quality. The
+        // connector does the same in rachel-mcp.js. Never from the LLM's own wording.
+        if (saInput.intent === 'menu_build') {
+          try {
+            const MX = require('./mixers.js');
+            const said = String(customerSaid || '') + '\n' + String(customerMessage || '') + '\n' + String((sessionState && sessionState.originalRequest) || '') + '\n' + String((eventParams && eventParams.serving_mix_text) || '');   // the serving-mix answer is handled in code (server.js), not in the LLM's history
+            const mx = MX.mixersIn(said).map(m => m.key);
+            saInput.mixers = mx; saInput.mixed_drinks = MX.mixedDrinks(said);
+            if (mx.length || saInput.mixed_drinks) console.log('[mixers] from the customer\'s words: ' + (mx.join(', ') || 'none named') + (saInput.mixed_drinks ? ' — mixed drinks (mixing-grade spirits)' : ''));
+          } catch (e) { console.log('[mixers] error: ' + e.message); }
+        }
         // DURATION IS NEVER ASSUMED. Real bug (Sep 29, QA replay of DC's Slack event): "event for 50 people for
         // $5000, liquor beer and wine" -> the LLM built with hours=5 the customer never gave (the prompt says
         // never default; it did anyway), then misread the customer's "2 hours" as a question. An event build's
@@ -809,7 +821,7 @@ RULES:
 - NEVER mention cart, "add to cart", or any cart action
 - Search immediately, no clarifying questions first
 - When ShoppingAgent returns recommendation results, present them DIRECTLY — NEVER make a follow-up product_query call after a recommendation
-- After presenting a package of 2 or more items, ask: "Would you also like to add mixers, water, soda, ice, or cups?" Never ask it after showing a single product (DC, Oct 3) — a single product gets the quantity question instead.
+- After presenting a package of 2 or more items, ask: "Would you also like to add mixers, water, soda, ice, or cups?" — unless the package already has Mixer lines (then ask only: order it, or a PDF proposal?). Never ask it after showing a single product (DC, Oct 3) — a single product gets the quantity question instead.
 - When customer says YES to mixers: immediately call ShoppingAgent intent="product_query" with queries=[{name:"still water",category:"mixer"},{name:"sparkling water",category:"mixer"},{name:"soda variety pack",category:"mixer"},{name:"ice bag",category:"mixer"}] and zip from session. Present what's available and ask which they want.
 - When customer says NO to mixers: respond with ONLY "Would you like to *place the order*, *generate a PDF proposal*, or make any changes?" — nothing else`,
 

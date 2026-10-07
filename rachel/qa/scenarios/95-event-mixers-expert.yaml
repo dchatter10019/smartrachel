@@ -1,0 +1,20 @@
+name: event-mixers-expert
+# Oct 7 (DC, claude.ai connector): 30 guests, 2 hours, $4,000, "mostly spirits ... mixed with coke and oj" got Opus One
+# ($1,100), Phelps Insignia, Clase Azul and Weller Full Proof (targets were $407 a spirit, $204 a wine bottle) and no Coke
+# or OJ — then a list of changes for the customer to approve. Rachel is the expert: event ceilings keep party bottles
+# (spirits under $50 when mixed), the customer's mixers are added in code (Boston carries Coke, not OJ — said plainly),
+# and the reply never asks "add mixers / water / ice?" when the mixers are already in. Same code as the connector's
+# rachel_build_package (rachel-mcp.js) and email.
+tags: [events]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "100 Federal Street, Boston, MA 02110"
+  - send: "party for 30 guests, 2 hours, budget $4000, beer wine and spirits"
+    expect: {contains: ["drink most"]}
+  - send: "mostly spirits, they will drink liquor mixed with coke and oj"
+    expect:
+      contains: ["Product total", "Coca"]
+      matches: "(?i)orange juice[^\\n]*(isn.t|not) carried|not carr[^\\n]*orange juice|doesn.t carry[^\\n]*orange juice"
+      not_matches: "(?i)opus one|insignia|clase azul|weller|would you (also )?like to add[^?]*(mixers|water|ice|cups)"
+      log_contains: ["[mixers] from the customer's words: cola, orange", "max $50 a bottle, mixed drinks", "[menu_build] mixer added:", "mixer NOT CARRIED here: Orange juice"]
