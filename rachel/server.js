@@ -631,8 +631,15 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
             const linesK = (sessions[sessionKey] || []).filter(m => m.role === 'user' && typeof m.content === 'string').slice(-6).map(m => m.content)
               .concat(state.currentUserMessage || '').reverse().flatMap(c => String(c).split(/\n+/));
             const rl = requestedPackLine(linesK, replacementName);
-            if (rl && basketLineFor(items, rl.name) < 0) { originalItem = rl.name; console.log('[confirm-substitute] no original given — ' + replacementName + ' stands in for the customer\'s ' + rl.qty + ' x ' + JSON.stringify(rl.name) + ' (another pack size)'); }
-            else if (rl) console.log('[confirm-substitute] ' + JSON.stringify(rl.name) + ' is a basket line — the pick is not its stand-in by pack alone');
+            const bi = rl ? basketLineFor(items, rl.name) : -1;
+            // The line in the basket for it may itself be a stand-in in another pack ("24 x 12 oz Cans" -> 4 x 12 x 12 OZ
+            // Cans); "actually bottles are fine, the 12pk Btl" then swaps that line, keeping its units. Real (Oct 8, F-0023):
+            // the 12-pack bottles went in at 1x beside the 4 cans. "also / another / more ..." still adds.
+            const biPack = bi >= 0 ? parsePack((items[bi].name || '') + ' ' + (items[bi].size || '')) : null, rlPack = rl ? parsePack(rl.name) : null;
+            const addWords = /\b(also|another|more|extra|add|adding|plus|too|as well)\b/i.test(state.currentUserMessage || '');
+            if (rl && bi < 0) { originalItem = rl.name; console.log('[confirm-substitute] no original given — ' + replacementName + ' stands in for the customer\'s ' + rl.qty + ' x ' + JSON.stringify(rl.name) + ' (another pack size)'); }
+            else if (rl && biPack && rlPack && biPack.count !== rlPack.count && !addWords) { originalItem = rl.name; console.log('[confirm-substitute] no original given — the basket line ' + JSON.stringify(items[bi].name) + ' already stands in for the customer\'s ' + rl.qty + ' x ' + JSON.stringify(rl.name) + ' (another pack size) — ' + replacementName + ' replaces it'); }
+            else if (rl) console.log('[confirm-substitute] ' + JSON.stringify(rl.name) + ' is a basket line — the pick is not its stand-in by pack alone' + (addWords ? ' (the customer said add/also/more)' : ''));
           } catch (e) { console.log('[confirm-substitute] pack line check failed: ' + e.message); }
         }
         // A cross-type original must come from the customer. Real bug (Sep 29 QA, scenario 26): for

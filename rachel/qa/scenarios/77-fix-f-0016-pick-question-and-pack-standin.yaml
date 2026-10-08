@@ -22,10 +22,11 @@ turns:
   - send: reset
   - send: "yes"
   - send: "332 Pine St, San Francisco, CA 94104"
-  - send: "4 x Conundrum White 750 mL\n2 x Stella Artois Premium Lager Beer 24 x 11 oz Bottles\nthat's the list for 20 people, 3 hours, beer and wine only, equal"
+  # Oct 8 (F-0023): the 24 x 11 oz bottles came back to the SF store; the 24 x 12 oz CANS (not carried) test the stand-in now.
+  - send: "4 x Conundrum White 750 mL\n2 x Stella Artois Premium Lager Beer 24 x 12 oz Cans\nthat's the list for 20 people, 3 hours, beer and wine only, equal"
     expect:
       contains: ["Stella"]
-      not_contains: ["Stella Artois Premium Lager Beer 24 x 11 oz Bottles isn't available"]
-      # Oct 7: the 12-pack bottles are picked (container asked) — no pack: conversion line then; either way a closest match
+      not_contains: ["Stella Artois Premium Lager Beer 24 x 12 oz Cans isn't available"]
+      # a closest match (the 12 x 12 oz cans), never UNAVAILABLE
       log_contains: ["[buildPackage] NOT EXACT (closest): \"Stella"]
       log_not_contains: ["UNAVAILABLE (pack mismatch): \"Stella"]

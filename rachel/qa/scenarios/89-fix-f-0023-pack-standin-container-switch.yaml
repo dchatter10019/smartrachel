@@ -1,0 +1,22 @@
+name: fix-f-0023-pack-standin-container-switch
+# Oct 8 nightly (F-0023). The Stella 24 x 11 oz bottles came back to the SF store (three scenarios had relied on them
+# being gone). With the 24 x 12 oz CANS asked (not carried), the 12 x 12 oz cans stand in at 4x. Then "actually bottles
+# are fine, I'll take the Stella Artois 12pk 11.2 oz Btl" ADDED the 12-pack bottles at 1x beside the 4 cans and asked "How
+# many bottles?" — the cans line counted as the customer's own line, so the pick was not taken as its replacement.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "332 Pine St, San Francisco, CA 94104"
+  - send: "2 x Stella Artois Premium Lager Beer 24 x 12 oz Cans"
+    expect:
+      matches: "(?i)\\b4\\s*x\\s*\\*?Stella[^\\n]*12 x 12 OZ Can"
+  # this wording is classified add_item 0.82 (3/3) -> the in-code add-item path, where the bug was ("... Btl works" was
+  # 0.70-0.82 and sometimes went to the LLM, which swapped correctly)
+  - send: "actually bottles are fine, I'll take the Stella Artois 12pk 11.2 oz Btl"
+    expect:
+      matches: "(?i)\\b4\\s*x\\s*\\*?Stella Artois 12pk[^\\n]*Btl"
+      not_contains: ["How many bottles"]
+  - send: "show my basket"
+    expect:
+      matches: "(?i)\\b4\\s*x?\\s*[^\\n]*Stella Artois 12pk[^\\n]*Btl"
+      not_matches: "(?i)12 x 12 OZ Can"

@@ -6,17 +6,20 @@ name: sf-list-hyphen-size-and-order-tz
 # SF store (Pacific) were labeled EST; "I said PST not EST" got "Could you give me a specific delivery date and time?";
 # after windows were shown in ET, a bare "2:00 PM" was read as Pacific and the order booked three hours late.
 # DC: with no zone given, Rachel asks for it, then shows every time in the zone the customer named.
+# Oct 8 (F-0023): the Sonoma Classic Simple Syrup left the SF store; the name-vs-size-field case is now "Owen's
+# Transfusion 4pk 250 ML Can" (size field 8.5 OZ). (A large gap — "Finest Call Triple Sec Bar Syrup - 1 L", size field
+# 16 OZ — is hidden by the catalog guard, so it can't stand in for this case.)
 turns:
   - send: reset
   - send: "yes"
   - send: "332 Pine St, San Francisco, CA 94104"
-  - send: "4 x Conundrum White 750mL\n3 x Fever-Tree Ginger Beer 6.8oz\n3 x Sonoma Classic Simple Syrup 24.5oz"
+  - send: "4 x Conundrum White 750mL\n3 x Fever-Tree Ginger Beer 6.8oz\n3 x Owen's Transfusion 4pk 250ml"
     expect:
       matches: "(?i)3\\s*x\\s*Fever[ -]Tree Ginger Beer[^\\n]*6\\.8"
-      contains: ["Sonoma Classic Simple Syrup"]
-      not_matches: "(?i)(Fever-Tree Ginger Beer|Sonoma Classic Simple Syrup)[^\\n]*(isn't|is not|not) (available|carried)"
-      log_contains: ["[doSearch] hyphen retry", "its name states 24.5oz"]
-      log_not_contains: ["UNAVAILABLE (size mismatch): \"Sonoma", "UNAVAILABLE (size mismatch): \"Fever"]
+      contains: ["Owen's Transfusion"]
+      not_matches: "(?i)(Fever-Tree Ginger Beer|Owen's Transfusion)[^\\n]*(isn't|is not|not) (available|carried)"
+      log_contains: ["[doSearch] hyphen retry", "its name states 250ml"]
+      log_not_contains: ["UNAVAILABLE (size mismatch): \"Owen", "UNAVAILABLE (size mismatch): \"Fever"]
   - send: "place the order"
     expect: {contains: ["name"]}
   - send: "QA Tester"
