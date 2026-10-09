@@ -17,5 +17,11 @@ eq('Oktoberfest theme alone is not the beer', bs('Oktoberfest-themed party, wine
 eq('German beers', bs('we want german beers'), 'German');
 eq('Mexican beers', bs('Mexican beers and margaritas'), 'Mexican');
 eq('Oktoberfest falls back to German', (beerStyleIn('Oktoberfest beer') || {}).then.label, 'German');
+const { isStyleLine } = require('../../event-prefs.js'), sl = t => (isStyleLine(t) || {}).label || null;
+eq('"Oktoberfest Beer" is a style line', sl('Oktoberfest Beer'), 'Oktoberfest');
+eq('"German beers - 3 cases" is a style line', sl('German beers - 3 cases'), 'German');
+eq('a named lager is NOT a style line (Oct 9: Stella -> Busch Light)', sl('Stella Artois Premium Lager Beer 24 x 12 oz Cans'), null);
+eq('Sam Adams Octoberfest is a product', sl('Sam Adams Octoberfest'), null);
+eq('Goose Island IPA is a product', sl('Goose Island IPA 24 x 12 oz'), null);
 console.log(failed ? '\nevent-prefs: ' + failed + ' FAILED' : '\nevent-prefs: all passed');
 if (failed) process.exit(1);

@@ -1105,7 +1105,7 @@ async function buildPackage(iv) {
     for (var bsI=0; bsI<namedProducts.length; bsI++) {
       var npB=namedProducts[bsI];
       if (String(npB.category||'').toLowerCase()!=='beer') continue;
-      var bstL=require('./event-prefs.js').beerStyleIn(npB.name);
+      var bstL=require('./event-prefs.js').isStyleLine(npB.name);   // a STYLE line only — never "Stella Artois Premium Lager Beer"
       if (!bstL) continue;
       var nzL=function(x){return String(x||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]/g,'');};
       var hitsFor=async function(terms){

@@ -313,7 +313,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   spirit_types / beer_style (connector: rachel-mcp from request + serving_mix; Slack/email/WhatsApp: rachel.js from this
   message + originalRequest + serving-mix answer) -> buildPackage spirit slots = those types ([buildPackage] spirits the
   customer asked for), beer = the style's words, then its family (Oktoberfest -> German brands), else usual beer; a custom_list
-  "Oktoberfest Beer" line is handled the same way. Not carried -> beer_note ("This store has no Oktoberfest beers right now,
+  "Oktoberfest Beer" line is handled the same way — only a STYLE line (event-prefs.js isStyleLine: nothing left but style +
+  beer words), never a named product that contains a style word (Oct 9: "Stella Artois Premium Lager Beer" became Busch Light
+  for ~1h after the style handling shipped; caught by scenario 78, no customer affected). Not carried -> beer_note ("This store has no Oktoberfest beers right now,
   so I picked German beers instead."), appended in code on /chat (replyNote), a plain statement on the connector. Spirit
   slots never take a wine ("1000 Stories Zinfandel Bourbon") or a cream / nog / liqueur / canned cocktail, beer slots never an
   NA beer, and the QUANTITY-FIRST downgrade re-checks the slot (it swapped that "bourbon" for Evan Williams Egg Nog). Two

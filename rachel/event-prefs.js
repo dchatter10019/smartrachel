@@ -58,4 +58,17 @@ function beerStyleIn(text) {
   return null;
 }
 
-module.exports = { spiritTypesIn, beerStyleIn, ALL_SPIRITS: ALL };
+// A list line that IS a style ("Oktoberfest Beer", "German beers", "IPA - 2 cases") — nothing left once the style word,
+// beer words, counts and sizes are removed. A named product that only CONTAINS a style word is not: Oct 9 (staging
+// nightly scenario 78, right after the style handling shipped) "Stella Artois Premium Lager Beer 24 x 12 oz Cans" was read
+// as "any lager" and became Busch Light.
+function isStyleLine(name) {
+  const s = beerStyleIn(name);
+  if (!s) return null;
+  const rest = norm(name).replace(new RegExp(s.re.source, 'g'), ' ')
+    .replace(/\b(beers?|biers?|selections?|styles?|ales?|brews?|cans?|bottles?|btls?|cases?|packs?|pk|oz|ml|l|x|of|a|an|the|some|any|assorted|variety|mix|or|and|like|similar)\b/g, ' ')
+    .replace(/[\d.,()\/&+-]+/g, ' ').trim();
+  return rest ? null : s;
+}
+
+module.exports = { spiritTypesIn, beerStyleIn, isStyleLine, ALL_SPIRITS: ALL };
