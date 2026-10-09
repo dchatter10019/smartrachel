@@ -106,6 +106,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   monitor detector conversation_review -> fixer (in scope.yaml fix_detectors; prompt.md stays protected, so a prompt change
   comes back as "Needs a decision"). The summary rides on the nightly QA Slack post. `--dry` lists, `--hours N` re-runs a
   window without moving the bookmark, REVIEW_OUT / RACHEL_TRANSCRIPTS_FILE for test runs.
+  A «qa-» session is never reviewed, by any row (Oct 9: connector tool rows carried qa by caller email only, so qa-manual
+  sessions were reviewed from the reply-less tool rows -> 4 false "Rachel never replied / no age check" findings,
+  F-0025..28). Review max_tokens 4000 (1500 cut a 26-turn review mid-JSON -> no review; a cut logs "hit max_tokens").
 - AI spend ledger (DC, Oct 3): every Anthropic call (rachel.js main, classifier, image reading, reviewer, catalog-guard web
   prices, QA judge) appends {ts, kind, model, test, env, tokens, usd} to logs/ai-spend.jsonl via rachel/ai-spend.js (price
   table there — update it when prices/models change; an unknown model logs [ai-spend] no price). test = staging, a «qa-»
@@ -268,6 +271,14 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - A customer-named product is never dropped for price caps; a stated size sorts first.
 - Multi-pick resolver only fires on a real numbered options list + a selection-shaped message.
 - A substantive first message (an order) is kept through the age gate (pendingIntent) and replayed.
+  An address + a request in ONE message at the address step ("1 Rockefeller Plaza, New York, NY 10019. Add 3 Tito's 750ml and
+  a case of Stella.") is split the same way (address-extract.js splitAddress, [addr] address + request in one message):
+  the address is stored, the request replayed. Oct 9 (connector): the whole sentence was saved as the address and the order
+  ignored. Only a request-shaped rest is split ("ring the bell, 3rd floor" stays). "Send 2 cases of X to <address>": the
+  street starts after the last "to/at <number>".
+- add_item routes in code only for ONE item: a second item without a number ("and a case of Stella") defers to the LLM
+  (classify-intent.js namesAnotherItem; [add-item] multi-item/multi-name — deferring (names another item: ...)).
+  Oct 9: add_item added 1 Tito's (not 3) and dropped the Stella silently.
 - Age answers are parsed by parseAgeAnswer (server.js): stated age decides, then doubt, then
   negation, then an affirmative at the start. A refusal sticks 24h, even across reset.
 - Catalog guard (store-agent/catalog-guard.js) hides bad rows + alerts QA Slack. Same product+size listed

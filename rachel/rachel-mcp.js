@@ -305,7 +305,7 @@ async function executeTool(name, input, callerEmail, apiKey) {
       const who = String(callerEmail || (input && input.email) || '').toLowerCase();
       const args = Object.assign({}, input || {}); delete args.email;
       if (name !== 'rachel_feedback' && result && !err) lastShown.set(who, name + ': ' + (name === 'rachel_chat' ? result.response : JSON.stringify(transcripts.productSummary(result) || result)));
-      transcripts.write({ session: (input && input.session_id) || 'mcp-' + (who || 'anon'), channel: 'mcp', customer: who, qa: QA_RE.test(who),
+      transcripts.write({ session: (input && input.session_id) || 'mcp-' + (who || 'anon'), channel: 'mcp', customer: who, qa: QA_RE.test(who) || /^qa-/.test(String((input && input.session_id) || '')),
         tool: name, message: JSON.stringify(args), latency_ms: Date.now() - t0,
         result: err ? 'ERROR: ' + err.message : name === 'rachel_chat' ? undefined : (transcripts.productSummary(result) || result) });
     } catch (e) {}

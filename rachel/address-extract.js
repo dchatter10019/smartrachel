@@ -36,7 +36,8 @@ function findAddress(text) {
   const found = [];
   let m;
   while ((m = RE.exec(t))) {
-    const a = m[1].replace(/\s+/g, ' ').replace(/\s*,\s*/g, ', ').trim();
+    // "Send 2 cases of Stella to 425 W 53rd St, ..." — the street starts after the last "to/at <number>", not at the "2".
+    const a = m[1].replace(/\s+/g, ' ').replace(/\s*,\s*/g, ', ').trim().replace(/^.*\b(?:to|at)\s+(?=\d{1,6}\s+[A-Za-z])/i, '');
     // A sentence break inside = two sentences, not an address: retry from the next word.
     if (/[.!?]\s+[A-Z]/.test(a) || /¶/.test(a)) { RE.lastIndex = m.index + 1; continue; }
     found.push({ a, cue: CUE.test(t.slice(Math.max(0, m.index - 40), m.index)) });
@@ -51,6 +52,24 @@ function findAddress(text) {
     return null;
   }
   return (found.find(f => f.cue) || found[0]).a;
+}
+
+// A message with an address AND a request ("1 Rockefeller Plaza, New York, NY 10019. Add 3 Tito's 750ml and a case of
+// Stella.") -> { address, rest }: the address cut out of the original text (its line breaks kept: street start .. zip end)
+// and the rest, minus a dangling "deliver to" / "address:". rest is null when nothing substantive is left (<= 8 chars).
+// Used for the pre-gate message and for a message at the address step (Oct 9, connector: the whole sentence was saved as
+// the address and the order was ignored).
+function splitAddress(text) {
+  const pi = String(text || ''), addrF = findAddress(pi);
+  if (!addrF) return null;
+  const st0 = pi.indexOf(addrF.split(',')[0]), zm = addrF.match(/\d{5}(?:-\d{4})?$/);
+  const en0 = zm && st0 >= 0 ? pi.indexOf(zm[0], st0) : -1;
+  const cut = st0 >= 0 && en0 > st0 ? pi.slice(0, st0) + pi.slice(en0 + zm[0].length) : pi.replace(addrF, '');
+  const rest = cut.replace(/^[\s.,;:!-]+/, '').replace(/\b(deliver(?:ed|y)?\s+(?:to|at)|ship(?:ped)?\s+to|address(?: is)?:?)\s*(?=,|\.|\s+on\b|\s*$)/i, '').trim();
+  // "Send 2 cases of Stella to <address>" -> "Send 2 cases of Stella"; "deliver to <address> please" -> nothing left.
+  const r2 = rest.replace(/\b(?:deliver(?:ed|y)?(?:\s+it)?\s+(?:to|at)|ship(?:ped)?\s+to)\s*(?=\s|$)/ig, ' ').replace(/\b(?:please|thanks|thank you|pls)\b[.!]*/ig, ' ')
+    .replace(/\s+(?:to|at)\s*[.,]?\s*$/i, '').replace(/^[\s.,;:!-]+|[\s,;:-]+$/g, '').trim();
+  return { address: addrF, rest: r2.replace(/\s+/g, ' ').length > 8 ? r2 : null };
 }
 
 // The address to echo and store after Google geocodes it, built from the geocoder's components.
@@ -71,4 +90,4 @@ function formatGeocoded(components, typed) {
     .filter(Boolean).join(', ');
 }
 
-module.exports = { findAddress, formatGeocoded };
+module.exports = { splitAddress, findAddress, formatGeocoded };

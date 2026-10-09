@@ -1,7 +1,7 @@
 // Unit tests for the deterministic intent rules + ref grounding in rachel/classify-intent.js, on
 // REAL customer messages from logs/rachel.log. Run: node qa/unit/classify-rules.test.js
 // (precheck.sh runs every qa/unit/*.test.js during lint — a failure blocks the deploy).
-const { ruleIntent, groundedRef } = require('../../classify-intent.js');
+const { ruleIntent, groundedRef, namesAnotherItem } = require('../../classify-intent.js');
 
 let failed = 0;
 const eq = (label, got, want) => {
@@ -60,6 +60,14 @@ eq('accents/apostrophes fold', groundedRef("Tito's Handmade Vodka", 'add titos')
   c = await classifyIntent('3', { lastKind: 'numbered_list' });
   eq('a rule answers without calling the API', [c.intent, c.source, models.length], ['select_option', 'rule:bare-number-after-list', 0]);
   global.fetch = realFetch;
+  console.log('add_item with one ref for a message naming more (Oct 9: the Stella was dropped)');
+  eq('"and a case of Stella"', namesAnotherItem("Add 3 Tito's 750ml and a case of Stella.", "Tito's 750ml"), 'stella');
+  eq('curly apostrophe', namesAnotherItem('add 3 Tito\u2019s 750ml and a case of Stella', "Tito's 750ml"), 'stella');
+  eq('comma list', namesAnotherItem('add 2 Stella, 3 Corona', 'Stella'), 'corona');
+  eq('"and place the order" is one item', namesAnotherItem("add 2 bottles of Tito's and place the order", "Tito's"), '');
+  eq('", please" is one item', namesAnotherItem("add Tito's, please", "Tito's"), '');
+  eq('"&" inside the product name', namesAnotherItem('add Smith & Hook Cabernet', 'Smith & Hook Cabernet'), '');
+  eq('one product, count + unit', namesAnotherItem('add 5 bottles of Mount Gay Black Barrel', 'Mount Gay Black Barrel'), '');
   console.log(failed ? '\nclassify-rules: ' + failed + ' FAILED' : '\nclassify-rules: all passed');
   process.exit(failed ? 1 : 0);
 })();

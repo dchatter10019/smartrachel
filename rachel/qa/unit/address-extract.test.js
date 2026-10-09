@@ -38,5 +38,14 @@ eq('no street number -> null (caller falls back)', formatGeocoded(C(['route', 'B
 eq('no commas', findAddress('375 Revere St Revere MA 02151'), '375 Revere St, Revere, MA 02151');
 eq('no commas, inside a sentence', findAddress('i had changed it to 375 Revere St Revere MA 02151'), '375 Revere St, Revere, MA 02151');
 eq('a quantity line is not an address', findAddress('44 bottles of prosecco and the budget is 1000'), null);
+
+// Address + request in one message (Oct 9, connector): the whole sentence was saved as the address, the order ignored.
+const { splitAddress } = require('../../address-extract.js');
+const sj = (t) => JSON.stringify(splitAddress(t));
+eq('address then order', sj("1 Rockefeller Plaza, New York, NY 10019. Add 3 Tito's 750ml and a case of Stella."), JSON.stringify({ address: '1 Rockefeller Plaza, New York, NY 10019', rest: "Add 3 Tito's 750ml and a case of Stella." }));
+eq('order "to" address: the quantity is not the street', sj('Send 2 cases of Stella to 425 W 53rd St, New York, NY 10019'), JSON.stringify({ address: '425 W 53rd St, New York, NY 10019', rest: 'Send 2 cases of Stella' }));
+eq('"deliver to ... please" leaves nothing', sj('deliver to 425 W 53rd St, New York, NY 10019 please'), JSON.stringify({ address: '425 W 53rd St, New York, NY 10019', rest: null }));
+eq('a unit stays in the address', sj('100 Federal Street, Floor 6, Boston, MA 02110'), JSON.stringify({ address: '100 Federal Street, Floor 6, Boston, MA 02110', rest: null }));
+eq('no address', splitAddress('need 2 cases of Bud Light'), null);
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');

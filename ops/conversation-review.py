@@ -52,7 +52,9 @@ def load(since, context_days=3):
         for l in open(TRANSCRIPTS):
             try: r = json.loads(l)
             except Exception: continue
-            if r.get('qa'): continue
+            # A connector rachel_chat call is logged twice: Rachel's /chat row (qa by session id) and the tool row (qa by caller
+            # email only, until Oct 9) — a «qa-» session counts as QA either way, else the review saw the tool rows without replies.
+            if r.get('qa') or str(r.get('session', '')).startswith('qa-'): continue
             t = parse_ts(r.get('ts', ''))
             if t >= since - context_days * 86400: r['_t'] = t; rows.append(r)
     except OSError: pass
@@ -120,7 +122,7 @@ unhappy_messages: EVERY customer message (after the marker) that shows dissatisf
 polite disappointment, any language. Empty list when there is none; never a neutral question or a plain change request."""
 
 def call(model, text, key):
-    body = json.dumps({'model': model, 'max_tokens': 1500, 'temperature': 0,
+    body = json.dumps({'model': model, 'max_tokens': 4000, 'temperature': 0,
                        'system': PROMPT, 'messages': [{'role': 'user', 'content': 'CONVERSATION:\n' + text}]}).encode()
     req = urllib.request.Request('https://api.anthropic.com/v1/messages', data=body, headers={
         'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json'})
@@ -133,6 +135,8 @@ def call(model, text, key):
                                  'env': 'review', 'in': u.get('input_tokens', 0), 'cw': 0, 'cr': 0, 'out': u.get('output_tokens', 0), 'ws': 0,
                                  'usd': round(usd, 6) if usd is not None else None}) + '\n')
     except Exception as e: log('ai-spend write failed: %s' % e)
+    # 1500 cut a 26-turn connector review mid-JSON (Oct 9: 'Expecting , delimiter' -> no review at all).
+    if r.get('stop_reason') == 'max_tokens': log('review hit max_tokens (%d out) — the JSON is cut' % u.get('output_tokens', 0))
     txt = ''.join(b.get('text', '') for b in r.get('content', []) if b.get('type') == 'text')
     m = re.search(r'\{[\s\S]*\}', txt)
     return json.loads(m.group(0)) if m else None, usd or 0

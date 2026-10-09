@@ -1,0 +1,19 @@
+name: address-and-order-one-message
+# Oct 9 (connector, rachel_chat): "1 Rockefeller Plaza, New York, NY 10019. Add 3 Tito's 750ml and a case of Stella." at the
+# address step was saved whole as the address ("delivering to 1 Rockefeller Plaza, ... Add 3 Tito's..") and the order was
+# ignored — the customer typed it again. The address is cut out and the order replayed (address-extract.js splitAddress).
+# Same /chat path for Slack, WhatsApp, email and the connector's rachel_chat.
+tags: [ux]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "1 Rockefeller Plaza, New York, NY 10019. Add 3 Tito's 750ml and a case of Stella."
+    expect:
+      contains: ["delivering to 1 Rockefeller Plaza", "Tito", "Stella", "Product total"]
+      not_matches: "(?i)delivering to [^\\n]*Add 3"
+      log_contains: ["[addr] address + request in one message"]
+  # Two items in one "add" — the classifier sometimes returns ONE ref (add_item), which added 1 Tito's and dropped the
+  # Stella (Oct 9, staging). namesAnotherItem defers such a message to the LLM.
+  - send: "add 2 bottles of Josh Cabernet and a 6 pack of Corona"
+    expect:
+      contains: ["Josh", "Corona", "Tito", "Stella"]

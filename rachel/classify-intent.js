@@ -121,4 +121,22 @@ async function classifyIntent(message, ctx = {}) {
   }
   return { intent: 'other', ref: '', qty: 0, confidence: 0, source: 'error:' + errs.join(',') };
 }
-module.exports = { firstJson, classifyIntent, ruleIntent, groundedRef, INTENTS, SYSTEM, callClassifier };   // SYSTEM + callClassifier: model evals (qa/eval-classifier.js)
+// The message names ANOTHER item besides the classifier's one ref: "Add 3 Tito's 750ml and a case of Stella" -> ref
+// "Tito's 750ml". Real (Oct 9, staging): add_item took the turn, added 1 Tito's and the Stella was dropped silently.
+// The ref's words are removed; what follows a separator (",", "and", "&", "+", "plus", a new line) past counts and
+// units must be a word that isn't filler ("and place the order", ", please" are one item).
+const FILLER = new Set(['then', 'also', 'please', 'pls', 'thanks', 'thank', 'deliver', 'delivered', 'delivery', 'send', 'ship', 'it', 'its', 'that', 'this', 'the', 'them',
+  'those', 'these', 'place', 'order', 'checkout', 'check', 'make', 'ready', 'can', 'could', 'would', 'will', 'show', 'what', 'how', 'when', 'is', 'are', 'i', 'we',
+  'you', 'me', 'my', 'our', 'ill', 'let', 'lets', 'go', 'get', 'see', 'total', 'price', 'proposal', 'pdf', 'quote', 'more', 'same', 'one', 'ones', 'thats', 'tomorrow', 'today',
+  'case', 'cases', 'bottle', 'bottles', 'pack', 'packs', 'can', 'cans', 'of']);
+function namesAnotherItem(message, ref) {
+  const nz = x => String(x || '').toLowerCase().replace(/[\u2018\u2019']/g, '');
+  let m = nz(message);
+  for (const w of nz(ref).split(/[^a-z0-9.]+/).filter(Boolean)) m = m.replace(new RegExp('\\b' + w.replace(/[.]/g, '\\.') + '\\b'), ' ');
+  const RE = /(?:,|;|\+|&|\band\b|\bplus\b|\n)\s*(?:(?:\d+|an?|two|three|four|five|six|seven|eight|nine|ten|twelve|some|couple|another)\s+)*(?:(?:x|cases?|bottles?|packs?|cans?|\d+-?packs?|of)\s+)*([a-z][a-z.-]{2,})/g;
+  let r;
+  while ((r = RE.exec(m))) if (!FILLER.has(r[1].replace(/[.-]+$/, ''))) return r[1].replace(/[.-]+$/, '');
+  return '';
+}
+
+module.exports = { firstJson, classifyIntent, ruleIntent, groundedRef, namesAnotherItem, INTENTS, SYSTEM, callClassifier };   // SYSTEM + callClassifier: model evals (qa/eval-classifier.js)

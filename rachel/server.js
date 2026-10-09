@@ -2172,17 +2172,24 @@ app.post('/chat', async (req, res) => {
     // already ready (saved address), replay it whole.
     if (state.pendingIntent && state.step === 'addr_new') {
       // address-extract.js: line breaks and unit lines inside the address (Sep 29: "Floor 6\r\nBoston" became "6, Boston").
-      const addrF = require('./address-extract.js').findAddress(state.pendingIntent);
-      const am = addrF ? [addrF, addrF] : null;
-      if (am) {
-        // Cut the address out of the original text (it still has its line breaks): street start .. zip end.
-        const pi = state.pendingIntent, st0 = pi.indexOf(addrF.split(',')[0]), zm = addrF.match(/\d{5}(?:-\d{4})?$/);
-        const en0 = zm && st0 >= 0 ? pi.indexOf(zm[0], st0) : -1;
-        const cut = st0 >= 0 && en0 > st0 ? pi.slice(0, st0) + pi.slice(en0 + zm[0].length) : pi.replace(addrF, '');
-        const rest = cut.replace(/\b(deliver(?:ed|y)?\s+(?:to|at)|ship(?:ped)?\s+to|address(?: is)?:?)\s*(?=,|\.|\s+on\b|\s*$)/i, '').trim();
-        message = am[1]; msgLower = message.toLowerCase();
-        state.pendingIntent = rest.replace(/\s+/g, ' ').length > 8 ? rest : null; saveFlowState();
+      const sp = require('./address-extract.js').splitAddress(state.pendingIntent);
+      if (sp) {
+        message = sp.address; msgLower = message.toLowerCase();
+        state.pendingIntent = sp.rest; saveFlowState();
         console.log('[age] pre-gate message: address', JSON.stringify(message), '| replaying rest:', JSON.stringify((state.pendingIntent || '').slice(0, 80)));
+      }
+    } else if (state.step === 'addr_new') {
+      // The address AND a request in one message at the address step: "1 Rockefeller Plaza, New York, NY 10019. Add 3
+      // Tito's 750ml and a case of Stella." Real (Oct 9, connector): the whole sentence was saved as the address
+      // ("delivering to 1 Rockefeller Plaza, ... Add 3 Tito's..") and the order ignored, so the customer typed it again.
+      // The address goes through the step below; the request is replayed after it (as the pre-gate message is). Only a
+      // request-shaped rest — "ring the bell, 3rd floor" / "Apt 4B" stay with the address.
+      const sp = require('./address-extract.js').splitAddress(message);
+      if (sp && sp.rest && sp.rest.split(/\s+/).length >= 2
+          && /\b(add|want|need|order|looking|send|get|do you|have|show|price|how much|bottles?|cases?|wine|beer|vodka|tequila|whiskey|bourbon|rum|gin|champagne|prosecco|spirits|party|event|recommend|guests?)\b/i.test(sp.rest)) {
+        console.log('[addr] address + request in one message — address', JSON.stringify(sp.address), '| replaying:', JSON.stringify(sp.rest.slice(0, 80)));
+        state.pendingIntent = state.pendingIntent ? state.pendingIntent + '\n' + sp.rest : sp.rest; saveFlowState();
+        message = sp.address; msgLower = message.toLowerCase();
       }
     } else if (state.pendingIntent && state.step === 'ready' && state.ageVerified) {
       message = state.pendingIntent; msgLower = message.toLowerCase(); state.pendingIntent = null; saveFlowState();
@@ -3658,7 +3665,10 @@ app.post('/chat', async (req, res) => {
     // real bug: searched as one string, 0 matches, "couldn't find" after Rachel had just
     // listed all three. Defer to the multi-pick resolver / LLM.
     const multiName = clsRef && clsRef.split(/\s*(?:,|;|\band\b|\bplus\b|&)\s*/i).filter(x => x.trim().length > 1).length >= 2;
-    if (clsIntent === 'add_item' && (isMultiItem || multiName)) { console.log('[add-item] multi-item/multi-name — deferring'); clsIntent = null; }
+    // A count-less second item: "Add 3 Tito's 750ml and a case of Stella" (one number) -> ref "Tito's 750ml"; added 1
+    // Tito's and dropped the Stella silently (Oct 9, staging). classify-intent.js namesAnotherItem.
+    const anotherItem = clsIntent === 'add_item' && clsRef ? require('./classify-intent.js').namesAnotherItem(message, clsRef) : '';
+    if (clsIntent === 'add_item' && (isMultiItem || multiName || anotherItem)) { console.log('[add-item] multi-item/multi-name — deferring' + (anotherItem ? ' (names another item: ' + JSON.stringify(anotherItem) + ')' : '')); clsIntent = null; }
     if (clsIntent === 'add_item' && clsRef && !state.orderStep && !state.proposalStep) {
       try {
         // A name from Rachel's own recent option list is that product — never re-searched
