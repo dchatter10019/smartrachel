@@ -109,6 +109,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   A «qa-» session is never reviewed, by any row (Oct 9: connector tool rows carried qa by caller email only, so qa-manual
   sessions were reviewed from the reply-less tool rows -> 4 false "Rachel never replied / no age check" findings,
   F-0025..28). Review max_tokens 4000 (1500 cut a 26-turn review mid-JSON -> no review; a cut logs "hit max_tokens").
+- Daily activity report (DC, Oct 9): ops/activity-report.py (yesterday UTC, `--day`), from transcripts.jsonl, no model calls,
+  QA excluded: per channel each person, messages (connector: steps + which tools), what they asked, how it ended (order /
+  proposal / basket, no order / browsed). Appended to the nightly QA Slack post (qa/nightly.sh, after AI spend).
 - AI spend ledger (DC, Oct 3): every Anthropic call (rachel.js main, classifier, image reading, reviewer, catalog-guard web
   prices, QA judge) appends {ts, kind, model, test, env, tokens, usd} to logs/ai-spend.jsonl via rachel/ai-spend.js (price
   table there — update it when prices/models change; an unknown model logs [ai-spend] no price). test = staging, a «qa-»

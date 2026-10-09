@@ -18,6 +18,8 @@ STATUS=$([ $RC -eq 0 ] && echo "✅ PASS" || echo "❌ FAIL")
 TEXT="*Rachel nightly QA — $STATUS*"$'\n'"$SUMMARY"$'\n'"_${CHANGES} scenario(s) had reply changes vs the previous run_"
 # AI spend, yesterday + month to date: customers / tests / auto-fixer (ops/ai-spend.py; DC, Oct 3)
 SPEND=$(python3 /home/ubuntu/ops/ai-spend.py 2>/dev/null) && TEXT="$TEXT"$'\n'"$SPEND"
+# Who used Rachel yesterday, per channel: what they asked, how it ended (ops/activity-report.py; DC, Oct 9; no model calls)
+ACTIVITY=$(python3 /home/ubuntu/ops/activity-report.py 2>/dev/null) && [ -n "$ACTIVITY" ] && TEXT="$TEXT"$'\n\n'"$ACTIVITY"
 # Conversation review (DC, Oct 7): yesterday's real conversations read by Claude; problems -> logs/review-issues.jsonl ->
 # the monitor pass below makes them findings -> the fixer. Its plain-language summary rides on this Slack post.
 REVIEW=$(python3 /home/ubuntu/ops/conversation-review.py 2>>/home/ubuntu/logs/conversation-review.log) && [ -n "$REVIEW" ] && TEXT="$TEXT"$'\n\n'"$REVIEW"
