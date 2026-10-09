@@ -24,6 +24,16 @@ function choose(item, candidates) {
   const good = scored.filter(x => x.same && x.fit >= 0.99 && x.rev >= 0.6);
   if (good.length === 1 || (good.length > 1 && good[0].fit + good[0].rev > good[1].fit + good[1].rev))
     return { pick: good[0].c, reason: 'same price $' + want.toFixed(2) + ', name fits' };
+  // The line's name IS a catalog name, and every row with that exact name is the same product (same size + price) —
+  // one product listed more than once, not a choice. Oct 8 (connector): "Stella Artois 24x12 Oz Bottle" (two identical
+  // rows + 4 near ones) was refused as "not an exact catalog match" and the Stella left the order.
+  if (good.length > 1) {
+    const nz = n => clean(n).toLowerCase().replace(/\s+/g, ' ');
+    const exact = good.filter(x => nz(x.c.name) === nz(item.name));
+    const sizeOf = c => String(c.sizeStr || c.size || '').toLowerCase().replace(/\s+/g, '');
+    if (exact.length && exact.every(x => sizeOf(x.c) === sizeOf(exact[0].c) && Math.abs(priceOf(x.c) - priceOf(exact[0].c)) < 0.005))
+      return { pick: exact[0].c, reason: 'exact name + same price $' + want.toFixed(2) + (exact.length > 1 ? ' (listed ' + exact.length + 'x in the catalog)' : '') };
+  }
   if (good.length > 1) return { pick: null, reason: good.length + ' products at the same price fit equally', options };
   if (!scored.length) return { pick: null, reason: 'not found in this store\'s catalog', options: [] };
   const byName = scored.find(x => x.fit >= 0.99 && x.rev >= 0.6);

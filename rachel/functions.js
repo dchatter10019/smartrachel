@@ -441,11 +441,16 @@ async function buildPackage(iv) {
     if (slotType==="red") return nameHasAny(name,RED_KW)&&!nameHasAny(name,WHITE_KW)&&!nameHasAny(name,SPARK_KW)&&!nameHasAny(name,NON_WINE)&&!nameHasAny(name,ALL_SPIRIT_WORDS)&&name.indexOf("beer")<0;
     if (slotType==="white") return nameHasAny(name,WHITE_KW)&&!nameHasAny(name,SPARK_KW)&&!nameHasAny(name,NON_WINE)&&!nameHasAny(name,ALL_SPIRIT_WORDS);
     if (slotType==="sparkling") return nameHasAny(name,SPARK_KW)&&!nameHasAny(name,NON_WINE)&&!nameHasAny(name,ALL_SPIRIT_WORDS);
-    if (slotType==="beer") return !nameHasAny(name,ALL_SPIRIT_WORDS.concat(RED_KW).concat(WHITE_KW).concat(SPARK_KW));
+    // A beer slot is alcoholic beer: Beck's Non Alcoholic came back for "Beck's" (Oct 7, Oktoberfest event).
+    if (slotType==="beer") return !nameHasAny(name,ALL_SPIRIT_WORDS.concat(RED_KW).concat(WHITE_KW).concat(SPARK_KW))&&!require('./drink-type.js').isNA(p);
     if (slotType==="seltzer") return name.indexOf("seltzer")>=0||name.indexOf("claw")>=0||name.indexOf("truly")>=0||name.indexOf("high noon")>=0;
     if (slotType==="nabeer") return name.indexOf("non alcoholic")>=0||name.indexOf("non-alcoholic")>=0||name.indexOf("0.0")>=0||name.indexOf("athletic")>=0||name.indexOf("na beer")>=0;
     if (SPIRIT_KW[slotType]) {
       if (!nameHasAny(name,SPIRIT_KW[slotType])) return false;
+      // A spirit slot is the spirit: never a wine aged in its barrels ("1000 Stories Zinfandel Bourbon") or a cream / nog /
+      // liqueur / canned cocktail that carries its word. Oct 7: the bourbon slot took the Zinfandel, the budget fit then
+      // swapped it for Evan Williams Egg Nog.
+      if (nameHasAny(name,RED_KW.concat(WHITE_KW).concat(SPARK_KW))||/\b(wine|nog|eggnog|cream|liqueur|cocktails?|ready to drink|rtd|punch|lemonade|seltzer|soda)\b/.test(name)) return false;
       for (var t in SPIRIT_KW) {
         if (t===slotType) continue;
         for (var k=0;k<SPIRIT_KW[t].length;k++) { var w=SPIRIT_KW[t][k]; if (SPIRIT_KW[slotType].indexOf(w)>=0) continue; if (name.indexOf(w)>=0) return false; }
@@ -787,6 +792,10 @@ async function buildPackage(iv) {
       }
       return ok;
     });
+    // The same product listed twice (two catalog rows, same name + size) is ONE choice — Oct 7: "6 x Gato Negro Sauvignon
+    // Blanc" appeared as two lines of the white slot.
+    var seenP={}; pool=pool.filter(function(p){ var k=String(p.name||'').toLowerCase().replace(/\s+/g,' ').trim()+'|'+String(p.sizeStr||p.size||'').toLowerCase().replace(/\s+/g,'');
+      if (seenP[k]) { console.log('[buildPackage] duplicate catalog row skipped: '+p.name+' $'+p.price); return false; } seenP[k]=1; return true; });
     if (pool.length===0) return [];
     var steps=[0.50,0.35,0.20,0];
     var chosenPool=null;
@@ -844,7 +853,7 @@ async function buildPackage(iv) {
     return out;
   }
 
-  var lineItems=[];var unavailable=[];var summaryBits=[];var totalDrinks=0;var fullBarNote="";var categoryNeeds=null;
+  var lineItems=[];var unavailable=[];var summaryBits=[];var totalDrinks=0;var fullBarNote="";var beerNote="";var categoryNeeds=null;
 
   function addLines(picks,label,category,needDrinks) {
     if (picks.length===0){unavailable.push(label);return;}
@@ -1090,6 +1099,28 @@ async function buildPackage(iv) {
       console.log('[buildPackage] custom_list generic-line price targets per unit: '+JSON.stringify(Object.keys(genTarget).reduce(function(o,c){o[c]=Math.round(genTarget[c]*100)/100;return o;},{})));
     }
     var results=await Promise.all(namedProducts.map(function(np){return doSearchWithFallbacks(np.name, np.category);}));
+    // A generic beer-STYLE line ("Oktoberfest Beer", "German beer" — event-prefs.js beerStyleIn) is the style's beers, then
+    // its family, else the usual beer, and the customer is told (beer_note). Oct 9 (staging, the Slack path of DC's Oct 7
+    // Oktoberfest brief): "Oktoberfest Beer" was not carried and had no stand-in — the event got no beer at all.
+    for (var bsI=0; bsI<namedProducts.length; bsI++) {
+      var npB=namedProducts[bsI];
+      if (String(npB.category||'').toLowerCase()!=='beer') continue;
+      var bstL=require('./event-prefs.js').beerStyleIn(npB.name);
+      if (!bstL) continue;
+      var nzL=function(x){return String(x||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]/g,'');};
+      var hitsFor=async function(terms){
+        var rs=await Promise.all(terms.map(function(t){return doSearch(t);})), seen={}, out=[];
+        rs.forEach(function(r,ti){ (r||[]).forEach(function(p){ var k=p.product_id||p.name;
+          if (!seen[k]&&nzL(p.name).indexOf(nzL(terms[ti]))>=0&&classifyOk('beer',p)&&!/\bcider\b/i.test(p.name||'')) { seen[k]=1; out.push(p); } }); });
+        return out;
+      };
+      var hL=await hitsFor(bstL.terms), usedL=bstL.label;
+      if (!hL.length&&bstL.then) { hL=await hitsFor(bstL.then.terms); usedL=bstL.then.label; }
+      if (!hL.length) { hL=(await doSearch('Beer')).filter(function(p){return classifyOk('beer',p)&&!/\bcider\b/i.test(p.name||'');}); usedL=''; }
+      console.log('[buildPackage] beer style line '+JSON.stringify(npB.name)+': '+(usedL?hL.length+' '+usedL+' beer(s)':'none of the style or its family — usual beer')+' — '+hL.slice(0,4).map(function(p){return p.name;}).join(' | '));
+      if (usedL!==bstL.label) beerNote='This store has no '+bstL.label+' beers right now, so I picked '+(usedL?usedL+' beers':'popular beers')+' instead.';
+      npB.label=npB.label||npB.name; npB.name='Beer'; results[bsI]=hL;
+    }
     // One 35s budget for ALL the market-price waits of a build, not 35s per not-carried line. Real bug (Oct 1,
     // nightly QA): Sean's 22-line email had 9 not-carried lines, each waited for its web price in turn -> 306s,
     // past the email agent's 300s chat timeout (no reply at all). Out of budget = cached price or none (logged).
@@ -1649,11 +1680,15 @@ async function buildPackage(iv) {
       } else console.log("[buildPackage] serving mix ignored (no overlap with package "+packageType+" categories): "+JSON.stringify(servingMix));
     }
     var spiritTypes2=["vodka","rum","bourbon","gin","tequila"];
+    // The spirits the customer asked for (event-prefs.js spiritTypesIn: "bourbon and tequila bar", "no vodka"). Oct 7: never
+    // passed, every rebuild was the five-spirit bar.
+    var askedSpirits=(Array.isArray(iv.spirit_types)?iv.spirit_types:[]).filter(function(t){return spiritTypes2.indexOf(t)>=0;});
+    if (askedSpirits.length) { spiritTypes2=askedSpirits; console.log('[buildPackage] spirits the customer asked for: '+spiritTypes2.join(', ')); }
     var spiritDrinks=Math.round(totalDrinks*split.spirits);
     var wineDrinks=Math.round(totalDrinks*split.wine);
     var beerDrinks=Math.round(totalDrinks*split.beer);
     var rawSB=split.spirits>0?Math.ceil(spiritDrinks/16):0;
-    var spiritBottles=split.spirits>0?Math.max(rawSB,5):0;
+    var spiritBottles=split.spirits>0?Math.max(rawSB,spiritTypes2.length):0;   // one bottle per spirit type at least (a full bar = 5)
     var wineBottles=split.wine>0?Math.ceil(wineDrinks/5):0;
     var beerCases=split.beer>0?Math.ceil(beerDrinks/beerPackSize):0;
     var redB=0,whiteB=0,sparkB=0;
@@ -1712,7 +1747,8 @@ async function buildPackage(iv) {
       if (rawSB < spiritBottles) {
         // A statement, never an offer to trim: DC (Sep 29) — the goal is to spend the customer's whole budget, and
         // "want me to trim it?" was also a second question after the mixers upsell.
-        fullBarNote = 'This includes a full bar — one bottle each of vodka, rum, bourbon, gin and tequila — so every guest\'s spirit is covered.';
+        fullBarNote = askedSpirits.length ? 'This includes one bottle each of ' + (spiritTypes2.length>1 ? spiritTypes2.slice(0,-1).join(', ') + ' and ' + spiritTypes2[spiritTypes2.length-1] : spiritTypes2[0]) + ', as asked.'
+          : 'This includes a full bar — one bottle each of vodka, rum, bourbon, gin and tequila — so every guest\'s spirit is covered.';
         console.log('[buildPackage] full-bar minimum: ' + spiritBottles + ' spirit bottles for ~' + spiritDrinks + ' spirit drinks (needs ' + rawSB + ') — customer told it is a full bar (no trim offer)');
       }
       // Spread the exact bottle count across the types (13 -> 3,3,3,2,2). Real bug (found by the
@@ -1735,6 +1771,31 @@ async function buildPackage(iv) {
     }
     if (plan.length===0) return fail("Nothing to search");
     var resAll=await Promise.all(plan.map(function(pl){return doSearch(pl.term);}));
+    // The beer the customer asked for (event-prefs.js beerStyleIn: "beer (Oktoberfest selections)", "German beers"): the
+    // style's own words first, then its family (Oktoberfest -> German brands), each hit must carry the word in its name.
+    // None here -> the usual beer, and the customer is told plainly (beer_note). Oct 7: never passed — Stella + Goose Island.
+    if (iv.beer_style&&Array.isArray(iv.beer_style.terms)) {
+      var bIdx=-1; for (var bi0=0;bi0<plan.length;bi0++) if (plan[bi0].slot==="beer") { bIdx=bi0; break; }
+      if (bIdx>=0) {
+        var nzB=function(x){return String(x||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]/g,'');};
+        var styleHits=async function(terms){
+          var rs=await Promise.all(terms.map(function(t){return doSearch(t);})), seen={}, out=[];
+          rs.forEach(function(r,ti){ (r||[]).forEach(function(p){ var k=p.product_id||p.name;
+            if (!seen[k]&&nzB(p.name).indexOf(nzB(terms[ti]))>=0&&classifyOk('beer',p)&&!/\bcider\b/i.test(p.name||'')) { seen[k]=1; out.push(p); } }); });
+          return out;
+        };
+        var bst=iv.beer_style, bHits=await styleHits(bst.terms), bUsed=bst.label;
+        if (!bHits.length&&bst.then) { bHits=await styleHits(bst.then.terms); bUsed=bst.then.label; }
+        if (bHits.length) {
+          resAll[bIdx]=bHits;
+          if (bUsed!==bst.label) beerNote='This store has no '+bst.label+' beers right now, so I picked '+bUsed+' beers instead.';
+          console.log('[buildPackage] beer style '+bst.label+': '+bHits.length+' '+bUsed+' beer(s) — '+bHits.slice(0,4).map(function(p){return p.name;}).join(' | '));
+        } else {
+          beerNote='This store has no '+bst.label+' beers right now, so the beer is a popular pick instead.';
+          console.log('[buildPackage] beer style '+bst.label+': NOT CARRIED here'+(bst.then?' (nor '+bst.then.label+')':'')+' — usual beer picks');
+        }
+      }
+    }
     for (var pIdx=0;pIdx<plan.length;pIdx++) {
       var pl=plan[pIdx];
       // "Beer" is beer: a cider is not picked for it while beer is in stock (Oct 4, claude.ai connector: a third of a
@@ -1858,6 +1919,10 @@ async function buildPackage(iv) {
               // Same size/pack REQUIRED for a downgrade — a 6-pack is not a cheaper 24-pack,
               // and a 375ml is not a cheaper 750ml. Different size = different product.
               if(liKey&&sizeKey(p.sizeStr)!==liKey) return false;
+              // A spirit line stays its spirit: Oct 7 "Bourbon" was downgraded to Evan Williams Egg Nog.
+              var slotS=String(li.label||'').toLowerCase();
+              if(li.category==='spirits'&&SPIRIT_KW[slotS]&&!classifyOk(slotS,p)) return false;
+              if(li.category==='beer'&&String(li.label||'').toLowerCase()==='beer'&&!classifyOk('beer',p)) return false;
               if(li.category==='wine'){
                 // Never a sake/port/sherry/vermouth etc. in a table-wine slot.
                 if(isNotTableWine(p.name)) return false;
@@ -1894,6 +1959,18 @@ async function buildPackage(iv) {
       if (idxQ<0) break;
       console.log('[buildPackage] QUANTITY-FIRST last-resort qty trim',lineItems[idxQ].name,lineItems[idxQ].qty,'->',lineItems[idxQ].qty-1);
       lineItems[idxQ].qty-=1;
+    }
+  }
+
+  // The budget fit can turn two lines into the same product (Oct 7: two Barefoot Sauvignon Blanc lines both became Gato
+  // Negro -> "6 x Gato Negro" twice). One product = one line, quantities added.
+  for (var mi=lineItems.length-1; mi>0; mi--) {
+    for (var mj=0; mj<mi; mj++) {
+      var A=lineItems[mj], B=lineItems[mi];
+      if (String(A.name).trim().toLowerCase()===String(B.name).trim().toLowerCase() && String(A.size||'')===String(B.size||'') && A.price===B.price) {
+        console.log('[buildPackage] same product on two lines merged: '+A.name+' '+A.qty+' + '+B.qty);
+        A.qty+=B.qty; lineItems.splice(mi,1); break;
+      }
     }
   }
 
@@ -1964,7 +2041,7 @@ async function buildPackage(iv) {
     // stand-in gets it (server.js applyBasketSubstitute) instead of 1.
     unavailable_qty:JSON.stringify(isCustom&&plannedQty?namedProducts.reduce(function(o,np,ix){ if(unavailable.indexOf(np.name)>=0&&plannedQty[ix]) o[np.name]=plannedQty[ix].qty; return o; },{}):{}),
     brand_substitutions:(typeof brandSubstitutions!=='undefined'?brandSubstitutions:[]).join("; "),
-    total_drinks:String(totalDrinks), drinks_per_person:String(baseDpp), full_bar_note:fullBarNote,
+    total_drinks:String(totalDrinks), drinks_per_person:String(baseDpp), full_bar_note:fullBarNote, beer_note:beerNote,
     category_needs:categoryNeeds?JSON.stringify(categoryNeeds):"", summary:summary };
 }
 

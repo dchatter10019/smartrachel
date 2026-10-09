@@ -506,6 +506,15 @@ async function executeTool(name, input) {
       // as an Argentine Malbec blend (DC, Oct 6). Results that don't carry the query's producer words are dropped; none
       // left = not carried here.
       const rm = require(RACHEL_DIR + '/search-match.js').rankByMatch(searchName, coreRank);
+      // A MIXER asked for by name (mixers.js: Coke, OJ, tonic...) with no spirit in the query is never answered with an
+      // alcoholic product that carries its word — Oct 8 (connector): "Coca-Cola" -> "Jack Daniel's & Coca-Cola" as found.
+      try {
+        const MXq = require(RACHEL_DIR + '/mixers.js'), DTq = require(RACHEL_DIR + '/drink-type.js');
+        if (MXq.mixersIn(searchName).length && !DTq.typeOf({ name: searchName })) {
+          const alc = rm.products.filter(p => DTq.typeOf(p) || /\b(cocktails?|mixed with|spiked|hard|vodka|rum|whiske?y|tequila|gin|bourbon)\b/i.test(p.name || ''));
+          if (alc.length) { console.log('[product_query] ' + JSON.stringify(searchName) + ' is a mixer — dropped alcoholic result(s): ' + alc.slice(0, 5).map(p => p.name).join(' | ')); rm.products = rm.products.filter(p => alc.indexOf(p) < 0); if (!rm.products.length) rm.found = false; }
+        }
+      } catch (e) { console.log('[product_query] mixer check error: ' + e.message); }
       if (rm.unrelated && rm.unrelated.length) console.log('[product_query] ' + JSON.stringify(searchName) + ' — dropped ' + rm.unrelated.length + ' result(s) without "' + rm.key.join(' ') + '": ' + rm.unrelated.slice(0, 5).map(p => p.name).join(' | '));
       if (!rm.found && coreRank.length) {
         console.log('[product_query] NOT FOUND ' + JSON.stringify(searchName) + ' — no result carries "' + rm.key.join(' ') + '"');
@@ -585,7 +594,9 @@ async function executeTool(name, input) {
       wine_price_target: input.wine_price_target || 0,
       beer_max_price: input.beer_max_price || input.max_price || 0,
       seltzer_max_price: input.seltzer_max_price || 0,
-      beer_pack_size: input.beer_pack_size || 0
+      beer_pack_size: input.beer_pack_size || 0,
+      spirit_types: input.spirit_types || null,   // rachel/event-prefs.js: the spirits the customer asked for (Oct 9)
+      beer_style: input.beer_style || null        // rachel/event-prefs.js: the beer style asked for, closest family first
     });
     { const outage = catalogOutage(failBefore, result); if (outage) return outage; }
     if (result.success !== 'true') return { success: false, error: result.error };
@@ -798,6 +809,7 @@ async function executeTool(name, input) {
       total_drinks: result.total_drinks,
       drinks_per_person: result.drinks_per_person,
       full_bar_note: result.full_bar_note || '',
+      beer_note: result.beer_note ? result.beer_note + ' Say this in one plain line — no question.' : '',
       supply_check: supply.text,
       tier_warning: result.tier_warning || ''
     };
@@ -948,6 +960,7 @@ async function executeTool(name, input) {
       unavailable: result.unavailable,
       unavailable_qty: result.unavailable_qty || '{}',
       supply_check: supply2.text,
+      beer_note: result.beer_note ? result.beer_note + ' Say this in one plain line — no question.' : '',
       tier_warning: result.tier_warning || ''
     };
   }
@@ -1382,7 +1395,7 @@ async function executeTool(name, input) {
 
 const TOOLS = [
   { name: 'product_query', description: 'Search for specific products. Use for do-you-have or show-me queries.', inputSchema: { type: 'object', properties: { queries: { type: 'array' }, zip: { type: 'string' }, email: { type: 'string' }, min_price: { type: 'number' }, max_price: { type: 'number' } }, required: ['queries', 'zip'] } },
-  { name: 'menu_build', description: 'Build event beverage package with guest count and budget.', inputSchema: { type: 'object', properties: { guests: { type: 'number' }, hours: { type: 'number' }, budget: { type: 'number' }, categories: { type: 'array' }, zip: { type: 'string' }, email: { type: 'string' }, package_type: { type: 'string' } }, required: ['guests', 'hours', 'zip'] } },
+  { name: 'menu_build', description: 'Build event beverage package with guest count and budget.', inputSchema: { type: 'object', properties: { guests: { type: 'number' }, hours: { type: 'number' }, budget: { type: 'number' }, categories: { type: 'array' }, zip: { type: 'string' }, email: { type: 'string' }, package_type: { type: 'string' }, spirit_types: { type: 'array' }, beer_style: { type: 'object' } }, required: ['guests', 'hours', 'zip'] } },
   { name: 'custom_list', description: 'Build package from named product list with quantities.', inputSchema: { type: 'object', properties: { named_products: { type: 'array' }, zip: { type: 'string' }, email: { type: 'string' }, budget: { type: 'number' } }, required: ['named_products', 'zip'] } },
   { name: 'alternatives', description: 'Alternatives for specific products this store does not carry, anchored to the original\'s market price and region.', inputSchema: { type: 'object', properties: { originals: { type: 'array', description: '[{name, category, ref_price?}]' }, zip: { type: 'string' }, email: { type: 'string' } }, required: ['originals', 'zip'] } },
   { name: 'recommendation', description: 'Get personalized recommendations based on occasion and customer history.', inputSchema: { type: 'object', properties: { occasion: { type: 'string' }, category: { type: 'string' }, zip: { type: 'string' }, email: { type: 'string' }, budget_per_bottle: { type: 'number' } }, required: ['zip'] } },

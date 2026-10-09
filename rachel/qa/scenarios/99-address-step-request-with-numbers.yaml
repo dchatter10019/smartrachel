@@ -1,0 +1,13 @@
+name: address-step-request-with-numbers
+# Oct 7 (connector rachel_chat): a revision request with numbers ("150 guests, 3 hours, $1,500") at the address step was
+# geocoded and answered "I couldn't find that address" with the whole request echoed as the example. Not address-like ->
+# not geocoded; it is held as the request and the address is asked for.
+tags: [ux]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "Please build a package for 150 guests, 3 hours, $1,500 total budget: wine, beer and a bourbon and tequila bar."
+    expect:
+      not_contains: ["couldn't find that address"]
+      contains: ["address"]
+      log_contains: ["[addr] not geocoded — not address-like"]

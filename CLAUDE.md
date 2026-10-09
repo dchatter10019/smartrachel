@@ -307,6 +307,21 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   Mix percentages: "60 pct / percent wine", "60/40 wine/beer", "wine 70%" (that form read NaN until Oct 4) (serving-mix.js).
   An event's beer packs are sized across the beer lines together on the real pack sizes to >= 95% of the need ([buildPackage]
   beer packs sized together; Oct 4: two lines each rounded up = 72 bottles for 50), and the "Beer" slot skips cider.
+- Event spirits + beer style (DC Oct 7 connector Oktoberfest test; fixed Oct 9): rachel/event-prefs.js reads from the
+  customer's words which spirits ("bourbon and tequila bar", "no vodka or gin"; "mostly whiskey" never shrinks the bar) and
+  which beer style ("beer (Oktoberfest selections)", "German beers"; a theme alone is not the beer). menu_build gets
+  spirit_types / beer_style (connector: rachel-mcp from request + serving_mix; Slack/email/WhatsApp: rachel.js from this
+  message + originalRequest + serving-mix answer) -> buildPackage spirit slots = those types ([buildPackage] spirits the
+  customer asked for), beer = the style's words, then its family (Oktoberfest -> German brands), else usual beer; a custom_list
+  "Oktoberfest Beer" line is handled the same way. Not carried -> beer_note ("This store has no Oktoberfest beers right now,
+  so I picked German beers instead."), appended in code on /chat (replyNote), a plain statement on the connector. Spirit
+  slots never take a wine ("1000 Stories Zinfandel Bourbon") or a cream / nog / liqueur / canned cocktail, beer slots never an
+  NA beer, and the QUANTITY-FIRST downgrade re-checks the slot (it swapped that "bourbon" for Evan Williams Egg Nog). Two
+  lines that end up the same product are merged. Catalog rows listed twice with the same name+size+price: line-resolve takes
+  the exact-name one (Oct 8: the Stella left a connector order as "not an exact catalog match"). product_query for a mixer
+  (mixers.js) with no spirit in the query drops alcoholic rows ("Coca-Cola" -> Jack Daniel's & Coca-Cola). At the address
+  step only an address-like message is geocoded; "150 guests, 3 hours, $1,500" is held as the request (was "I couldn't find
+  that address" with the request echoed). Scenarios 98, 99.
 - "use another / a different <type>" with ONE basket line of that type: the LLM's product_query is rerouted in code to
   alternatives for that line ([swap-to-alternatives]; anchored to its price, the line's own product excluded via
   originals[].exclude). A confirm_substitute whose replacement is the B of the customer's "A -> B" must replace A's line

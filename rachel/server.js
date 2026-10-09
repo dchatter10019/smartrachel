@@ -1340,7 +1340,9 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
     onPackageBuilt: (em, lineItems, fmt, saInput, saResult) => {
       // Full-bar note (DC: keep one bottle of each spirit type, but tell the customer when that's
       // more than they need). Appended to this turn's reply in code — not left to the LLM.
-      try { if (saResult && saResult.full_bar_note) { getState(sessionKey).replyNote = saResult.full_bar_note; } } catch (e) {}
+      // + the beer-style note (event-prefs.js; "This store has no Oktoberfest beers right now, so I picked German beers instead.")
+      try { const notes = [saResult && saResult.full_bar_note, saResult && saResult.beer_note && String(saResult.beer_note).replace(/\s*Say this in one plain line.*$/, '')].filter(Boolean);
+        if (notes.length) getState(sessionKey).replyNote = notes.join(' '); } catch (e) {}
       // The customer's mixers are already in the package (shopping-agent menu_build, mixers.js; DC Oct 7: fewer back-and-forths):
       // no "would you also like to add mixers...?" question after it — the follow-up is order or proposal.
       try { const li = typeof lineItems === 'string' ? JSON.parse(lineItems || '[]') : (lineItems || []); if (li.some(x => x && x.category === 'mixer')) { getState(sessionKey).mixerAsked = true; console.log('[mixers] package has the customer\'s mixers — no mixers question'); } } catch (e) {}
@@ -2199,8 +2201,14 @@ app.post('/chat', async (req, res) => {
     // Address normalization via Google at the address steps (and an address change at
     // confirm). A zip-less address gets its zip; a sloppy one ('425 west 53rd st, NY, NY
     // 10019') becomes a clean one. The parser below then sees a complete address.
+    // Address-like = a full address, a street word after the number, or a short reply. Real (Oct 7, connector): "Please
+    // revise the package: ... 150 guests, 3 hours ... $1,500 total budget" was geocoded ("150 guests") and answered "I
+    // couldn't find that address" with the whole request echoed back as the example.
+    const STREET_W = /\b\d{1,6}\s+(?:[A-Za-z0-9'.-]+\s+){0,4}?(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Way|Pl|Place|Ct|Court|Pkwy|Parkway|Ter|Terrace|Sq|Square|Hwy|Highway|Cir|Circle|Plaza|Row|Wharf|Pier|Broadway|Bowery)\b\.?/i;
+    const addrLike = !!require('./address-extract.js').findAddress(message) || STREET_W.test(message) || message.trim().split(/\s+/).length <= 8;
     if ((['addr', 'addr_new'].includes(state.step) || (state.orderStep === 'confirm' && /\b(address|deliver to|delivery location)\b/i.test(message)))
-        && /\b\d{1,6}\s+[A-Za-z]/.test(message) && !/^\s*(yes|yeah|yep|no|nope|same)\b[\s.!]*$/i.test(message)) {   // only a BARE yes/no is skipped; 'no, use 11 Broadway...' is geocoded
+        && /\b\d{1,6}\s+[A-Za-z]/.test(message) && !/^\s*(yes|yeah|yep|no|nope|same)\b[\s.!]*$/i.test(message)
+        && (addrLike || (console.log('[addr] not geocoded — not address-like: ' + JSON.stringify(message).slice(0, 70)), false))) {   // only a BARE yes/no is skipped; 'no, use 11 Broadway...' is geocoded
       const addrText = message.replace(/^.*?\b(address|deliver to|delivery location|ship to)\b\s*(to|is|:)?\s*/i, '').replace(/^(no|nope|use|instead)[,.\s]+/i, '').trim();
       const geo = await geocodeAddress(addrText);
       if (geo) {
@@ -2262,7 +2270,8 @@ app.post('/chat', async (req, res) => {
       } else {
         // Not an address. A request ("I want some beer") is held and replayed after the
         // address, as at the age gate; anything else gets a concrete example, not the same line.
-        const looksLikeRequest = !/\d/.test(message) && message.split(/\s+/).length >= 2 && /\b(want|need|order|looking|do you|have|show|price|how much|bottle|wine|beer|vodka|tequila|whiskey|champagne|spirits|party|event|recommend)\b/i.test(message);
+        // Digits are fine when the message isn't address-like ("revise the package ... 150 guests, $1,500"; Oct 7).
+        const looksLikeRequest = (!/\d/.test(message) || !addrLike) && message.split(/\s+/).length >= 2 && /\b(want|need|order|looking|do you|have|show|price|how much|bottles?|wine|beer|vodka|tequila|whiskey|bourbon|champagne|spirits|party|event|recommend|package|guests?|budget|revise|add|change)\b/i.test(message);
         if (looksLikeRequest && !state.pendingIntent) {
           state.pendingIntent = message; saveFlowState();
           console.log('[addr] request at the address step — held for after the address: ' + JSON.stringify(message).slice(0, 70));

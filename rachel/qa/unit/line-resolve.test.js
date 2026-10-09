@@ -26,6 +26,13 @@ eq('nameOnly strips sizes', LR.nameOnly('High Noon Variety Pool Pack 8x12 oz Can
   const r = await LR.resolveLines([{ name: 'Baileys Irish Cream', price: 54.99, qty: 1 }, { name: 'Linked', product_id: 'p', establishmentId: 'e', price: 1 }],
     async () => [P('Baileys Irish Cream - 1.75 L', 54.99, 'b')], () => {});
   eq('resolveLines links, keeps qty, leaves linked lines alone', [r.items[0].product_id, r.items[0].qty, r.items[1].product_id, r.linked.length, r.unresolved.length], ['b', 1, 'p', 1, 0]);
+  {
+    // Oct 8 (connector): the catalog lists "Stella Artois 24x12 Oz Bottle" twice; the order dropped the Stella.
+    const S = (n, id) => ({ name: n, price: 62.99, product_id: id, establishmentId: 'e', sizeStr: '24x12 Oz bottle' });
+    const st = [S('Stella Artois 24x12 Oz Bottle', 's1'), S('Stella Artois Cider 24x12 Oz Bottle', 'c'), S('Stella Artois 24x12 Oz Bottle', 's2'), S('Stella Artois Light 24x12 Oz Bottle', 'l')];
+    eq('exact name listed twice = one product', (LR.choose({ name: 'Stella Artois 24x12 Oz Bottle', price: 62.99 }, st).pick || {}).product_id, 's1');
+    eq('a vague name is still asked', LR.choose({ name: 'Stella Artois', price: 62.99 }, st).pick, null);
+  }
   console.log(failed ? '\nline-resolve: ' + failed + ' FAILED' : '\nline-resolve: all passed');
   if (failed) process.exit(1);
 })();

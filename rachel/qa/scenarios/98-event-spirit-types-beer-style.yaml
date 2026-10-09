@@ -1,0 +1,17 @@
+name: event-spirit-types-beer-style
+# Oct 7 (DC, claude.ai connector): "Oktoberfest-themed party ... beer (Oktoberfest selections), bourbon, and tequila bar"
+# got the five-spirit full bar with Stella + Goose Island; the revision changed nothing; the bourbon slot took "1000 Stories
+# Zinfandel Bourbon" (a wine) and the budget fit swapped it for Evan Williams Egg Nog. event-prefs.js reads the spirits and
+# the beer style from the customer's words (Slack/email/WhatsApp: rachel.js; connector: rachel-mcp.js) for menu_build.
+tags: [events]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "1 Rockefeller Plaza, New York, NY 10019"
+  - send: "Oktoberfest party for 150 guests, 3 hours, $1500 budget. Wine, beer (Oktoberfest selections), and a bourbon and tequila bar."
+  - send: "equal parts beer, wine and spirits"
+    expect:
+      contains: ["Bourbon", "Tequila", "Product total", "no Oktoberfest beers"]
+      not_matches: "(?i)\\b(vodka|gin|rum)\\b[^\\n]*\\$|egg nog|zinfandel bourbon|non alcoholic|\\bstella\\b|goose island"
+      # The LLM sends custom_list ("Oktoberfest Beer" / "Bourbon" / "Tequila" lines) or menu_build (event-prefs) — either way:
+      log_contains: ["beer style"]

@@ -371,6 +371,16 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             saInput.mixers = mx; saInput.mixed_drinks = MX.mixedDrinks(said);
             if (mx.length || saInput.mixed_drinks) console.log('[mixers] from the customer\'s words: ' + (mx.join(', ') || 'none named') + (saInput.mixed_drinks ? ' — mixed drinks (mixing-grade spirits)' : ''));
           } catch (e) { console.log('[mixers] error: ' + e.message); }
+          // Which spirits / which beer the customer asked for (event-prefs.js, Oct 9) — from this message, the original request
+          // and the serving-mix answer (not the whole history: an earlier "3 bottles of vodka" order is not an event brief).
+          try {
+            const EP = require('./event-prefs.js'), cats = (saInput.categories || []).map(c => String(c).toLowerCase()).join(' ');
+            const brief = String(customerMessage || '') + '\n' + String((sessionState && sessionState.originalRequest) || '') + '\n' + String((eventParams && eventParams.serving_mix_text) || '');
+            const sp = !cats || /spirit|liquor/.test(cats) ? EP.spiritTypesIn(brief) : null, bs = !cats || /beer/.test(cats) ? EP.beerStyleIn(brief) : null;
+            if (sp) saInput.spirit_types = sp.types;
+            if (bs) saInput.beer_style = bs;
+            if (sp || bs) console.log('[event-prefs] from the customer\'s words: ' + (sp ? 'spirits ' + sp.types.join(', ') + ' (' + sp.why + ')' : '') + (sp && bs ? ' · ' : '') + (bs ? 'beer ' + bs.label : ''));
+          } catch (e) { console.log('[event-prefs] error: ' + e.message); }
         }
         // DURATION IS NEVER ASSUMED. Real bug (Sep 29, QA replay of DC's Slack event): "event for 50 people for
         // $5000, liquor beer and wine" -> the LLM built with hours=5 the customer never gave (the prompt says
@@ -676,6 +686,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         // the model also read it here and wrote its own "heads-up" paragraph, so the customer got the
         // same trim offer twice. The model no longer sees it.
         if (result.full_bar_note) { console.log('[tool] full_bar_note withheld from the model — appended in code'); delete result.full_bar_note; }
+        if (result.beer_note) { console.log('[tool] beer_note withheld from the model — appended in code'); delete result.beer_note; }
         // Track unavailable items via the tool's own structured field, not by
         // trying to parse the LLM's eventual free-text reply — this is what lets
         // a later deterministic "yes, find a substitute" handler in server.js
