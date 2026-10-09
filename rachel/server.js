@@ -1258,7 +1258,16 @@ async function findSubstitute(name, zip, email) {
     const rt = await rr.text(); const rl = rt.split('\n').find(l => l.startsWith('data:'));
     const res = rl ? JSON.parse(JSON.parse(rl.replace('data:', '').trim()).result.content[0].text) : null;
     const prods = (res && res.results && res.results[0] && res.results[0].products) || [];
-    const p = prods.find(pr => { const pw = ' ' + words(pr.name).join(' ') + ' '; return key.every(k => pw.includes(' ' + k + ' ')); });
+    // A mixer / garnish line ("Mint", "Lime Juice") is never offered a spirit or wine that only carries its word.
+    // F-0024 (Oct 8): "Mint" for mojitos -> "Ketel One Botanical Cucumber Mint is in stock — swap it in?".
+    const mixerOnly = words(name).every(w => /^(mint|lime|limes|lemon|lemons|juice|syrup|simple|soda|water|club|tonic|sugar|salt|ice|cola|coke|ginger|grenadine|cranberry|orange|grapefruit|pineapple|cucumber|basil|agave|puree|fresh|leaves|sprigs|garnish)$/.test(w));
+    const DTs = require('./drink-type.js');
+    const p = prods.find(pr => {
+      const pw = ' ' + words(pr.name).join(' ') + ' ';
+      if (!key.every(k => pw.includes(' ' + k + ' '))) return false;
+      if (mixerOnly && DTs.typeOf(pr)) { console.log('[cta] substitute for mixer ' + JSON.stringify(name) + ' NOT offered: ' + pr.name + ' (' + DTs.typeOf(pr) + ', alcoholic)'); return false; }
+      return true;
+    });
     if (!p) { console.log('[cta] no same-brand substitute in stock for ' + JSON.stringify(name) + ' (searched ' + JSON.stringify(q) + ': ' + prods.map(x => x.name).join(' | ') + ')'); return null; }
     const sub = { name: String(p.name).replace(/\s*-\s*[\d.]+\s*(ML|L|OZ)\s*$/i, ''), size: p.sizeStr || p.size || ((String(p.name).match(/[\d.]+\s*(?:ML|L|OZ)\s*$/i) || [''])[0]).replace(/ML$/i, 'mL'), price: parseFloat(p.salePrice || p.price) || 0 };
     console.log('[cta] substitute for ' + JSON.stringify(name) + ': ' + sub.name + ' ' + sub.size + ' $' + sub.price);

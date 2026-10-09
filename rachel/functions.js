@@ -1195,6 +1195,14 @@ async function buildPackage(iv) {
       // Liquor / Aperitif, so the wine check rejected it and a Sauvignon Blanc stood in.
       if (found.length===0) {
         var exactX=results[n].filter(function(p){return !isMini(p)&&PM.verdict(reqForFit,p).kind==='exact';});
+        // ...but a mixer / garnish is never rescued as a spirit, wine or beer that merely has its word in the name.
+        // Real complaint (Oct 8, connector, mojitos): "Mint" (mixer) -> Ketel One Botanical Cucumber Mint vodka.
+        // A drink type the request itself names (typeOf "Lillet Blanc" = aperitif) still counts; Cointreau / bitters have none.
+        if (exactX.length && catN==='mixer') {
+          var DTx=require('./drink-type.js'), reqT=DTx.typeOf({name:np.name});
+          var alcX=exactX.filter(function(p){var t=DTx.typeOf(p); return t && t!==reqT;});
+          if (alcX.length) { console.log('[buildPackage] category: '+JSON.stringify(np.name)+' asked as mixer — NOT kept as '+alcX.map(function(p){return p.name+' ('+(p.category||'?')+(p.subCategory?' / '+p.subCategory:'')+')';}).join(', ')+' (alcoholic product for a mixer)'); exactX=exactX.filter(function(p){return alcX.indexOf(p)<0;}); }
+        }
         if (exactX.length) { found=exactX; console.log('[buildPackage] category: '+JSON.stringify(np.name)+' asked as '+catN+', the catalog files '+exactX[0].name+' as '+(exactX[0].category||'?')+(exactX[0].subCategory?' / '+exactX[0].subCategory:'')+' — exact product kept'); }
       }
       // Non-alcoholic only for non-alcoholic, alcoholic only for alcoholic — in every match, not only stand-ins. Real bug

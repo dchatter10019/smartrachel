@@ -1,0 +1,15 @@
+name: fix-f-0024-mojito-mint-not-vodka
+# F-0024 (Oct 8, DC on the connector): mojitos for 40 guests — the "Mint" mixer line became Ketel One Botanical Cucumber
+# Mint vodka: the "exact product carried under another category" rescue (meant for Lillet asked as wine) took any product
+# with the word "mint" in its name. A mixer is never rescued as a spirit/wine of a type it didn't name. Same builder
+# (custom_list) on Slack, WhatsApp, email and the connector (cocktail-expand -> custom_list).
+tags: [events]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "1 Rockefeller Plaza, New York, NY 10019"
+  - send: "For mojitos please send:\n3 x White Rum\n2 x Lime Juice\n2 x Mint\n2 x Soda Water"
+    expect:
+      contains: ["Product total"]
+      not_matches: "(?i)ketel one botanical cucumber mint"
+      log_not_contains: ["Ketel One Botanical Cucumber Mint - 750 ML as Liquor / Vodka — exact product kept"]
