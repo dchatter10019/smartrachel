@@ -14,9 +14,9 @@ turns:
   # 0.70-0.82 and sometimes went to the LLM, which swapped correctly)
   - send: "actually bottles are fine, I'll take the Stella Artois 12pk 11.2 oz Btl"
     expect:
-      matches: "(?i)\\b4\\s*x\\s*\\*?Stella Artois 12pk[^\\n]*Btl"
+      matches: "(?i)\\b4\\s*x\\s*\\*?Stella Artois (?:12pk[^\\n]*Btl|12 x 11\\.2 OZ Bottles)"
       not_contains: ["How many bottles"]
   - send: "show my basket"
     expect:
-      matches: "(?i)\\b4\\s*x?\\s*[^\\n]*Stella Artois 12pk[^\\n]*Btl"
+      matches: "(?i)\\b4\\s*x?\\s*[^\\n]*Stella Artois (?:12pk[^\\n]*Btl|12 x 11\\.2 OZ Bottles)"
       not_matches: "(?i)12 x 12 OZ Can"

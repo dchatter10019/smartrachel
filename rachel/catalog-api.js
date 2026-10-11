@@ -49,4 +49,16 @@ async function catalogFetch(o) {
 
 console.log('[catalog-api] catalog search: ' + (mode() === 'getproducts' ? 'getProducts (' + newBase() + ')' : 'legacy searchCorpProducts'));
 
-module.exports = { catalogUrl, catalogFetch, rowsFrom, mode };
+// The search matches hyphens literally: "Coca Cola" and "St Germain" find nothing, "Coca-Cola" / "St-Germain" do (catalog
+// re-import, Oct 11 nightly: the Coke mixer and St-Germain went "not carried"). A search that found nothing is retried with
+// each pair of adjacent words joined by a hyphen — at most 2 tries, words only (no sizes).
+function hyphenJoins(term) {
+  const w = String(term || '').split(/\s+/), out = [];
+  for (let i = 0; i + 1 < w.length && out.length < 2; i++) {
+    if (/^[A-Za-z\u00C0-\u024F]{2,}$/.test(w[i]) && /^[A-Za-z\u00C0-\u024F]{3,}$/.test(w[i + 1]) && ![w[i], w[i + 1]].some(x => /^(and|or|the|of|with|for|wine|wines|beer|beers|vodka|gin|rum|tequila|whiskey|bourbon)$/i.test(x)))
+      out.push(w.slice(0, i).concat(w[i] + '-' + w[i + 1], w.slice(i + 2)).join(' '));
+  }
+  return out;
+}
+
+module.exports = { catalogUrl, catalogFetch, rowsFrom, mode, hyphenJoins };

@@ -21,8 +21,8 @@ turns:
   - send: "actually bottles are fine, I'll take the Stella Artois 12pk 11.2 oz Btl"
     # the switch keeps the 48 units (4 x 12-pack), whichever path applies it
     expect:
-      matches: "(?i)\\b4\\s*x\\s*\\*?Stella Artois 12pk[^\\n]*Btl"
+      matches: "(?i)\\b4\\s*x\\s*\\*?Stella Artois (?:12pk[^\\n]*Btl|12 x 11\\.2 OZ Bottles)"
   - send: "show my basket"
     expect:
-      matches: "(?i)\\b4\\s*x?\\s*[^\\n]*Stella Artois 12pk[^\\n]*Btl"
+      matches: "(?i)\\b4\\s*x?\\s*[^\\n]*Stella Artois (?:12pk[^\\n]*Btl|12 x 11\\.2 OZ Bottles)"
       not_matches: "(?i)\\b[128]\\s*x\\s*Stella"

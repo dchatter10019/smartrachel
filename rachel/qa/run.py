@@ -212,7 +212,7 @@ def send(session, text, fmt, email, images=None, idle=False, ctx=None):
     t0 = time.time()
     # Above the email agent's own wait (RACHEL_EMAIL_TIMEOUT 300s): a 22-line quote email takes ~3.5 min alone and passed
     # 240s under the nightly's parallel load (Oct 2, email-quote-list: the reply was right, the harness had hung up).
-    r = httpx.post(RACHEL, json=payload, timeout=330)
+    r = httpx.post(RACHEL, json=payload, timeout=420)   # a 22-line email quote ran 299-330s (Oct 7-11) and timed out at 330
     return r.json().get("text", ""), round(time.time() - t0, 1)
 
 EVENTS_FILE = "/home/ubuntu/logs/events.jsonl"   # staging (--url): its own data dir's events.jsonl
@@ -257,7 +257,15 @@ def check_events(session, spec, wait=3.0):
     if spec.get("all") and not all(sub(e, spec["all"]) for e in evs): fails.append(f"events: not every line matches {spec['all']}")
     return fails
 
+# Product names in replies, PDFs and logs are compared without accents: the catalog re-import of Oct 11 renamed
+# Patron -> Patrón, Dom Perignon -> Dom Pérignon, Kolsch -> Kölsch, and 13 assertions written in plain letters failed.
+def fold(x):
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", str(x or "")) if not unicodedata.combining(c))
+
 def check(reply, expect, log_text=""):
+    reply, log_text = fold(reply), fold(log_text)
+    expect = {k: (fold(v) if isinstance(v, str) and k != "judge" else [fold(x) for x in v] if isinstance(v, list) and k != "judge" else v) for k, v in (expect or {}).items()}
     fails = []; low = reply.lower()
     for s in expect.get("log_contains", []):
         if s not in log_text: fails.append(f"log missing {s!r}")
@@ -278,6 +286,7 @@ def check(reply, expect, log_text=""):
                 pdf = httpx.get(m.group(0), timeout=30).content
                 with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f: f.write(pdf); path = f.name
                 txt = subprocess.run(["pdftotext", "-layout", path, "-"], capture_output=True, text=True, timeout=30).stdout
+                txt = fold(txt)
             except Exception as e: fails.append(f"pdf read error: {e}")
         else: fails.append("no PDF link in reply")
         for s_ in expect.get("pdf_contains", []):

@@ -1,11 +1,17 @@
 // Search ranking: a brand's core expressions before its specialty bottles (see shopping-agent searches).
 const CORE_EXPR = new Set(['blanco', 'silver', 'plata', 'reposado', 'anejo', 'añejo', 'white', 'gold', 'original', 'classic']);
 const SEARCH_NOISE = new Set(['ml', 'l', 'oz', 'tequila', 'vodka', 'whiskey', 'whisky', 'bourbon', 'rum', 'gin', 'scotch', 'mezcal', 'cognac', 'brandy', 'wine', 'beer', 'the', 'of', 'and', 'straight', 'kentucky']);
+const words = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  .replace(/\b\d+(\.\d+)?\s*(ml|l|oz)\b/g, ' ')
+  .replace(/\(?\b\d+(\.\d+)?\s*proof\b\)?/g, ' ')   // "750 ML (80 Proof)" is the plain bottle   // sizes only: "1942" and "70" are expressions
+  .split(/[^a-z0-9']+/).filter(w => w && !SEARCH_NOISE.has(w));
+// How many words a product name adds to the query that aren't a core expression: "Patron Silver" -> Patrón Silver
+// Tequila 0, Roca Patrón Silver Tequila 1 (another product line). Used by buildPackage's named-product sort.
+function extraWords(query, name) {
+  const qw = new Set(words(query));
+  return words(name).filter(w => !qw.has(w) && !CORE_EXPR.has(w)).length;
+}
 function coreFirst(query, rows) {
-  const words = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
-    .replace(/\b\d+(\.\d+)?\s*(ml|l|oz)\b/g, ' ')
-    .replace(/\(?\b\d+(\.\d+)?\s*proof\b\)?/g, ' ')   // "750 ML (80 Proof)" is the plain bottle   // sizes only: "1942" and "70" are expressions
-    .split(/[^a-z0-9']+/).filter(w => w && !SEARCH_NOISE.has(w));
   const qw = new Set(words(query));
   const isCore = p => words(p.name).filter(w => !qw.has(w)).every(w => CORE_EXPR.has(w));
   // A size the customer stated sorts first (then core within it). Real bug (Sep 29 smoke): the
@@ -38,4 +44,4 @@ function stripDescriptors(q) {
   return /[a-z]{3,}/i.test(out.replace(/\b\d+(\.\d+)?\s*(ml|l|oz|cl)\b/gi, '')) ? out : String(q || '');
 }
 
-module.exports = { coreFirst, spaceSize, stripDescriptors };
+module.exports = { extraWords, coreFirst, spaceSize, stripDescriptors };

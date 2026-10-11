@@ -4,6 +4,7 @@
  */
 
 const PM = require('./product-match.js');
+const CORE_FIRST = require('../store-agent/core-first.js');   // a brand's core expression before another line of it
 const CATALOG = require('./catalog-api.js');   // the catalog search (legacy searchCorpProducts or getProducts)   // request -> product fit, per list line (buildPackage named products)
 
 // ─── GET PRODUCT URL ─────────────────────────────────────────────────────────
@@ -759,6 +760,15 @@ async function buildPackage(iv) {
         }
       }
 
+      // The other way round: the catalog hyphenates ("Coca-Cola", "St-Germain") and the term doesn't (catalog-api.js).
+      if (bestSoFar.length === 0 && unhyphenated === term) {
+        var joins = CATALOG.hyphenJoins(term);
+        for (var hj = 0; hj < joins.length; hj++) {
+          var hjResults = await rawSearch(joins[hj]);
+          if (hjResults.length > 0) { console.log('[doSearch] hyphen-join retry:', JSON.stringify(term), '->', JSON.stringify(joins[hj]), '(' + hjResults.length + ' result(s))'); return hjResults; }
+        }
+      }
+
       // If NOTHING at all was found by any exact-match retry, try the generalized
       // fuzzy fallback before giving up entirely — catches brand-naming mismatches
       // we haven't seen before, without needing to hardcode each one.
@@ -1306,12 +1316,15 @@ async function buildPackage(iv) {
         if (ps.length) { tgtP=ps[Math.floor((ps.length-1)/2)]; console.log('[buildPackage] generic '+JSON.stringify(np.name)+': mid-priced pick — median of '+ps.length+' is $'+tgtP.toFixed(2)+' (range $'+ps[0].toFixed(2)+'-$'+ps[ps.length-1].toFixed(2)+')');
           var midBand=found.filter(function(p){return p.price>=tgtP*0.75&&p.price<=tgtP*1.25;}); if (midBand.length) found=midBand; }
       }
-      var terms=np.name.toLowerCase().split(/\s+/);
+      var foldD=function(x){return String(x||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'');};
+      var terms=foldD(np.name.toLowerCase()).split(/\s+/);
+      // a line that names a producer (not "Pinot Noir", "dry rosé", "Vodka"), with no price target to keep
+      var namesBrand=!tgtP&&!GENERIC_LINE.test(npBare)&&require('./search-match.js').distinctiveWords(np.name).some(function(w){return !/^(dry|sweet|light)$/.test(w);});
       // Exact-name preference: a candidate whose size-stripped name equals the request
       // beats a superset name. "Ruffino Prosecco Rosé" ties "Ruffino Prosecco" on term
       // score and then won on price — the Rosé variant kept replacing the plain one.
-      var reqKey=String(np.name||'').toLowerCase().replace(/\s*[-—]?\s*\d+(\.\d+)?\s*(ml|l|oz)\b.*$/i,'').replace(/[^a-z0-9]/g,'');
-      function nameKey(x){return String(x.name||'').toLowerCase().replace(/\s*[-—]?\s*\d+(\.\d+)?\s*(ml|l|oz)\b.*$/i,'').replace(/[^a-z0-9]/g,'');}
+      var reqKey=foldD(String(np.name||'').toLowerCase()).replace(/\s*[-—]?\s*\d+(\.\d+)?\s*(ml|l|oz)\b.*$/i,'').replace(/[^a-z0-9]/g,'');
+      function nameKey(x){return foldD(String(x.name||'').toLowerCase()).replace(/\s*[-—]?\s*\d+(\.\d+)?\s*(ml|l|oz)\b.*$/i,'').replace(/[^a-z0-9]/g,'');}
       // Also: no rosé for a non-rosé request, at initial selection time too.
       if(catN==='wine'&&!/ros[eé]|blush/.test(String(np.name||'').toLowerCase())){
         var nonRose=found.filter(function(x){return !/ros[eé]|blush/.test(String(x.name||'').toLowerCase());});
@@ -1326,9 +1339,13 @@ async function buildPackage(iv) {
         // Fit to the request (product-match.js): brand + style words present, no type-changing words, pack size.
         var fa=PM.fit(reqForFit,a).score, fb=PM.fit(reqForFit,b).score; if(fa!==fb) return fb-fa;
         var ea=nameKey(a)===reqKey?1:0, eb=nameKey(b)===reqKey?1:0; if(ea!==eb) return eb-ea;
-        function score(x){var s=0;var ln=x.name.toLowerCase();for(var t=0;t<terms.length;t++) if(ln.indexOf(terms[t])>=0) s++;return s;}
+        function score(x){var s=0;var ln=foldD(x.name.toLowerCase());for(var t=0;t<terms.length;t++) if(ln.indexOf(terms[t])>=0) s++;return s;}
         if(altRef0) return Math.abs(a.price-altRef0)-Math.abs(b.price-altRef0);   // an alternative: name words don't apply (brand not carried)
         var d=score(b)-score(a);if(d) return d;
+        // The name closest to the request, before price. Real (Oct 11 nightly, catalog re-imported with accents):
+        // "Patron Silver 750ml" scored "patron" in neither "Patrón" row and the price sort took Roca Patrón Silver
+        // $76.99 over Patrón Silver Tequila $47.29.
+        if(namesBrand){ var xa=CORE_FIRST.extraWords(np.name,a.name), xb=CORE_FIRST.extraWords(np.name,b.name); if(xa!==xb) return xa-xb; }   // a generic line keeps its price target
         var pa=brandStatus(a.name)==="preferred"?1:0;
         var pb2=brandStatus(b.name)==="preferred"?1:0;
         if(pa!==pb2) return pb2-pa;
@@ -1457,7 +1474,9 @@ async function buildPackage(iv) {
         // The pick is a different brand word's product ("Remy Cointreau 750ml" -> Remy Martin 375 mL): the size is not
         // the problem — search the request's brand words the pick lacks ("cointreau") at the requested size first. Real
         // (Oct 2 QA, proposal-date-edit): "Remy Cointreau 750ml" was UNAVAILABLE while Cointreau 750 mL was in stock.
-        if (reqSizeNorm !== foundSizeNorm) {
+        // (not when the pick's own name states the size: Oct 11 nightly, "Fort Point KSA Kölsch Non-Alcoholic 6 x 12 OZ Cans" for
+        // a 12 oz line was swapped for North Coast Brewing Co. Foggy Day IPA — size field "6 x 12 OZ", missing word "co.")
+        if (reqSizeNorm !== foundSizeNorm && !productHasSize(best, reqSizeNorm)) {
           var bwS=PM.brandWords(reqForFit), missS=PM.fit(reqForFit,best).missing.filter(function(w){return bwS.indexOf(w)>=0;});
           if (missS.length) {
             var wS=missS.join(' ');

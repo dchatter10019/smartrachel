@@ -18,7 +18,7 @@ turns:
     expect: {contains: ["Patron"]}
   # Two Patron Silver rows are listed (Silver, Roca Silver) — pick the plain one.
   - send: "1"
-    expect: {contains: ["Patron Silver - 750 ML"]}
+    expect: {matches: "Patron Silver (?:Tequila )?- 750 ML"}
   - send: "send me the PDF propoesal"
     expect:
       contains: ["proposal is ready", "QA Second Co"]

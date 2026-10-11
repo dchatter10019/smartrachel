@@ -23,7 +23,8 @@ const SYN = { oktoberfest: 'octoberfest', pilsner: 'pilsener', pils: 'pilsener',
   ciders: 'cider', ipas: 'ipa', budlight: 'bud light', michelop: 'michelob', pumkin: 'pumpkin', smithwick: 'smithwicks',
   tea: 'tea', iced: 'iced', ice: 'iced', seltzers: 'seltzer', lemonades: 'lemonade', cocktails: 'cocktail', vp: 'variety' };
 const canon = w => SYN[w] || w;
-const words = s => norm(s).split(/\s+/).map(canon).join(' ').split(/\s+/).filter(Boolean);
+// A sentence period is not part of the word ("Beer Co." -> co, a filler word; it was a brand word the pick lacked, Oct 11).
+const words = s => norm(s).split(/\s+/).map(w => w.replace(/\.+$/, '')).map(canon).join(' ').split(/\s+/).filter(Boolean);
 
 // Words that describe the order, not the product: never required to appear on the product. Category words
 // ("hard seltzer", "cider") are here too — catalog names often leave them out ("High Noon Variety Pool Pack").

@@ -9,7 +9,7 @@ context: {email_subject: "Drinks order - SF office", user_name: "QA Tester"}
 turns:
   - send: "Hi,\r\n\r\nPlease send a quote for the items below.\r\n\r\nI am 21 years old. Deliver to 332 Pine St, San Francisco, CA 94104\r\n\r\n4 x Conundrum White 750mL\r\n3 x Fever-Tree Ginger Beer 6.8oz\r\n\r\nThanks!"
     expect:
-      contains: ["Fever Tree Ginger Beer"]
+      matches: "Fever.Tree Ginger Beer"
   # No zone: asked first, the time held (DC, Oct 5).
   - send: "Please place the order and send the payment link to pat@example-client.com\r\n\r\nCustomer Name: Pat Example-Lee\r\nCustomer Phone Number: (862) 555-0142\r\nDelivery tomorrow at 7 am"
     expect:

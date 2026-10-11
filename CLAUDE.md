@@ -269,7 +269,14 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   The search needs the possessive apostrophe ("Titos" finds nothing, "Tito's" does): searchWithFallbacks retries
   "<word>s" as "<word>'s" ([searchWithFallbacks] apostrophe retry); rachel.js [not-found] compares without apostrophes.
   It also matches hyphens literally ("Fever-Tree Ginger Beer" finds nothing, "Fever Tree" does): doSearch retries
-  unhyphenated ([doSearch] hyphen retry). A requested size matches the size field OR the size in the product's name
+  unhyphenated ([doSearch] hyphen retry). The other way round too: a search that found nothing is retried with adjacent words hyphenated
+  ("Coca Cola" -> "Coca-Cola", "St Germain" -> "St-Germain"; catalog-api.js hyphenJoins, [doSearch] / [searchWithFallbacks]
+  hyphen-join retry). Oct 11: the catalog was re-imported with accented / hyphenated names (Patrón, Bacardí, Kölsch, Dom
+  Pérignon, St-Germain, Coca-Cola Classic, "Stella Artois 12 x 11.2 OZ Bottles"); the search is accent-insensitive, our
+  matching folds accents (buildPackage term score too), and a named line ("Patron Silver") prefers the name with the fewest
+  extra words before price (core-first.js extraWords: Patrón Silver Tequila $47, not Roca Patrón $77). qa/run.py compares
+  replies / PDFs / logs without accents. Some packs are now named "1 x 16 OZ Can" at a pack price (catalog data, open).
+  A requested size matches the size field OR the size in the product's name
   (Sonoma Simple Syrup "24.5 OZ" has size field 25.4 OZ; functions.js productHasSize). (Oct 5, DC, SF: both were "not available".)
 - A customer-named product is never dropped for price caps; a stated size sorts first.
 - Multi-pick resolver only fires on a real numbered options list + a selection-shaped message.

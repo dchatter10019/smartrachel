@@ -1354,7 +1354,9 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
         if (notes.length) getState(sessionKey).replyNote = notes.join(' '); } catch (e) {}
       // The customer's mixers are already in the package (shopping-agent menu_build, mixers.js; DC Oct 7: fewer back-and-forths):
       // no "would you also like to add mixers...?" question after it — the follow-up is order or proposal.
-      try { const li = typeof lineItems === 'string' ? JSON.parse(lineItems || '[]') : (lineItems || []); if (li.some(x => x && x.category === 'mixer')) { getState(sessionKey).mixerAsked = true; console.log('[mixers] package has the customer\'s mixers — no mixers question'); } } catch (e) {}
+      try { const li = typeof lineItems === 'string' ? JSON.parse(lineItems || '[]') : (lineItems || []); if (li.some(x => x && x.category === 'mixer')) { getState(sessionKey).mixerAsked = true; console.log('[mixers] package has the customer\'s mixers — no mixers question'); }
+        // Mixers named but not carried: the not-carried note already answers the topic (Oct 11 nightly: Coke missed, the question came back).
+        else if (saResult && saResult.mixers_not_carried) { getState(sessionKey).mixerAsked = true; console.log('[mixers] customer\'s mixers not carried here (said in the reply) — no mixers question'); } } catch (e) {}
       // The totals of the latest build this turn, so the reply always shows them (see [reply] totals below).
       try { if (saResult && saResult.product_total) { getState(sessionKey).builtTotals = { pt: saResult.product_total, tax: saResult.estimated_tax, svc: saResult.estimated_service, tip: saResult.estimated_tip, del: saResult.delivery_fee, grand: saResult.estimated_grand_total, budget: saInput && saInput.budget, lineItems: saResult.line_items }; } } catch (e) {}
       // A successful build supersedes any prior "unavailable" state. Real bug: two

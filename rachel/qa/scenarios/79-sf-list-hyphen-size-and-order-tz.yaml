@@ -18,7 +18,8 @@ turns:
       matches: "(?i)3\\s*x\\s*Fever[ -]Tree Ginger Beer[^\\n]*6\\.8"
       contains: ["Owen's Transfusion"]
       not_matches: "(?i)(Fever-Tree Ginger Beer|Owen's Transfusion)[^\\n]*(isn't|is not|not) (available|carried)"
-      log_contains: ["[doSearch] hyphen retry", "its name states 250ml"]
+      log_contains: ["its name states 250ml"]
+      matches: "3x Fever.Tree Ginger Beer - 6\\.8 OZ"
       log_not_contains: ["UNAVAILABLE (size mismatch): \"Owen", "UNAVAILABLE (size mismatch): \"Fever"]
   - send: "place the order"
     expect: {contains: ["name"]}

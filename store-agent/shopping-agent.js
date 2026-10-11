@@ -418,6 +418,11 @@ async function searchWithFallbacks(location, client, name, limit, minPrice, maxP
       }
     }
   }
+  // The catalog hyphenates ("Coca-Cola", "St-Germain") and the search text doesn't (rachel/catalog-api.js hyphenJoins).
+  for (const alt of CATALOG.hyphenJoins(name)) {
+    products = await searchProducts(location, client, alt, limit || 10, minPrice, maxPrice);
+    if (products.length) { console.log('[searchWithFallbacks] hyphen-join retry succeeded:', JSON.stringify(name), '->', JSON.stringify(alt)); return products; }
+  }
   // Normalize common category names
   const nameMap = {'champagne': 'champagne', 'prosecco': 'prosecco', 'sparkling wine': 'champagne',
                    'red wine': 'cabernet', 'white wine': 'chardonnay', 'rose': 'rose wine', 'ros\u00e9': 'rose wine'};
