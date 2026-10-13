@@ -1,0 +1,23 @@
+name: new-address-with-request
+# Oct 13 (Sean, email): "Can you please get me a quote for the items below? The delivery date is 12/5 to address 1460
+# Broadway, New York, NY." in a conversation whose address was Boston. The LLM priced the NYC store, but state.address
+# stayed Boston and the PDF said "Delivery: 100 Federal Street, Boston". An address that comes WITH a request (no zip
+# here — geocoded) is applied in code, then the request goes on (server.js ready block, findAddressNoZip).
+# Same /chat path for Slack, WhatsApp, email and the connector's rachel_chat.
+tags: [ux]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "100 Federal Street, Boston, MA 02110"
+  - send: "2 bottles of Tito's 750ml"
+    expect: {contains: ["Tito"]}
+  - send: "Can you please get me a quote for the items below? The delivery date is 12/5 to address 1460 Broadway, New York, NY.\n\n- Blanton's Single Barrel x 2\n- Josh Cellars Cabernet x 3\n\nThanks!"
+    expect:
+      contains: ["Blanton", "Josh"]
+      log_contains: ["[addr] address with no zip in the message", "[addr] new address + request in one message"]
+  - send: "please create a proposal"
+  - send: "Liquid Labs"
+  - send: "December 5"
+    expect:
+      pdf_contains: ["1460 Broadway", "Liquid Labs"]
+      pdf_not_contains: ["Federal Street"]

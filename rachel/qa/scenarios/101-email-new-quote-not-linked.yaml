@@ -1,0 +1,20 @@
+name: email-new-quote-not-linked
+transport: email
+tags: [channel]
+# Oct 13 (Sean): a NEW thread "Menu Request - Liquid Labs 12/5" asking "get me a quote for the items below ... to address
+# 1460 Broadway, New York, NY" was linked to his Gen II Boston thread as "about changing a quote" (email-link.js: "add\w*"
+# matched "address") — the PDF was billed to "Gen II Fund" with the Boston delivery address. A request for a new quote
+# starts its own conversation; the subject's client drops the trailing date.
+turns:
+  - subject: "Drinks quote - Northwind QA"
+    new_thread: true
+    send: "Hi,\n\nPlease send a quote for the items below. I am 21. Deliver to 100 Federal Street, Boston, MA 02110.\n\n2 x Bud Light (30 cans per case)\n1 Oyster Bay Sauvignon Blanc\n\nThanks!"
+    expect: {contains: ["PDF proposal is attached"]}
+  - subject: "Menu Request - Liquid Labs QA 12/5"
+    new_thread: true
+    send: "Good morning, Rachel.\n\nI am 21. Can you please get me a quote for the items below? The delivery date is\n12/5 to address 1460 Broadway, New York, NY 10036.\n\n   - Blanton's Single Barrel x 2\n   - Josh Cellars Cabernet x 3\n   - Tito's 750ml x 2\n\nThanks!"
+    expect:
+      contains: ["PDF proposal is attached"]
+      log_not_contains: ["about changing a quote"]
+      pdf_contains: ["1460 Broadway", "Liquid Labs QA"]
+      pdf_not_contains: ["Federal Street", "Northwind", "12/5"]

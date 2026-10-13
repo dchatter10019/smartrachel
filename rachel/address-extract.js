@@ -54,6 +54,20 @@ function findAddress(text) {
   return (found.find(f => f.cue) || found[0]).a;
 }
 
+// An address with no zip, only after a cue ("to address 1460 Broadway, New York, NY") -> "1460 Broadway, New York, NY"
+// (street, city, 2-letter state). The caller geocodes it for the zip. Real (Oct 13, Sean's email quote): findAddress
+// needs a zip, so the session kept its Boston address and the NYC quote's PDF said "Delivery: 100 Federal Street, Boston".
+function findAddressNoZip(text) {
+  const t = unwrap(String(text || '').replace(/\r/g, '')).replace(/\n\s*\n/g, ' ¶ ').replace(/\s*\n\s*/g, ', ');
+  const CUE_NZ = /\b(?:delivery address|address|deliver(?:ed|y)?\s+(?:to|at)|ship(?:ped)?\s+to|send (?:it )?to)\b(?:\s+is)?\s*:?\s*/gi;
+  let m;
+  while ((m = CUE_NZ.exec(t))) {
+    const a = t.slice(m.index + m[0].length).match(/^(\d{1,6}\s+[A-Za-z0-9'.#\- ]{2,40}?(?:,\s*[A-Za-z0-9'.#\- ]{1,30}?){0,2},\s*[A-Z][A-Za-z. ]{1,30}?,?\s+[A-Z]{2})(?![A-Za-z])(?!,?\s*\d{5})/);
+    if (a) return a[1].replace(/\s+/g, ' ').replace(/\s*,\s*/g, ', ').trim();
+  }
+  return null;
+}
+
 // A message with an address AND a request ("1 Rockefeller Plaza, New York, NY 10019. Add 3 Tito's 750ml and a case of
 // Stella.") -> { address, rest }: the address cut out of the original text (its line breaks kept: street start .. zip end)
 // and the rest, minus a dangling "deliver to" / "address:". rest is null when nothing substantive is left (<= 8 chars).
@@ -90,4 +104,4 @@ function formatGeocoded(components, typed) {
     .filter(Boolean).join(', ');
 }
 
-module.exports = { splitAddress, findAddress, formatGeocoded };
+module.exports = { splitAddress, findAddress, findAddressNoZip, formatGeocoded };

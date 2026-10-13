@@ -42,7 +42,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   (3 days) not in logs/email-processed.json — NOT the UNREAD label (an email opened in Gmail first is still
   handled). A new thread asks /internal/email-link (email-link.js) whether it continues an earlier quote
   (same sender; a proposal PDF of it attached/linked, the client name, or — for an edit request — the one quote
-  whose event date / venue / total matches, or the sender's only quote in 14 days). Several possible: the new
+  whose event date / venue / total matches, or the sender's only quote in 14 days). "Edit" never matches "address", and
+  "get me a quote for ..." (a NEW quote, no "the/our/earlier quote") is not an edit (Oct 13: Sean's NYC "Liquid Labs" request
+  joined his Gen II Boston thread -> PDF billed Gen II Fund, delivery Boston). Several possible: the new
   thread asks "which proposal?" (numbered), holds the email, and the answer relinks the thread to that quote
   and replays it there (state.pendingLink; `relink` in the /chat reply). Replies attach the PDF by its real name. Server-side, email bodies are cut to
   the new text + a forwarded message (email-body.js); quoted history never reaches Rachel. The sender's signature is
@@ -480,7 +482,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   state.address (proposals/orders kept 332 Pine St). The store is compared by establishmentId (coverage now returns
   it; SF and Boston are both client "bevvibot"); another store = each line found again there by exact name at its price
   ([addr] basket moved ... repriced / NOT CARRIED -> pendingSubstitutes), never an emptied basket; the reply lists the
-  basket. Bevvi has no store for 02210 (Seaport) — a real coverage gap, not a Rachel bug.
+  basket. Bevvi has no store for 02210 (Seaport) — a real coverage gap, not a Rachel bug. An address that comes WITH a request ("quote for the
+  items below ... to address 1460 Broadway, New York, NY") is applied in code too when it is cued ("address", "deliver to")
+  and differs from the saved one; a zip-less one is geocoded (address-extract.js findAddressNoZip); then the request goes
+  on to the LLM ([addr] new address + request in one message). Subject client drops a trailing date ("Liquid Labs 12/5").
 - Tax / proposal address (tax-command.js, Oct 5 DC): "the tax should be 0", "Estimated tax (10%): $79.16 is 0", "tax
   exempt" -> state.taxExempt for the session: every estimate (basket, order summary, LLM-written totals corrected in
   code [tax]), proposalOpts.tax_exempt on every PDF; "add the tax back" restores. "take out the delivery address from

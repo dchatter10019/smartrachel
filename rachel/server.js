@@ -2618,12 +2618,33 @@ app.post('/chat', async (req, res) => {
     if (state.step === 'ready' && !state.orderStep && !state.proposalStep) {
       // address-extract.js, not a one-line pattern: "100 Federal Street, Floor 6, Boston, MA 02110" (a unit with a
       // number) didn't match, so the change fell through to the LLM (Sep 29, Gen II session).
-      const afR = require('./address-extract.js').findAddress(message);
+      const AX = require('./address-extract.js');
+      let afR = AX.findAddress(message), afTyped = afR;
+      // No zip ("to address 1460 Broadway, New York, NY"): geocoded for it. Real (Oct 13, Sean's email quote): the
+      // session kept its Boston address; the LLM priced NYC, but the PDF said "Delivery: 100 Federal Street, Boston".
+      if (!afR) {
+        const nz = AX.findAddressNoZip(message);
+        const g = nz ? await geocodeAddress(nz) : null;
+        if (g && g.zip) { afTyped = nz; afR = /\d{5}$/.test(g.formatted || '') ? g.formatted : nz + ' ' + g.zip; console.log('[addr] address with no zip in the message: ' + JSON.stringify(nz) + ' -> ' + JSON.stringify(afR)); }
+        else if (nz) console.log('[addr] address with no zip not geocoded — left to the LLM: ' + JSON.stringify(nz));
+      }
       const am = afR ? [afR, afR, (afR.match(/(\d{5})(?:-\d{4})?$/) || [])[1]] : null;
       // What's left once the address is taken out (letters only, so line breaks and commas don't matter).
       const lettersOf = x => String(x || '').replace(/[^a-z]/gi, '').toLowerCase();
-      const rest = am ? lettersOf(String(message).replace(/\b(please|change|update|use|switch|new|my|the|delivery|address|deliver|ship|send|it|to|is|at|instead|actually|now)\b|[^a-z]/gi, '')).replace(lettersOf(afR), '') : 'x';
-      if (am && rest.length <= 3) {
+      const rest = am ? lettersOf(String(message).replace(/\b(please|change|update|use|switch|new|my|the|delivery|address|deliver|ship|send|it|to|is|at|instead|actually|now)\b|[^a-z]/gi, '')).replace(lettersOf(afTyped), '') : 'x';
+      // An address that comes WITH a request ("quote for the items below ... to address <new address>"): the address
+      // is applied here, then the request goes on to the LLM. Only a cued address ("address", "deliver to") that is
+      // not the one already saved — a venue named in passing is left alone.
+      const streetKey = a => (String(a || '').toLowerCase().match(/^\s*(\d+[a-z]?)\s+([a-z]+)/) || []).slice(1).join(' ');
+      let addrWithRequest = false;
+      if (am && rest.length > 3 && am[2]) {
+        const at = String(message).indexOf(String(afTyped).split(',')[0]);
+        const cued = at >= 0 && /(?:address|deliver\w*\s+(?:to|at)|ship\w*\s+to|send (?:it )?to)\b(?:\s+is)?\s*:?\s*$/i.test(String(message).slice(Math.max(0, at - 40), at));
+        const same = am[2] === state.zip && streetKey(afR) === streetKey(state.address);
+        addrWithRequest = cued && !same;
+        if (cued && !same) console.log('[addr] new address + request in one message: ' + JSON.stringify(state.address) + ' -> ' + JSON.stringify(afR) + ' — address applied, the request goes on');
+      }
+      if (am && (rest.length <= 3 || addrWithRequest)) {
         const newZip = am[2];
         const cov = await checkStoreCoverage(newZip);
         if (cov && cov.store_count === 0) {
@@ -2656,7 +2677,9 @@ app.post('/chat', async (req, res) => {
           }
           state.lastLineItems = JSON.stringify(out);
           Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; });
-          if (moved.missing.length) {
+          if (moved.missing.length && addrWithRequest) {
+            console.log('[addr] not carried at the new store, NOT offered as substitutes (the message brings its own request): ' + moved.missing.map(li => li.name).join('; '));
+          } else if (moved.missing.length) {
             state.pendingSubstitutes = (state.pendingSubstitutes || []).concat(moved.missing.map(li => li.label || li.name));
             state.unavailableQty = Object.assign({}, state.unavailableQty || {}, Object.fromEntries(moved.missing.map(li => [li.label || li.name, li.qty || li.quantity || 1])));
           }
@@ -2665,6 +2688,10 @@ app.post('/chat', async (req, res) => {
         }
         saveFlowState();
         if (email) { try { const d2c = await getD2CSession(email) || {}; await saveD2CSession(email, Object.assign({}, d2c, { delivery_address: state.address, delivery_zip: newZip })); } catch (e) {} }
+        if (addrWithRequest) {
+          // The request is answered next (LLM); a proposal from it now prints the new address.
+          if (email) Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; });
+        } else {
         const usd2 = n => '$' + n.toFixed(2);
         // The whole basket, one line too (basketAfterChange lists 2+ lines only).
         const listB = () => { let b = []; try { b = JSON.parse(state.lastLineItems || '[]'); } catch (e) {} return b.length ? '\n\n' + b.map(li => (li.qty || li.quantity || 1) + 'x ' + li.name + ' — ' + usd2(parseFloat(li.price) || 0) + ' ea = ' + usd2((li.qty || li.quantity || 1) * (parseFloat(li.price) || 0))).join('\n') : ''; };
@@ -2676,6 +2703,7 @@ app.post('/chat', async (req, res) => {
           : items.length ? ' Your basket stays the same.' + listB() + '\n\nAnything else, or ready to place the order?' : ' What can I get you?')
           + (state.lastProposalUrl && items.length ? '\n\n(Your earlier proposal shows the old address — say "send the proposal" for an updated one.)' : '');
         return res.json({ text: rA, response: rA });
+        }
       }
     }
 

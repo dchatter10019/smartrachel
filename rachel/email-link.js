@@ -33,8 +33,13 @@ function mentions(text, client) {
   return toks.every(w => t.includes(' ' + w + ' '));
 }
 const ABOUT_QUOTE = /\b(?:proposal|quote|order|estimate|invoice)\b/i;
-const CHANGE = /\b(?:modif\w*|change\w*|updat\w*|remov\w*|adjust\w*|revis\w*|edit\w*|swap\w*|add\w*|reduc\w*|increas\w*|instead)\b/i;
-const isEdit = text => ABOUT_QUOTE.test(text) && CHANGE.test(text);
+// "add" never "address": Sean's new quote request (Oct 13, "get me a quote ... to address 1460 Broadway, New York")
+// read as an edit, joined his Gen II Boston thread, and the PDF went out with the Boston address and "Gen II Fund".
+const CHANGE = /\b(?:modif\w*|change\w*|updat\w*|remov\w*|adjust\w*|revis\w*|edit\w*|swap\w*|add(?!ress)\w*|reduc\w*|increas\w*|instead)\b/i;
+// "get me a quote for the items below" asks for a NEW quote — not an edit, unless it also points at an earlier one.
+const NEW_QUOTE = /\b(?:get|send|give|prepare|put together|create|make|need|want|like|request(?:ing)?)\s+(?:me\s+|us\s+)?(?:a|an)\s+(?:new\s+|quick\s+)?(?:quote|proposal|estimate)\b/i;
+const PRIOR = /\b(?:the|that|this|our|my|your|earlier|previous|last|existing|same|sent)\s+(?:\w+\s+)?(?:quote|proposal|estimate|invoice)\b/i;
+const isEdit = text => ABOUT_QUOTE.test(text) && CHANGE.test(text) && !(NEW_QUOTE.test(text) && !PRIOR.test(text));
 
 // ── Weaker signals ─────────────────────────────────────────────────────────────────────────────────────────
 // Event date: "Oct 12", "October 12th", "12 October", "10/12", "10/12/2026", "2026-10-12" -> "10-12" keys.

@@ -23,7 +23,8 @@ function clientFromSubject(subject) {
   for (let i = parts.length - 1; i >= 1; i--) {
     const p = parts[i].trim();
     if (!p || p.length > 60 || DATEISH.test(p)) continue;
-    const c = clean(p.replace(/\s+event$/i, ''));
+    // A date at the end is not part of the name: "Menu Request - Liquid Labs 12/5" -> Liquid Labs (Oct 13).
+    const c = clean(p.replace(/\s+event$/i, '').replace(/\s+(?:on\s+)?(?:\d{1,2}\/\d{1,2}(?:\/\d{2,4})?|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\w*\.?\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s*\d{4})?)$/i, '').replace(/\s+event$/i, ''));
     if (c) return c;
     break;
   }
