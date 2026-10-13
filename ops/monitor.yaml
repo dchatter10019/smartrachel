@@ -20,6 +20,7 @@ detectors:
   stuck_session:       {severity: medium, same_state_turns: 4, repeat_message: 2}
   latency:             {severity: medium, median_seconds: 20, window_minutes: 60, min_turns: 5}
   qa_fail:             {severity: high}
+  self_correction:     {severity: high}   # the proposal guard corrected a PDF before sending (logs/self-corrections.jsonl); not corrected = critical
   side_test:           {severity: high}   # a nightly side test failed (connector test, monitor self-test)
   escalation_request:  {severity: info}
   watchdog_alert:      {severity: high}

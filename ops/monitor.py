@@ -30,6 +30,7 @@ TEXT_LOGS = {   # source -> path; lines have no timestamp unless the format give
 EVENTS = LOGS + '/events.jsonl'
 FEEDBACK = LOGS + '/feedback.jsonl'   # corrections, 'Rachel feedback:' lines, Slack 👎 (rachel/feedback.js, rachel_slack_bot.py)
 REVIEW_ISSUES = LOGS + '/review-issues.jsonl'   # nightly conversation review (ops/conversation-review.py, Oct 7)
+SELF_CORRECTIONS = LOGS + '/self-corrections.jsonl'   # proposal guard corrections (rachel/proposal-guard.js, Oct 13)
 SIDE_TESTS = LOGS + '/side-tests.jsonl'   # nightly side tests (connector, monitor self-test) — rachel/qa/nightly.sh
 QA_RUNS = HOME + '/rachel/qa/runs'
 
@@ -224,6 +225,20 @@ class Monitor:
         sev = e['severity'] if e['severity'] == 'high' else self.d.get('conversation_review', {}).get('severity', 'medium')
         self.store.record('conversation_review', sev, '%s: %s (%s)' % (e.get('category', 'other'), str(e.get('what_happened', ''))[:120], sess), [ev], [sess], t or self.now())
 
+    def self_correction(self, e, t=None):
+        # Rachel caught a proposal that disagreed with what the customer said and corrected it before sending (or
+        # couldn't) — the live fix hides the cause, so the cause becomes a finding for the fixer (DC, Oct 13).
+        if e.get('qa'): return
+        sess = e.get('session', '')
+        fields = ', '.join(sorted(set(i.get('field', '?') for i in e.get('issues') or []))) or '?'
+        ev = '%s | corrected: %s | issues: %s | customer said: %s | pdf %s -> %s' % (
+            e.get('channel', '?'), ','.join(e.get('corrected') or []) or 'NOTHING (needs a person)',
+            ' ; '.join('%s printed %r, expected %r (%s)' % (i.get('field'), i.get('printed'), i.get('expected'), i.get('why')) for i in e.get('issues') or [])[:700],
+            str(e.get('customer_said', ''))[:400].replace('\n', ' / '), e.get('pdf_before', '?'), e.get('pdf_after', '-'))
+        sev = self.d.get('self_correction', {}).get('severity', 'high')
+        if not e.get('corrected'): sev = 'critical'   # the wrong proposal went out
+        self.store.record('self_correction', sev, 'proposal %s wrong before sending (%s)' % (fields, sess), [ev], [sess], t or self.now())
+
     def side_test(self, e, t=None):
         # A nightly side test (connector test, monitor self-test) failed: qa/nightly.sh -> logs/side-tests.jsonl (Oct 4).
         if e.get('ok'): return
@@ -285,6 +300,9 @@ def one_pass(mon, st):
     for line in new_lines(REVIEW_ISSUES, st, 'off:' + REVIEW_ISSUES):
         try: mon.review_issue(json.loads(line))
         except Exception: pass
+    for line in new_lines(SELF_CORRECTIONS, st, 'off:' + SELF_CORRECTIONS):
+        try: mon.self_correction(json.loads(line))
+        except Exception: pass
     for line in new_lines(SIDE_TESTS, st, 'off:' + SIDE_TESTS):
         try: mon.side_test(json.loads(line))
         except Exception: pass
@@ -330,6 +348,8 @@ PLAIN = {   # detector -> (what it means for customers, what a person could do).
                            'Read what they said and what Rachel had said just before; the fixer turns it into a test and a fix.'),
     'conversation_review': ("The nightly read-through of yesterday's real conversations found a place where Rachel let a customer down (wrong item, ignored what they said, a dead end, a lost customer).",
                            'Read what happened below. The fixer tries a code fix; a change to how Rachel talks comes to you as a decision.'),
+    'self_correction':    ("Rachel caught one of her own proposals disagreeing with what the customer said (delivery address, client name, event date, or products from the wrong store) and fixed it before sending. The customer got the right PDF; the cause is still in the code.",
+                           'The fixer finds why the wrong value got there and fixes it. If it says NOTHING was corrected, the wrong PDF went out — someone should resend it.'),
     'watchdog_alert':     ('The nightly health check found something wrong.', 'See the technical details below.'),
 }
 

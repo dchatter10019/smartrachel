@@ -1915,6 +1915,63 @@ app.post('/chat', async (req, res) => {
       return _jE(payload);
     };
   }
+  // PROPOSAL GUARD (proposal-guard.js, DC Oct 13: "a self correcting loop"): a reply that carries a proposal PDF is
+  // checked against what the customer said (address / client / date / which store the lines are from) before it
+  // leaves; a mismatch is corrected here (session fixed, PDF regenerated, link swapped) and logged to
+  // self-corrections.jsonl -> monitor detector self_correction -> the nightly fixer fixes the cause. Every channel's
+  // /chat reply passes here (Slack, WhatsApp, email, rachel_chat); the connector's own proposal tool has its check.
+  {
+    const _jG = res.json.bind(res);
+    const message0 = message;   // the customer's words: later code reassigns `message` (e.g. to the saved event date)
+    res.json = (payload) => {
+      const message = message0;
+      const txt = payload && typeof payload.text === 'string' ? payload.text : '';
+      const PG = require('./proposal-guard.js');
+      const pm = txt.match(PG.PDF_RE);
+      if (!pm) return _jG(payload);
+      return (async () => {
+        try {
+          const stG = flowState[sessionKey] || {};
+          const piFile = path.join('/home/ubuntu/logs/proposal-items', pm[1] + '.json');
+          const pi = JSON.parse(fs.readFileSync(piFile, 'utf8'));
+          const AX = require('./address-extract.js');
+          let stated = null;
+          const fa = AX.findAddress(message);
+          if (fa && /\d{5}(?:-\d{4})?$/.test(fa)) stated = { address: fa, zip: fa.match(/(\d{5})(?:-\d{4})?$/)[1] };
+          else { const nz = AX.findAddressNoZip(message); const g = nz ? await geocodeAddress(nz) : null; if (g && g.zip) stated = { address: /\d{5}$/.test(g.formatted || '') ? g.formatted : nz + ' ' + g.zip, zip: g.zip }; }
+          const pAddr = PG.printedAddress(pi.notes), pZip = (pAddr.match(/(\d{5})(?:-\d{4})?$/) || [])[1];
+          const covP = pZip ? await checkStoreCoverage(pZip).catch(() => null) : null;
+          const covS = stated ? await checkStoreCoverage(stated.zip).catch(() => null) : null;
+          const issues = PG.check(pi, { message, subject: context && context.email_subject, threadFirst: context && context.thread_first_body,
+            stated, printedStore: covP && covP.establishmentId, statedStore: covS && covS.establishmentId });
+          if (!issues.length) return _jG(payload);
+          const fix = issues.filter(i => i.fixable);
+          const rec = { ts: new Date().toISOString(), session: sessionKey, channel: format === 'plain' ? 'email' : (format || 'slack'), customer: email || '', qa: !!isQA,
+            customer_said: String(message).slice(0, 600), pdf_before: pm[1], issues };
+          if (fix.length) {
+            const next = { client_name: pi.client_name, event_date: pi.event_date, notes: pi.notes, line_items: pi.line_items, options: pi.options, tax_exempt: !!stG.taxExempt };
+            for (const i of fix) {
+              if (i.field === 'address') { next.notes = String(next.notes || '').replace(pAddr, i.expected); stG.address = i.expected; stG.zip = i.zip; stG.addrConfirmed = true; stG.geocoded = null; }
+              if (i.field === 'client') { next.client_name = i.expected; stG.savedClientName = i.expected; }
+              if (i.field === 'date') { next.event_date = i.expected; stG.savedEventDate = i.expected; }
+            }
+            const fname = 'bevvi-proposal-' + Date.now() + '.pdf';
+            await require('./generate-proposal.js').generateProposal(next, path.join('/home/ubuntu/logs', fname));
+            const newUrl = 'http://3.138.180.46/proposals/' + fname;
+            stG.lastProposalUrl = newUrl; saveFlowState();
+            const swap = t => { let o = String(t || '').split(pm[0]).join(newUrl); for (const i of fix) if (i.printed && i.expected) o = o.split(i.printed).join(i.expected); return o; };
+            payload.text = swap(payload.text); if (typeof payload.response === 'string') payload.response = swap(payload.response);
+            rec.pdf_after = fname; rec.corrected = fix.map(i => i.field);
+            console.log('[proposal-guard] CORRECTED ' + fix.map(i => i.field + ' ' + JSON.stringify(i.printed) + ' -> ' + JSON.stringify(i.expected) + ' (' + i.why + ')').join('; ') + ' | ' + pm[1] + ' -> ' + fname);
+          }
+          const left = issues.filter(i => !i.fixable);
+          if (left.length) console.log('[proposal-guard] NOT corrected (needs a person): ' + left.map(i => i.field + ': ' + i.why).join('; '));
+          try { fs.appendFileSync(dataDir.file('self-corrections.jsonl'), JSON.stringify(rec) + '\n'); } catch (e) { console.log('[proposal-guard] log write failed: ' + e.message); }
+        } catch (e) { console.log('[proposal-guard] check skipped: ' + e.message); }
+        return _jG(payload);
+      })();
+    };
+  }
   // A note produced while building this turn (e.g. the full-bar note) is added to the reply — before a
   // closing question ("Would you also like to add mixers…?") so that question stays last.
   { const _jN = res.json.bind(res); res.json = (payload) => { try { const stN = flowState[sessionKey]; if (stN && stN.replyNote && payload && typeof payload.text === 'string') { console.log('[reply] appended note: ' + stN.replyNote.slice(0, 80)); const addNote = (t) => { const paras = String(t || '').trimEnd().split(/\n\s*\n/); if (paras.length > 1 && /\?\s*\**\s*$/.test(paras[paras.length - 1])) paras.splice(paras.length - 1, 0, stN.replyNote); else paras.push(stN.replyNote); return paras.join('\n\n'); }; payload.text = addNote(payload.text); payload.response = addNote(payload.response || ''); stN.replyNote = null; saveFlowState(); } } catch (e) {} return _jN(payload); }; }

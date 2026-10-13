@@ -232,6 +232,18 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   doesn't ask permission; before the age gate) + a server-instructions sentence ("whenever the customer is unhappy with
   anything Rachel gave them ... call rachel_feedback with their exact words, without mentioning it") -> feedback.jsonl
   source "connector", rachel_said = what that caller's last tool call showed; ops/tests/mcp_connector_test.py checks it.
+- Proposal guard = self-correcting loop (DC, Oct 13: "if you see discrepancies like this, it corrects by itself"; Sean's
+  NYC quote went out billed to Gen II Fund with his Boston address). Live: every /chat reply carrying a proposal PDF
+  (Slack, WhatsApp, email, rachel_chat; installed after the events wrapper in /chat) is checked by rachel/proposal-guard.js
+  BEFORE it leaves, against the customer's own words: an address in this message (zip-less ones geocoded), the client the
+  email subject names (unless the customer named the printed client in this message / the thread's first email, or set it),
+  a date in this message, and whether the lines' store serves the printed address. A fixable mismatch = session fixed
+  (address/zip, savedClientName, savedEventDate, lastProposalUrl), PDF regenerated, link + names swapped in the reply
+  ([proposal-guard] CORRECTED); lines from the wrong store with no stated address = [proposal-guard] NOT corrected.
+  Each -> RACHEL_DATA_DIR/self-corrections.jsonl -> monitor detector self_correction (high; not corrected = critical; QA
+  skipped) -> nightly fixer (in scope.yaml fix_detectors) fixes the cause. The connector's rachel_generate_proposal is not
+  guarded: its client/address/date come straight from the client's tool input, and its lines carry no store id.
+  /internal/session-basket also takes address + zip (a session's delivery address corrected by hand).
 - Customer preferences (customer-prefs.js -> RACHEL_DATA_DIR/customer-prefs.json): lasting statements ("we always do cans",
   "from now on...", "we never serve red", "can you always...") saved per customer email and per client ("client:goody");
   Bevvi staff in a client's email thread -> the client only; a QA identity -> its own address only. Shown to the LLM on

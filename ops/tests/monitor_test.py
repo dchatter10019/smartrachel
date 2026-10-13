@@ -64,6 +64,14 @@ mon.feedback({'kind': 'correction', 'session': 'email-abc-sean', 'who': 'dc@x.co
 mon.feedback({'kind': 'thumbs_down', 'session': 'qa-fb-1', 'who': 'qa-fb@getbevvi.com', 'text': '👎', 'rachel_said': 'x', 'qa': True}, T)
 fb = found('feedback')
 check('feedback: one finding per conversation (count 2), evidence has what Rachel said, QA ignored', len(fb) == 1 and fb[0]['count'] == 2 and any("Mara's last name" in e for e in fb[0]['evidence']))
+# self-correction (Oct 13): a proposal the guard corrected is a high finding with what was wrong; one it couldn't fix is critical; QA never
+mon.self_correction({'session': 'email-x-sean', 'channel': 'email', 'qa': False, 'customer_said': 'quote to address 1460 Broadway', 'pdf_before': 'a.pdf', 'pdf_after': 'b.pdf',
+                     'corrected': ['address', 'client'], 'issues': [{'field': 'address', 'printed': '100 Federal St', 'expected': '1460 Broadway', 'why': 'x'}, {'field': 'client', 'printed': 'Gen II Fund', 'expected': 'Liquid Labs', 'why': 'y'}]}, T)
+mon.self_correction({'session': 'slack-y', 'channel': 'slack', 'qa': False, 'corrected': [], 'issues': [{'field': 'store', 'printed': '1 Main St', 'expected': '', 'why': 'z'}]}, T)
+mon.self_correction({'session': 'qa-z', 'qa': True, 'corrected': ['date'], 'issues': [{'field': 'date'}]}, T)
+sc = found('self_correction')
+check('self_correction: corrected = high with the issues, not corrected = critical, QA ignored',
+      len(sc) == 2 and any(f['severity'] == 'high' and 'Gen II Fund' in f['evidence'][0] for f in sc) and any(f['severity'] == 'critical' for f in sc))
 # side tests (Oct 4): a failed nightly connector test is a finding with the failing step; a pass is not
 mon.side_test({'test': 'mcp_connector_test', 'ok': False, 'detail': ['  ✗ connector api key + two-step order: chat after age -> ASKED AGAIN']}, T)
 mon.side_test({'test': 'monitor_test', 'ok': True, 'detail': []}, T)
