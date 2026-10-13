@@ -6088,6 +6088,9 @@ app.post('/internal/session-basket', async (req, res) => {
     line_items = rr.items;
     resolveNote = rr.linked.length + ' line(s) linked to the catalog' + (rr.unresolved.length ? ', NOT linked: ' + rr.unresolved.map(u => u.name + ' (' + u.reason + ')').join('; ') : '');
   }
+  // address + zip: a corrected delivery address (Oct 13: Sean's NYC quote sat in a session with his Boston address).
+  const addrIn = req.body && req.body.address, zipIn = req.body && req.body.zip;
+  if (addrIn && /^\d{5}$/.test(String(zipIn || ''))) { console.log('[internal] session-basket: ' + session_id + ' address ' + JSON.stringify(st.address) + ' -> ' + JSON.stringify(addrIn)); st.address = String(addrIn); st.zip = String(zipIn); st.addrConfirmed = true; st.geocoded = null; }
   if (prop) { st.lastProposalUrl = 'http://3.138.180.46/proposals/' + prop.pdf; if (prop.client_name) st.savedClientName = prop.client_name; if (prop.event_date) st.savedEventDate = prop.event_date; }
   st.lastLineItems = JSON.stringify(line_items); st.pendingSubstitutes = []; st.pendingAddOffer = null; st.pendingQtyFor = null; st.lastCta = null;
   if (!sessions[session_id]) sessions[session_id] = [];
