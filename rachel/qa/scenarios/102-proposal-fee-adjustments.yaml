@@ -1,0 +1,24 @@
+name: proposal-fee-adjustments
+# Oct 13 (Sean, email): "Adjust the tax to: 8.8875% / Adjust the tip to: $50 flat fee / Adjust the delivery to: $0" after a
+# proposal. The LLM wrote those numbers in its reply, but the PDF kept tax "9%", tip 5% ($380.87) and delivery $25, was
+# billed to the sender, and lost the delivery address. Fees are now read in code (tax-command.js fees), kept for the
+# session (proposalOpts) and passed on every proposal path; the PDF is regenerated in code. Same /chat path on every channel.
+tags: [ux]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "1460 Broadway, New York, NY 10036"
+  - send: "2 bottles of Tito's 750ml and 3 bottles of Josh Cellars Cabernet"
+    expect: {contains: ["Tito", "Josh"]}
+  - send: "please create a proposal"
+  - send: "Liquid Labs QA"
+  - send: "December 5"
+    expect: {pdf_contains: ["Liquid Labs QA", "1460 Broadway", "Tip (5%)"]}
+  - send: "Thanks! Can we please make these adjustments:\n\nAdjust the tax to: 8.8875%\nAdjust the tip to: $50 flat fee\nAdjust the delivery to: $0"
+    expect:
+      contains: ["8.8875%", "$50.00", "delivery $0.00"]
+      log_contains: ["[fees] proposal fees set"]
+      pdf_contains: ["Estimated tax (8.8875%)", "Tip (flat)", "$50.00", "Liquid Labs QA", "1460 Broadway"]
+      pdf_not_contains: ["Tip (5%)", "$25.00", "(9%)"]
+  - send: "show my basket"
+    expect: {contains: ["Estimated tax (8.8875%)", "Tip (flat): $50.00"]}

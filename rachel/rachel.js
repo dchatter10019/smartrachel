@@ -163,6 +163,10 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         if (eventParams && eventParams.qa) toolInput.dry_run = true;   // QA: no real placement
         if (toolInput.intent === 'generate_proposal' && eventParams && eventParams.proposalOpts) {
           for (const k of ['hide_subtotals', 'totals_only', 'tax_exempt']) if (eventParams.proposalOpts[k] && toolInput[k] === undefined) toolInput[k] = true;
+          // Fees the customer set win over the LLM's (Oct 13: it passed tip_amount, the PDF ignored it and printed 5%).
+          for (const k of ['tax_rate', 'service_rate', 'tip_rate', 'tip_amount', 'delivery_fee']) if (typeof eventParams.proposalOpts[k] === 'number') toolInput[k] = eventParams.proposalOpts[k];
+          if (typeof eventParams.proposalOpts.tip_amount === 'number') delete toolInput.tip_rate;
+          if (typeof eventParams.proposalOpts.tip_rate === 'number') delete toolInput.tip_amount;
           console.log('[proposal] options injected into generate_proposal:', JSON.stringify(eventParams.proposalOpts));
         }
         const saInput = Object.assign({}, toolInput, { channel: channelFormat || toolInput.channel || 'slack' });
@@ -553,6 +557,13 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         // generate_proposal sent no event_date and the PDF said "Event Date(s): —".
         if (saInput.intent === 'generate_proposal' && sessionState) {
           if (!saInput.event_date && sessionState.savedEventDate) { saInput.event_date = sessionState.savedEventDate; console.log('[proposal] saved event date added to the LLM proposal: ' + JSON.stringify(saInput.event_date)); }
+          // The saved client wins over the LLM's, unless this message names the LLM's. Real (Oct 13, Sean): with "Liquid
+          // Labs" saved, the LLM billed "Sean Fitzgibbons" (the sender).
+          if (sessionState.savedClientName && saInput.client_name && saInput.client_name !== sessionState.savedClientName
+              && !String(sessionState.currentUserMessage || '').toLowerCase().includes(String(saInput.client_name).toLowerCase())) {
+            console.log('[proposal] saved client ' + JSON.stringify(sessionState.savedClientName) + ' kept, not the LLM\'s ' + JSON.stringify(saInput.client_name));
+            saInput.client_name = sessionState.savedClientName;
+          }
           if (!saInput.client_name && sessionState.savedClientName) saInput.client_name = sessionState.savedClientName;
           // No saved client: the one the email subject names beats the LLM's guess (unless the customer's own message names
           // the LLM's). Real bug (Oct 2, QA email-which-proposal): "Drinks quote - Northwind QA" — the LLM billed "Bevvi"
@@ -573,7 +584,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           if (saInput.intent === 'generate_proposal' && sessionState && sessionState.proposalHideAddress) {
             saInput.notes = String(saInput.notes || '').replace(/[^.]*\b(deliver|address)[^.]*\.?/gi, '').trim();
             console.log('[proposal] delivery address left off the LLM proposal (customer asked)');
-          } else if (saInput.intent === 'generate_proposal' && sessionState && sessionState.address && !/\bdeliver/i.test(saInput.notes || '')) {
+          } else if (saInput.intent === 'generate_proposal' && sessionState && sessionState.address && !/\bdeliver(?:y|ed)?\s*(?:to|address|at)?\s*:?\s*\d/i.test(saInput.notes || '')) {   // "Delivery fee: $0" is not an address (Oct 13)
             saInput.notes = 'Delivery: ' + sessionState.address + '.' + (saInput.notes ? ' ' + saInput.notes : '');
             console.log('[proposal] delivery address added to the LLM proposal notes');
           }

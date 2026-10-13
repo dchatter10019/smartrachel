@@ -78,6 +78,24 @@ function groupByCategory(lineItems) {
   return sorted;
 }
 
+// The estimate lines. Fees the customer set (DC, Oct 13 — Sean: "tax 8.8875%, tip $50 flat, delivery $0"; the PDF kept
+// 9% / 5% / $25 because only tax_rate existed and its label was rounded): tax_rate, service_rate, tip_rate or tip_amount,
+// delivery_fee. Defaults: tax 10%, service 10%, tip 5%, delivery $25. Same numbers in the saved items file (totals).
+const pctLabel = r => (Math.round(r * 1e6) / 1e4).toString() + '%';
+function proposalTotals(proposal, items) {
+  const num = v => (typeof v === 'number' && isFinite(v) ? v : (v != null && v !== '' && isFinite(parseFloat(v)) ? parseFloat(v) : null));
+  const productTotal = Math.round(items.reduce((sum, p) => sum + ((p.qty || p.quantity || 1) * (parseFloat(p.price) || 0)), 0) * 100) / 100;
+  const taxR = proposal.tax_exempt ? 0 : (num(proposal.tax_rate) ?? 0.10);
+  const svcR = num(proposal.service_rate) ?? 0.10;
+  const tipAmt = num(proposal.tip_amount), tipR = tipAmt != null ? null : (num(proposal.tip_rate) ?? 0.05);
+  const delivery = num(proposal.delivery_fee) ?? 25.00;
+  const r2 = x => Math.round(x * 100) / 100;
+  const tax = r2(productTotal * taxR), service = r2(productTotal * svcR), tip = tipAmt != null ? r2(tipAmt) : r2(productTotal * tipR);
+  return { productTotal, effectiveTaxRate: taxR, tax, service, tip, delivery, grandTotal: r2(productTotal + tax + service + tip + delivery),
+    taxLabel: proposal.tax_exempt ? 'Estimated tax (exempt)' : 'Estimated tax (' + pctLabel(taxR) + ')',
+    serviceLabel: 'Service charge (' + pctLabel(svcR) + ')', tipLabel: tipAmt != null ? 'Tip (flat)' : 'Tip (' + pctLabel(tipR) + ')' };
+}
+
 function generateHTML(proposal) {
   const { client_name, event_date, line_items, notes, tax_exempt, tax_rate, totals_only, hide_subtotals } = proposal;
   let options = []; try { options = typeof proposal.options === 'string' ? JSON.parse(proposal.options) : (proposal.options || []); } catch (e) { console.log('[proposal] options not readable — left out: ' + e.message); }
@@ -86,12 +104,8 @@ function generateHTML(proposal) {
   
   items.forEach(p => { p.qty = p.qty || p.quantity || 1; p.price = parseFloat(p.price) || 0; });
   const productTotal = items.reduce((sum, p) => sum + (p.qty * p.price), 0);
-  const effectiveTaxRate = tax_exempt ? 0 : (typeof tax_rate === 'number' ? tax_rate : 0.10);
-  const tax = Math.round(productTotal * effectiveTaxRate * 100) / 100;
-  const service = Math.round(productTotal * 0.10 * 100) / 100;
-  const tip = Math.round(productTotal * 0.05 * 100) / 100;
-  const delivery = 25.00;
-  const grandTotal = productTotal + tax + service + tip + delivery;
+  const t = proposalTotals(proposal, items);
+  const { effectiveTaxRate, tax, service, tip, delivery, grandTotal } = t;
   
   let categorySections = '';
   Object.entries(groups).forEach(([cat, products]) => {
@@ -222,9 +236,9 @@ function generateHTML(proposal) {
   ${notes ? `<div class="notes">${notes}</div>` : ''}
   ${totals_only ? '' : `<div class="totals">
     <div><span>Product total</span><span>$${productTotal.toFixed(2)}</span></div>
-    <div><span>Estimated tax (${Math.round(effectiveTaxRate * 100)}%)</span><span>$${tax.toFixed(2)}</span></div>
-    <div><span>Service charge (10%)</span><span>$${service.toFixed(2)}</span></div>
-    <div><span>Tip (5%)</span><span>$${tip.toFixed(2)}</span></div>
+    <div><span>${t.taxLabel}</span><span>$${tax.toFixed(2)}</span></div>
+    <div><span>${t.serviceLabel}</span><span>$${service.toFixed(2)}</span></div>
+    <div><span>${t.tipLabel}</span><span>$${tip.toFixed(2)}</span></div>
     <div><span>Delivery</span><span>$${delivery.toFixed(2)}</span></div>
   </div>`}
   <div class="grand-total">
@@ -268,7 +282,9 @@ async function generateProposal(proposal, outputPath) {
     let options = []; try { options = typeof proposal.options === 'string' ? JSON.parse(proposal.options) : (proposal.options || []); } catch (e) {}
     fs.writeFileSync(path.join(dir, path.basename(outputPath) + '.json'), JSON.stringify({
       pdf: path.basename(outputPath), at: new Date().toISOString(), client_name: proposal.client_name || '',
-      event_date: proposal.event_date || '', notes: proposal.notes || '', line_items: items, options: options.length ? options : undefined }, null, 1));
+      event_date: proposal.event_date || '', notes: proposal.notes || '', line_items: items, options: options.length ? options : undefined,
+      fees: { tax_exempt: !!proposal.tax_exempt, tax_rate: proposal.tax_rate, service_rate: proposal.service_rate, tip_rate: proposal.tip_rate, tip_amount: proposal.tip_amount, delivery_fee: proposal.delivery_fee },
+      totals: proposal.totals_only ? undefined : proposalTotals(proposal, items) }, null, 1));
   } catch (e) { console.log('[proposal] line items NOT saved for ' + outputPath + ': ' + e.message); }
   return outputPath;
 }
@@ -280,4 +296,4 @@ if (require.main === module) {
   generateProposal(input, output).then(() => console.log('Done:', output)).catch(console.error);
 }
 
-module.exports = { generateProposal };
+module.exports = { generateProposal, proposalTotals };

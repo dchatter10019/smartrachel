@@ -22,4 +22,17 @@ eq('a date in the message that differs', G.check(good, Object.assign({}, sean, {
 eq('lines from another store, no stated address: flagged, not fixable', G.check(good, Object.assign({}, sean, { printedStore: BOS, stated: null, message: 'send the proposal' })).map(x => [x.field, x.fixable]), [['store', false]]);
 eq('no Delivery line (address hidden): no address/store check', G.check(Object.assign({}, good, { notes: '' }), Object.assign({}, sean, { printedStore: BOS })), []);
 eq('printedAddress', G.printedAddress('Delivery: 100 Federal Street, Floor 6, Boston, MA 02110. Call ahead.'), '100 Federal Street, Floor 6, Boston, MA 02110');
+// Oct 13 (Sean): the sender billed as the client while the subject names one — his signature is in the thread's first email
+eq("sender's own name billed: corrected to the subject's client", G.check(Object.assign({}, good, { client_name: 'Sean Fitzgibbons' }),
+  Object.assign({}, sean, { printedStore: NYC, senderName: 'Sean Fitzgibbons', threadFirst: 'quote please -- Sean Fitzgibbons Managing Partner' })).map(x => [x.field, x.expected]), [['client', 'Liquid Labs']]);
+// Oct 13 (Sean): the LLM's reply totals vs the PDF's
+const GP = require('../../generate-proposal.js');
+const tot = GP.proposalTotals({ tax_rate: 0.088875, tip_amount: 50, delivery_fee: 0 }, [{ qty: 1, price: 7617.33 }]);
+eq('fees: tax 8.8875% / tip $50 flat / delivery $0', [tot.tax, tot.tip, tot.delivery, tot.service, tot.grandTotal, tot.taxLabel, tot.tipLabel], [676.99, 50, 0, 761.73, 9106.05, 'Estimated tax (8.8875%)', 'Tip (flat)']);
+eq('fees: defaults unchanged', (t => [t.tax, t.service, t.tip, t.delivery, t.taxLabel])(GP.proposalTotals({}, [{ qty: 1, price: 100 }])), [10, 10, 5, 25, 'Estimated tax (10%)']);
+const reply = "Product total: $7,617.33\nTax (8.8875%): $676.74\nDelivery: $0.00\nService (10%): $761.73\nTip: $50.00\nEstimated grand total: $9,105.80\n\nDelivery: 1460 Broadway, New York, NY 10036";
+const ft = G.fixTotals(reply, tot);
+eq('reply totals rewritten to the PDF (tax, grand total), others and the address line untouched', [ft.changed.map(c => c.line), ft.text.split('\n')[1], ft.text.split('\n')[5], ft.text.split('\n')[7]],
+  [['Tax (8.8875%)', 'Estimated grand total'], 'Estimated tax (8.8875%): $676.99', 'Estimated grand total: $9,106.05', 'Delivery: 1460 Broadway, New York, NY 10036']);
+eq('matching totals: nothing changed', G.fixTotals(ft.text, tot).changed, []);
 if (failed) { console.log(failed + ' failed'); process.exit(1); }

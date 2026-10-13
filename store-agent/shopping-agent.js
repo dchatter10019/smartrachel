@@ -1167,7 +1167,12 @@ async function executeTool(name, input) {
       totals_only: input.totals_only || false,
       hide_subtotals: input.hide_subtotals || false,
       options: input.options || null,   // alternatives listed per basket line (rachel/proposal-options.js)
-      tax_rate: typeof input.tax_rate === 'number' ? input.tax_rate : undefined
+      tax_rate: typeof input.tax_rate === 'number' ? input.tax_rate : undefined,
+      // Fees the customer set (Rachel's proposalOpts / the LLM): service %, tip % or flat $, delivery $ (Oct 13).
+      service_rate: typeof input.service_rate === 'number' ? input.service_rate : undefined,
+      tip_rate: typeof input.tip_rate === 'number' ? input.tip_rate : undefined,
+      tip_amount: typeof input.tip_amount === 'number' ? input.tip_amount : undefined,
+      delivery_fee: typeof input.delivery_fee === 'number' ? input.delivery_fee : undefined
     }, outputPath);
     return {
       success: true,

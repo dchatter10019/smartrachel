@@ -945,14 +945,26 @@ const LIST_SCALE_NOTE = 'The customer wants THEIR LISTED products sized for this
 const taxRateFor = state => (state && state.taxExempt ? 0 : 0.10);
 const taxLabelFor = state => (state && state.taxExempt ? 'Estimated tax (exempt)' : 'Estimated tax (10%)');
 const TAXCMD = require('./tax-command.js');
+// The fees the customer set for this session's proposals (tax-command.js fees -> state.proposalOpts), as
+// generate_proposal arguments. Every proposal path passes them (in-code, email quote PDF, LLM, the guard).
+const FEE_KEYS = ['tax_rate', 'service_rate', 'tip_rate', 'tip_amount', 'delivery_fee'];
+const feeArgs = po => Object.fromEntries(FEE_KEYS.filter(k => po && typeof po[k] === 'number').map(k => [k, po[k]]));
+// One estimate for a product total: the PDF's math (generate-proposal.js proposalTotals) with this session's fees; the
+// tip is the proposal tip if one was set, else the order's tip choice. Every in-chat estimate uses it.
+function estimateFor(state, base) {
+  const fa = feeArgs(state && state.proposalOpts), tipSet = fa.tip_amount != null || fa.tip_rate != null;
+  const tc = tipFor(state || {}, base);
+  const PT = require('./generate-proposal.js').proposalTotals(Object.assign({ tax_exempt: !!(state && state.taxExempt) }, fa,
+    tipSet ? {} : (tc.choice && tc.choice.pct == null ? { tip_amount: tc.tip } : { tip_rate: tc.choice ? tc.choice.pct / 100 : 0.05 })), [{ qty: 1, price: base }]);
+  return { tax: PT.tax, svc: PT.service, tip: PT.tip, del: PT.delivery, grand: PT.grandTotal, taxL: PT.taxLabel, svcL: PT.serviceLabel, tipL: tipSet ? PT.tipLabel : tc.label };
+}
 // The basket with every estimate line (show basket, tax change).
 function basketTotalsText(state, items, format) {
   const lines = items.map(li => (li.qty || li.quantity || 1) + 'x ' + li.name + ' — $' + (parseFloat(li.price) || 0).toFixed(2) + ' ea = $' + ((li.qty || li.quantity || 1) * (parseFloat(li.price) || 0)).toFixed(2));
   const tot = Math.round(items.reduce((a, li) => a + (li.qty || li.quantity || 1) * (parseFloat(li.price) || 0), 0) * 100) / 100;
-  const tax = Math.round(tot * taxRateFor(state) * 100) / 100, svc = Math.round(tot * 10) / 100, { tip, label: tipL } = tipFor(state, tot), del = 25.00;
-  const grand = Math.round((tot + tax + svc + tip + del) * 100) / 100;
+  const E = estimateFor(state, tot), tax = E.tax, svc = E.svc, tip = E.tip, del = E.del, tipL = E.tipL, grand = E.grand;
   const b = format === 'slack' ? '*' : '';
-  return lines.join('\n') + '\n\nProduct total: $' + tot.toFixed(2) + '\n' + taxLabelFor(state) + ': $' + tax.toFixed(2) + '\nService charge (10%): $' + svc.toFixed(2) +
+  return lines.join('\n') + '\n\nProduct total: $' + tot.toFixed(2) + '\n' + E.taxL + ': $' + tax.toFixed(2) + '\n' + E.svcL + ': $' + svc.toFixed(2) +
     '\n' + tipL + ': $' + tip.toFixed(2) + '\nEstimated delivery: $' + del.toFixed(2) + '\n' + b + 'Estimated grand total: $' + grand.toFixed(2) + b + '\n\nEstimates — actual totals may vary.';
 }
 function tipFor(state, base) {
@@ -1942,14 +1954,26 @@ app.post('/chat', async (req, res) => {
           const pAddr = PG.printedAddress(pi.notes), pZip = (pAddr.match(/(\d{5})(?:-\d{4})?$/) || [])[1];
           const covP = pZip ? await checkStoreCoverage(pZip).catch(() => null) : null;
           const covS = stated ? await checkStoreCoverage(stated.zip).catch(() => null) : null;
-          const issues = PG.check(pi, { message, subject: context && context.email_subject, threadFirst: context && context.thread_first_body,
+          const issues = PG.check(pi, { message, subject: context && context.email_subject, threadFirst: context && context.thread_first_body, senderName: context && context.user_name,
             stated, printedStore: covP && covP.establishmentId, statedStore: covS && covS.establishmentId });
-          if (!issues.length) return _jG(payload);
+          // Totals the reply states must be the PDF's (checked after any regeneration below, on the final PDF).
+          const totalsFix = (piT) => {
+            const ft = PG.fixTotals(payload.text, piT && piT.totals);
+            if (!ft.changed.length) return [];
+            payload.text = ft.text; if (typeof payload.response === 'string') payload.response = PG.fixTotals(payload.response, piT.totals).text;
+            console.log('[proposal-guard] CORRECTED reply totals to the PDF\'s: ' + ft.changed.map(c => c.line + ' $' + c.was + ' -> $' + c.now).join('; '));
+            return [{ field: 'totals', printed: ft.changed.map(c => c.line + ' $' + c.was).join('; '), expected: ft.changed.map(c => c.line + ' $' + c.now).join('; '), why: 'the reply stated amounts the PDF does not have', fixable: true }];
+          };
+          if (!issues.length) {
+            const tIss = totalsFix(pi);
+            if (tIss.length) { try { fs.appendFileSync(dataDir.file('self-corrections.jsonl'), JSON.stringify({ ts: new Date().toISOString(), session: sessionKey, channel: format === 'plain' ? 'email' : (format || 'slack'), customer: email || '', qa: !!isQA, customer_said: String(message).slice(0, 600), pdf_before: pm[1], issues: tIss, corrected: ['totals'] }) + '\n'); } catch (e) {} }
+            return _jG(payload);
+          }
           const fix = issues.filter(i => i.fixable);
           const rec = { ts: new Date().toISOString(), session: sessionKey, channel: format === 'plain' ? 'email' : (format || 'slack'), customer: email || '', qa: !!isQA,
             customer_said: String(message).slice(0, 600), pdf_before: pm[1], issues };
           if (fix.length) {
-            const next = { client_name: pi.client_name, event_date: pi.event_date, notes: pi.notes, line_items: pi.line_items, options: pi.options, tax_exempt: !!stG.taxExempt };
+            const next = Object.assign({ client_name: pi.client_name, event_date: pi.event_date, notes: pi.notes, line_items: pi.line_items, options: pi.options }, pi.fees || {}, { tax_exempt: !!stG.taxExempt });
             for (const i of fix) {
               if (i.field === 'address') { next.notes = String(next.notes || '').replace(pAddr, i.expected); stG.address = i.expected; stG.zip = i.zip; stG.addrConfirmed = true; stG.geocoded = null; }
               if (i.field === 'client') { next.client_name = i.expected; stG.savedClientName = i.expected; }
@@ -1962,8 +1986,10 @@ app.post('/chat', async (req, res) => {
             const swap = t => { let o = String(t || '').split(pm[0]).join(newUrl); for (const i of fix) if (i.printed && i.expected) o = o.split(i.printed).join(i.expected); return o; };
             payload.text = swap(payload.text); if (typeof payload.response === 'string') payload.response = swap(payload.response);
             rec.pdf_after = fname; rec.corrected = fix.map(i => i.field);
+            try { const tIss = totalsFix(JSON.parse(fs.readFileSync(path.join('/home/ubuntu/logs/proposal-items', fname + '.json'), 'utf8'))); if (tIss.length) { rec.issues = rec.issues.concat(tIss); rec.corrected.push('totals'); } } catch (e) {}
             console.log('[proposal-guard] CORRECTED ' + fix.map(i => i.field + ' ' + JSON.stringify(i.printed) + ' -> ' + JSON.stringify(i.expected) + ' (' + i.why + ')').join('; ') + ' | ' + pm[1] + ' -> ' + fname);
           }
+          if (!fix.length) { const tIss = totalsFix(pi); if (tIss.length) { rec.issues = rec.issues.concat(tIss); rec.corrected = ['totals']; } }
           const left = issues.filter(i => !i.fixable);
           if (left.length) console.log('[proposal-guard] NOT corrected (needs a person): ' + left.map(i => i.field + ': ' + i.why).join('; '));
           try { fs.appendFileSync(dataDir.file('self-corrections.jsonl'), JSON.stringify(rec) + '\n'); } catch (e) { console.log('[proposal-guard] log write failed: ' + e.message); }
@@ -3335,6 +3361,7 @@ app.post('/chat', async (req, res) => {
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'generate_proposal', arguments: {
           line_items: JSON.stringify(items), client_name: client, event_date: eventDate, email, channel: format || 'plain',
           tax_exempt: !!st.taxExempt,   // the session's tax / address choices hold on email quotes too (DC, Oct 5)
+          ...feeArgs(st.proposalOpts),
           notes: (st.address && !st.proposalHideAddress ? 'Delivery: ' + st.address + '.' : '') + (inexactCount ? ' Some items are recommended alternatives to what was asked (see email).' : '')
             + (items.some(li => /\*\s*$/.test(String(li.name || ''))) ? ' * = recommended in place of a requested item this store does not carry.' : '') } } }) });
       const rt = await rr.text(); const rl = rt.split('\n').find(l => l.startsWith('data:'));
@@ -3711,10 +3738,9 @@ app.post('/chat', async (req, res) => {
           const asksBasket = /\b(basket|cart|my order|order so far)\b/i.test(message);
           if (one && !isList && !asksBasket && !items.some(it => nk(it.name).indexOf(nk(one[1]).slice(0, 12)) >= 0)) {
             const pp = parseFloat(one[3].replace(/,/g, '')) || 0;
-            const tax1 = Math.round(pp * taxRateFor(state) * 100) / 100, svc1 = Math.round(pp * 10) / 100, { tip: tip1, label: tipL1 } = tipFor(state, pp), del1 = 25.00;
-            const g1 = Math.round((pp + tax1 + svc1 + tip1 + del1) * 100) / 100;
+            const E1 = estimateFor(state, pp), tax1 = E1.tax, svc1 = E1.svc, tip1 = E1.tip, tipL1 = E1.tipL, del1 = E1.del, g1 = E1.grand;
             const r1 = 'Estimated all-in for 1x ' + one[1].trim() + (one[2] ? ' — ' + one[2].trim() : '') + ':\n\n' +
-              'Product: $' + pp.toFixed(2) + '\n' + taxLabelFor(state) + ': $' + tax1.toFixed(2) + '\nService charge (10%): $' + svc1.toFixed(2) +
+              'Product: $' + pp.toFixed(2) + '\n' + E1.taxL + ': $' + tax1.toFixed(2) + '\n' + E1.svcL + ': $' + svc1.toFixed(2) +
               '\n' + tipL1 + ': $' + tip1.toFixed(2) + '\nEstimated delivery: $' + del1.toFixed(2) + '\n*Estimated total: $' + g1.toFixed(2) + '*' +
               '\n\nEstimates — actual totals may vary.' +
               (items.length ? '\n\n(Your basket has ' + items.length + ' other item' + (items.length === 1 ? '' : 's') + ' — say "show my basket" for that total.)' : '') +
@@ -3729,12 +3755,11 @@ app.post('/chat', async (req, res) => {
           // Full estimate, same math as the order summary. Real regression: 'estimated
           // price' routed here (show_basket 0.90) and got only the product total — no tax,
           // service, tip, or delivery.
-          const tax = Math.round(tot * taxRateFor(state) * 100) / 100, svc = Math.round(tot * 10) / 100, { tip, label: tipL } = tipFor(state, tot), del = 25.00;
-          const grand = Math.round((tot + tax + svc + tip + del) * 100) / 100;
+          const E = estimateFor(state, Math.round(tot * 100) / 100), tax = E.tax, svc = E.svc, tip = E.tip, tipL = E.tipL, del = E.del, grand = E.grand;
           const reply = 'Here\'s your current basket:\n\n' + lines.join('\n') +
             '\n\nProduct total: $' + tot.toFixed(2) +
-            '\n' + taxLabelFor(state) + ': $' + tax.toFixed(2) +
-            '\nService charge (10%): $' + svc.toFixed(2) +
+            '\n' + E.taxL + ': $' + tax.toFixed(2) +
+            '\n' + E.svcL + ': $' + svc.toFixed(2) +
             '\n' + tipL + ': $' + tip.toFixed(2) +
             '\nEstimated delivery: $' + del.toFixed(2) +
             '\n*Estimated grand total: $' + grand.toFixed(2) + '*' +
@@ -4765,15 +4790,24 @@ app.post('/chat', async (req, res) => {
     // zeroed the tax on one PDF only, the next estimate and PDF had 10% again; "take out the address" was refused.
     const taxCmd = TAXCMD.read(message);
     const addrCmd = TAXCMD.proposalAddress(message);
-    if ((taxCmd || addrCmd) && !pfHandled && !state.proposalStep && (!state.orderStep || state.orderStep === 'confirm')) {
+    const feeCmd = TAXCMD.fees(message);   // "tax to 8.8875%", "tip $50 flat", "delivery $0" (Oct 13, Sean)
+    if ((taxCmd || addrCmd || feeCmd) && !pfHandled && !state.proposalStep && (!state.orderStep || state.orderStep === 'confirm')) {
       if (taxCmd) {
         state.taxExempt = taxCmd === 'zero';
         state.proposalOpts = Object.assign({}, state.proposalOpts || {}, { tax_exempt: state.taxExempt });
         state.eventParams = Object.assign({}, state.eventParams || {}, { proposalOpts: state.proposalOpts });
       }
       if (addrCmd) state.proposalHideAddress = addrCmd === 'hide';
+      if (feeCmd) {
+        const po2 = Object.assign({}, state.proposalOpts || {});
+        if (feeCmd.tip_amount != null) delete po2.tip_rate; if (feeCmd.tip_rate != null) delete po2.tip_amount;
+        if (feeCmd.tax_rate != null) { po2.tax_exempt = feeCmd.tax_rate === 0; state.taxExempt = feeCmd.tax_rate === 0; }
+        state.proposalOpts = Object.assign(po2, feeCmd);
+        state.eventParams = Object.assign({}, state.eventParams || {}, { proposalOpts: state.proposalOpts });
+        console.log('[fees] proposal fees set: ' + TAXCMD.feesText(feeCmd) + ' -> ' + JSON.stringify(feeArgs(state.proposalOpts)));
+      }
       saveFlowState();
-      const said = [taxCmd ? (taxCmd === 'zero' ? 'tax is set to $0' : 'the estimated 10% tax is back') : '', addrCmd ? (addrCmd === 'hide' ? 'the delivery address is left off the proposal' : 'the delivery address is back on the proposal') : ''].filter(Boolean).join(' and ');
+      const said = [taxCmd ? (taxCmd === 'zero' ? 'tax is set to $0' : 'the estimated 10% tax is back') : '', feeCmd ? TAXCMD.feesText(feeCmd) + ' on the proposal' : '', addrCmd ? (addrCmd === 'hide' ? 'the delivery address is left off the proposal' : 'the delivery address is back on the proposal') : ''].filter(Boolean).join(' and ');
       console.log('[tax/address] ' + said + ' (' + JSON.stringify(message).slice(0, 60) + ')' + (state.lastProposalUrl ? ' — proposal regenerated' : ''));
       if (state.orderStep === 'confirm' && taxCmd) return renderOrderSummary(state, email, format, res);
       let tl = []; try { tl = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
@@ -4957,7 +4991,7 @@ app.post('/chat', async (req, res) => {
           const reqP = { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
             body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'generate_proposal', arguments: Object.assign({
               line_items: JSON.stringify(existingItemsForProposal), client_name: pd.client_name || '', event_date: pd.event_date || '', email, channel: format || 'slack',
-              notes: state.address && !state.proposalHideAddress ? 'Delivery: ' + state.address + '.' : '' }, altOpts.length ? { options: JSON.stringify(altOpts) } : {}, po.tax_exempt ? { tax_exempt: true } : {}, po.totals_only ? { totals_only: true } : {}, po.hide_subtotals ? { hide_subtotals: true } : {}) } }) };
+              notes: state.address && !state.proposalHideAddress ? 'Delivery: ' + state.address + '.' : '' }, altOpts.length ? { options: JSON.stringify(altOpts) } : {}, po.tax_exempt ? { tax_exempt: true } : {}, feeArgs(po), po.totals_only ? { totals_only: true } : {}, po.hide_subtotals ? { hide_subtotals: true } : {}) } }) };
           // A dropped connection ("fetch failed") is retried once before the LLM fallback (F-0021: the fallback's
           // reply had no basket lines and no in-code PDF checks).
           let rrP;
@@ -6148,6 +6182,15 @@ app.post('/internal/session-basket', async (req, res) => {
   // address + zip: a corrected delivery address (Oct 13: Sean's NYC quote sat in a session with his Boston address).
   const addrIn = req.body && req.body.address, zipIn = req.body && req.body.zip;
   if (addrIn && /^\d{5}$/.test(String(zipIn || ''))) { console.log('[internal] session-basket: ' + session_id + ' address ' + JSON.stringify(st.address) + ' -> ' + JSON.stringify(addrIn)); st.address = String(addrIn); st.zip = String(zipIn); st.addrConfirmed = true; st.geocoded = null; }
+  // The fees saved with that PDF (tax / service / tip / delivery the customer set) hold for the session's next proposals.
+  if (prop && prop.fees) {
+    const fa = feeArgs(prop.fees);
+    if (Object.keys(fa).length || prop.fees.tax_exempt) {
+      st.proposalOpts = Object.assign({}, st.proposalOpts || {}, fa, { tax_exempt: !!prop.fees.tax_exempt }); st.taxExempt = !!prop.fees.tax_exempt;
+      st.eventParams = Object.assign({}, st.eventParams || {}, { proposalOpts: st.proposalOpts });
+      console.log('[internal] session-basket: ' + session_id + ' proposal fees from ' + prop.pdf + ': ' + JSON.stringify(fa));
+    }
+  }
   if (prop) { st.lastProposalUrl = 'http://3.138.180.46/proposals/' + prop.pdf; if (prop.client_name) st.savedClientName = prop.client_name; if (prop.event_date) st.savedEventDate = prop.event_date; }
   st.lastLineItems = JSON.stringify(line_items); st.pendingSubstitutes = []; st.pendingAddOffer = null; st.pendingQtyFor = null; st.lastCta = null;
   if (!sessions[session_id]) sessions[session_id] = [];

@@ -7,7 +7,7 @@
 //
 // check(pi, ctx) -> [{ field, printed, expected, why, fixable }]
 //   pi:  the proposal's saved items file (generate-proposal.js): { client_name, event_date, notes, line_items }
-//   ctx: { message, subject, threadFirst, stated: { address, zip } | null, printedStore, statedStore, now }
+//   ctx: { message, subject, threadFirst, senderName, stated: { address, zip } | null, printedStore, statedStore, now }
 // Checks (each only when the customer's own words give the expected value):
 //   address — an address in THIS message that isn't the printed one
 //   store   — the lines come from another store than the one serving the printed address (fixable only when the
@@ -56,8 +56,11 @@ function check(pi, ctx) {
     }
   }
   const sc = clientFromSubject(ctx.subject || '');
+  // The sender's own name is never "named by the customer" — it is in every email's signature (Oct 13: Sean's quote was
+  // billed to "Sean Fitzgibbons" with "Liquid Labs" in the subject).
+  const senderIsClient = !!(ctx.senderName && pi.client_name && (names(ctx.senderName, pi.client_name) || names(pi.client_name, ctx.senderName)));
   if (sc && pi.client_name && !names(pi.client_name, sc) && !names(sc, pi.client_name)
-      && !names(msg, pi.client_name) && !names(ctx.threadFirst || '', pi.client_name)
+      && (senderIsClient || (!names(msg, pi.client_name) && !names(ctx.threadFirst || '', pi.client_name)))
       && !(ED.parseProposalFieldEdit(msg, pi.event_date, now) || {}).client) {
     out.push({ field: 'client', printed: pi.client_name, expected: sc, why: 'the email subject names ' + sc + ' and the customer never named ' + pi.client_name + ' in this thread', fixable: true });
   }
@@ -68,6 +71,36 @@ function check(pi, ctx) {
   return out;
 }
 
+// The estimate lines the reply states vs the PDF's (pi.totals, generate-proposal.js) -> { text, changed: [{ line, was, now }] }.
+// A reply line "Tax (8.8875%): $676.74" whose amount differs from the PDF's is rewritten with the PDF's label and amount.
+// Real (Oct 13, Sean): the LLM wrote tax $676.74 / tip $50 / delivery $0 / total $9,105.80; the PDF said 9% $676.99 / 5%
+// $380.87 / $25 / $9,461.92. Lines without a "$" amount ("Delivery: 1460 Broadway") are never touched.
+function fixTotals(text, totals) {
+  if (!totals || typeof text !== 'string') return { text, changed: [] };
+  const usd = v => '$' + Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const KINDS = [
+    [/^product\s+total\b/i, 'Product total', 'productTotal'],
+    [/^(?:estimated\s+)?(?:sales\s+)?tax\b/i, totals.taxLabel, 'tax'],
+    [/^service(?:\s+charge|\s+fee)?\b/i, totals.serviceLabel, 'service'],
+    [/^(?:tip|gratuity)\b/i, totals.tipLabel, 'tip'],
+    [/^(?:estimated\s+)?delivery(?:\s+fee|\s+charge)?\b/i, 'Delivery', 'delivery'],
+    [/^(?:estimated\s+)?grand\s+total\b/i, 'Estimated grand total', 'grandTotal']];
+  const changed = [];
+  const out = text.split('\n').map(line => {
+    const m = line.match(/^(\s*(?:[-•*]\s+)?\**)([A-Za-z][^:\n$]{0,40}?)\s*:\s*\**\s*\$\s*([\d,]+(?:\.\d{1,2})?)\**(.*)$/);
+    if (!m) return line;
+    const k = KINDS.find(x => x[0].test(m[2].trim()));
+    if (!k || typeof totals[k[2]] !== 'number') return line;
+    const was = parseFloat(m[3].replace(/,/g, '')), now = totals[k[2]];
+    if (Math.abs(was - now) < 0.01) return line;
+    const bold = /^\s*\*/.test(m[1]) ? '*' : '';
+    const nl = m[1].replace(/\*+$/, '') + bold + k[1] + ': ' + usd(now) + bold + (/budget/i.test(m[4]) ? m[4].replace(/^\**/, '') : '');
+    changed.push({ line: m[2].trim(), was, now });
+    return nl;
+  });
+  return { text: out.join('\n'), changed };
+}
+
 const PDF_RE = /https?:\/\/[^\s<>|"]*\/proposals\/(bevvi-proposal[\w.-]*\.pdf)/;
 
-module.exports = { check, printedAddress, linesStore, PDF_RE };
+module.exports = { check, fixTotals, printedAddress, linesStore, PDF_RE };

@@ -243,7 +243,16 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   Each -> RACHEL_DATA_DIR/self-corrections.jsonl -> monitor detector self_correction (high; not corrected = critical; QA
   skipped) -> nightly fixer (in scope.yaml fix_detectors) fixes the cause. The connector's rachel_generate_proposal is not
   guarded: its client/address/date come straight from the client's tool input, and its lines carry no store id.
-  /internal/session-basket also takes address + zip (a session's delivery address corrected by hand).
+  /internal/session-basket also takes address + zip (a session's delivery address corrected by hand), and loading
+  from_proposal restores that PDF's fees. The guard also checks the reply's stated totals against the PDF's (rewritten
+  from the PDF, field "totals") and the sender's own name billed as client while the subject names one.
+- Proposal fees (Oct 13, Sean: "tax to 8.8875% / tip $50 flat / delivery $0" — the LLM's reply had them, the PDF kept
+  9% / 5% / $25, billed the sender and lost the address): read in code (tax-command.js fees: tax %, service %, tip % or $,
+  delivery $; "delivery to <address>" is never a fee) -> state.proposalOpts for the session -> every path (in-code
+  proposal, email quote PDF, the LLM's generate_proposal — customer fees override the LLM's) -> generate-proposal.js
+  proposalTotals (exact % labels; fees + totals saved in proposal-items) and every in-chat estimate (server.js estimateFor).
+  The placed-order email/summary keeps Bevvi's real fees. The LLM's generate_proposal keeps the saved client unless this
+  message names its own; "Delivery fee" in its notes no longer drops the delivery address. Scenario 102.
 - Customer preferences (customer-prefs.js -> RACHEL_DATA_DIR/customer-prefs.json): lasting statements ("we always do cans",
   "from now on...", "we never serve red", "can you always...") saved per customer email and per client ("client:goody");
   Bevvi staff in a client's email thread -> the client only; a QA identity -> its own address only. Shown to the LLM on
