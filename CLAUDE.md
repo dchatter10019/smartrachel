@@ -23,7 +23,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   kind cocktail-expand) -> custom_list (Wine/Beer lines + every ingredient), as Rachel's cocktail mode. rachel_proposal_from_list (DC, Oct 14):
   products (list entries "3 x Tito's 750ml", "2 cases of Stella", "X x 6", or {name, qty}) + zip, customer_name / event_date
   optional -> each entry read in code (original-compare.js namedFromListLine: no count = 1, a case of wine/spirits = 12) ->
-  custom_list -> the same generate-proposal.js PDF; result lists substituted (asked vs on the PDF) and not_included. rachel_chat: a connection
+  custom_list -> the same generate-proposal.js PDF; result lists substituted (asked vs on the PDF) and not_included. Optional
+  per line: price ({price} / "@ $25" / "$25 each"; a bare "$75" is not read) — on the store's product, or a not-carried /
+  stand-in line printed as typed (never on another product); prices_you_set lists store vs customer price. Optional fees:
+  tax_percent, tax_exempt, service_percent, tip_percent | tip_amount, delivery_fee (proposalTotals defaults otherwise). rachel_chat: a connection
   that passed rachel_verify_age tells Rachel via POST /internal/age-verified {session_id, via:'rachel-mcp'} (refused when proxied
   or after a refusal in 24h; an idle session is expired there first, else /chat's idle expiry wiped the check — Oct 4) -> that conversation only skips her age question, never the profile (DC approved, Oct 3). Tool descriptions + server instructions OPEN with when to use them (drink recommendations, events, buying / delivery,
   "even if they don't mention Bevvi") — claude.ai shows only a description's first line until a tool is loaded, and a plain

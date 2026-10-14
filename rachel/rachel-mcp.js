@@ -148,10 +148,16 @@ const TOOLS = [
     inputSchema: {
       type: 'object',
       properties: {
-        products:      { type: 'array', description: 'The products, one per entry, with the customer\'s quantity and size if given: "3 x Tito\'s 750ml", "2 cases of Stella Artois", "Whispering Angel" (no quantity = 1). Or objects {name, qty}.', items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { name: { type: 'string' }, qty: { type: 'number' } }, required: ['name'] }] } },
+        products:      { type: 'array', description: 'The products, one per entry, with the customer\'s quantity and size if given: "3 x Tito\'s 750ml", "2 cases of Stella Artois", "Whispering Angel" (no quantity = 1). Or objects {name, qty, price}. price is OPTIONAL — only when the customer states the unit price to print for that line ("Tito\'s 750ml @ $25" also works); otherwise the store\'s price is used.', items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { name: { type: 'string' }, qty: { type: 'number' }, price: { type: 'number', description: 'Optional unit price in USD to print instead of the store\'s' } }, required: ['name'] }] } },
         zip:           { type: 'string', description: 'Delivery zip code (prices are the local store\'s)' },
         customer_name: { type: 'string', description: 'Optional: the client / customer name printed as "Billed To"' },
         event_date:    { type: 'string', description: 'Optional: the event date, e.g. "2026-11-20" or "Nov 20"' },
+        tax_percent:     { type: 'number', description: 'Optional: tax rate in percent, e.g. 8.8875 (default 10)' },
+        tax_exempt:      { type: 'boolean', description: 'Optional: true when the customer is tax-exempt / says the tax is 0' },
+        service_percent: { type: 'number', description: 'Optional: service charge in percent (default 10)' },
+        tip_percent:     { type: 'number', description: 'Optional: tip in percent of the products (default 5)' },
+        tip_amount:      { type: 'number', description: 'Optional: a flat tip in USD (instead of tip_percent)' },
+        delivery_fee:    { type: 'number', description: 'Optional: delivery fee in USD (default 25; 0 for free delivery)' },
         email:         { type: 'string', description: 'Customer email' }
       },
       required: ['products', 'zip']
@@ -245,15 +251,17 @@ async function callShoppingAgent(intent, args) {
 }
 
 // The proposal PDF (generate-proposal.js — the same PDF Slack / WhatsApp / email send), served by nginx /proposals/.
-async function writeProposalPdf({ client_name, event_date, line_items, notes, tax_exempt }) {
+// fees (optional): tax_rate / service_rate / tip_rate as fractions, tip_amount / delivery_fee in USD — generate-proposal.js
+// proposalTotals defaults (10% / 10% / 5% / $25) for any left out.
+async function writeProposalPdf({ client_name, event_date, line_items, notes, tax_exempt, fees }) {
   const { generateProposal, proposalTotals } = require('./generate-proposal.js');
   const ev = event_date ? require('./event-date.js').normalizeEventDate(event_date).text : '';
   const filename = `bevvi-proposal-${Date.now()}.pdf`;
-  const proposal = { client_name, event_date: ev, line_items, notes: notes || '', tax_exempt: !!tax_exempt };
+  const proposal = Object.assign({ client_name, event_date: ev, line_items, notes: notes || '', tax_exempt: !!tax_exempt }, fees || {});
   await generateProposal(proposal, `/home/ubuntu/logs/${filename}`);
   const t = proposalTotals(proposal, typeof line_items === 'string' ? JSON.parse(line_items) : line_items);
   return { filename, download_url: `http://3.138.180.46/proposals/${filename}`, event_date: ev,
-    totals: { products: t.productTotal, tax: t.tax, service: t.service, tip: t.tip, delivery: t.delivery, grand_total: t.grandTotal } };
+    totals: { products: t.productTotal, tax_label: t.taxLabel, tax: t.tax, service_label: t.serviceLabel, service: t.service, tip_label: t.tipLabel, tip: t.tip, delivery: t.delivery, grand_total: t.grandTotal } };
 }
 
 // Age is verified per CONNECTION (API key), held in memory for 4 hours idle — never saved to the customer's profile
@@ -603,17 +611,30 @@ async function runTool(name, input, callerEmail, apiKey) {
   // and priced by custom_list — the builder Slack/email use for a customer's own list — so the PDF is the same one they get.
   if (name === 'rachel_proposal_from_list') {
     const OC = require('./original-compare.js');
+    // A unit price the customer gave for a line ({price} or "... @ $25" / "at $25" / "$25 each" / "$25/bottle") is printed
+    // instead of the store's. A bare trailing "$75" is not read as a unit price (it could be the line's total).
+    const PRICE_RE = /\s*(?:(?:@|\bat\b)\s*\$?\s*(\d+(?:\.\d{1,2})?)\s*(?:each|ea)?|\$\s*(\d+(?:\.\d{1,2})?)\s*(?:each|ea\b|\/\s*(?:bottle|btl|unit|can|pack|case|ea)))\s*\.?\s*$/i;
     const raw = (Array.isArray(input.products) ? input.products : []).map(p => {
-      if (p && typeof p === 'object') return (parseInt(p.qty) > 0 ? parseInt(p.qty) + ' x ' : '') + String(p.name || '').trim();
-      return String(p || '').trim();
-    }).filter(Boolean);
+      if (p && typeof p === 'object') return { line: (parseInt(p.qty) > 0 ? parseInt(p.qty) + ' x ' : '') + String(p.name || '').trim(), price: parseFloat(p.price) > 0 ? Math.round(parseFloat(p.price) * 100) / 100 : null };
+      const t = String(p || '').trim(), m = t.match(PRICE_RE);
+      return m ? { line: t.slice(0, m.index).trim(), price: parseFloat(m[1] || m[2]) } : { line: t, price: null };
+    }).filter(r => r.line);
     if (!raw.length) return { error: 'No products given. Pass the list in products, e.g. ["3 x Tito\'s 750ml", "2 cases of Stella Artois"].' };
-    const named = [];
-    for (const line0 of raw) {
-      const np = OC.namedFromListLine(line0);
-      if (!np) { console.log('[rachel-mcp] proposal_from_list line NOT read: ' + JSON.stringify(line0)); continue; }
-      if (np.case_bottles) console.log('[rachel-mcp] proposal_from_list ' + JSON.stringify(line0) + ' = ' + np.qty + ' bottles (12 a case)');
+    // Fees the customer gave (percent in, fraction to the PDF); anything left out keeps the proposal defaults.
+    const fees = {}, feeErr = [];
+    const pctIn = (k, to) => { if (input[k] == null || input[k] === '') return; const v = parseFloat(input[k]); if (!(v >= 0 && v <= 100)) feeErr.push(k + ' must be a percent from 0 to 100'); else fees[to] = Math.round(v * 10000) / 1000000; };
+    const usdIn = (k, to) => { if (input[k] == null || input[k] === '') return; const v = parseFloat(input[k]); if (!(v >= 0)) feeErr.push(k + ' must be 0 or more (USD)'); else fees[to] = Math.round(v * 100) / 100; };
+    pctIn('tax_percent', 'tax_rate'); pctIn('service_percent', 'service_rate'); pctIn('tip_percent', 'tip_rate'); usdIn('tip_amount', 'tip_amount'); usdIn('delivery_fee', 'delivery_fee');
+    if (fees.tip_amount != null && fees.tip_rate != null) feeErr.push('give tip_percent or tip_amount, not both');
+    if (feeErr.length) { console.log('[rachel-mcp] proposal_from_list REFUSED — fees: ' + feeErr.join('; ')); return { error: 'Fees not usable: ' + feeErr.join('; ') + '.' }; }
+    if (Object.keys(fees).length || input.tax_exempt) console.log('[rachel-mcp] proposal_from_list fees from the customer: ' + JSON.stringify(Object.assign({}, fees, input.tax_exempt ? { tax_exempt: true } : {})));
+    const named = [], givenPrice = new Map();   // np.name (the builder's line label) -> the customer's unit price
+    for (const r of raw) {
+      const np = OC.namedFromListLine(r.line);
+      if (!np) { console.log('[rachel-mcp] proposal_from_list line NOT read: ' + JSON.stringify(r.line)); continue; }
+      if (np.case_bottles) console.log('[rachel-mcp] proposal_from_list ' + JSON.stringify(r.line) + ' = ' + np.qty + ' bottles (12 a case)');
       delete np.case_bottles;
+      if (r.price) givenPrice.set(np.name, r.price);
       named.push(np);
     }
     if (!named.length) return { error: 'None of the lines could be read as products. Pass one product per entry, e.g. "3 x Tito\'s 750ml".' };
@@ -626,18 +647,37 @@ async function runTool(name, input, callerEmail, apiKey) {
     let items = built.line_items;
     if (typeof items === 'string') { try { items = JSON.parse(items); } catch (e) { items = []; } }
     items = (Array.isArray(items) ? items : []).filter(li => li && parseFloat(li.price) > 0 && (parseInt(li.qty) || 0) > 0);
-    const notIncluded = Array.isArray(built.unavailable) ? built.unavailable : String(built.unavailable || '').split(/\s*,\s*/).filter(Boolean);   // buildPackage joins them with ", "
+    let notIncluded = Array.isArray(built.unavailable) ? built.unavailable : String(built.unavailable || '').split(/\s*,\s*/).filter(Boolean);   // buildPackage joins them with ", "
+    // ("closest" whose name has every word asked — "Whispering Angel" -> Château d'Esclans Whispering Angel Rosé — is the product asked for)
+    const fold = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[’']/g, '');
+    const hasAllWords = (asked, name) => fold(asked).split(/[^a-z0-9]+/).filter(w => w.length > 1).every(w => fold(name).includes(w));
+    const isSub = li => li.match && li.match.kind && li.match.kind !== 'exact' && !(li.match.kind === 'closest' && hasAllWords(li.match.asked || li.label, li.name));
+    // The customer's own unit prices. On the store's product for that line; a line the store doesn't carry, or only as a
+    // stand-in, is printed as they typed it — their price never goes on another product.
+    const priceSet = [];
+    for (const [asked, price] of givenPrice) {
+      const i = items.findIndex(li => (li.label || (li.match && li.match.asked)) === asked);
+      const np = named.find(n => n.name === asked);
+      if (i >= 0 && !isSub(items[i])) {
+        priceSet.push({ name: items[i].name, store_price: items[i].price, your_price: price });
+        items[i] = Object.assign({}, items[i], { price, price_from_customer: true });
+      } else {
+        const typed = { name: asked, qty: np.qty, price, category: np.category, label: asked, price_from_customer: true };
+        if (i >= 0) { console.log('[rachel-mcp] proposal_from_list ' + JSON.stringify(asked) + ' was a stand-in (' + items[i].name + ') — printed as typed at the customer\'s $' + price); items[i] = typed; }
+        else items.push(typed);
+        notIncluded = notIncluded.filter(n => n !== asked);
+        priceSet.push({ name: asked, store_price: null, your_price: price, note: 'not carried at this store — printed as typed' });
+      }
+    }
+    if (priceSet.length) console.log('[rachel-mcp] proposal_from_list customer prices: ' + priceSet.map(x => x.name + ' $' + x.your_price + (x.store_price != null ? ' (store $' + x.store_price + ')' : ' (' + x.note + ')')).join('; '));
     if (notIncluded.length) console.log('[rachel-mcp] proposal_from_list not carried at this store, left off the PDF: ' + notIncluded.join('; '));
     if (!items.length) {
       console.log('[rachel-mcp] proposal_from_list REFUSED — no line found at the store for ' + input.zip);
       return { success: false, not_included: notIncluded, message: 'None of these products are available at the store that delivers to ' + input.zip + ', so no proposal was made.' };
     }
-    const pdf = await writeProposalPdf({ client_name: input.customer_name || '', event_date: input.event_date, line_items: JSON.stringify(items) });
+    const pdf = await writeProposalPdf({ client_name: input.customer_name || '', event_date: input.event_date, line_items: JSON.stringify(items), tax_exempt: !!input.tax_exempt, fees });
     // A line that isn't exactly what was asked (the store's nearest size / label, or a same-type stand-in) is said, never silent.
-    // ("closest" whose name has every word asked — "Whispering Angel" -> Château d'Esclans Whispering Angel Rosé — is the product asked for)
-    const fold = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[’']/g, '');
-    const hasAllWords = (asked, name) => fold(asked).split(/[^a-z0-9]+/).filter(w => w.length > 1).every(w => fold(name).includes(w));
-    const substituted = items.filter(li => li.match && li.match.kind && li.match.kind !== 'exact' && !(li.match.kind === 'closest' && hasAllWords(li.match.asked || li.label, li.name)))
+    const substituted = items.filter(li => !li.price_from_customer && isSub(li))
       .map(li => ({ asked: li.match.asked || li.label || '', on_proposal: li.name, note: li.match.note || '' }));
     if (substituted.length) console.log('[rachel-mcp] proposal_from_list not exact: ' + substituted.map(x => JSON.stringify(x.asked) + ' -> ' + x.on_proposal + ' (' + x.note + ')').join('; '));
     console.log('[rachel-mcp] proposal_from_list PDF ' + pdf.filename + ' — ' + items.length + ' line(s), $' + pdf.totals.grand_total + (input.customer_name ? ' for ' + input.customer_name : '') + (pdf.event_date ? ', ' + pdf.event_date : ''));
@@ -645,8 +685,8 @@ async function runTool(name, input, callerEmail, apiKey) {
       success: true, download_url: pdf.download_url, filename: pdf.filename,
       customer_name: input.customer_name || null, event_date: pdf.event_date || null,
       line_items: items.map(li => ({ name: li.name, qty: li.qty, price: li.price, line_total: Math.round(li.qty * li.price * 100) / 100 })),
-      totals: pdf.totals, not_included: notIncluded, substituted,
-      presentation: 'Give the customer the PDF link and the items with the totals as they are. If substituted has lines, say plainly what was asked and what is on the proposal instead (its note). If not_included has lines, say plainly the store doesn\'t carry them and offer to look for an alternative (rachel_search). Do not comment on the prices.'
+      totals: pdf.totals, not_included: notIncluded, substituted, prices_you_set: priceSet,
+      presentation: 'Give the customer the PDF link and the items with the totals (with their tax / service / tip labels) as they are. If prices_you_set has lines, say those lines use the customer\'s prices, and name any printed as typed because the store doesn\'t carry them. If substituted has lines, say plainly what was asked and what is on the proposal instead (its note). If not_included has lines, say plainly the store doesn\'t carry them and offer to look for an alternative (rachel_search). Do not comment on the prices.'
     };
   }
 
