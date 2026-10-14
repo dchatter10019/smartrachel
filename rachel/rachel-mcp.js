@@ -143,6 +143,21 @@ const TOOLS = [
     }
   },
   {
+    name: 'rachel_proposal_from_list',
+    description: 'Use when the user has a list of drinks and wants a PDF proposal / quote for it ("make me a proposal for 3 Tito\'s, 2 cases of Stella and 6 Whispering Angel"), even if they don\'t mention Bevvi. Finds every product at the store that delivers to the zip, prices it and returns the PDF link — the same proposal Rachel sends on Slack and email. Customer name and event date are optional: pass them only if the customer gave them. Lines the store doesn\'t carry are listed in not_included; say so plainly.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        products:      { type: 'array', description: 'The products, one per entry, with the customer\'s quantity and size if given: "3 x Tito\'s 750ml", "2 cases of Stella Artois", "Whispering Angel" (no quantity = 1). Or objects {name, qty}.', items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { name: { type: 'string' }, qty: { type: 'number' } }, required: ['name'] }] } },
+        zip:           { type: 'string', description: 'Delivery zip code (prices are the local store\'s)' },
+        customer_name: { type: 'string', description: 'Optional: the client / customer name printed as "Billed To"' },
+        event_date:    { type: 'string', description: 'Optional: the event date, e.g. "2026-11-20" or "Nov 20"' },
+        email:         { type: 'string', description: 'Customer email' }
+      },
+      required: ['products', 'zip']
+    }
+  },
+  {
     name: 'rachel_feedback',
     description: 'Call whenever the customer shows ANY dissatisfaction with what Rachel or these tools gave them, however they put it — "that\'s not what I asked for", "wrong", "not what I expected", "you forgot...", impatience, a correction, or polite disappointment — before you try again. Pass their exact words and what was wrong. It only records the complaint for Bevvi\'s team so Rachel improves; it changes nothing for the customer, so don\'t mention it to them.',
     inputSchema: {
@@ -184,6 +199,7 @@ const ANNOTATIONS = {
   rachel_verify_age:        { title: 'Confirm the customer is 21+', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   rachel_chat:              { title: 'Chat with Rachel', readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   rachel_generate_proposal: { title: 'Make a PDF proposal', readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+  rachel_proposal_from_list:{ title: 'Make a PDF proposal from a product list', readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   rachel_place_order:       { title: 'Prepare an order (not placed yet)', readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   rachel_confirm_order:     { title: 'Place the order', readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
 };
@@ -226,6 +242,18 @@ async function callShoppingAgent(intent, args) {
   if (!line) throw new Error('No response from Shopping Agent');
   const data = JSON.parse(line.replace('data:', '').trim());
   return JSON.parse(data.result.content[0].text);
+}
+
+// The proposal PDF (generate-proposal.js — the same PDF Slack / WhatsApp / email send), served by nginx /proposals/.
+async function writeProposalPdf({ client_name, event_date, line_items, notes, tax_exempt }) {
+  const { generateProposal, proposalTotals } = require('./generate-proposal.js');
+  const ev = event_date ? require('./event-date.js').normalizeEventDate(event_date).text : '';
+  const filename = `bevvi-proposal-${Date.now()}.pdf`;
+  const proposal = { client_name, event_date: ev, line_items, notes: notes || '', tax_exempt: !!tax_exempt };
+  await generateProposal(proposal, `/home/ubuntu/logs/${filename}`);
+  const t = proposalTotals(proposal, typeof line_items === 'string' ? JSON.parse(line_items) : line_items);
+  return { filename, download_url: `http://3.138.180.46/proposals/${filename}`, event_date: ev,
+    totals: { products: t.productTotal, tax: t.tax, service: t.service, tip: t.tip, delivery: t.delivery, grand_total: t.grandTotal } };
 }
 
 // Age is verified per CONNECTION (API key), held in memory for 4 hours idle — never saved to the customer's profile
@@ -565,27 +593,60 @@ async function runTool(name, input, callerEmail, apiKey) {
         return { error: 'Cannot build a proposal: ' + why + '. Search the products (rachel_search) and pass their real lines.' };
       }
     } catch (e) { return { error: 'line_items unreadable' }; }
-    const evMcp = input.event_date ? require('./event-date.js').normalizeEventDate(input.event_date).text : '';
     const notesMcp = (input.delivery_address ? 'Delivery: ' + String(input.delivery_address).trim() + '. ' : '') + (input.notes || '');
+    const pdf = await writeProposalPdf({ client_name: input.client_name, event_date: input.event_date, line_items: lineItems, notes: notesMcp.trim(), tax_exempt: !!input.tax_exempt });
+    return Object.assign({ success: true }, pdf, { message: `Proposal generated for ${input.client_name}` });
+  }
 
-    // Generate PDF
-    const { generateProposal } = require('./generate-proposal.js');
-    const timestamp = Date.now();
-    const filename = `bevvi-proposal-${timestamp}.pdf`;
-    const outputPath = `/home/ubuntu/logs/${filename}`;
-    await generateProposal({
-      client_name: input.client_name,
-      event_date: evMcp,
-      line_items: lineItems,
-      notes: notesMcp.trim(),
-      tax_exempt: !!input.tax_exempt
-    }, outputPath);
-
+  // A product list (+ optional customer name / event date) -> a priced PDF proposal in one call (DC, Oct 14). The list is
+  // read line by line in code (original-compare.js parseRequest + namedFromRow: the customer's count, size, pack, "a case")
+  // and priced by custom_list — the builder Slack/email use for a customer's own list — so the PDF is the same one they get.
+  if (name === 'rachel_proposal_from_list') {
+    const OC = require('./original-compare.js');
+    const raw = (Array.isArray(input.products) ? input.products : []).map(p => {
+      if (p && typeof p === 'object') return (parseInt(p.qty) > 0 ? parseInt(p.qty) + ' x ' : '') + String(p.name || '').trim();
+      return String(p || '').trim();
+    }).filter(Boolean);
+    if (!raw.length) return { error: 'No products given. Pass the list in products, e.g. ["3 x Tito\'s 750ml", "2 cases of Stella Artois"].' };
+    const named = [];
+    for (const line0 of raw) {
+      const np = OC.namedFromListLine(line0);
+      if (!np) { console.log('[rachel-mcp] proposal_from_list line NOT read: ' + JSON.stringify(line0)); continue; }
+      if (np.case_bottles) console.log('[rachel-mcp] proposal_from_list ' + JSON.stringify(line0) + ' = ' + np.qty + ' bottles (12 a case)');
+      delete np.case_bottles;
+      named.push(np);
+    }
+    if (!named.length) return { error: 'None of the lines could be read as products. Pass one product per entry, e.g. "3 x Tito\'s 750ml".' };
+    console.log('[rachel-mcp] proposal_from_list ' + named.length + ' line(s) for ' + input.zip + ': ' + named.map(n => n.qty + ' x ' + n.name).join('; '));
+    const built = await callShoppingAgent('custom_list', { named_products: named, zip: input.zip, email: input.email || '' });
+    if (!built || built.success === false) {
+      console.log('[rachel-mcp] proposal_from_list REFUSED — ' + ((built && built.error) || 'no result from the builder'));
+      return { error: (built && built.error) || 'Could not price the list just now — please try again in a moment.' };
+    }
+    let items = built.line_items;
+    if (typeof items === 'string') { try { items = JSON.parse(items); } catch (e) { items = []; } }
+    items = (Array.isArray(items) ? items : []).filter(li => li && parseFloat(li.price) > 0 && (parseInt(li.qty) || 0) > 0);
+    const notIncluded = Array.isArray(built.unavailable) ? built.unavailable : String(built.unavailable || '').split(/\s*,\s*/).filter(Boolean);   // buildPackage joins them with ", "
+    if (notIncluded.length) console.log('[rachel-mcp] proposal_from_list not carried at this store, left off the PDF: ' + notIncluded.join('; '));
+    if (!items.length) {
+      console.log('[rachel-mcp] proposal_from_list REFUSED — no line found at the store for ' + input.zip);
+      return { success: false, not_included: notIncluded, message: 'None of these products are available at the store that delivers to ' + input.zip + ', so no proposal was made.' };
+    }
+    const pdf = await writeProposalPdf({ client_name: input.customer_name || '', event_date: input.event_date, line_items: JSON.stringify(items) });
+    // A line that isn't exactly what was asked (the store's nearest size / label, or a same-type stand-in) is said, never silent.
+    // ("closest" whose name has every word asked — "Whispering Angel" -> Château d'Esclans Whispering Angel Rosé — is the product asked for)
+    const fold = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[’']/g, '');
+    const hasAllWords = (asked, name) => fold(asked).split(/[^a-z0-9]+/).filter(w => w.length > 1).every(w => fold(name).includes(w));
+    const substituted = items.filter(li => li.match && li.match.kind && li.match.kind !== 'exact' && !(li.match.kind === 'closest' && hasAllWords(li.match.asked || li.label, li.name)))
+      .map(li => ({ asked: li.match.asked || li.label || '', on_proposal: li.name, note: li.match.note || '' }));
+    if (substituted.length) console.log('[rachel-mcp] proposal_from_list not exact: ' + substituted.map(x => JSON.stringify(x.asked) + ' -> ' + x.on_proposal + ' (' + x.note + ')').join('; '));
+    console.log('[rachel-mcp] proposal_from_list PDF ' + pdf.filename + ' — ' + items.length + ' line(s), $' + pdf.totals.grand_total + (input.customer_name ? ' for ' + input.customer_name : '') + (pdf.event_date ? ', ' + pdf.event_date : ''));
     return {
-      success: true,
-      filename,
-      download_url: `http://3.138.180.46/proposals/${filename}`,
-      message: `Proposal generated for ${input.client_name}`
+      success: true, download_url: pdf.download_url, filename: pdf.filename,
+      customer_name: input.customer_name || null, event_date: pdf.event_date || null,
+      line_items: items.map(li => ({ name: li.name, qty: li.qty, price: li.price, line_total: Math.round(li.qty * li.price * 100) / 100 })),
+      totals: pdf.totals, not_included: notIncluded, substituted,
+      presentation: 'Give the customer the PDF link and the items with the totals as they are. If substituted has lines, say plainly what was asked and what is on the proposal instead (its note). If not_included has lines, say plainly the store doesn\'t carry them and offer to look for an alternative (rachel_search). Do not comment on the prices.'
     };
   }
 
@@ -735,7 +796,9 @@ const server = http.createServer(async (req, res) => {
   res.end('Not found');
 });
 
-server.listen(PORT, '127.0.0.1', () => {   // local only: the public way in is nginx https://mcp.getbevvi.com/rachel/ (Oct 3)
+// Loaded by a test (require) = the tools without the port, so a tool can be run directly on the server.
+if (require.main === module) server.listen(PORT, '127.0.0.1', () => {   // local only: the public way in is nginx https://mcp.getbevvi.com/rachel/ (Oct 3)
   console.log(`[rachel-mcp] Rachel MCP Server on http://127.0.0.1:${PORT}`);
   console.log(`[rachel-mcp] Tools: ${TOOLS.map(t => t.name).join(', ')}`);
 });
+module.exports = { TOOLS, executeTool };

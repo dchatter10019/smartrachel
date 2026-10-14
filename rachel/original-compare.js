@@ -199,6 +199,47 @@ function applyNotBoth(items, note) {
 // "can we swap the ketel one for titos?", "remove the water case", "can we add back some wine?" were added as
 // products — Owen's Transfusion, Dr Pepper, San Pellegrino, and "remove the water case isn't available".
 const NOT_A_PRODUCT_LINE = /\?\s*$|^\s*(?:can|could|would|will|should|please|pls|remove|delete|drop|take|swap|switch|replace|change|add|include|make|keep|update|send|we|i|it|this|that|these|those|they|there|so|also|and|but|because|since|if|let'?s|ok|okay|thanks?)\b|\b(?:remove|swap|switch|replace|instead of|on hand|left\s*over|leftover|from last time)\b/i;
+// One line of the customer's own list as a named_products item for buildPackage (the customer's count, a volume as
+// volume_ml, the size and pack kept in the name). Used for a list line the LLM left out and by the connector's
+// rachel_proposal_from_list.
+function namedFromRow(r) {
+  const isVol = !r.counted && r.ml && r.pack === 1;
+  let base = r.names[0].replace(/^\s*\d+\s*[x×]\s*/i, '').replace(/^\s*(?:\d+|a|one)\s+(cases?)\s+(.+)$/i, '$2 $1');   // "1 case bottled water" -> "bottled water case"
+  const packM = base.match(/\b(\d+)\s*-?\s*packs?\b/i);
+  base = base.replace(/\b\d+\s*-?\s*packs?\b/ig, '');
+  if (isVol) base = base.replace(/\b\d+(?:\.\d+)?\s*(?:ml|l|liters?|litres?|oz)\b/ig, '');
+  base = base.replace(/\s+/g, ' ').trim();
+  if (!base) return null;
+  const sizeM = isVol ? null : base.match(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/i);
+  let name = sizeM ? (base.replace(sizeM[0], '').replace(/\s+/g, ' ').trim() + ' ' + sizeM[0].replace(/\s+/g, '')) : base;
+  if (packM) name += ' ' + packM[1] + '-pack';
+  const t = DT.typeOf({ name: base });
+  const category = /\b(?:water|juice|syrup|pur[eé]e|soda|tonic|ginger beer|ginger ale|club soda|seltzer water|bitters|mixer|n\/?a|non[- ]?alc\w*)\b/i.test(base) ? 'mixer'
+    : /\b(?:liqueur|triple sec|vermouth|cointreau|amaretto|schnapps)\b/i.test(base) ? 'spirits'
+    : /\b(?:beer|lager|ipa|ale|stout|seltzer|cider)\b/i.test(base) ? 'beer'
+    : ['red', 'white', 'rose', 'sparkling', 'fortified', 'aperitif'].indexOf(t) >= 0 ? 'wine' : t ? 'spirits' : 'mixer';
+  const np = { name, category, qty: r.counted ? r.qty : 1, qty_from_customer: true };
+  if (isVol) np.volume_ml = Math.round(r.ml);
+  return np;
+}
+
+// One entry of a product list the caller typed ("3 x Tito's 750ml", "2 cases of Stella", "Whispering Angel x 6", "4 Casamigos
+// Blanco") -> a named_products item (connector rachel_proposal_from_list). No count = 1. A case of wine / spirits = 12
+// bottles (case_bottles set); buildPackage's "case" rule (24 units) is for beer / water / mixers.
+function namedFromListLine(line0) {
+  let line = String(line0 || '').trim().replace(/^\s*[-•*·]\s*/, ''), m;
+  if ((m = line.match(/^(\d{1,4}|a|an|one)\s+(cases?)\s+(?:of\s+)?(.+)$/i))) line = (/^\d/.test(m[1]) ? m[1] : 1) + ' x ' + m[3] + ' case';
+  else if ((m = line.match(/^(\d{1,4})\s*(?:[x×]\s*)?(?!\d|ml\b|l\b|oz\b|pk\b|pack)(.+)$/i)) && !/^\s*(?:ml|l|oz|liters?|litres?)\b/i.test(m[2])) line = m[1] + ' x ' + m[2].replace(/^\s*(?:bottles?|cans?)\s+of\s+/i, '');
+  else if ((m = line.match(/^(.+?)\s*[x×]\s*(\d{1,4})\s*$/i))) line = m[2] + ' x ' + m[1];
+  const row = parseRequest('- ' + line)[0];
+  const np = row && namedFromRow(row);
+  if (!np) return null;
+  if (/\bcases?\b/i.test(np.name) && (np.category === 'wine' || np.category === 'spirits' || DT.typeOf({ name: np.name }))) {
+    np.name = np.name.replace(/\s*\bcases?\b/ig, '').trim(); np.qty = (np.qty || 1) * 12; np.case_bottles = true;
+  }
+  return np;
+}
+
 function reconcileNamed(namedProducts, text) {
   const all = parseRequest(text, OH.parseOnHand(text));
   const rows = all.filter(r => !NOT_A_PRODUCT_LINE.test(String(r.text || '')));
@@ -231,27 +272,12 @@ function reconcileNamed(namedProducts, text) {
     // never an item that already answers another line (Oct 3: "Sun Cruiser Lemonade" was taken as the Iced Tea line)
     const part = llmItems.find(np => np && !claimed.has(np) && Math.max(...r.names.map(n => matchScore(n, { name: np.name }))) > 0.5);
     if (part) { claimed.add(part); log.push(JSON.stringify(r.text) + ' partly matches ' + JSON.stringify(part.name) + ' — taken as that line'); continue; }
-    const isVol = !r.counted && r.ml && r.pack === 1;
-    let base = r.names[0].replace(/^\s*\d+\s*[x×]\s*/i, '').replace(/^\s*(?:\d+|a|one)\s+(cases?)\s+(.+)$/i, '$2 $1');   // "1 case bottled water" -> "bottled water case"
-    const packM = base.match(/\b(\d+)\s*-?\s*packs?\b/i);
-    base = base.replace(/\b\d+\s*-?\s*packs?\b/ig, '');
-    if (isVol) base = base.replace(/\b\d+(?:\.\d+)?\s*(?:ml|l|liters?|litres?|oz)\b/ig, '');
-    base = base.replace(/\s+/g, ' ').trim();
-    if (!base) continue;
-    const sizeM = isVol ? null : base.match(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/i);
-    let name = sizeM ? (base.replace(sizeM[0], '').replace(/\s+/g, ' ').trim() + ' ' + sizeM[0].replace(/\s+/g, '')) : base;
-    if (packM) name += ' ' + packM[1] + '-pack';
-    const t = DT.typeOf({ name: base });
-    const category = /\b(?:water|juice|syrup|pur[eé]e|soda|tonic|ginger beer|ginger ale|club soda|seltzer water|bitters|mixer|n\/?a|non[- ]?alc\w*)\b/i.test(base) ? 'mixer'
-      : /\b(?:liqueur|triple sec|vermouth|cointreau|amaretto|schnapps)\b/i.test(base) ? 'spirits'
-      : /\b(?:beer|lager|ipa|ale|stout|seltzer|cider)\b/i.test(base) ? 'beer'
-      : ['red', 'white', 'rose', 'sparkling', 'fortified', 'aperitif'].indexOf(t) >= 0 ? 'wine' : t ? 'spirits' : 'mixer';
-    const np = { name, category, qty: r.counted ? r.qty : 1, qty_from_customer: true };
-    if (isVol) np.volume_ml = Math.round(r.ml);
+    const np = namedFromRow(r);
+    if (!np) continue;
     namedProducts.push(np);
     log.push(JSON.stringify(r.text) + ' was missing from the list — added ' + JSON.stringify(np));
   }
   return log;
 }
 
-module.exports = { reconcileNamed, parseRequest, compare, render, reply, isCompareAsk, isApplyAsk, requestNotes, applyNotBoth };
+module.exports = { reconcileNamed, namedFromRow, namedFromListLine, parseRequest, compare, render, reply, isCompareAsk, isApplyAsk, requestNotes, applyNotBoth };

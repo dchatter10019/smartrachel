@@ -11,6 +11,12 @@ function extraWords(query, name) {
   const qw = new Set(words(query));
   return words(name).filter(w => !qw.has(w) && !CORE_EXPR.has(w)).length;
 }
+// "<X> by <the brand asked for>" is that brand's other label, never the brand itself (Oct 14: "Whispering Angel" picked
+// The Beach by Whispering Angel $20.89 — 3 extra words — over Château d'Esclans Whispering Angel Rosé $24.19 with 6).
+function otherLabel(query, name) {
+  const qw = new Set(words(query)), nw = words(name);
+  return nw.some((w, i) => w === 'by' && i > 0 && qw.has(nw[i + 1]) && !qw.has(nw[i - 1]));
+}
 function coreFirst(query, rows) {
   const qw = new Set(words(query));
   const isCore = p => words(p.name).filter(w => !qw.has(w)).every(w => CORE_EXPR.has(w));
@@ -44,4 +50,4 @@ function stripDescriptors(q) {
   return /[a-z]{3,}/i.test(out.replace(/\b\d+(\.\d+)?\s*(ml|l|oz|cl)\b/gi, '')) ? out : String(q || '');
 }
 
-module.exports = { extraWords, coreFirst, spaceSize, stripDescriptors };
+module.exports = { extraWords, otherLabel, coreFirst, spaceSize, stripDescriptors };

@@ -20,7 +20,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   guests drink most?" (rachel/serving-mix.js, shared with server.js); only zip is required, so the client can't invent values.
   Cocktails: named none -> Rachel's "which cocktails?" list; named -> rachel/cocktail-expand.js (Sonnet 4.6, guided by prompt.md
   "Cocktail mode" + 8.3 read live — no recipe table in code, DC: hundreds of cocktails; unknown name asked back; spend ledger
-  kind cocktail-expand) -> custom_list (Wine/Beer lines + every ingredient), as Rachel's cocktail mode. rachel_chat: a connection
+  kind cocktail-expand) -> custom_list (Wine/Beer lines + every ingredient), as Rachel's cocktail mode. rachel_proposal_from_list (DC, Oct 14):
+  products (list entries "3 x Tito's 750ml", "2 cases of Stella", "X x 6", or {name, qty}) + zip, customer_name / event_date
+  optional -> each entry read in code (original-compare.js namedFromListLine: no count = 1, a case of wine/spirits = 12) ->
+  custom_list -> the same generate-proposal.js PDF; result lists substituted (asked vs on the PDF) and not_included. rachel_chat: a connection
   that passed rachel_verify_age tells Rachel via POST /internal/age-verified {session_id, via:'rachel-mcp'} (refused when proxied
   or after a refusal in 24h; an idle session is expired there first, else /chat's idle expiry wiped the check — Oct 4) -> that conversation only skips her age question, never the profile (DC approved, Oct 3). Tool descriptions + server instructions OPEN with when to use them (drink recommendations, events, buying / delivery,
   "even if they don't mention Bevvi") — claude.ai shows only a description's first line until a tool is loaded, and a plain
@@ -297,7 +300,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   hyphen-join retry). Oct 11: the catalog was re-imported with accented / hyphenated names (Patrón, Bacardí, Kölsch, Dom
   Pérignon, St-Germain, Coca-Cola Classic, "Stella Artois 12 x 11.2 OZ Bottles"); the search is accent-insensitive, our
   matching folds accents (buildPackage term score too), and a named line ("Patron Silver") prefers the name with the fewest
-  extra words before price (core-first.js extraWords: Patrón Silver Tequila $47, not Roca Patrón $77). qa/run.py compares
+  extra words before price (core-first.js extraWords: Patrón Silver Tequila $47, not Roca Patrón $77); "<X> by <brand>" is another label, never the brand, and
+  a 750 mL sorts before the word count — otherLabel; Oct 14: "Whispering Angel" got The Beach by Whispering Angel, then a 375). qa/run.py compares
   replies / PDFs / logs without accents. Some packs are now named "1 x 16 OZ Can" at a pack price (catalog data, open).
   A requested size matches the size field OR the size in the product's name
   (Sonoma Simple Syrup "24.5 OZ" has size field 25.4 OZ; functions.js productHasSize). (Oct 5, DC, SF: both were "not available".)

@@ -1345,7 +1345,13 @@ async function buildPackage(iv) {
         // The name closest to the request, before price. Real (Oct 11 nightly, catalog re-imported with accents):
         // "Patron Silver 750ml" scored "patron" in neither "Patrón" row and the price sort took Roca Patrón Silver
         // $76.99 over Patrón Silver Tequila $47.29.
-        if(namesBrand){ var xa=CORE_FIRST.extraWords(np.name,a.name), xb=CORE_FIRST.extraWords(np.name,b.name); if(xa!==xb) return xa-xb; }   // a generic line keeps its price target
+        if(namesBrand){
+          var la=CORE_FIRST.otherLabel(np.name,a.name)?1:0, lb=CORE_FIRST.otherLabel(np.name,b.name)?1:0; if(la!==lb) return la-lb;   // "The Beach by Whispering Angel" is not Whispering Angel
+          // the 750 mL before the word count: catalog names of one wine differ by size ("Whispering Angel Rosé - 375 ML" has
+          // fewer words than "... Côtes de Provence Rosé - 750 ML") — Oct 14, a 6-bottle list line became 375s
+          if(prefer750){ var w7a=/\b750\s*ml\b/i.test(String(a.sizeStr||a.name||''))?0:1, w7b=/\b750\s*ml\b/i.test(String(b.sizeStr||b.name||''))?0:1; if(w7a!==w7b) return w7a-w7b; }
+          var xa=CORE_FIRST.extraWords(np.name,a.name), xb=CORE_FIRST.extraWords(np.name,b.name); if(xa!==xb) return xa-xb;
+        }   // a generic line keeps its price target
         var pa=brandStatus(a.name)==="preferred"?1:0;
         var pb2=brandStatus(b.name)==="preferred"?1:0;
         if(pa!==pb2) return pb2-pa;
