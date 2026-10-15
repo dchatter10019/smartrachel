@@ -171,7 +171,12 @@ deploy() {
 # Everything runs inside main so bash has parsed the whole file before a rollback touches the tree.
 main() {
   case "${1:-}" in
-    --deploy) [ "${2:-}" = --stage-first ] && STAGE_FIRST=1; deploy ;;
+    --deploy) [ "${2:-}" = --stage-first ] && STAGE_FIRST=1
+              # One deploy at a time (F-0038, Oct 13): a second deploy restarted Rachel while the first one's smoke
+              # was still running -> its test chats got no reply and three false QA findings. The next one waits.
+              exec 9>/home/ubuntu/logs/.deploy.lock
+              flock -n 9 || { echo "Another deploy is running — waiting for it to finish..."; flock 9; }
+              deploy ;;
     --smoke)  lint || exit 1; smoke live || { echo "SMOKE FAILED against the live service"; exit 1; } ;;
     "")       lint || exit 1 ;;
     *)        echo "usage: $0 [--smoke|--deploy [--stage-first]]"; exit 2 ;;

@@ -96,6 +96,10 @@ order or send a PDF proposal. Her standing rules include: age is confirmed every
 order, not an event question; she spends the stated budget (no downselling); she never comments on prices being high/low;
 stock the customer already has is never ordered; a customer-named product is never silently swapped for another type.
 
+In a Claude connector conversation the customer talks to Claude, not to Rachel: the log may have only CONNECTOR TOOL lines
+and no CUSTOMER / RACHEL lines. Those tool results ("shown to the client") ARE Rachel's answer — Claude presents them
+itself. Never report a dead end, no reply or a missing age check only because those lines are absent (F-0033, Oct 13).
+
 Read the conversation below (it may have only one turn) and judge ONLY the part after the "earlier" marker, if any.
 Find real problems — places where Rachel was wrong, ignored what the customer said, asked for something she already
 had, offered the wrong product/size/quantity/price, said something isn't available when the shown results suggest it is,

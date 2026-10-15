@@ -1,0 +1,18 @@
+name: fix-f-0034-proposal-client-date-in-request
+# F-0034 (QA run 20261013-135432, scenario 100's first version): "please create a proposal for Liquid Labs, event date
+# December 5" — the client and the date were in the request itself, and Rachel still asked "What is the client or
+# company name?". The proposal request's own "for <client>" and date are read in code (event-date.js
+# proposalRequestFields, [proposal] client/date from the request) and the PDF goes out on that turn.
+# Same /chat path for Slack, WhatsApp, email and the connector's rachel_chat.
+tags: [ux]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "100 Federal Street, Boston, MA 02110"
+  - send: "Please add these:\n\n- Blanton's Single Barrel x 2\n- Josh Cellars Cabernet x 3"
+    expect: {contains: ["Blanton", "Josh"]}
+  - send: "please create a proposal for Liquid Labs, event date December 5"
+    expect:
+      not_contains: ["client or company name", "What is the event date"]
+      pdf_contains: ["Liquid Labs", "December 5"]
+      log_contains: ["[proposal] from the request"]

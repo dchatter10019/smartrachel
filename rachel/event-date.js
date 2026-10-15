@@ -104,4 +104,22 @@ function findEventDateIn(text, now = new Date()) {
   return wd ? wd[1][0].toUpperCase() + wd[1].slice(1).toLowerCase() : '';
 }
 
-module.exports = { normalizeEventDate, parseProposalFieldEdit, findEventDateIn };
+// The client and event date given IN a proposal request ("please create a proposal for Liquid Labs, event date
+// December 5"). -> { client?, date? } or null. Real bug (F-0034, Oct 13 QA): both were in the request and Rachel
+// still asked "What is the client or company name?". A "for <X>" that is a pronoun, the items, a date, a number or
+// an event word / weekday is not a client. "quote for" is not read: a quote names items ("a quote for Tito's").
+const NOT_CLIENT = /^(?:the|a|an|me|us|my|our|this|that|these|those|it|them|him|her|you|your|all|everything|each|both|today|tomorrow|tonight|next|monday|tuesday|wednesday|thursday|friday|saturday|sunday|weekend|delivery|event|party|order|items?|drinks?|basket|cart|quote|proposal|pdf|guests?|people)\b/i;
+function proposalRequestFields(msg, now = new Date()) {
+  const s = String(msg || '').replace(/\s+/g, ' ').trim();
+  const out = {};
+  const m = s.match(/\b(?:proposal|pdf)\s+(?:for|to)\s+(?:client\s*:?\s*)?["“']?([A-Za-z][^,.;!?\n"”]{0,60}?)["”']?\s*(?:[,.;!?]|\s+(?:with|on|dated|event|for|and|by|please|thanks?)\b|$)/i);
+  if (m) {
+    const c = m[1].replace(SIGNOFF, '').trim();
+    if (c && !NOT_CLIENT.test(c) && !new RegExp('^' + MON_RE + '(?:\\s|$)', 'i').test(c) && !/\d/.test(c)) out.client = c;
+  }
+  const d = normalizeEventDate(s, now);
+  if (d.date) out.date = d.text;
+  return out.client || out.date ? out : null;
+}
+
+module.exports = { normalizeEventDate, parseProposalFieldEdit, findEventDateIn, proposalRequestFields };

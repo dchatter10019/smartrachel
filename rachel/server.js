@@ -726,11 +726,23 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
           }
         } catch (e) {}
         if (!resolved) try {
-          const rr = await fetch(STAGING.SA_URL, {
-            method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
-            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: replacementName, limit: 8 }], zip: state.zip || '', email: email } } })
-          });
-          const rt = await rr.text();
+          // One retry on a transport error. Real (Oct 13, F-0036): the shopping-agent restarted mid-turn
+          // during a deploy, "fetch failed" once, and the Macallan the customer had just said yes to was dropped.
+          let rt = '';
+          for (let attempt = 1; ; attempt++) {
+            try {
+              const rr = await fetch(STAGING.SA_URL, {
+                method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+                body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: replacementName, limit: 8 }], zip: state.zip || '', email: email } } })
+              });
+              rt = await rr.text();
+              break;
+            } catch (fe) {
+              if (attempt >= 2) throw fe;
+              console.log('[confirm-substitute] product lookup failed (' + fe.message + ') — retrying once');
+              await new Promise(r => setTimeout(r, 1500));
+            }
+          }
           const rl = rt.split('\n').find(l => l.startsWith('data:'));
           const rd = rl ? JSON.parse(rl.replace('data:', '').trim()) : null;
           const rres = rd ? JSON.parse(rd.result.content[0].text) : null;
@@ -3596,10 +3608,18 @@ app.post('/chat', async (req, res) => {
       const yes = /^\s*(yes|yes please|yeah|yep|sure|ok|okay|please|do it|do that|add it|go ahead|absolutely|sounds good)\b/i.test(message);
       if (qm || yes) {
         const q = qm ? (NW[qm[1]] || parseInt(qm[1])) : off.qty;
-        await applyBasketSubstitute(sessionKey, email, '', off.name, off.price, off.size);
-        retirePendingFor(state, off.name);
+        const rrOff = await applyBasketSubstitute(sessionKey, email, '', off.name, off.price, off.size);
         const nzA = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
         const labelA = off.name + (off.size && nzA(off.name).indexOf(nzA(off.size)) < 0 ? ' — ' + off.size : '') + ' — ' + usd(off.price);
+        // Never say "Added" for a line that isn't in the basket. Real (Oct 13, F-0036): the lookup failed,
+        // the add was refused, and the reply still said "Added 1x The Macallan 18" — the basket showed only the prosecco.
+        if (rrOff && rrOff.success === false) {
+          state.pendingAddOffer = Object.assign({}, off, { qty: q || off.qty || 0 }); saveFlowState();
+          console.log('[add-confirm] NOT added — ' + off.name + ' could not be added (' + (rrOff.error || 'unresolved') + '); offer kept for a retry');
+          const rX = 'Sorry — I couldn\'t add ' + labelA + ' just now (the store didn\'t answer). Reply "yes" or the number of bottles and I\'ll try again.';
+          return res.json({ text: rX, response: rX });
+        }
+        retirePendingFor(state, off.name);
         console.log('[add-confirm] accepted ' + JSON.stringify(message.slice(0, 40)) + ' -> ' + off.name + (q ? ' x' + q : ' (quantity to ask)'));
         if (q > 0) {
           try { const it = JSON.parse(state.lastLineItems || '[]'); const row = it.find(x => nzA(x.name) === nzA(off.name)); if (row) { row.qty = q; row.quantity = q; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); } } catch (e) {}
@@ -4868,6 +4888,14 @@ app.post('/chat', async (req, res) => {
         // to generating. The customer can still say "change the client/date" to update.
         // Fill what the customer already gave before asking (Oct 2, DC: "Goody alcohol order" + "ideally by Tue 10/6"
         // in the first email, and Rachel asked "What is the client or company name?" then "What is the event date?").
+        // The client / date stated in this very request win ("a proposal for Liquid Labs, event date December 5" —
+        // F-0034: Rachel asked "What is the client or company name?" with both in the message).
+        const reqF = require('./event-date.js').proposalRequestFields(message);
+        if (reqF) {
+          if (reqF.client) state.savedClientName = reqF.client;
+          if (reqF.date) { state.savedEventDate = reqF.date; state.eventDateNone = false; }
+          console.log('[proposal] from the request: ' + JSON.stringify(reqF));
+        }
         if (!state.savedClientName) {
           const subjC = require('./email-subject.js').clientFromSubject(state.emailSubject || (context && context.email_subject) || '');
           if (subjC) { state.savedClientName = subjC; console.log('[proposal] client from the email subject: ' + JSON.stringify(subjC)); }
@@ -5248,7 +5276,13 @@ app.post('/chat', async (req, res) => {
     if (state.pendingAddOffer && !state.orderStep && !state.proposalStep) {
       const off = state.pendingAddOffer; state.pendingAddOffer = null; saveFlowState();
       if (/^\s*(yes|yes please|yeah|yep|sure|ok|okay|please|do it|do that|yes do that|add it|go ahead|absolutely)\b/i.test(message)) {
-        await applyBasketSubstitute(sessionKey, email, '', off.name + (off.size ? ' - ' + off.size : ''), off.price, off.size);
+        const rrOffY = await applyBasketSubstitute(sessionKey, email, '', off.name + (off.size ? ' - ' + off.size : ''), off.price, off.size);
+        if (rrOffY && rrOffY.success === false) {   // never "Added" for a refused line (F-0036)
+          state.pendingAddOffer = off; saveFlowState();
+          console.log('[add-offer] NOT added — ' + off.name + ' could not be added (' + (rrOffY.error || 'unresolved') + '); offer kept for a retry');
+          const rX = 'Sorry — I couldn\'t add ' + off.name + (off.size ? ' — ' + off.size : '') + ' just now (the store didn\'t answer). Reply "yes" and I\'ll try again.';
+          return res.json({ text: rX, response: rX });
+        }
             retirePendingFor(state, off.name);
         state.pendingQtyFor = off.name; saveFlowState();
         const rY = 'Added ' + off.name + (off.size ? ' — ' + off.size : '') + ' — $' + off.price.toFixed(2) + '. How many bottles would you like?';

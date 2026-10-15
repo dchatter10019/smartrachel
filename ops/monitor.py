@@ -258,6 +258,10 @@ class Monitor:
             out = subprocess.run(['systemctl', 'show', svc, '-p', 'ActiveState', '-p', 'ActiveEnterTimestamp', '--value'], capture_output=True, text=True).stdout.split('\n')
             state, since = (out + ['', ''])[0].strip(), (out + ['', ''])[1].strip()
             prev = self.svc_seen.get(svc); self.svc_seen[svc] = (state, since)
+            if deploying and state in ('deactivating', 'inactive'):
+                # Mid-deploy: rachel finishes its in-flight chats on SIGTERM (up to 80s) before it restarts. Not a crash
+                # (F-0037, Oct 13). Still down once the deploy window has passed -> reported below on a later pass.
+                continue
             if state not in ('active', 'activating', 'reloading'):
                 self.store.record('crash', self.d['crash']['severity'], 'service %s is %s' % (svc, state or 'unknown'), ['systemctl: %s %s' % (svc, state)], [], t)
             elif prev and prev[1] and since != prev[1] and not deploying:
