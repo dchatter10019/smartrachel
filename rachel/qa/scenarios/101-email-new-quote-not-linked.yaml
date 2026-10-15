@@ -15,6 +15,7 @@ turns:
     send: "Good morning, Rachel.\n\nI am 21. Can you please get me a quote for the items below? The delivery date is\n12/5 to address 1460 Broadway, New York, NY 10036.\n\n   - Blanton's Single Barrel x 2\n   - Josh Cellars Cabernet x 3\n   - Tito's 750ml x 2\n\nThanks!"
     expect:
       contains: ["PDF proposal is attached"]
-      log_not_contains: ["about changing a quote"]
-      pdf_contains: ["1460 Broadway", "Liquid Labs QA"]
+      log_not_contains: ["about changing a quote;", "about changing a quote,"]   # the "-> new session ... not about changing a quote" line is fine
+      pdf_contains: ["1460 Broadway", "Liquid Labs QA", "December 5"]
+      matches: "(?i)2x Tito"
       pdf_not_contains: ["Federal Street", "Northwind", "12/5"]

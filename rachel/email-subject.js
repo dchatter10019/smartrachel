@@ -8,7 +8,8 @@ const ORDER_WORDS = '(?:alcohol|drinks?|beverages?|bar|wine|liquor|beer|booze|co
 const GENERIC = /^(?:new|drinks?|beverages?|bar|alcohol|wine|liquor|beer|order|quote|proposal|request|estimate|event|party|our|my|the|a|an|urgent|updated|revised|final|re|fwd?|question)$/i;
 
 function clientFromSubject(subject) {
-  let s = String(subject || '').replace(/^\s*(?:(?:re|fwd?|fw)\s*:\s*)+/i, '').replace(/[\[\]"]/g, '').trim();
+  // A trailing long number (a ticket / run id: "Menu Request - Liquid Labs QA 12/5 1792052356") is not the client.
+  let s = String(subject || '').replace(/^\s*(?:(?:re|fwd?|fw)\s*:\s*)+/i, '').replace(/[\[\]"]/g, '').trim().replace(/\s+#?\d{7,}$/, '');
   if (!s) return '';
   const clean = c => {
     c = String(c || '').replace(/[\s,;:.!?–—-]+$/, '').replace(/^[\s,;:–—-]+/, '').trim();

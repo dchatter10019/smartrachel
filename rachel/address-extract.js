@@ -37,7 +37,9 @@ function findAddress(text) {
   let m;
   while ((m = RE.exec(t))) {
     // "Send 2 cases of Stella to 425 W 53rd St, ..." — the street starts after the last "to/at <number>", not at the "2".
-    const a = m[1].replace(/\s+/g, ' ').replace(/\s*,\s*/g, ', ').trim().replace(/^.*\b(?:to|at)\s+(?=\d{1,6}\s+[A-Za-z])/i, '');
+    // Also "to address <number>" / "address: <number>" (Oct 15 nightly: "delivery date is 12/5 to address 1460 Broadway"
+    // was saved as "5 to address 1460 Broadway, ...").
+    const a = m[1].replace(/\s+/g, ' ').replace(/\s*,\s*/g, ', ').trim().replace(/^.*\b(?:(?:to|at)(?:\s+(?:the\s+)?(?:delivery\s+)?(?:address|location|venue))?|address(?:\s+is)?)\s*:?\s+(?=\d{1,6}\s+[A-Za-z])/i, '');
     // A sentence break inside = two sentences, not an address: retry from the next word.
     if (/[.!?]\s+[A-Z]/.test(a) || /¶/.test(a)) { RE.lastIndex = m.index + 1; continue; }
     found.push({ a, cue: CUE.test(t.slice(Math.max(0, m.index - 40), m.index)) });

@@ -481,14 +481,24 @@ async function buildPackage(iv) {
       .trim();
   }
 
-  async function rawSearch(term) {
+  // One catalog call per distinct term per build. Real (Oct 15 nightly, F-0045): a 16-line email quote made 167 catalog
+  // calls (72 repeats of the same term — "beer" 12x, each fallback tier re-searching the brand word) and took ~145s;
+  // the QA turn limit is 300s. Only successful answers are kept (a failed call is retried by the next caller); every
+  // caller gets its own copies (rows are annotated downstream).
+  var rawCache = {};
+  function rawSearch(term) {
+    var k = String(term || '').toLowerCase().replace(/\s+/g, ' ').trim();
+    if (!rawCache[k]) rawCache[k] = rawSearchUncached(term).then(function(r) { if (!r.ok) delete rawCache[k]; return r.rows; }, function(e) { delete rawCache[k]; throw e; });
+    return rawCache[k].then(function(rows) { return rows.map(function(p) { return Object.assign({}, p); }); });
+  }
+  async function rawSearchUncached(term) {
     var isZipSentinel = kitchenLocation.indexOf('zip:') === 0;
     var catQ = isZipSentinel ? { zip: kitchenLocation.slice(4), q: term, limit: 100, client: clientName } : { location: kitchenLocation, q: term, limit: 100, client: clientName };
     var cu = CATALOG.catalogUrl(catQ), url = cu.url;   // legacy or getProducts (catalog-api.js)
     var res=await fetch(url);
-    if (!res.ok) return [];
+    if (!res.ok) return { ok: false, rows: [] };
     var data=CATALOG.rowsFrom(await res.json().catch(function(){ return null; }), cu.mode, catQ);
-    if (!Array.isArray(data)) return [];
+    if (!Array.isArray(data)) return { ok: false, rows: [] };
     // Catalog guard on the package builder's searches too (bad rows, duplicate listings decided on
     // the market price, size conflicts). DC, Sep 27: only shopping-agent searches were guarded, so
     // event packages could pick a row the guard hides elsewhere ("Belvedere Vodka - 1 L" listed as
@@ -497,7 +507,7 @@ async function buildPackage(iv) {
       var zipG=isZipSentinel?kitchenLocation.slice(4):"";
       data=await require('/home/ubuntu/store-agent/catalog-guard.js').guardAsync(data, term, zipG);
     } catch(eG) { console.error('[buildPackage] catalog guard failed — unscreened results used for', JSON.stringify(term)+':', eG.message); }
-    return data.map(function(p) {
+    return { ok: true, rows: data.map(function(p) {
       var price=p.salePrice||p.price||0;
       var sizeStr=p.size&&p.units?String(p.size)+String(p.units):"";
       var purl=p.url?p.url:(p.slug?"https://airculinaire.getbevvi.com/productdetail/"+p.slug:"");
@@ -507,7 +517,7 @@ async function buildPackage(iv) {
       // field — the guard fell back to a name regex and rejected every RTD can
       // (Fresca, Topo Chico, Minute Maid, Simply Spiked) as "not a beer".
       return {name:p.name||"",price:parseFloat(price)||0,sizeStr:sizeStr,url:purl,product_id:pid,upc:p.upc||p.origanlUpc||"",establishmentId:p.establishmentId||"",category:p.category||"",subCategory:p.subCategory||p.subcategory||""};
-    }).filter(function(p){return p.price>0&&p.name;});
+    }).filter(function(p){return p.price>0&&p.name;}) };
   }
 
   // Strip accented characters (ò, ä, é, etc.) to their plain ASCII equivalents —
@@ -777,13 +787,6 @@ async function buildPackage(iv) {
         if (fuzzyResults.length > 0) return fuzzyResults;
       }
 
-      // If NOTHING at all was found by any exact-match retry, try the generalized
-      // fuzzy fallback before giving up entirely — catches brand-naming mismatches
-      // we haven't seen before, without needing to hardcode each one.
-      if (bestSoFar.length === 0) {
-        var fuzzyResults = await fuzzyFallbackSearch(stripSizeFromSearchTerm(stripDiacritics(term)) || term, searchCategory);
-        if (fuzzyResults.length > 0) return fuzzyResults;
-      }
 
       // No retry step found an exact size match — return the best (most complete)
       // candidate set found so far rather than nothing, so the item still shows up

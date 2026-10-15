@@ -39,13 +39,15 @@ function parseRequest(text, onHand) {
       const orAlt = /^\s*or\b/i.test(((part.match(/\(([^)]*)\)/) || [])[1]) || '') ? alt.replace(/^\s*\d+\s*[x×]\s*/i, '') : '';
       part = part.replace(/\([^)]*\)/g, m0 => /^\(\s*or\b/i.test(m0) ? '' : ' ' + m0.slice(1, -1) + ' ').trim();
       const qm = part.match(/^\s*(\d+)\s*[x×]\s*/i);
-      let qty = qm ? +qm[1] : null;
-      let rest = qm ? part.slice(qm[0].length) : part;
+      // A trailing count too: "Tito's 750ml x 2" (Oct 15 nightly: read as 750 mL of Tito's -> 1 bottle).
+      const qt = qm ? null : part.match(/(?<!\d)\s[x×]\s*(\d{1,4})\s*$/i);   // never a pack "12 x 12"
+      let qty = qm ? +qm[1] : qt ? +qt[1] : null;
+      let rest = qm ? part.slice(qm[0].length) : qt ? part.slice(0, qt.index).trim() : part;
       const isCase = /\bcase\b/i.test(rest);
       if (qty == null) qty = 1;
       const pack = /\b(\d+)\s*-?\s*packs?\b/i.test(rest) ? +rest.match(/\b(\d+)\s*-?\s*packs?\b/i)[1] : (isCase ? 24 : 1);
       const ml = sizeMl(rest);
-      out.push({ text: part.replace(/\s+/g, ' ').trim(), qty, counted: !!qm, pack, units: qty * pack, ml: ml ? ml * qty * (pack > 1 ? pack : 1) : null, names: [rest].concat(orAlt ? [orAlt] : []) });
+      out.push({ text: part.replace(/\s+/g, ' ').trim(), qty, counted: !!(qm || qt), pack, units: qty * pack, ml: ml ? ml * qty * (pack > 1 ? pack : 1) : null, names: [rest].concat(orAlt ? [orAlt] : []) });
     }
   }
   return out;

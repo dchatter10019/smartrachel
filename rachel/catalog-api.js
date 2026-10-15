@@ -54,8 +54,8 @@ console.log('[catalog-api] catalog search: ' + (mode() === 'getproducts' ? 'getP
 // each pair of adjacent words joined by a hyphen — at most 2 tries, words only (no sizes).
 function hyphenJoins(term) {
   const w = String(term || '').split(/\s+/), out = [];
-  for (let i = 0; i + 1 < w.length && out.length < 2; i++) {
-    if (/^[A-Za-z\u00C0-\u024F]{2,}$/.test(w[i]) && /^[A-Za-z\u00C0-\u024F]{3,}$/.test(w[i + 1]) && ![w[i], w[i + 1]].some(x => /^(and|or|the|of|with|for|wine|wines|beer|beers|vodka|gin|rum|tequila|whiskey|bourbon)$/i.test(x)))
+  for (let i = 0; i + 1 < w.length && i < 2 && out.length < 2; i++) {   // brand position only (Coca-Cola, St-Germain): every pair cost a search (Oct 15: 45 of a quote's 109 calls)
+    if (/^[A-Za-z\u00C0-\u024F]{2,}$/.test(w[i]) && /^[A-Za-z\u00C0-\u024F]{3,}$/.test(w[i + 1]) && ![w[i], w[i + 1]].some(x => /^(and|or|the|of|with|for|wine|wines|beer|beers|vodka|gin|rum|tequila|whiskey|bourbon|per|case|cases|can|cans|pack|packs|bottle|bottles|mix|ale|ipa|lager|pilsner|cider|variety|premium)$/i.test(x)))
       out.push(w.slice(0, i).concat(w[i] + '-' + w[i + 1], w.slice(i + 2)).join(' '));
   }
   return out;

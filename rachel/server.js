@@ -5794,6 +5794,15 @@ app.post('/chat', async (req, res) => {
               console.log('[substitute-merge] SKIPPED — ' + JSON.stringify(matched.name) + ' is already a basket line; left to the LLM');
               throw { skipMerge: true };
             }
+            // A message that is more than this pick (a question, a second product) goes to the LLM whole, as in the pick
+            // resolver above. Real (Oct 15 nightly, F-0045): the options list had "Michter's US*1" (catalog name), the pick
+            // resolver didn't see a numbered pick, and "Michter's US1 ... looks good. Do you have Casamigos Blanco?" was
+            // merged here — the Casamigos question dropped.
+            const mLeft = require('./multipick.js').pickLeftover(message.replace(/\*/g, ''), { name: matched.name.replace(/\*/g, ''), size: matched.size });
+            if (mLeft.length) {
+              console.log('[substitute-merge] SKIPPED — message is more than a pick of ' + JSON.stringify(matched.name) + ' (leftover: ' + JSON.stringify(mLeft.slice(0, 12)) + '); left to the LLM');
+              throw { skipMerge: true };
+            }
             let qtyToUse = 1;
             // Route through applyBasketSubstitute so the item is RESOLVED to a real catalog
             // product (productId/upc/establishmentId). This block used to hand-build the
@@ -5825,6 +5834,9 @@ app.post('/chat', async (req, res) => {
               const normQ = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
               const added = itemsAfter.find(it => normQ(it.name).indexOf(normQ(matched.name).slice(0, 12)) >= 0);
               if (added && qtyToUse > 1) { added.qty = qtyToUse; added.quantity = qtyToUse; state.lastLineItems = JSON.stringify(itemsAfter); }
+              // The reply states the line's real qty: applyBasketSubstitute may have given it a not-carried line's qty
+              // (Oct 15: basket 5x Michter's, reply "1x ... has been added").
+              else if (added && (added.qty || added.quantity) > qtyToUse) qtyToUse = added.qty || added.quantity;
             } catch (e) {}
             const newLineItems = state.lastLineItems;
             const replacing = !!(hasOriginalToReplace && originalItemName);   // never "has replaced null" (Oct 2, DC)

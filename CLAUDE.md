@@ -42,7 +42,7 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   "recommend a wine" didn't reach Rachel (DC, Oct 5). rachel-mcp.log: `initialize by <email> (client ...)` and `tools/list by
   <email> — descriptions <hash>` (TOOLS_HASH changes with every description edit) show when a client re-reads them. Clients are told (server instructions + rachel_search description + the not-found note) never to comment on the search or
   tools — false matches, categories, data quality, tool errors — only what is/isn't available and the next step (DC, Oct 6). Clients never get product urls/slugs
-  (also inside JSON-text fields and chat text), buyer tier or reviewer notes; told not to judge prices (DC, Oct 3). Orders are two-step:
+  (also inside JSON-text fields and chat text), buyer tier or reviewer notes; told not to judge prices (DC, Oct 3). A tool result that didn't do what was asked (age check expired, missing details, expired code, refusal) carries outcome ("NOT prepared — nothing was ordered... no duplicate") + ask_the_customer + next_step "call <tool> again" (rachel-mcp.js withNextStep), and the server instructions say never to invent another explanation (DC, Oct 15: an expired age check held rachel_place_order; Claude re-verified, never repeated it and told DC it was "blocked as a duplicate"; connector test 'order before age'). Orders are two-step:
   rachel_place_order PREPARES (server /internal/order-preview: catalog linking, real delivery windows, totals) and returns
   a 15-min one-use confirmation_code bound to the key; rachel_confirm_order places it (QA identities dry-run). Streamable
   HTTP: JSON or SSE by Accept, notifications 202, protocol version echoed. claude.ai sign-in = OAuth 2.1 (rachel/mcp-oauth.js, DC Oct 3):
@@ -444,6 +444,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   + note); rachel.js [not-found] uses the same module. Was price-only: "Green Chartreuse" -> Johnnie Walker Green, "Rioja" ->
   an Argentine blend first, and the connector (which calls product_query directly) showed them as found. The catalog has
   no subcategory data (all None) — no category search; Veuve Clicquot 6 Liter is filed as Beer (catalog data).
+- buildPackage memoizes catalog searches per build (rawSearch; successful answers only) and hyphen-join retries only the first two
+  word pairs, never packaging/style words (Oct 15: a 16-line email quote made 167 calls, 152s -> 82s, same picks; the catalog API
+  answers about one call at a time, so time ~ number of calls).
 - Catalog 5xx/429: searchProducts retries twice; a build that still hit failures returns CATALOG_UNREACHABLE,
   never "isn't available at this store".
 - A conversation expires after RACHEL_IDLE_HOURS (4) idle, except email threads; age is re-asked. An email thread's

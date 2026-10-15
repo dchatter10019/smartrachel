@@ -138,6 +138,12 @@ class EmailTransport:
         while time.time() - t0 < timeout:   # Rachel's reply: search our inbox by subject, not by thread id (thread ids are per-mailbox)
             time.sleep(10)
             got = self.svc.users().messages().list(userId="me", q=f'from:{self.RACHEL} subject:"{self.subject}" newer_than:1h', maxResults=5).execute().get("messages", [])
+            # Gmail SEARCH can lag minutes behind delivery (Oct 15 nightly: Rachel replied in 20s, search never showed it in
+            # 300s -> false "NO REPLY"). Our own thread is read directly too — a thread read doesn't use the search index.
+            try:
+                th = self.svc.users().threads().get(userId="me", id=self.thread, format="metadata", metadataHeaders=["From"]).execute()
+                got = got + [m for m in th.get("messages", []) if self.RACHEL in json.dumps(m.get("payload", {}).get("headers", []))]
+            except Exception: pass
             for g in got:
                 if g["id"] in self.seen: continue
                 msg = self.svc.users().messages().get(userId="me", id=g["id"], format="full").execute()
@@ -310,7 +316,7 @@ def listed_partial(reply):
         for w in reversed(ws[1:]):
             cand = f"{ws[0]} {w}"
             if sum(fits(cand, o) for o in opts) == 1:   # {pick_re}: the pick's words in order (catalog names differ in punctuation)
-                return {"pick": cand, "pick_full": full, "pick_re": ".*".join(re.escape(x) for x in words(cand))}
+                return {"pick": cand, "pick_full": full, "pick_re": ".*".join("[^a-z0-9 ]?".join(re.escape(ch) for ch in x) for x in words(cand))}   # "michters" ~ "Michter's"
     return {}
 
 def _fill(x, vars_):

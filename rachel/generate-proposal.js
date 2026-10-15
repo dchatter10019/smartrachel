@@ -92,7 +92,7 @@ function proposalTotals(proposal, items) {
   const r2 = x => Math.round(x * 100) / 100;
   const tax = r2(productTotal * taxR), service = r2(productTotal * svcR), tip = tipAmt != null ? r2(tipAmt) : r2(productTotal * tipR);
   return { productTotal, effectiveTaxRate: taxR, tax, service, tip, delivery, grandTotal: r2(productTotal + tax + service + tip + delivery),
-    taxLabel: proposal.tax_exempt ? 'Estimated tax (exempt)' : 'Estimated tax (' + pctLabel(taxR) + ')',
+    taxLabel: proposal.tax_exempt ? 'Estimated tax (0%)' : 'Estimated tax (' + pctLabel(taxR) + ')',
     serviceLabel: 'Service charge (' + pctLabel(svcR) + ')', tipLabel: tipAmt != null ? 'Tip (flat)' : 'Tip (' + pctLabel(tipR) + ')' };
 }
 
