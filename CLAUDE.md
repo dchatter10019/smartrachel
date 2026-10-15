@@ -17,7 +17,13 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   verify_age confirmed:false clears it), never saved to the profile (rule 4). Every tool is gated EXCEPT rachel_generate_proposal
   called WITH line_items (DC, Oct 15, for Voiceflow: "no age only if the drinks are already provided"; a PDF, no sale;
   rachel-mcp.js ageExempt; without line_items it reads the saved basket and is gated; proposal_from_list, search, build,
-  chat and orders stay gated; the connector test checks all three). rachel_build_package = shopping-agent menu_build,
+  chat and orders stay gated; the connector test checks all three). rachel_generate_proposal send_to / cc (DC, Oct 15, for
+  Voiceflow): emails the PDF attached from rachelai@ (email-utils sendEmailWithAttachment), only to the caller's own email,
+  its company domain (never for free mail: gmail/yahoo/outlook...) or @getbevvi.com — others dropped + reported (rejected,
+  email_error), max 10, deduped (proposal-email.js, qa/unit/proposal-email.test.js); bcc bevvi-support@ (proposals@ does not
+  exist; PROPOSAL_BCC overrides); subject "Your Bevvi proposal – <client> – <date>", Rachel's voice + totals, no link;
+  send_to WITHOUT line_items is refused (a saved basket is never emailed, even age-verified); a QA caller or only-QA
+  recipients = logged dry run. Returns emailed / sent_to / rejected / email_error. rachel_build_package = shopping-agent menu_build,
   the builder Slack/email use (was custom_list with category words as products), with Rachel's intake in code: missing guests /
   hours (or drinks per guest) / budget / drink types asked in ONE needs_info.ask_customer, then a mixed event's "what will your
   guests drink most?" (rachel/serving-mix.js, shared with server.js); only zip is required, so the client can't invent values.

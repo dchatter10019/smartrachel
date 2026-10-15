@@ -127,7 +127,7 @@ const TOOLS = [
   },
   {
     name: 'rachel_generate_proposal',
-    description: 'Generate a PDF proposal from an active basket/package. Returns a download URL for the PDF. If the customer says the tax should be 0 / tax-exempt, pass tax_exempt=true (on every proposal after that). Pass delivery_address to print it; leave it out when the customer asks for no address on the proposal.',
+    description: 'Generate a PDF proposal from an active basket/package. Returns a download URL for the PDF. If the customer says the tax should be 0 / tax-exempt, pass tax_exempt=true (on every proposal after that). Pass delivery_address to print it; leave it out when the customer asks for no address on the proposal. To email the PDF (attached), pass send_to (and optionally cc) together with line_items: only the caller\'s own email, addresses in the caller\'s company domain, or @getbevvi.com are sent to — others come back in rejected.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -137,7 +137,12 @@ const TOOLS = [
         line_items:  { type: 'string', description: 'JSON string of line_items (optional — uses active session if not provided)' },
         notes:       { type: 'string', description: 'Any additional notes to include' },
         tax_exempt:  { type: 'boolean', description: 'true when the customer said the tax is 0 / tax-exempt — the PDF shows $0 tax' },
-        delivery_address: { type: 'string', description: 'Delivery address printed on the proposal; omit when the customer asked to leave it off' }
+        delivery_address: { type: 'string', description: 'Delivery address printed on the proposal; omit when the customer asked to leave it off' },
+        send_to:     { type: 'string', description: 'Email the PDF to these addresses (comma-separated). Requires line_items. Allowed: the email above, its company domain (not gmail/yahoo/outlook...), @getbevvi.com; max 10' },
+        cc:          { type: 'string', description: 'Optional cc addresses (comma-separated), same rules as send_to' },
+        recipient_name: { type: 'string', description: 'Optional: the recipient\'s name, for the greeting ("Hi Sean,")' },
+        subject:     { type: 'string', description: 'Optional subject; default "Your Bevvi proposal – <client> – <event date>"' },
+        body:        { type: 'string', description: 'Optional plain-text email body; default: Rachel\'s note with the totals' }
       },
       required: ['email', 'client_name']
     }
@@ -262,6 +267,35 @@ async function writeProposalPdf({ client_name, event_date, line_items, notes, ta
   const t = proposalTotals(proposal, typeof line_items === 'string' ? JSON.parse(line_items) : line_items);
   return { filename, download_url: url, event_date: ev,
     totals: { products: t.productTotal, tax_label: t.taxLabel, tax: t.tax, service_label: t.serviceLabel, service: t.service, tip_label: t.tipLabel, tip: t.tip, delivery: t.delivery, grand_total: t.grandTotal } };
+}
+
+// rachel_generate_proposal send_to (DC, Oct 15): the PDF attached, to the allowed addresses only (proposal-email.js),
+// Bevvi bcc'd. -> { emailed, sent_to, rejected, email_error }. QA never sends (logged).
+async function emailProposal(input, pdf, callerEmail) {
+  const PE = require('./proposal-email.js');
+  const who = String(input.email || callerEmail || '').toLowerCase();
+  const r = PE.allowedRecipients(who, input.send_to, input.cc);
+  const rejected = r.rejected.map(x => x.address);
+  if (r.rejected.length) console.log('[rachel-mcp] proposal email REJECTED ' + r.rejected.map(x => x.address + ' (' + x.why + ')').join('; ') + ' — caller ' + who);
+  const res = { emailed: false, sent_to: [], rejected, email_error: '' };
+  const why = r.rejected.length ? 'Not sent to ' + r.rejected.map(x => x.address + ' (' + x.why + ')').join('; ') + '.' : '';
+  if (!r.to.length) { res.email_error = why || 'no recipient'; return res; }
+  const subject = String(input.subject || '').trim() || PE.subjectFor(input.client_name, pdf.event_date);
+  const body = String(input.body || '').trim() || PE.bodyFor({ first: PE.firstName(input.recipient_name, r.to[0]), clientName: input.client_name, eventDate: pdf.event_date, totals: pdf.totals });
+  const pdfPath = require('path').join('/home/ubuntu/logs', pdf.filename);
+  if (PE.isQA(who, r.to, r.cc)) {
+    console.log('[rachel-mcp] proposal email DRY-RUN (QA) — to ' + r.to.join(', ') + (r.cc.length ? ' cc ' + r.cc.join(', ') : '') + ' bcc ' + PE.BCC.join(', ') + ' | ' + subject + ' | ' + pdf.filename);
+    return Object.assign(res, { emailed: false, dry_run: true, sent_to: r.to.concat(r.cc), email_error: why });
+  }
+  try {
+    const id = await require('./email-utils.js').sendEmailWithAttachment({ to: r.to, cc: r.cc, bcc: PE.BCC, subject, body,
+      attachment: { filename: pdf.filename, path: pdfPath, contentType: 'application/pdf' } });
+    console.log('[rachel-mcp] proposal emailed — to ' + r.to.join(', ') + (r.cc.length ? ' cc ' + r.cc.join(', ') : '') + ' bcc ' + PE.BCC.join(', ') + ' | ' + subject + ' | ' + pdf.filename + ' | gmail id ' + id + ' — caller ' + who);
+    return Object.assign(res, { emailed: true, sent_to: r.to.concat(r.cc), email_error: why });
+  } catch (e) {
+    console.log('[rachel-mcp] proposal email FAILED — ' + e.message + ' — to ' + r.to.join(', '));
+    return Object.assign(res, { email_error: 'Email could not be sent right now. ' + why });
+  }
 }
 
 // Age is verified per CONNECTION (API key), held in memory for 4 hours idle — never saved to the customer's profile
@@ -613,8 +647,17 @@ async function runTool(name, input, callerEmail, apiKey) {
       }
     } catch (e) { return { error: 'line_items unreadable' }; }
     const notesMcp = (input.delivery_address ? 'Delivery: ' + String(input.delivery_address).trim() + '. ' : '') + (input.notes || '');
+    // send_to without the caller's own lines is refused before any PDF: a saved basket is never emailed (DC, Oct 15),
+    // even on an age-verified connection.
+    const wantsEmail = !!(String(input.send_to || '').trim() || String(input.cc || '').trim());
+    if (wantsEmail && !input.line_items) {
+      console.log('[rachel-mcp] generate_proposal email REFUSED — send_to without line_items (a saved basket is never emailed) — ' + callerEmail);
+      return { error: 'send_to needs line_items: pass the proposal\'s lines (name, price, qty) to email it.', emailed: false, sent_to: [], rejected: [], email_error: 'line_items required to email a proposal' };
+    }
     const pdf = await writeProposalPdf({ client_name: input.client_name, event_date: input.event_date, line_items: lineItems, notes: notesMcp.trim(), tax_exempt: !!input.tax_exempt });
-    return Object.assign({ success: true }, pdf, { message: `Proposal generated for ${input.client_name}` });
+    const out = Object.assign({ success: true }, pdf, { message: `Proposal generated for ${input.client_name}` });
+    if (wantsEmail) Object.assign(out, await emailProposal(input, pdf, callerEmail));
+    return out;
   }
 
   // A product list (+ optional customer name / event date) -> a priced PDF proposal in one call (DC, Oct 14). The list is
