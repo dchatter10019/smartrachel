@@ -1155,9 +1155,9 @@ async function executeTool(name, input) {
       if (ed.changed) console.log('[generate_proposal] event date ' + JSON.stringify(input.event_date) + ' -> ' + JSON.stringify(ed.text) + ' (' + ed.why + ')');
       input.event_date = ed.text;
     }
-    const timestamp = Date.now();
-    const filename = 'bevvi-proposal-' + timestamp + '.pdf';
-    const outputPath = '/home/ubuntu/logs/' + filename;
+    const pf = require(RACHEL_DIR + '/generate-proposal.js').proposalFile(input);   // readable, unguessable name + https link
+    const filename = pf.filename;
+    const outputPath = pf.path;
     await generateProposal({
       client_name: input.client_name,
       event_date: input.event_date || '',
@@ -1177,7 +1177,7 @@ async function executeTool(name, input) {
     return {
       success: true,
       filename,
-      download_url: 'http://3.138.180.46/proposals/' + filename,
+      download_url: pf.url,
       event_date: input.event_date || '',   // the date printed on the PDF — the reply must say this one (Oct 1: the LLM wrote "2025")
       download_text: 'Download proposal',
       message: 'Proposal generated for ' + input.client_name

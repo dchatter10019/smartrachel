@@ -296,4 +296,30 @@ if (require.main === module) {
   generateProposal(input, output).then(() => console.log('Done:', output)).catch(console.error);
 }
 
-module.exports = { generateProposal, proposalTotals };
+// Where a proposal PDF goes and the link customers get (Oct 15): served over HTTPS on our own domain
+// (nginx mcp.getbevvi.com /proposals/, regex-limited to bevvi-proposal*.pdf — the directory is all of logs/), named
+// bevvi-proposal-<client>-<YYYY-MM-DD>-<6 random>.pdf. The random suffix keeps links unguessable (the old
+// bevvi-proposal-<epoch>.pdf names could be enumerated); the date is the event date, else today. Every writer
+// (Rachel /chat + proposal guard, shopping-agent generate_proposal, the connector) uses this.
+const PROPOSAL_DIR = '/home/ubuntu/logs';
+const PROPOSAL_PUBLIC_BASE = (process.env.PROPOSAL_PUBLIC_BASE || 'https://mcp.getbevvi.com/proposals').replace(/\/+$/, '');
+function proposalSlug(name) {
+  return String(name || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40).replace(/-+$/, '');
+}
+function proposalDay(eventDate, now = new Date()) {
+  const ymd = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const iso = String(eventDate || '').match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+  if (iso) return iso[0];
+  if (eventDate && !/\b\d{4}\b/.test(eventDate)) { try { eventDate = require('./event-date.js').normalizeEventDate(eventDate).text; } catch (e) {} }   // "Oct 6th" -> the next Oct 6
+  const d = eventDate && !/^\s*none\s*$/i.test(eventDate) ? new Date(String(eventDate).replace(/(\d)(st|nd|rd|th)\b/i, '$1')) : null;
+  return d && !isNaN(d) && d.getFullYear() >= 2000 ? ymd(d) : ymd(now);
+}
+function proposalFile({ client_name, event_date } = {}) {
+  const rand = require('crypto').randomBytes(8).readBigUInt64BE().toString(36).padStart(6, '0').slice(-6);
+  const filename = ['bevvi-proposal', proposalSlug(client_name), proposalDay(event_date), rand].filter(Boolean).join('-') + '.pdf';
+  return { filename, path: require('path').join(PROPOSAL_DIR, filename), url: PROPOSAL_PUBLIC_BASE + '/' + filename };
+}
+const proposalUrl = filename => PROPOSAL_PUBLIC_BASE + '/' + filename;
+
+module.exports = { generateProposal, proposalTotals, proposalFile, proposalUrl, proposalSlug, proposalDay };

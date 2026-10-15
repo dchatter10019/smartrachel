@@ -96,7 +96,13 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - rachel-whatsapp: rachel/rachel_whatsapp_bot.py (Flask + Twilio; invite gate; admin page). Env: /etc/rachel-whatsapp.env
 - Proposals: rachel/generate-proposal.js; each PDF's line items → logs/proposal-items/<pdf>.json (load one into a
   session: POST localhost:3500/internal/session-basket {session_id, from_proposal}). nginx /proposals/ serves
-  ONLY bevvi-proposal*.pdf (sites rachel AND bevvi-support; until Sep 29 it served all of logs/). Address geocoding: Google Maps (geocodeAddress in server.js).
+  ONLY bevvi-proposal*.pdf (sites rachel AND bevvi-support; until Sep 29 it served all of logs/). Since Oct 15 every
+  link is https://mcp.getbevvi.com/proposals/bevvi-proposal-<client-slug>-<YYYY-MM-DD event date, else today>-<6 random
+  base36>.pdf (generate-proposal.js proposalFile — used by server.js proposal guard, shopping-agent generate_proposal and
+  rachel-mcp; env PROPOSAL_PUBLIC_BASE overrides the base). Was http://3.138.180.46/proposals/bevvi-proposal-<epoch>.pdf
+  (no HTTPS, enumerable). nginx bevvi-mcp.conf has the same regex-limited location (Content-Disposition inline, noindex,
+  30d expires; backup in config/). Email attachments use the same name. PDFs older than 90 days are deleted nightly
+  (ops/proposal-cleanup.sh from qa/nightly.sh, bevvi-proposal*.pdf only, logs/proposal-cleanup.log; proposal-items kept). Address geocoding: Google Maps (geocodeAddress in server.js).
 - Logs: /home/ubuntu/logs/ (rachel.log, shopping-agent.log, ...). Journal is NOT where bots log.
 - Token use (DC, Oct 3: cost is the goal): the system prompt is ONE block (prompt.md + channel note), identical for every
   customer — prompt.md's {user_email}/{kitchen_location}/{client_id}/{account_id}/{age_verified} render as "<x from SESSION
@@ -548,6 +554,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   (Oct 3, Foodie For All: the POC/COI/loading-dock notes never reached the order).
 
 ## Open items
+- After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
+  so PDFs sent before Oct 15 still open (ask DC first; nginx).
 - WhatsApp QA phone +19173024521 has no handset and is not a Twilio number: replies come back 63024
   (expected; content is still asserted). Deferred by DC (Sep 26): register it (or a new Twilio number)
   as a WhatsApp sender for true end-to-end — needs one OTP to the number + an approved utility template

@@ -1979,9 +1979,9 @@ app.post('/chat', async (req, res) => {
               if (i.field === 'client') { next.client_name = i.expected; stG.savedClientName = i.expected; }
               if (i.field === 'date') { next.event_date = i.expected; stG.savedEventDate = i.expected; }
             }
-            const fname = 'bevvi-proposal-' + Date.now() + '.pdf';
-            await require('./generate-proposal.js').generateProposal(next, path.join('/home/ubuntu/logs', fname));
-            const newUrl = 'http://3.138.180.46/proposals/' + fname;
+            const pf = require('./generate-proposal.js').proposalFile(next), fname = pf.filename;
+            await require('./generate-proposal.js').generateProposal(next, pf.path);
+            const newUrl = pf.url;
             stG.lastProposalUrl = newUrl; saveFlowState();
             const swap = t => { let o = String(t || '').split(pm[0]).join(newUrl); for (const i of fix) if (i.printed && i.expected) o = o.split(i.printed).join(i.expected); return o; };
             payload.text = swap(payload.text); if (typeof payload.response === 'string') payload.response = swap(payload.response);
@@ -6191,7 +6191,7 @@ app.post('/internal/session-basket', async (req, res) => {
       console.log('[internal] session-basket: ' + session_id + ' proposal fees from ' + prop.pdf + ': ' + JSON.stringify(fa));
     }
   }
-  if (prop) { st.lastProposalUrl = 'http://3.138.180.46/proposals/' + prop.pdf; if (prop.client_name) st.savedClientName = prop.client_name; if (prop.event_date) st.savedEventDate = prop.event_date; }
+  if (prop) { st.lastProposalUrl = require('./generate-proposal.js').proposalUrl(prop.pdf); if (prop.client_name) st.savedClientName = prop.client_name; if (prop.event_date) st.savedEventDate = prop.event_date; }
   st.lastLineItems = JSON.stringify(line_items); st.pendingSubstitutes = []; st.pendingAddOffer = null; st.pendingQtyFor = null; st.lastCta = null;
   if (!sessions[session_id]) sessions[session_id] = [];
   if (sent_text) sessions[session_id].push({ role: 'assistant', content: String(sent_text) });

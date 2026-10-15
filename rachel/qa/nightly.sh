@@ -33,6 +33,8 @@ fi
 # Its review posts go to OPS_SLACK_CHANNEL (until set: logs/fixer/<id>.post.txt). After the QA post, so QA isn't delayed.
 export PATH="/home/ubuntu/.npm-global/bin:$PATH"   # the claude CLI (systemd's PATH lacks it)
 python3 /home/ubuntu/ops/monitor.py --once >> /home/ubuntu/logs/monitor.log 2>&1
+# Proposal PDFs older than 90 days (bevvi-proposal*.pdf only; one line each in logs/proposal-cleanup.log; Oct 15)
+/home/ubuntu/ops/proposal-cleanup.sh
 if [ -e /home/ubuntu/ops/PAUSE ]; then echo "[nightly] fixer skipped: ops/PAUSE" >> /home/ubuntu/logs/qa-nightly.log
 else python3 /home/ubuntu/ops/fixer.py >> /home/ubuntu/logs/fixer/nightly.log 2>&1 || echo "[nightly] fixer exited $?" >> /home/ubuntu/logs/qa-nightly.log; fi
 exit $RC

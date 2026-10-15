@@ -256,11 +256,11 @@ async function callShoppingAgent(intent, args) {
 async function writeProposalPdf({ client_name, event_date, line_items, notes, tax_exempt, fees }) {
   const { generateProposal, proposalTotals } = require('./generate-proposal.js');
   const ev = event_date ? require('./event-date.js').normalizeEventDate(event_date).text : '';
-  const filename = `bevvi-proposal-${Date.now()}.pdf`;
+  const { filename, path: pdfPath, url } = require('./generate-proposal.js').proposalFile({ client_name, event_date: ev });
   const proposal = Object.assign({ client_name, event_date: ev, line_items, notes: notes || '', tax_exempt: !!tax_exempt }, fees || {});
-  await generateProposal(proposal, `/home/ubuntu/logs/${filename}`);
+  await generateProposal(proposal, pdfPath);
   const t = proposalTotals(proposal, typeof line_items === 'string' ? JSON.parse(line_items) : line_items);
-  return { filename, download_url: `http://3.138.180.46/proposals/${filename}`, event_date: ev,
+  return { filename, download_url: url, event_date: ev,
     totals: { products: t.productTotal, tax_label: t.taxLabel, tax: t.tax, service_label: t.serviceLabel, service: t.service, tip_label: t.tipLabel, tip: t.tip, delivery: t.delivery, grand_total: t.grandTotal } };
 }
 
