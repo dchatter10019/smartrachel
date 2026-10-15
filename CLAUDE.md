@@ -14,7 +14,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   public at https://mcp.getbevvi.com/rachel/mcp (nginx /rachel/ -> :3600; the "bevvi" transactions MCP is /mcp -> :8000).
   Per-caller API keys (mcp-auth.js: /rachel/auth/request-key -> emailed code -> /rachel/auth/verify-code; 5 wrong codes
   cancel it). Age verified per API key (4h idle; kept by key hash in RACHEL_DATA_DIR/mcp-age.json so a deploy doesn't re-ask;
-  verify_age confirmed:false clears it), never saved to the profile (rule 4). rachel_build_package = shopping-agent menu_build,
+  verify_age confirmed:false clears it), never saved to the profile (rule 4). Every tool is gated EXCEPT rachel_generate_proposal
+  (DC, Oct 15, for Voiceflow: a PDF of lines the client already has, no sale; AGE_EXEMPT in rachel-mcp.js; proposal_from_list,
+  search, build, chat and orders stay gated; the connector test checks both). rachel_build_package = shopping-agent menu_build,
   the builder Slack/email use (was custom_list with category words as products), with Rachel's intake in code: missing guests /
   hours (or drinks per guest) / budget / drink types asked in ONE needs_info.ask_customer, then a mixed event's "what will your
   guests drink most?" (rachel/serving-mix.js, shared with server.js); only zip is required, so the client can't invent values.
@@ -171,7 +173,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 3. Commit with a message that names the real bug and the fix; `git push` after. Commit scope: rachel/,
    store-agent/, ops/, precheck.sh, .gitignore and CLAUDE.md (update it in the same commit when a fact here changes).
    qa/runs/, qa/runs-staging/ and staging/ are gitignored.
-4. Compliance: age verification is per session, never inherited from a saved profile. Never weaken it.
+4. Compliance: age verification is per session, never inherited from a saved profile. Never weaken it. (One exception DC
+   approved, Oct 15: the connector's rachel_generate_proposal runs without it; nothing else.)
 5. QA identities are dry-run on every channel: session ids starting `qa-`, and emails qa-*@getbevvi.com
    / rachel_qa@getbevvi.com (server.js isQA). They never train the price profile (gbrain.saveBasket).
 6. Deterministic over LLM: when a behavior must be reliable (routing, quantities, proposal options,
