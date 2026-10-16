@@ -202,6 +202,13 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
    tools, /internal/order-preview, /internal/* and rachel_chat) and fix or extend the ones that miss it; test at least
    one non-Slack channel (an email scenario, a direct /internal call or the connector test). Never ship a Slack-only fix.
 
+9. WARN DC TO UPDATE VOICEFLOW (DC, Oct 16): any change to the connector (rachel-mcp.js / mcp-auth.js / mcp-oauth.js:
+   tools, inputs, descriptions, server instructions, age gating, result shape) ends with a warning to DC to refresh the
+   Rachel MCP tools in Voiceflow, saying exactly what changed. Voiceflow keeps its own copy of the tools and never calls
+   tools/list (rachel-mcp.log: voiceflow-client initialize, then tool calls only). Oct 16: its rachel_generate_proposal
+   still had only email + client_name, never sent line_items, so every call was held at the age check. The fixer's
+   "Fix ready" post adds the warning in code when the branch touches those files (ops/fixer.py voiceflow_warning).
+
 ## Debug-and-fix loop (spec: "Rachel — Automated Debug-and-Fix Loop", Sep 29)
 - Step 1 staging: done (see Staging above). Step 2 monitor: ops/monitor.py (thresholds ops/monitor.yaml) reads the logs,
   events.jsonl, qa/runs/*/summary.json, the watchdog log and the six services' state; appends findings to

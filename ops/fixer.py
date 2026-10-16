@@ -290,6 +290,15 @@ def tech_footer(f, extra=''):
     if extra: t += '\n_%s_' % extra
     return t
 
+# Voiceflow keeps its own copy of the connector's tools and never re-reads them (DC, Oct 16: its stale
+# rachel_generate_proposal never sent line_items), so a fix that touches the connector says so in the post.
+CONNECTOR_FILES = ('rachel/rachel-mcp.js', 'rachel/mcp-auth.js', 'rachel/mcp-oauth.js')
+def voiceflow_warning(files):
+    hit = [x for x in files if x in CONNECTOR_FILES]
+    if not hit: return ''
+    return ("⚠️ *Update Voiceflow:* this changes the Rachel connector. After it goes live, refresh the Rachel MCP tools "
+            "in Voiceflow so it picks up the change.\n")
+
 # ── posting ─────────────────────────────────────────────────────────────────────────────────────────────────────────
 def post(f, res, proof, dry, scope=None, cost=None):
     scope = scope or {}
@@ -304,6 +313,7 @@ def post(f, res, proof, dry, scope=None, cost=None):
                 f"*How I checked it:* I recreated the problem in a test copy of Rachel (not the live one) and saw it go wrong. "
                 f"With my fix it no longer does, and all of Rachel's everyday checks still pass. Customers haven't seen any change yet.\n"
                 f"*Risk:* {risk}. {plain(res, 'plain_risk', '')}".rstrip() + "\n"
+                + voiceflow_warning(proof.get('files', [])) +
                 f"👉 React ✅ to put it live (it is tested once more first, takes about 5 minutes, and is undone automatically if anything fails), "
                 f"❌ to throw it away, or reply here with questions.\n"
                 + tech_footer(f, 'changed: %s · branch fix/%s · log logs/fixer/%s.log%s' % (', '.join(proof.get('files', [])), f['id'], f['id'],
