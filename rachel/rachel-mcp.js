@@ -12,6 +12,7 @@ const PORT = 3600;
 const { requestKey, verifyCode, resolveEmailForKey } = require('./mcp-auth.js');
 const { parseServingMix, mixText } = require('./serving-mix.js');
 const { expandCocktails } = require('./cocktail-expand.js');
+const { parseAgeAnswer } = require('./age-answer.js');   // the customer's own words in rachel_verify_age
 const OAUTH = require('./mcp-oauth.js');   // claude.ai connector sign-in (OAuth 2.1 + PKCE); API keys keep working
 const callerFor = token => resolveEmailForKey(token) || OAUTH.emailForToken(token);
 const RACHEL_URL = 'http://127.0.0.1:3500';
@@ -23,12 +24,13 @@ const transcripts = require('./transcripts.js');
 const TOOLS = [
   {
     name: 'rachel_verify_age',
-    description: 'Call first, before any other rachel tool (rachel_generate_proposal with line_items excepted), whenever the user wants drink recommendations, products, prices or an order from Bevvi: ask them to confirm they are 21 or older, then pass confirmed:true. Age is kept for this connection only (4 hours idle), never saved to a profile.',
+    description: 'Call first, before any other rachel tool (rachel_generate_proposal with line_items excepted), whenever the user wants drink recommendations, products, prices or an order from Bevvi. Records the CUSTOMER\'s own answer to the question "Are you 21 or older?" — you never assert it for them: ask that question, wait for their reply, then pass their exact reply as customer_said and confirmed:true only if they said yes. Bevvi checks customer_said itself (an under-21, unsure or missing answer is not accepted) and checks ID again at delivery. Age is kept for this connection only (4 hours idle), never saved to a profile.',
     inputSchema: {
       type: 'object',
       properties: {
-        email:     { type: 'string', description: 'Customer email' },
-        confirmed: { type: 'boolean', description: 'Set to true if customer has confirmed they are 21 or older' }
+        email:         { type: 'string', description: 'Customer email' },
+        customer_said: { type: 'string', description: 'The customer\'s exact reply to "Are you 21 or older?" (e.g. "yes, I\'m over 21")' },
+        confirmed:     { type: 'boolean', description: 'true only if the customer themself said they are 21 or older' }
       },
       required: ['email', 'confirmed']
     }
@@ -430,13 +432,25 @@ async function runTool(name, input, callerEmail, apiKey) {
 
   // Age verification tool — per connection (see ageVerified)
   if (name === 'rachel_verify_age') {
-    if (!input.confirmed) {
+    // customer_said (Oct 20, DC): Claude Code's permission check refused a bare {confirmed:true} as the assistant
+    // "self-asserting" the customer's age, so the call now carries the customer's own words and Bevvi reads them
+    // (age-answer.js, the same parser as the Slack/email/WhatsApp gate). Optional: Voiceflow's cached schema lacks it.
+    const said = String(input.customer_said || '').trim().slice(0, 300);
+    const heard = said ? parseAgeAnswer(said) : null;
+    if (!input.confirmed || (heard && heard.answer === 'no')) {
       ageOk.delete(keyHash(apiKey)); saveAge();   // a "no" (or an under-21 answer) ends the connection's earlier check
-      console.log('[rachel-mcp] age NOT confirmed (' + callerEmail + ') — connection held until confirmed');
+      console.log('[rachel-mcp] age NOT confirmed (' + callerEmail + (heard ? ', customer said: ' + heard.why : '') + ') — connection held until confirmed');
       return { verified: false, message: 'Customer must confirm they are 21 or older to proceed.' };
     }
+    if (heard && heard.answer !== 'yes') {
+      console.log('[rachel-mcp] age answer unclear (' + callerEmail + ', ' + heard.why + ') — not verified');
+      return { verified: false, message: 'The customer\'s reply did not say they are 21 or older.',
+        outcome: 'Age NOT confirmed — nothing else was done. Do not tell the customer anything else happened.',
+        ask_the_customer: 'Are you 21 or older?',
+        next_step: 'Ask the customer that, then call rachel_verify_age again with their exact reply as customer_said.' };
+    }
     markAgeVerified(apiKey);
-    console.log('[rachel-mcp] age verified for this connection (' + callerEmail + ') — not saved to the profile');
+    console.log('[rachel-mcp] age verified for this connection (' + callerEmail + ', ' + (heard ? 'customer said: ' + heard.why : 'no customer words given') + ') — not saved to the profile');
     return { verified: true, message: 'Age verified for this session. Customer is confirmed 21 or older.' };
   }
 
@@ -462,7 +476,7 @@ async function runTool(name, input, callerEmail, apiKey) {
         ? ' Nothing was prepared or placed by this call — there is no order and no duplicate.' : ''),
       // Oct 15 (DC, claude.ai): the age check had expired mid-conversation; Claude re-verified, never repeated
       // rachel_place_order, and told DC the retry was blocked as a "duplicate order". Say plainly that nothing happened.
-      next_step: 'Ask the customer to confirm they are 21 or older, then call rachel_verify_age with confirmed:true and call ' + name + ' again with exactly the same arguments.'
+      next_step: 'Ask the customer to confirm they are 21 or older, then call rachel_verify_age with their exact reply as customer_said and confirmed:true, and call ' + name + ' again with exactly the same arguments.'
     };
   }
 

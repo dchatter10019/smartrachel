@@ -86,7 +86,11 @@ def apikey():
     # Oct 15 (DC): an order held by the age check must say nothing was prepared, what to ask, and to repeat the same call
     po,_=tool('rachel_place_order',{'line_items':json.dumps([{'name':"Tito's Handmade Vodka 750 ML",'price':24.19,'qty':2}]),'first_name':'Pat','last_name':'Example','phone':'212-555-0100','address':'425 W 53rd St, New York, NY 10019','zip':'10019','delivery_datetime':'next Tuesday at 3pm ET'})
     print('order before age ->', 'held' if (po.get('age_verification_required') and 'NOT prepared' in po.get('outcome','') and '21' in po.get('ask_the_customer','') and 'same arguments' in po.get('next_step','')) else 'NOT HELD / NO NEXT STEP', '|', {k: po.get(k) for k in ('outcome','ask_the_customer')})
-    print('verify_age ->', tool('rachel_verify_age',{'confirmed':True})[0])
+    # customer_said (Oct 20): the customer's own words are read by Bevvi — under 21 / unsure is never verified
+    u,_=tool('rachel_verify_age',{'confirmed':True,'customer_said':"I'm 19"})
+    n,_=tool('rachel_verify_age',{'confirmed':True,'customer_said':'not sure'})
+    print('verify_age own words ->', 'ok' if (u.get('verified') is False and n.get('verified') is False and '21' in n.get('ask_the_customer','')) else 'WRONG', '|', u.get('verified'), n.get('verified'))
+    print('verify_age ->', tool('rachel_verify_age',{'confirmed':True,'customer_said':"yes, I'm over 21"})[0])
     c,_=tool('rachel_chat',{'message':'hi','zip':'10019','session_id':'qa-mcp-age-pass'})
     print('chat after age ->', 'no re-ask' if '21' not in c.get('response','') else 'ASKED AGAIN', '|', c.get('response','')[:120].replace(chr(10),' '))
     r,_=tool('rachel_search',{'products':["Tito's Handmade Vodka 1.75 L"],'zip':'10019'})

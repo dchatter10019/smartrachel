@@ -14,7 +14,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   public at https://mcp.getbevvi.com/rachel/mcp (nginx /rachel/ -> :3600; the "bevvi" transactions MCP is /mcp -> :8000).
   Per-caller API keys (mcp-auth.js: /rachel/auth/request-key -> emailed code -> /rachel/auth/verify-code; 5 wrong codes
   cancel it). Age verified per API key (4h idle; kept by key hash in RACHEL_DATA_DIR/mcp-age.json so a deploy doesn't re-ask;
-  verify_age confirmed:false clears it), never saved to the profile (rule 4). Every tool is gated EXCEPT rachel_generate_proposal
+  verify_age confirmed:false clears it), never saved to the profile (rule 4). rachel_verify_age takes customer_said = the
+  customer's exact reply to "Are you 21 or older?", read by rachel/age-answer.js parseAgeAnswer (the /chat gate's parser):
+  under 21 = refused + cleared, unsure = not verified + asked again; optional (Voiceflow's copy lacks it) (Oct 20: Claude Code's
+  permission check refused a bare confirmed:true as the assistant self-asserting age). Every tool is gated EXCEPT rachel_generate_proposal
   called WITH line_items (DC, Oct 15, for Voiceflow: "no age only if the drinks are already provided"; a PDF, no sale;
   rachel-mcp.js ageExempt; without line_items it reads the saved basket and is gated; proposal_from_list, search, build,
   chat and orders stay gated; the connector test checks all three). rachel_generate_proposal send_to / cc (DC, Oct 15, for
