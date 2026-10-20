@@ -79,7 +79,7 @@ start() {
   # CATALOG_API=getproducts (+ CATALOG_API_URL) from the caller's env: staging searches the getProducts API (rachel/catalog-api.js)
   # RACHEL_MODEL / RACHEL_EFFORT from the caller's env reach staging only (model A/B: RACHEL_MODEL=claude-sonnet-4-6 ops/staging.sh start)
   (cd "$tree/rachel" && launch rachel "$LOG" "$BASE/rachel.pid" RACHEL_PORT=$PORT RACHEL_DATA_DIR=$DATA SHOPPING_AGENT_URL=$sa_url \
-    ${RACHEL_MODEL:+RACHEL_MODEL=$RACHEL_MODEL} ${RACHEL_EFFORT:+RACHEL_EFFORT=$RACHEL_EFFORT} \
+    ${RACHEL_MODEL:+RACHEL_MODEL=$RACHEL_MODEL} ${RACHEL_EFFORT:+RACHEL_EFFORT=$RACHEL_EFFORT} ${RACHEL_STUCK_TURN_MS:+RACHEL_STUCK_TURN_MS=$RACHEL_STUCK_TURN_MS} \
     ${CATALOG_API:+CATALOG_API=$CATALOG_API} ${CATALOG_API_URL:+CATALOG_API_URL=$CATALOG_API_URL} -- node "$tree/rachel/server.js")
   echo "$tree" > "$BASE/tree"
   for i in $(seq 1 45); do http_up http://127.0.0.1:$PORT/health && break; sleep 1; done

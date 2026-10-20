@@ -131,24 +131,34 @@ let INFLIGHT = 0, HTTP_SERVER = null;   // TURNS / TURN_SEQ (the stuck-turn watc
 app.use((req, res, next) => {
   if (req.path === '/chat') {
     INFLIGHT++; let done = false; const id = ++TURN_SEQ;
-    TURNS.set(id, { t0: Date.now(), session: String((req.body && req.body.session_id) || '?'), msg: String((req.body && req.body.message) || '').slice(0, 80) });
+    const turn = { t0: Date.now(), session: String((req.body && req.body.session_id) || '?'), msg: String((req.body && req.body.message) || '').slice(0, 80) };
+    TURNS.set(id, turn);
     const fin = () => { if (!done) { done = true; INFLIGHT--; TURNS.delete(id); } }; res.on('finish', fin); res.on('close', fin);
+    return TURN_ALS.run(turn, next);   // the turn's last log line rides along for [stuck-turn]
   }
   next();
 });
+// The last line each turn logged (any channel), so a [stuck-turn] says WHERE it stopped. Oct 20: three QA turns ("3" in
+// session-basics, each just after a production restart) logged "[turn]" and then nothing — no way to tell what they waited on.
+const TURN_ALS = new (require('async_hooks').AsyncLocalStorage)();
+for (const lvl of ['log', 'warn', 'error']) {
+  const o = console[lvl];
+  console[lvl] = (...a) => { const t = TURN_ALS.getStore(); if (t) { t.last = String(a[0] === undefined ? '' : a[0]).slice(0, 60) + (a.length > 1 ? ' ' + String(a[1]).slice(0, 60) : ''); t.lastAt = Date.now(); } return o(...a); };
+}
 // A turn that hangs leaves no trace — no reply, no event (Oct 2 QA, already-in-basket: "let's go with Tito's 750 ml"
 // logged its classification and then nothing for 5+ minutes). Every 30s: a turn running over 120s is logged ONCE as
 // [stuck-turn] (the monitor turns it into a finding). Logging only — the turn itself is left to finish or fail.
 const TURNS = new Map(); let TURN_SEQ = 0;
+const STUCK_MS = Number(process.env.RACHEL_STUCK_TURN_MS) || 120000;   // lowered only to test the watchdog on staging
 setInterval(() => {
   const now = Date.now();
   for (const [, t] of TURNS) {
-    if (!t.flagged && now - t.t0 > 120000) {
+    if (!t.flagged && now - t.t0 > STUCK_MS) {
       t.flagged = true;
-      console.log('[stuck-turn] ' + t.session + ' running ' + Math.round((now - t.t0) / 1000) + 's, no reply yet: ' + JSON.stringify(t.msg) + (/^qa-/i.test(t.session) ? ' «' + t.session + '»' : ''));
+      console.log('[stuck-turn] ' + t.session + ' running ' + Math.round((now - t.t0) / 1000) + 's, no reply yet: ' + JSON.stringify(t.msg) + (t.last ? ' | last logged ' + Math.round((now - t.lastAt) / 1000) + 's ago: ' + JSON.stringify(t.last) : ' | nothing logged') + (/^qa-/i.test(t.session) ? ' «' + t.session + '»' : ''));
     }
   }
-}, 30000).unref();
+}, Math.min(30000, STUCK_MS)).unref();
 app.get('/internal/inflight', (req, res) => res.json({ inflight: INFLIGHT }));
 // QA sessions: tag every log line of the request with the session (rachel/log-tag.js), so the QA
 // runner can run scenarios in parallel and still assert on just its own log lines.

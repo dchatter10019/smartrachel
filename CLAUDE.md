@@ -445,6 +445,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   event word is an ORDER: rachel/qty-order.js -> rachel.js note "QUANTITY GIVEN" ([qty-order]) -> custom_list at that qty
   + budget, never "is this for an event?" (prompt.md PRIORITY 0-PRE fired on the budget; DC, Oct 5). Connector:
   rachel_build_package's description sends a stated quantity to rachel_chat.
+- [stuck-turn] (server.js watchdog, any turn > 120s) names the turn's last log line and how long ago it was logged (TURN_ALS,
+  Oct 20). Three QA turns ("3" in session-basics, each minutes after a production restart: Oct 5, 13, 20) logged "[turn]" then
+  nothing and never replied; not reproduced on staging (fresh restart + prodcheck x2, 3- and 4-option lists). Most other
+  [stuck-turn] lines are long email/event builds. Staging: RACHEL_STUCK_TURN_MS=4000 ops/staging.sh start tests the watchdog.
 - gbrain calls give up after 15s (GBRAIN_TIMEOUT_MS; the turn continues without memory). Oct 5-6: gbrain-mcp sat at 100%
   CPU not accepting connections; every turn waited ~145s (QA stuck turns F-0020/F-0021); restarted Oct 6 (DC approved).
 - Proposal options from the alternatives search are kept too (proposal-options.js groupsFromResult labels by r.query);
