@@ -557,6 +557,15 @@ async function executeTool(name, input) {
     return { success: true, results: results, kitchen: loc.kitchen, client: loc.client, store: friendlyStore(loc.kitchen), buyer_tier: scoreBuyer(profile).tier };
   }
 
+  // The package's ready-made sentences from its FINAL items (rachel/package-facts.js, Oct 21): drinks per person (shown with
+  // every package, appended in code), the "why that many drinks" answer, the WINE heading with its red/white/sparkling counts.
+  function eventFacts(items, inp, targetDrinks) {
+    try {
+      const f = require(RACHEL_DIR + '/package-facts.js').packageFacts(items, { guests: inp.guests, hours: inp.hours, drinksPerPerson: inp.drinks_per_person, targetDrinks });
+      if (f.drinks_statement) console.log('[package-facts] ' + f.delivered_drinks + ' drinks delivered (target ' + targetDrinks + ') — ' + f.drinks_statement + (f.wine_heading ? ' | ' + f.wine_heading : ''));
+      return { drinks_statement: f.drinks_statement, why_drinks_statement: f.why_drinks_statement, wine_heading: f.wine_heading };
+    } catch (e) { console.error('[package-facts] error:', e.message); return {}; }
+  }
   if (name === 'menu_build') {
     const loc = resolveLocation(input.zip || '');
     if (!loc.kitchen) return { success: false, error: 'No store for zip ' + input.zip };
@@ -601,6 +610,8 @@ async function executeTool(name, input) {
       seltzer_max_price: input.seltzer_max_price || 0,
       beer_pack_size: input.beer_pack_size || 0,
       spirit_types: input.spirit_types || null,   // rachel/event-prefs.js: the spirits the customer asked for (Oct 9)
+      wine_lean: input.wine_lean || '',            // rachel/event-wishes.js: "more white than red" (Oct 21)
+      mix_bias: input.mix_bias || '',              // rachel/event-wishes.js: "more beer than wine", "heavy on the spirits"
       beer_style: input.beer_style || null        // rachel/event-prefs.js: the beer style asked for, closest family first
     });
     { const outage = catalogOutage(failBefore, result); if (outage) return outage; }
@@ -663,6 +674,7 @@ async function executeTool(name, input) {
         for (var ii = 0; ii < items.length; ii++) {
           const item = items[ii];
           if (item.category === 'mixer') continue;   // mixers are never upgraded
+          if (/\bmi[ -]?campo\b/i.test(item.name || '')) continue;   // tequila stays Mi Campo (rachel/mi-campo.js, DC)
           const lineSpend = item.qty * item.price;
           const headroomLeft = productBudget - runningTotalUp;
           if (headroomLeft <= 30) break;
@@ -691,7 +703,9 @@ async function executeTool(name, input) {
                 // the line kept size '750 ML', so the supply check counted 48 spirit servings for ~95.
                 { const was = sizeKey(item.name) || sizeKey(item.size), now = sizeKey(p.name) || sizeKey(p.size); if (was && now !== was) return false; }   // name first: catalog size fields can be wrong ('Belvedere Vodka - 1 L' has size 750 ML)
                 // No flavoured/spiced upgrade for a classic spirit (real bug: Mi Campo Blanco -> Ghost Blanco Spicy).
-                { const FLV = /\b(coconut|vanilla|citrus|citron|mandrin|mandarin|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i; if (FLV.test(p.name || '') && !FLV.test(item.name || '')) return false; }
+                { const FLV = /\b(coconut|vanilla|citrus|citron|mandrin|mandarin|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|pear|poire|apricot|melon|banana|pomegranate|elderflower|hibiscus|lavender|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i; if (FLV.test(p.name || '') && !FLV.test(item.name || '')) return false; }
+                // A spirit stays its spirit type (live, Oct 21: pass 2 upgraded Silent Pool Gin to Mijenta Reposado Tequila).
+                if (String(item.category || '').toLowerCase() === 'spirits') { const ST = require(RACHEL_DIR + '/spirit-type.js'), tW = ST.spiritType(item.label + ' ' + item.name); if (tW && ST.spiritType(p.name) !== tW) return false; }
                 if (n.includes('port') || sub.includes('port') || n.includes('tawny') || n.includes('sherry') || n.includes('sake') || sub.includes('fortified')) return false;
                 if (itemLabel === 'red wine' && sub && !sub.includes('red') && !sub.includes('cabernet') && !sub.includes('merlot') && !sub.includes('pinot noir') && !sub.includes('blend') && !sub.includes('chianti') && !sub.includes('bordeaux') && !sub.includes('barolo')) return false;
                 if (itemLabel === 'white wine' && sub && (sub.includes('red') || sub.includes('champagne') || sub.includes('sparkling') || sub.includes('sake') || sub.includes('port'))) return false;
@@ -724,6 +738,7 @@ async function executeTool(name, input) {
             // Skip beer upgrades — keep beer as beer
             if (itemCat2.includes('beer') || itemCat2.includes('lager') || itemCat2.includes('ale')) continue;
             if (/^mixer/.test(itemCat2)) continue;
+            if (/\bmi[ -]?campo\b/i.test(item.name || '')) continue;   // tequila stays Mi Campo (rachel/mi-campo.js, DC)
             const maxForItem = item.price + remaining2 / item.qty;
             const itemLabel2 = (item.label || item.category || '').toLowerCase();
             const term2 = itemLabel2 === 'red wine' ? 'Red Wine' :
@@ -743,7 +758,9 @@ async function executeTool(name, input) {
                 // the line kept size '750 ML', so the supply check counted 48 spirit servings for ~95.
                 { const was = sizeKey(item.name) || sizeKey(item.size), now = sizeKey(p.name) || sizeKey(p.size); if (was && now !== was) return false; }   // name first: catalog size fields can be wrong ('Belvedere Vodka - 1 L' has size 750 ML)
                 // No flavoured/spiced upgrade for a classic spirit (real bug: Mi Campo Blanco -> Ghost Blanco Spicy).
-                { const FLV = /\b(coconut|vanilla|citrus|citron|mandrin|mandarin|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i; if (FLV.test(p.name || '') && !FLV.test(item.name || '')) return false; }
+                { const FLV = /\b(coconut|vanilla|citrus|citron|mandrin|mandarin|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|pear|poire|apricot|melon|banana|pomegranate|elderflower|hibiscus|lavender|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i; if (FLV.test(p.name || '') && !FLV.test(item.name || '')) return false; }
+                // A spirit stays its spirit type (live, Oct 21: pass 2 upgraded Silent Pool Gin to Mijenta Reposado Tequila).
+                if (String(item.category || '').toLowerCase() === 'spirits') { const ST = require(RACHEL_DIR + '/spirit-type.js'), tW = ST.spiritType(item.label + ' ' + item.name); if (tW && ST.spiritType(p.name) !== tW) return false; }
                 if (n.includes('port') || sub.includes('port') || n.includes('tawny') || n.includes('sherry') || n.includes('sake') || sub.includes('fortified')) return false;
                 if (itemLabel2 === 'red wine' && sub && !sub.includes('red') && !sub.includes('cabernet') && !sub.includes('merlot') && !sub.includes('pinot noir') && !sub.includes('blend') && !sub.includes('chianti') && !sub.includes('bordeaux') && !sub.includes('barolo')) return false;
                 if (itemLabel2 === 'white wine' && sub && (sub.includes('red') || sub.includes('champagne') || sub.includes('sparkling') || sub.includes('sake') || sub.includes('port'))) return false;
@@ -816,7 +833,8 @@ async function executeTool(name, input) {
       full_bar_note: result.full_bar_note || '',
       beer_note: result.beer_note ? result.beer_note + ' Say this in one plain line — no question.' : '',
       supply_check: supply.text,
-      tier_warning: result.tier_warning || ''
+      tier_warning: result.tier_warning || '',
+      ...eventFacts(result.line_items, input, result.total_drinks)
     };
   }
 
@@ -873,6 +891,7 @@ async function executeTool(name, input) {
         let runningTotalUp = currentTotal;
         for (var ii = 0; ii < items.length; ii++) {
           const item = items[ii];
+          if (/\bmi[ -]?campo\b/i.test(item.name || '')) continue;   // tequila stays Mi Campo (rachel/mi-campo.js, DC)
           const lineSpend = item.qty * item.price;
           const headroomLeft = productBudget - runningTotalUp;
           if (headroomLeft <= 30) break;
@@ -894,7 +913,9 @@ async function executeTool(name, input) {
                 // the line kept size '750 ML', so the supply check counted 48 spirit servings for ~95.
                 { const was = sizeKey(item.name) || sizeKey(item.size), now = sizeKey(p.name) || sizeKey(p.size); if (was && now !== was) return false; }   // name first: catalog size fields can be wrong ('Belvedere Vodka - 1 L' has size 750 ML)
                 // No flavoured/spiced upgrade for a classic spirit (real bug: Mi Campo Blanco -> Ghost Blanco Spicy).
-                { const FLV = /\b(coconut|vanilla|citrus|citron|mandrin|mandarin|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i; if (FLV.test(p.name || '') && !FLV.test(item.name || '')) return false; }
+                { const FLV = /\b(coconut|vanilla|citrus|citron|mandrin|mandarin|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|pear|poire|apricot|melon|banana|pomegranate|elderflower|hibiscus|lavender|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i; if (FLV.test(p.name || '') && !FLV.test(item.name || '')) return false; }
+                // A spirit stays its spirit type (live, Oct 21: pass 2 upgraded Silent Pool Gin to Mijenta Reposado Tequila).
+                if (String(item.category || '').toLowerCase() === 'spirits') { const ST = require(RACHEL_DIR + '/spirit-type.js'), tW = ST.spiritType(item.label + ' ' + item.name); if (tW && ST.spiritType(p.name) !== tW) return false; }
                 // Same style as the line it upgrades (menu_build has the same guard). Real bug
                 // (event-serving-mix, Sep 27): custom_list upgraded the "Red Wine" line from The
                 // Prisoner Red Blend to Taylor Fladgate 20 Year Tawny Port — a dessert wine.
@@ -966,7 +987,8 @@ async function executeTool(name, input) {
       unavailable_qty: result.unavailable_qty || '{}',
       supply_check: supply2.text,
       beer_note: result.beer_note ? result.beer_note + ' Say this in one plain line — no question.' : '',
-      tier_warning: result.tier_warning || ''
+      tier_warning: result.tier_warning || '',
+      ...(input.guests ? eventFacts(finalItems2, input, result.total_drinks) : {})
     };
   }
 

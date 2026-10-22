@@ -402,7 +402,7 @@ async function buildPackage(iv) {
     "chandon","cloudy bay","terrazas","cape mentelle","newton vineyard","chateau d'yquem","chateau cheval blanc","colgin","joseph phelps",
     "hennessy","glenmorangie","ardbeg","belvedere","corona","modelo","pacifico","victoria",
     "robert mondavi winery","schrader","mount veeder","the prisoner","kim crawford","ruffino","sea smoke","lingua franca",
-    "high west","nelson's green brier","casa noble","mi campo",
+    "high west","nelson's green brier","mi campo",   // Casa Noble dropped (Voiceflow v2.5, Oct 21)
     "kendall-jackson","kendall jackson","la crema","cambria","carmel road","matanzas creek","murphy-goode","murphy goode","freemark abbey",
     "cardinale","lokoya","mt. brave","mt brave","gran moraine","bardstown bourbon","green river distilling"];
 
@@ -447,14 +447,16 @@ async function buildPackage(iv) {
     if (slotType==="seltzer") return name.indexOf("seltzer")>=0||name.indexOf("claw")>=0||name.indexOf("truly")>=0||name.indexOf("high noon")>=0;
     if (slotType==="nabeer") return name.indexOf("non alcoholic")>=0||name.indexOf("non-alcoholic")>=0||name.indexOf("0.0")>=0||name.indexOf("athletic")>=0||name.indexOf("na beer")>=0;
     if (SPIRIT_KW[slotType]) {
-      if (!nameHasAny(name,SPIRIT_KW[slotType])) return false;
+      // Whole words: "gin" is inside "Disaronno Originale Amaretto" (live, Oct 21: the gin slot took it), "rum" inside "Rumchata".
+      var hasW=function(n,ws){ return ws.some(function(w){ return new RegExp('\\b'+w+'\\b').test(n); }); };
+      if (!hasW(name,SPIRIT_KW[slotType])) return false;
       // A spirit slot is the spirit: never a wine aged in its barrels ("1000 Stories Zinfandel Bourbon") or a cream / nog /
       // liqueur / canned cocktail that carries its word. Oct 7: the bourbon slot took the Zinfandel, the budget fit then
       // swapped it for Evan Williams Egg Nog.
       if (nameHasAny(name,RED_KW.concat(WHITE_KW).concat(SPARK_KW))||/\b(wine|nog|eggnog|cream|liqueur|cocktails?|ready to drink|rtd|punch|lemonade|seltzer|soda)\b/.test(name)) return false;
       for (var t in SPIRIT_KW) {
         if (t===slotType) continue;
-        for (var k=0;k<SPIRIT_KW[t].length;k++) { var w=SPIRIT_KW[t][k]; if (SPIRIT_KW[slotType].indexOf(w)>=0) continue; if (name.indexOf(w)>=0) return false; }
+        for (var k=0;k<SPIRIT_KW[t].length;k++) { var w=SPIRIT_KW[t][k]; if (SPIRIT_KW[slotType].indexOf(w)>=0) continue; if (hasW(name,[w])) return false; }
       }
       return true;
     }
@@ -1112,6 +1114,22 @@ async function buildPackage(iv) {
       console.log('[buildPackage] custom_list generic-line price targets per unit: '+JSON.stringify(Object.keys(genTarget).reduce(function(o,c){o[c]=Math.round(genTarget[c]*100)/100;return o;},{})));
     }
     var results=await Promise.all(namedProducts.map(function(np){return doSearchWithFallbacks(np.name, np.category);}));
+    // A mixer line never takes a soft drink it didn't name, food, or tonic for soda water (mixer-guard.js, Oct 21).
+    for (var mgI=0; mgI<namedProducts.length; mgI++) {
+      var mgC=String(namedProducts[mgI].category||'').toLowerCase();
+      if (mgC==='mixer'||mgC==='mixers') results[mgI]=require('./mixer-guard.js').guardMixerRows(namedProducts[mgI].name, results[mgI]);
+    }
+    // A generic tequila line ("Tequila", "Tequila Blanco", a margarita's base) is Mi Campo when this store carries it —
+    // whatever the price target; only the customer's own spirit caps (or a size they stated) rule it out (mi-campo.js).
+    for (var mcI=0; mcI<namedProducts.length; mcI++) {
+      var npM=namedProducts[mcI], MCM=require('./mi-campo.js');
+      if (String(npM.category||'').toLowerCase()!=='spirits' || !MCM.isGenericTequila(npM.name)) continue;
+      var szM0=(String(npM.name||'').match(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/i)||[''])[0].toLowerCase().replace(/\s+/g,'');
+      var mcRows=(await rawSearch('Mi Campo')).filter(function(p){return !szM0||productHasSize(p,szM0);});
+      var mcP=MCM.bestMiCampo(mcRows,{min:capSpiritMin,max:capSpiritMax});
+      if (mcP) { npM._miCampo=true; results[mcI]=[mcP]; console.log('[buildPackage] Mi Campo for '+JSON.stringify(npM.name)+': '+mcP.name+' $'+mcP.price); }
+      else console.log('[buildPackage] Mi Campo for '+JSON.stringify(npM.name)+': not carried here'+(capSpiritMin||capSpiritMax||szM0?' (within the customer\'s caps/size)':'')+' — usual tequila pick');
+    }
     // A generic beer-STYLE line ("Oktoberfest Beer", "German beer" — event-prefs.js beerStyleIn) is the style's beers, then
     // its family, else the usual beer, and the customer is told (beer_note). Oct 9 (staging, the Slack path of DC's Oct 7
     // Oktoberfest brief): "Oktoberfest Beer" was not carried and had no stand-in — the event got no beer at all.
@@ -1297,7 +1315,7 @@ async function buildPackage(iv) {
       if (catN==='spirits' && GENERIC_LINE.test(String(np.name||''))) {
         // A generic spirit ("Vodka", "Tequila Blanco") is the classic, not a flavour. Real bug
         // (event-serving-mix): "Vodka" for Moscow Mules picked Cîroc Coconut.
-        var FLAV=/\b(coconut|vanilla|citrus|citron|mandrin|mandarin|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i;
+        var FLAV=/\b(coconut|vanilla|citrus|citron|mandrin|mandarin|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|pear|poire|apricot|melon|banana|pomegranate|elderflower|hibiscus|lavender|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i;
         var plain=found.filter(function(p){ return !FLAV.test(String(p.name||'')) || FLAV.test(String(np.name||'')); });
         if (plain.length) { if (plain.length<found.length) console.log('[buildPackage] generic '+JSON.stringify(np.name)+': dropped '+(found.length-plain.length)+' flavoured match(es)'); found=plain; }
       }
@@ -1372,7 +1390,7 @@ async function buildPackage(iv) {
       var best=found[0];
       // Not an exact fit: retry the search with just the request's distinctive words + pack count. Real bug:
       // "Bud Light 30 pack cans" returned the Platinum seltzer; "bud light 30" returns the lager 30-pack.
-      if (PM.verdict(reqForFit,best).kind!=='exact' && !altRef0) {
+      if (PM.verdict(reqForFit,best).kind!=='exact' && !altRef0 && !np._miCampo) {
         var sk=PM.searchKey(reqForFit);
         if (sk && sk!==String(np.name).toLowerCase()) {
           var seen={}; found.forEach(function(p){seen[p.product_id||p.name]=1;});
@@ -1393,7 +1411,7 @@ async function buildPackage(iv) {
       // that style and take it if it fits better — "Sam Adams Octoberfest" -> an Oktoberfest, not Boston Lager.
       if (!altNote) {
         var f0=PM.fit(reqForFit,best), sq1=f0.missing.length ? PM.styleQuery(reqForFit, f0.missing) : '';
-        if (sq1 && f0.missing.some(PM.isStyle)) {
+        if (sq1 && f0.missing.some(PM.isStyle) && !np._miCampo) {
           var alt1=(await doSearch(sq1, catN)).filter(function(p){return !isMini(p)&&altSane(p);});
           alt1.sort(function(a,b){return PM.fit(reqForFit,b).score-PM.fit(reqForFit,a).score;});
           if (alt1.length && PM.fit(reqForFit,alt1[0]).score>f0.score) {
@@ -1638,6 +1656,10 @@ async function buildPackage(iv) {
       var wineBottlesS=Math.max(1,Math.ceil(wineDrinksS/5));
       var redRatioS=(categoryBrands.red_ratio!==undefined)?parseFloat(categoryBrands.red_ratio):0.5;
       var redBottlesS=Math.round(wineBottlesS*redRatioS);
+      // "more white than red" from the customer's words (event-wishes.js) wins over any ratio the LLM sent (Oct 21 staging: a
+      // wine-only event built as SPLIT came back 12 red / 9 white): red = floor(40%), white the rest; a red lean mirrors.
+      var wineLeanS=/white/.test(String(iv.wine_lean||'').toLowerCase())?'white':(/red/.test(String(iv.wine_lean||'').toLowerCase())?'red':'');
+      if (wineLeanS) { var minorS=Math.floor(wineBottlesS*0.4); redBottlesS=wineLeanS==='white'?minorS:wineBottlesS-minorS; console.log('[buildPackage] wine lean '+wineLeanS+' (split): '+redBottlesS+' red / '+(wineBottlesS-redBottlesS)+' white'); }
       var whiteBottlesS=wineBottlesS-redBottlesS;
       var redBrandsS=categoryBrands.red||[];
       var whiteBrandsS=categoryBrands.white||[];
@@ -1715,6 +1737,16 @@ async function buildPackage(iv) {
         console.log("[buildPackage] serving mix from customer -> spirits "+Math.round(split.spirits*100)+"% / wine "+Math.round(split.wine*100)+"% / beer "+Math.round(split.beer*100)+"% (package "+packageType+")");
       } else console.log("[buildPackage] serving mix ignored (no overlap with package "+packageType+" categories): "+JSON.stringify(servingMix));
     }
+    // "more beer than wine", "heavy on the spirits" (event-wishes.js mixBiasIn) when the customer gave no serving mix: the
+    // named category weighs 1.6 vs 0.5 (pair) or 1.8 vs 0.7 (one category) — Voiceflow BuildPackage v2.7.17 (Oct 21).
+    var mixBias=String(iv.mix_bias||'').toLowerCase().replace(/\s+/g,'');
+    if (mixBias && !servingMix) {
+      var wts={wine:1,beer:1,spirits:1}, mbp=mixBias.split('>');
+      if (mbp.length===2&&wts[mbp[0]]!==undefined&&wts[mbp[1]]!==undefined) { wts[mbp[0]]=1.6; wts[mbp[1]]=0.5; }
+      else if (wts[mbp[0]]!==undefined) { for (var wk in wts) wts[wk]=(wk===mbp[0])?1.8:0.7; }
+      var nW=split.wine*wts.wine, nB=split.beer*wts.beer, nS=split.spirits*wts.spirits, nT=nW+nB+nS;
+      if (nT>0) { split={wine:nW/nT,beer:nB/nT,spirits:nS/nT}; console.log('[buildPackage] mix bias '+mixBias+' -> spirits '+Math.round(split.spirits*100)+'% / wine '+Math.round(split.wine*100)+'% / beer '+Math.round(split.beer*100)+'%'); }
+    }
     var spiritTypes2=["vodka","rum","bourbon","gin","tequila"];
     // The spirits the customer asked for (event-prefs.js spiritTypesIn: "bourbon and tequila bar", "no vodka"). Oct 7: never
     // passed, every rebuild was the five-spirit bar.
@@ -1724,13 +1756,35 @@ async function buildPackage(iv) {
     var wineDrinks=Math.round(totalDrinks*split.wine);
     var beerDrinks=Math.round(totalDrinks*split.beer);
     var rawSB=split.spirits>0?Math.ceil(spiritDrinks/16):0;
-    var spiritBottles=split.spirits>0?Math.max(rawSB,spiritTypes2.length):0;   // one bottle per spirit type at least (a full bar = 5)
+    // How many spirit TYPES (DC, Oct 21 — same as Voiceflow BuildPackage v2.7.18): a small event gets fewer types so the
+    // bottle count stays near the drinks it needs — under 60 target drinks 3 types, under 100 4, else the full bar of 5;
+    // tequila, vodka, bourbon, gin, rum in that order. The money saved goes into better bottles (spiritTarget2 = spirit
+    // budget / bottles). "Heavy on the spirits" with 20+ guests = all 5 types, 2 bottles each. The customer's own spirit
+    // list (spirit_types) is never trimmed. Was: always the full bar of 5 (Sep 29).
+    var spiritsHeavy=/^spirits(>|$)/.test(mixBias) && guests>=20;   // from the customer's words (no % split) — also when the serving mix carries it
+    if (!askedSpirits.length && split.spirits>0) {
+      var typeFloor=spiritsHeavy?5:(totalDrinks>=100?5:(totalDrinks>=60?4:3));
+      var nTypes=Math.min(5,Math.max(typeFloor,Math.min(5,rawSB)));
+      if (nTypes<5) {
+        var keepT=["tequila","vodka","bourbon","gin","rum"].slice(0,nTypes);
+        spiritTypes2=spiritTypes2.filter(function(t){return keepT.indexOf(t)>=0;});
+        console.log('[buildPackage] spirit types for '+totalDrinks+' target drinks: '+spiritTypes2.join(', ')+' ('+nTypes+' of 5)');
+      }
+    }
+    var spiritBottles=split.spirits>0?Math.max(rawSB,spiritTypes2.length,spiritsHeavy?10:0):0;   // one bottle per spirit type at least
+    if (spiritsHeavy && split.spirits>0) console.log('[buildPackage] heavy on the spirits: '+spiritBottles+' bottles across the 5 types');
     var wineBottles=split.wine>0?Math.ceil(wineDrinks/5):0;
     var beerCases=split.beer>0?Math.ceil(beerDrinks/beerPackSize):0;
     var redB=0,whiteB=0,sparkB=0;
     if (wineBottles>0) {
-      if (packageType===5){redB=Math.round(wineBottles*0.5);whiteB=Math.round(wineBottles*0.3);sparkB=wineBottles-redB-whiteB;}
+      // Rachel's default leans red (DC kept it, Oct 21). "More white than red" (event-wishes.js wineLeanIn) flips it:
+      // package 5 = 50 white / 30 red / 20 sparkling; else red = floor(40%), white the rest (Voiceflow v2.7.16).
+      var wineLean=/white/.test(String(iv.wine_lean||'').toLowerCase())?'white':(/red/.test(String(iv.wine_lean||'').toLowerCase())?'red':'');
+      if (packageType===5){var mainC=Math.round(wineBottles*0.5),minorC=Math.round(wineBottles*0.3);redB=wineLean==='white'?minorC:mainC;whiteB=wineLean==='white'?mainC:minorC;sparkB=wineBottles-redB-whiteB;}
+      else if (wineLean==='white'){redB=Math.floor(wineBottles*0.4);whiteB=wineBottles-redB;}
+      else if (wineLean==='red'){whiteB=Math.floor(wineBottles*0.4);redB=wineBottles-whiteB;}
       else{redB=Math.round(wineBottles*0.6);whiteB=wineBottles-redB;}
+      if (wineLean) console.log('[buildPackage] wine lean '+wineLean+': '+redB+' red / '+whiteB+' white'+(sparkB?' / '+sparkB+' sparkling':''));
     }
     var pb=productBudget||totalBudget;
     var spiritBudget=Math.round(pb*split.spirits*100)/100;
@@ -1778,9 +1832,9 @@ async function buildPackage(iv) {
     }
     // Servings each category must supply — checked against the FINAL package (after the
     // shopping agent's budget upgrades) by supplyCheck(). Cocktail spirits are not checked.
-    categoryNeeds={wine:wineDrinks,beer:beerDrinks,spirits:hasCocktails?0:spiritDrinks,full_bar:spiritBottles>rawSB,beer_pack:beerPackSize};
+    categoryNeeds={wine:wineDrinks,beer:beerDrinks,spirits:hasCocktails?0:spiritDrinks,full_bar:spiritBottles>rawSB,beer_pack:beerPackSize,spirit_min_qty:spiritsHeavy?2:1};
     if (spiritBottles>0&&!hasCocktails) {
-      if (rawSB < spiritBottles) {
+      if (rawSB < spiritBottles && (askedSpirits.length || spiritTypes2.length===5)) {
         // A statement, never an offer to trim: DC (Sep 29) — the goal is to spend the customer's whole budget, and
         // "want me to trim it?" was also a second question after the mixers upsell.
         fullBarNote = askedSpirits.length ? 'This includes one bottle each of ' + (spiritTypes2.length>1 ? spiritTypes2.slice(0,-1).join(', ') + ' and ' + spiritTypes2[spiritTypes2.length-1] : spiritTypes2[0]) + ', as asked.'
@@ -1806,7 +1860,18 @@ async function buildPackage(iv) {
       }
     }
     if (plan.length===0) return fail("Nothing to search");
-    var resAll=await Promise.all(plan.map(function(pl){return doSearch(pl.term);}));
+    var resAll=await Promise.all(plan.map(function(pl){return doSearch(pl.term, pl.cat==="mixers"?"mixer":undefined);}));
+    for (var mgS=0; mgS<plan.length; mgS++) if (plan[mgS].cat==="mixers") resAll[mgS]=require('./mixer-guard.js').guardMixerRows(plan[mgS].term, resAll[mgS]);
+    // The tequila slot and a cocktail's tequila base are Mi Campo when the store carries it (mi-campo.js; DC standing rule):
+    // below the derived price floor too — only the customer's own spirit caps can rule it out.
+    var mcStd=null;
+    for (var mcS=0; mcS<plan.length; mcS++) {
+      var plM=plan[mcS];
+      if (plM.cat!=="spirits" || !(plM.slot==="tequila" || require('./mi-campo.js').isGenericTequila(plM.term))) continue;
+      if (mcStd===null) mcStd=require('./mi-campo.js').bestMiCampo(await rawSearch('Mi Campo'),{min:capSpiritMin,max:capSpiritMax})||false;
+      if (mcStd) { plM.miCampo=mcStd; console.log('[buildPackage] Mi Campo for the '+plM.label+' slot: '+mcStd.name+' $'+mcStd.price); }
+      else console.log('[buildPackage] Mi Campo for the '+plM.label+' slot: not carried here'+(capSpiritMin||capSpiritMax?' (within the customer\'s caps)':'')+' — usual tequila pick');
+    }
     // The beer the customer asked for (event-prefs.js beerStyleIn: "beer (Oktoberfest selections)", "German beers"): the
     // style's own words first, then its family (Oktoberfest -> German brands), each hit must carry the word in its name.
     // None here -> the usual beer, and the customer is told plainly (beer_note). Oct 7: never passed — Stella + Goose Island.
@@ -1842,11 +1907,11 @@ async function buildPackage(iv) {
       }
       // A spirit-type slot ("Vodka") is the classic, never a flavour (Oct 7: Absolut Mandrin for a mixed-drinks party).
       if (pl.cat==="spirits"&&pl.slot!=="mixer") {
-        var FLAVE=/\b(coconut|vanilla|citrus|citron|mandrin|mandarin|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i;
+        var FLAVE=/\b(coconut|vanilla|citrus|citron|mandrin|mandarin|peach|mango|pineapple|berry|raspberry|strawberry|cherry|apple|pear|poire|apricot|melon|banana|pomegranate|elderflower|hibiscus|lavender|lemon|lime|orange|grapefruit|watermelon|cucumber|pepper|jalape[nñ]o|spicy|honey|cinnamon|chocolate|espresso|coffee|caramel|salted|whipped|cake|flavou?red|infused)\b/i;
         var plainE=(resAll[pIdx]||[]).filter(function(p){return !FLAVE.test(p.name||'');});
         if (plainE.length && plainE.length<(resAll[pIdx]||[]).length) { console.log('[buildPackage] '+pl.slot+' slot: '+((resAll[pIdx]||[]).length-plainE.length)+' flavoured bottle(s) left out'); resAll[pIdx]=plainE; }
       }
-      var picks=pick(resAll[pIdx],pl.slot,pl.target,pl.min,pl.max,pl.qty,pl.uniq);
+      var picks=pl.miCampo?[{product:pl.miCampo,qty:pl.qty}]:pick(resAll[pIdx],pl.slot,pl.target,pl.min,pl.max,pl.qty,pl.uniq);
       if (picks.length===0&&pl.slot!=="mixer"&&!(pl.cat==="wine"&&capWineMax)&&!(pl.cat==="beer"&&capBeerMax)&&!(pl.cat==="spirits"&&capSpiritMax)) {
         // Nothing in the target range: the closest price wins — still under the event ceiling when one fits (event-ceiling.js).
         var ceilF=(pl.cat==="wine"||pl.cat==="spirits")?pl.max:0;
@@ -1884,7 +1949,7 @@ async function buildPackage(iv) {
       var idx=-1,best2=0;
       for (var i2=0;i2<lineItems.length;i2++) {
         var sub=lineItems[i2].qty*lineItems[i2].price;
-        if (!downgraded[i2]&&sub>best2){best2=sub;idx=i2;}
+        if (!downgraded[i2]&&sub>best2&&!/\bmi[ -]?campo\b/i.test(lineItems[i2].name||'')){best2=sub;idx=i2;}   // Mi Campo is never downgraded away (mi-campo.js)
       }
       if (idx>=0) {
         var li=lineItems[idx];
@@ -2023,7 +2088,8 @@ async function buildPackage(iv) {
       var lines=lineItems.filter(function(li){ return li.category===cat && li.role!=='modifier'; });
       var sup=function(){ return lines.reduce(function(a,li){ return a+li.qty*mlT(li.name+' '+(li.size||''))/per; },0); };
       for (var guard=0; guard<200; guard++) {
-        var cands=lines.filter(function(li){ return li.qty>1 && sup()-mlT(li.name+' '+(li.size||''))/per >= need; })
+        var minQ=cat==='spirits'?(+categoryNeeds.spirit_min_qty||1):1;   // "heavy on the spirits" = 2 of each, kept (Oct 21)
+        var cands=lines.filter(function(li){ return li.qty>minQ && sup()-mlT(li.name+' '+(li.size||''))/per >= need; })
           .sort(function(a,b){ return mlT(b.name+' '+(b.size||''))-mlT(a.name+' '+(a.size||'')) || b.price-a.price; });
         if (!cands.length) break;
         console.log('[buildPackage] trim unneeded unit: '+cands[0].name+' '+cands[0].qty+' -> '+(cands[0].qty-1)+' ('+cat+' supply '+Math.round(sup())+' for '+Math.round(need)+' needed)');
@@ -2105,7 +2171,8 @@ function supplyCheck(items, needs) {
     if (sup < need*0.95) problems.push('UNDERSUPPLY '+cat+': '+Math.round(sup)+' servings for '+Math.round(need)+' needed');
     for (var i=0;i<lines.length;i++) {
       var q=lines[i].qty||lines[i].quantity||1, u=spu(lines[i],cat);
-      if (q>1 && sup-u >= need*1.10) { problems.push('OVERSUPPLY '+cat+': '+q+'x '+lines[i].name+' ('+(q-1)+' would still cover '+Math.round(need)+' needed; supplied '+Math.round(sup)+')'); break; }
+      var minQ=cat==='spirits'?(+needs.spirit_min_qty||1):1;   // "heavy on the spirits" = 2 of each by design (Oct 21)
+      if (q>minQ && sup-u >= need*1.10) { problems.push('OVERSUPPLY '+cat+': '+q+'x '+lines[i].name+' ('+(q-1)+' would still cover '+Math.round(need)+' needed; supplied '+Math.round(sup)+')'); break; }
     }
   });
   return { ok: problems.length===0, text: 'supply check '+(problems.length?'FAILED — '+problems.join('; ')+' | ':'OK — ')+'need/supplied: '+parts.join(', ') };

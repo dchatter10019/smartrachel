@@ -1,0 +1,30 @@
+name: voiceflow-sync-small-event
+# Oct 21 (DC: "ensure this logic is captured within rachel so ... slack, whatsapp, MCP ... reflect it" — the Voiceflow
+# change set BuildPackage v2.7.14-20 / ParseRequest v1.2-1.5): a small event gets fewer spirit TYPES (60 target drinks ->
+# 4: tequila, vodka, bourbon, gin) with the tequila Mi Campo; EVERY package carries the drinks-per-person sentence (code,
+# whole numbers); "why N drinks?" is answered in code with the why sentence; the WINE heading carries the real counts; a
+# bartender price ask gets the fixed reply + one alert (QA: logged, not sent) and no invented price.
+tags: [events, voiceflow-sync]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "332 Pine St, San Francisco, CA 94104"
+  - send: "need a menu for 20 people, beer + wine + spirits, 2 hour event, budget is 500 dollars"
+    expect: {contains: ["drink most"]}
+  - send: "an even mix"
+    expect:
+      contains: ["Product total", "drinks per person for your 20 guests over 2 hours"]
+      matches: "about \\d+ drinks per person for your 20 guests over 2 hours \\(about \\d+ drinks total\\)"
+      not_matches: "(?i)includes a full bar|one bottle each of vodka, rum|\\b\\d+\\.\\d+ drinks per person"
+      log_not_contains: ["full-bar minimum"]
+      log_contains: ["[buildPackage] spirit types for 60 target drinks: vodka, bourbon, gin, tequila (4 of 5)", "[buildPackage] Mi Campo for the Tequila slot: Mi Campo Blanco Tequila", "[package-facts]"]
+  - send: "why is it that many drinks per person?"
+    expect:
+      matches: "^(Your package includes at least one bottle or pack of each type|This package is sized for about \\d+ drinks per person)"
+      not_matches: "(?i)standard rate|sized to your budget"
+      log_contains: ["[package-facts] \"why that many drinks\" answered in code"]
+  - send: "how much would a bartender cost for this?"
+    expect:
+      contains: ["I'm not able to provide bartender pricing myself, but I've alerted Bevvi Support"]
+      not_matches: "\\$\\s?\\d+\\s*(?:/|per|an)\\s*(?:hour|hr)"
+      log_contains: ["[staff-quote] QA — alert NOT sent: to bevvi-support@getbevvi.com"]

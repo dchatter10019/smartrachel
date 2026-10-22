@@ -1,0 +1,14 @@
+name: voiceflow-sync-email-cocktails
+fresh: true
+tags: [email, voiceflow-sync]
+# Rule 8, the Oct 21 Voiceflow change set over email: margaritas + mojitos — the tequila is Mi Campo, "soda water" is plain
+# soda (never tonic), "mint" is never a cookie, no soft drink in a mixer line; the drinks-per-person sentence is in the
+# reply; a bartender price ask in the same email gets the alert line first (QA: not sent) and the package is still built.
+format: plain
+context: {email_subject: "Margarita party", user_name: "QA Tester"}
+turns:
+  - send: "Hi Rachel,\r\n\r\nI am 21 years old. Deliver to 100 Federal Street, Boston, MA 02110\r\n\r\nWe're having 30 guests for 3 hours, budget $1500, margaritas and mojitos only. Also how much would a bartender cost?\r\n\r\nThanks!"
+    expect:
+      contains: ["I'm not able to provide bartender pricing myself", "Mi Campo", "drinks per person for your 30 guests over 3 hours"]
+      not_matches: "(?i)tonic|oreo|cookie|coca-cola|zero sugar"
+      log_contains: ["[staff-quote] QA — alert NOT sent", "[buildPackage] Mi Campo for"]

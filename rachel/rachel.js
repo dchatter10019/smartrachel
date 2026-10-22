@@ -383,6 +383,12 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             const sp = !cats || /spirit|liquor/.test(cats) ? EP.spiritTypesIn(brief) : null, bs = !cats || /beer/.test(cats) ? EP.beerStyleIn(brief) : null;
             if (sp) saInput.spirit_types = sp.types;
             if (bs) saInput.beer_style = bs;
+            // "more white than red", "more beer than wine", "heavy on the spirits" (event-wishes.js, Oct 21 — the Voiceflow
+            // agent's ParseRequest rules): read in code, never the LLM's call.
+            const EW = require('./event-wishes.js'), wl = EW.wineLeanIn(brief), mb = EW.mixBiasIn(brief);
+            if (wl) saInput.wine_lean = wl;
+            if (mb) saInput.mix_bias = mb;
+            if (wl || mb) console.log('[event-wishes] from the customer\'s words:' + (wl ? ' wine lean ' + wl : '') + (mb ? ' mix bias ' + mb : ''));
             if (sp || bs) console.log('[event-prefs] from the customer\'s words: ' + (sp ? 'spirits ' + sp.types.join(', ') + ' (' + sp.why + ')' : '') + (sp && bs ? ' · ' : '') + (bs ? 'beer ' + bs.label : ''));
           } catch (e) { console.log('[event-prefs] error: ' + e.message); }
         }
@@ -407,7 +413,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             if (o) { left.push((o.qty ? o.qty + 'x ' : '') + o.name); console.log('[on-hand] DROPPED ' + JSON.stringify(np.name) + ' (customer already has ' + JSON.stringify(o.name) + ')'); }
             return !o;
           });
-          if (left.length) sessionState.replyNote = 'Not ordered — you already have: ' + left.join(', ') + '.';
+          if (left.length) sessionState.replyNote = (sessionState.replyNote ? sessionState.replyNote + ' ' : '') + 'Not ordered — you already have: ' + left.join(', ') + '.';
           // A generic line ("4 white") must not land on the on-hand product either (nightly Oct 3: "White Wine" was filled
           // with Conundrum White, the 2 bottles DC already has). Products the customer chose later (onHandReleased) stay pickable.
           const relN = new Set((sessionState.onHandReleased || []).map(x => String(x).toLowerCase()));
@@ -503,7 +509,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           }
           saInput.named_products = kept;
           const inCats = Object.keys(mixL).filter(k => mixL[k] > 0).map(k => k === 'spirits' ? 'liquor' : k);
-          if (dropped.length && sessionState) sessionState.replyNote = 'Left out, since your guests will drink ' + inCats.join(' and ') + ' only: ' + dropped.join(', ') + '.';
+          if (dropped.length && sessionState) sessionState.replyNote = (sessionState.replyNote ? sessionState.replyNote + ' ' : '') + 'Left out, since your guests will drink ' + inCats.join(' and ') + ' only: ' + dropped.join(', ') + '.';
           console.log('[list-scale] custom_list: ' + kept.length + ' listed line(s) sized for ' + saInput.guests + ' guests / ' + (saInput.hours || '?') + 'h, mix ' + eventParams.serving_mix + (dropped.length ? ', ' + dropped.length + ' dropped' : ''));
         }
         // The LIVE basket, not the one this turn started with. Real bug (Oct 1, DC's Goody quote): one LLM
@@ -698,6 +704,9 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         // same trim offer twice. The model no longer sees it.
         if (result.full_bar_note) { console.log('[tool] full_bar_note withheld from the model — appended in code'); delete result.full_bar_note; }
         if (result.beer_note) { console.log('[tool] beer_note withheld from the model — appended in code'); delete result.beer_note; }
+        // Drinks per person (package-facts.js): the sentence is appended in code with every package and the "why" answer is
+        // given in code when asked (server.js) — the model never states its own figure (Voiceflow v2.7.18-19, Oct 21).
+        if (result.drinks_statement || result.why_drinks_statement) { console.log('[tool] drinks_statement withheld from the model — appended in code'); delete result.drinks_statement; delete result.why_drinks_statement; }
         // Track unavailable items via the tool's own structured field, not by
         // trying to parse the LLM's eventual free-text reply — this is what lets
         // a later deterministic "yes, find a substitute" handler in server.js
@@ -836,7 +845,7 @@ IMPORTANT: After a recommendation intent result, present the products directly. 
 - NO links, NO URLs, NO View links
 - No HTML tags, no markdown headers (###)
 PACKAGE DISPLAY — when ShoppingAgent returns line_items:
-*WINE — N bottles*
+*WINE — N bottles (a red, b white, c sparkling)* — use wine_heading from the result exactly when present
 Red: Nx Product Name — size — $price
 SINGLE PRODUCT: *Product Name* — size — $price
 RULES:

@@ -100,10 +100,15 @@ def automated_reason(headers):
 def get_email(service, msg_id):
     msg = service.users().messages().get(userId='me', id=msg_id, format='full').execute()
     headers = {h['name'].lower(): h['value'] for h in msg['payload']['headers']}
-    body, attachments = '', []
+    body, attachments, att_parts = '', [], []
     def get_body(p):
         nonlocal body
-        if p.get('filename'): attachments.append(p['filename'])   # a forwarded proposal PDF links the thread to its quote
+        if p.get('filename'):
+            attachments.append(p['filename'])   # a forwarded proposal PDF links the thread to its quote
+            ph = {h['name'].lower(): h['value'] for h in p.get('headers', [])}
+            att_parts.append({'name': p['filename'], 'mime': (p.get('mimeType') or '').lower(), 'size': p.get('body', {}).get('size', 0),
+                              'id': p.get('body', {}).get('attachmentId'), 'data': p.get('body', {}).get('data'),
+                              'inline': ph.get('content-disposition', '').lower().startswith('inline') or 'content-id' in ph})
         if p.get('mimeType') == 'text/plain':
             data = p.get('body', {}).get('data', '')
             if data: body += base64.urlsafe_b64decode(data).decode('utf-8', errors='ignore')
@@ -130,10 +135,41 @@ def get_email(service, msg_id):
             'auto': automated_reason(headers),
             'from': headers.get('from', ''), 'subject': headers.get('subject', ''), 'body': body.strip(),
             'message_id': headers.get('message-id', ''), 'references': headers.get('references', ''),
-            'to': headers.get('to', ''), 'cc': headers.get('cc', ''), 'attachments': attachments}
+            'to': headers.get('to', ''), 'cc': headers.get('cc', ''), 'attachments': attachments, 'att_parts': att_parts}
+
+# Order lists sent as files (DC, Oct 22): PDFs, Excel / CSV and photos of a list go to Rachel's /chat as `files`
+# (server.js ORDER FILES / order-file.js reads them; a Google Sheets link in the body is read there too). Not sent:
+# Rachel's own proposal PDFs (they link the thread to its quote, email-link.js), signature logos (inline or small images),
+# other file types. Each choice is logged.
+FILE_TYPES = {'.pdf': 'application/pdf', '.csv': 'text/csv', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+              '.xls': 'application/vnd.ms-excel', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif'}
+MAX_FILE_BYTES = 15 * 1024 * 1024
+def order_files(service, email):
+    out, total = [], 0
+    for a in email.get('att_parts') or []:
+        name = a['name']; ext = os.path.splitext(name.lower())[1]
+        mt = FILE_TYPES.get(ext) or (a['mime'] if a['mime'] in FILE_TYPES.values() else '')
+        why = ''
+        if re.match(r'bevvi-proposal', name, re.I): why = "Rachel's own proposal PDF"
+        elif not mt: why = f"type {a['mime'] or ext or '?'} not read"
+        elif mt.startswith('image/') and (a['inline'] or (a['size'] or 0) < 20000): why = 'inline / small image (a signature logo)'
+        elif (a['size'] or 0) > MAX_FILE_BYTES or total + (a['size'] or 0) > 18 * 1024 * 1024: why = f"too large ({a['size']} bytes)"
+        if why:
+            log.info(f'[files] {name} skipped — {why}'); continue
+        try:
+            data = a['data'] or service.users().messages().attachments().get(userId='me', messageId=email['id'], id=a['id']).execute().get('data', '')
+            raw = base64.urlsafe_b64decode(data + '=' * (-len(data) % 4))
+            total += len(raw)
+            out.append({'name': name, 'media_type': mt, 'data': base64.b64encode(raw).decode()})
+            log.info(f'[files] {name} ({mt}, {len(raw)} bytes) sent to Rachel')
+        except Exception as e:
+            log.error(f'[files] {name} download failed: {e}')
+        if len(out) >= 6: break
+    return out
 
 LAST_EXTRA_CC = []
 LAST_EXTRA_TO = []   # the payment link's customer: the reply's To; the sender + the thread go in Cc (DC, Oct 3)
+LAST_FOLLOWUP = None  # {message}: a list + "place the order" email — the basket was built, the order step follows (same email)
 LAST_RELINK = None   # {session_id, message}: the "which proposal?" answer — replay the held email on that session
 # Same pattern as email-order.js GLUED: a TLD with the next word glued on.
 GLUED = re.compile(r'\.(com|net|org|edu|gov|io|co|us|ai|biz|info|me)(and|or|then|plus|also|too|thanks|please|cc)$', re.I)
@@ -192,7 +228,7 @@ def thread_first_body(service, thread_id):
         log.error(f'thread first email fetch failed ({thread_id[:8]}): {ex}')
     return ''
 
-def chat_with_rachel(message, session_id, sender_email, sender_name='', subject='', request_id='', first_body=''):
+def chat_with_rachel(message, session_id, sender_email, sender_name='', subject='', request_id='', first_body='', files=None):
     try:
         r = requests.post('http://127.0.0.1:3500/chat', json={
             'message': message,
@@ -208,12 +244,14 @@ def chat_with_rachel(message, session_id, sender_email, sender_name='', subject=
                 'thread_first_body': first_body,   # the thread's first customer email (server keeps it as the original request)
                 'age_verified': True
             },
-            'request_id': request_id           # the Gmail message id: a retry gets the SAME reply, never a second run
+            'request_id': request_id,          # the Gmail message id: a retry gets the SAME reply, never a second run
+            **({'files': files} if files else {})
         }, timeout=CHAT_TIMEOUT)
         j = r.json()
         # Addresses the email asked to receive the payment link ("send dipanjan@... a payment link") — added to
         # this reply's Cc by reply_all_cc (Sep 29: they were only copied if they already were).
-        global LAST_EXTRA_CC, LAST_EXTRA_TO, LAST_RELINK
+        global LAST_EXTRA_CC, LAST_EXTRA_TO, LAST_RELINK, LAST_FOLLOWUP
+        LAST_FOLLOWUP = j.get('followup') if isinstance(j.get('followup'), dict) else None
         LAST_EXTRA_CC = [a for a in (j.get('email_cc') or []) if isinstance(a, str) and '@' in a]
         LAST_EXTRA_TO = [a for a in (j.get('email_to') or []) if isinstance(a, str) and '@' in a]
         LAST_RELINK = j.get('relink') if isinstance(j.get('relink'), dict) else None
@@ -303,7 +341,14 @@ def chat_following_relink(email, session_id, sender_email, sender_name):
     # One email's reply, following a relink: the thread was asked "which proposal should I update?" and this
     # email answered it. The held email is replayed on the chosen quote's session, and the thread is mapped
     # there from now on. -> (reply text or None, the session the thread belongs to)
-    reply = chat_with_rachel(email['body'], session_id, sender_email, sender_name, email['subject'], email['id'], email.get('first_body', ''))
+    reply = chat_with_rachel(email['body'], session_id, sender_email, sender_name, email['subject'], email['id'], email.get('first_body', ''), email.get('files'))
+    fu = LAST_FOLLOWUP
+    if reply and fu and fu.get('message'):
+        # The email's list became the basket; its typed text ("place the order", name, phone, date) now places the order
+        # (or asks for what's missing). One email back with both.
+        reply2 = chat_with_rachel(fu['message'], session_id, sender_email, sender_name, email['subject'], email['id'] + '-order')
+        log.info(f"[email-order] list + order command: basket built, order step {'answered' if reply2 else 'FAILED (quote reply sent alone)'}")
+        if reply2: reply = re.sub(r'\n+[^\n]*\b(place|ready)\b[^\n]*\border\b[^\n]*\?\s*$', '', reply.rstrip(), flags=re.I) + '\n\n' + reply2   # its "Ready to place the order?" is answered below
     rl = LAST_RELINK
     if reply is None or not rl or not rl.get('session_id'):
         return reply, session_id
@@ -342,6 +387,7 @@ def process(service, email):
         return
 
     thread_id = email['thread_id']
+    email['files'] = order_files(service, email)
 
     # Check if this is a continuation of an existing thread
     if thread_id in THREAD_SESSIONS:

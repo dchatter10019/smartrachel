@@ -1,9 +1,9 @@
 name: event-estimates
 # Estimations (DC, Sep 27): drinks per guest follow the rule of thumb (2 in the first hour,
-# 1 per hour after: 3h = 4), quantities use each bottle's real size, and a full bar (one
-# bottle of each spirit type) that exceeds what the guests need is kept and stated in the reply —
-# as a statement, never an offer to trim (DC, Sep 29: spend the whole budget; one question per turn).
-# 20 guests x 4 drinks = 80; "mostly wine" on a two-category event (wine+liquor) = 65/35 -> ~28 spirit drinks.
+# 1 per hour after: 3h = 4), quantities use each bottle's real size. Spirit TYPES follow the event size (DC, Oct 21 —
+# Voiceflow parity; was always the full bar of 5): 20 guests x 4 drinks = 80 target drinks -> 4 types (tequila, vodka,
+# bourbon, gin), the tequila Mi Campo, no "full bar" note, never an offer to trim; the drinks-per-person sentence is in the
+# reply (code). "mostly wine" on a two-category event (wine+liquor) = 65/35 -> ~28 spirit drinks.
 tags: [smoke]
 stop_on_fail: true
 turns:
@@ -13,4 +13,4 @@ turns:
   - send: "party for 20 people, 3 hours, budget $800, wine and liquor"
     expect: {contains: ["drink most"]}
   - send: "mostly wine"
-    expect: {contains: ["Product total", "Wine total:", "Spirits total:", "full bar"], log_not_contains: ["supply check FAILED"], not_contains: ["heads-up", "fewer spirits", "trim it"], log_contains: ["supply check OK", "for ~28 spirit drinks", "[reply] appended note", "[reply] subtotals in code", "full_bar_note withheld from the model"]}
+    expect: {contains: ["Product total", "Wine total:", "Spirits total:", "drinks per person for your 20 guests over 3 hours"], log_not_contains: ["supply check FAILED"], not_contains: ["heads-up", "fewer spirits", "trim it", "full bar"], log_contains: ["supply check OK", "spirit types for 80 target drinks: vodka, bourbon, gin, tequila (4 of 5)", "Mi Campo for the Tequila slot", "[reply] appended note", "[reply] subtotals in code"]}

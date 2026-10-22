@@ -8,16 +8,18 @@ turns:
   - send: reset
   - send: "yes"
   - send: "425 W 53rd St, New York, NY 10019"
+  # Oct 22: the 2017 row is gone (Opus One 2018 1.5 L, same $1,099.99), and the classifier scores "I need an opus" add_item
+  # 0.70 (< 0.8), so the LLM's search shows it; the search capture now holds it as the same offer ([product-discussed]
+  # NOT captured) instead of putting it in the cart at 1x. Either route: offered, then the quantity adds it.
   - send: "I need an opus"
     expect:
-      contains: ["$1,099.99", "Want me to add it?"]
-      matches: "Opus One (?:- )?2017"
+      contains: ["$1,099.99"]
+      matches: "Opus One"
       not_contains: ["Added"]
-      log_contains: ["[add-item] single match NOT added — confirming first"]
   - send: "2"
     expect:
       contains: ["$2,199.98"]
-      matches: "Added 2x Opus One (?:- )?2017"
+      matches: "Added 2x \\*?Opus One"
       log_contains: ["[add-confirm] accepted"]
   - send: "show me my basket"
     expect:

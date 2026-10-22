@@ -28,6 +28,7 @@ lint() {
   done
   python3 -m py_compile rachel/email-agent.py 2>/dev/null || { echo "SYNTAX ERROR: rachel/email-agent.py"; fail=1; }
   python3 -m py_compile rachel/rachel_slack_bot.py 2>/dev/null || { echo "SYNTAX ERROR: rachel/rachel_slack_bot.py"; fail=1; }
+  python3 -m py_compile rachel/rachel_whatsapp_bot.py 2>/dev/null || { echo "SYNTAX ERROR: rachel/rachel_whatsapp_bot.py"; fail=1; }
   python3 -m py_compile ops/monitor.py ops/fixer.py 2>/dev/null || { echo "SYNTAX ERROR: ops/*.py"; fail=1; }
   python3 ops/tests/monitor_test.py >/dev/null 2>&1 || { echo "UNIT TEST FAILED: ops/tests/monitor_test.py"; fail=1; }
   out=$(npx --yes eslint@8 --no-eslintrc --parser-options=ecmaVersion:2022 --env node,es2022 \
@@ -70,7 +71,7 @@ up() {
   local svc=$1 url i
   # rachel-email has no HTTP port: up = still active 10 s after the restart (catches a crash at startup).
   if [ "$svc" = rachel-email ] || [ "$svc" = rachel-slack ]; then sleep 10; systemctl is-active --quiet "$svc"; return $?; fi
-  case $svc in rachel) url=http://127.0.0.1:3500/health ;; shopping-agent) url=http://127.0.0.1:8300/ ;; rachel-mcp) url=http://127.0.0.1:3600/ ;; esac
+  case $svc in rachel) url=http://127.0.0.1:3500/health ;; shopping-agent) url=http://127.0.0.1:8300/ ;; rachel-mcp) url=http://127.0.0.1:3600/ ;; rachel-whatsapp) url=http://127.0.0.1:3601/ ;; esac
   for i in $(seq 1 30); do
     if [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "$url")" != "000" ]; then
       sleep 5
@@ -155,6 +156,8 @@ deploy() {
   echo "$DIRTY" | grep -q " rachel/email-agent\.py" && svcs+=(rachel-email)
   # The Slack bot (rachel/rachel_slack_bot.py) is its own service too.
   echo "$DIRTY" | grep -q " rachel/rachel_slack_bot\.py" && svcs+=(rachel-slack)
+  # The WhatsApp bot (rachel/rachel_whatsapp_bot.py, :3601) too — until Oct 22 a change to it never went live in a deploy.
+  echo "$DIRTY" | grep -q " rachel/rachel_whatsapp_bot\.py" && svcs+=(rachel-whatsapp)
   # The MCP connector (rachel-mcp.js on :3600) and what it loads. Until Oct 3 it was restarted by hand, outside a
   # deploy -> no deploy log -> the monitor raised a false "restarted outside a deploy" crash (F-0014).
   echo "$DIRTY" | grep -qE " rachel/(rachel-mcp|mcp-auth|mcp-oauth|gbrain|generate-proposal|serving-mix|cocktail-expand|proposal-email|email-utils)\.js" && svcs+=(rachel-mcp)

@@ -193,7 +193,9 @@ def send(to: str, text: str):
         except Exception as e: log.error(f"[twilio] send error to {to}: {e}")
 
 # ── media (photos / scans of an order) ───────────────────────────────────────
-SUPPORTED_MEDIA = ("image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf")
+# Order lists as files (DC, Oct 22): photos / PDFs (Claude reads them) and CSV / Excel (read in code, order-file.js).
+SUPPORTED_MEDIA = ("image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf",
+                   "text/csv", "text/comma-separated-values", "application/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 def fetch_media(url: str, ctype: str):
     """Twilio media URLs need account auth. Returns {media_type, data(base64)} or None."""
     try:
@@ -235,7 +237,7 @@ def _handle_unlocked(to: str, phone: str, text: str, profile_name: str, images=N
     # Twilio delivered the note AFTER the answer. Now the note re-checks `done` right
     # before sending, and the reply JOINS the note thread so a note in flight always
     # lands first. Threshold raised so ordinary 8s lookups don't trigger it.
-    if images: send(to, "Reading your photo 📷 — one moment.")
+    if images: send(to, "Reading your file 📄 — one moment.")
     done = threading.Event()
     def slow_note():
         if not done.wait(SLOW_NOTE_AFTER) and not done.is_set():

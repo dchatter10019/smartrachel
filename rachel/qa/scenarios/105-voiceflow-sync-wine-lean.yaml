@@ -1,0 +1,14 @@
+name: voiceflow-sync-wine-lean
+# Oct 21 (Voiceflow ParseRequest wine_lean + BuildPackage v2.7.16, DC: same on every channel): "more white than red" is
+# read in code (event-wishes.js) and turns Rachel's red-leaning default around — white > red; the WINE heading shows
+# the real red / white counts (package-facts.js, rewritten in code).
+tags: [events, voiceflow-sync]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "wine only for a 30 person dinner, 3 hours, budget $1200 — more white than red please"
+    expect:
+      contains: ["Product total", "drinks per person for your 30 guests over 3 hours"]
+      matches: "WINE — \\d+ bottles \\(\\d+ red, \\d+ white\\)"
+      log_contains: ["[event-wishes] from the customer's words: wine lean white", "[buildPackage] wine lean white"]

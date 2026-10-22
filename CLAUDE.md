@@ -82,6 +82,24 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   never the token URL (DC, Oct 3; Slack: <url|Payment Link>); the plain part keeps full URLs. Every email opens "Hi <first name>," and ends "Warmly, Rachel /
   Your personal mixologist at Bevvi" (email-agent dress(); DC Oct 3: cordial, Rachel is their personal mixologist); the
   plain/email channel note tells the LLM that voice and not to add its own greeting/sign-off.
+- Order lists as FILES (DC, Oct 22), every channel: email attachments (email-agent order_files: PDF, .xlsx, .csv, .xls, attached
+  images >= 20KB; never Rachel's own bevvi-proposal PDFs or inline/signature images; each skip logged [files]) -> /chat `files`;
+  Slack files / WhatsApp media (bots' SUPPORTED_MEDIA now include CSV + xlsx) -> /chat `images`; a Google Sheets link in any
+  message (connector rachel_chat too). server.js ORDER FILES (after the email cut) + rachel/order-file.js: CSV / xlsx / Sheets
+  read IN CODE (header row names product / qty / size; blank or 0 qty rows = an order form, skipped; total/fee rows skipped; a
+  "Cases" column -> "N cases of X"; xlsx via the system unzip, first sheet by workbook order; [order-file] logs every skip);
+  PDFs / photos -> transcribeOrderImages (Claude; max_tokens 4000, was 800). Result = "<qty> x <product> <size>" lines: email =
+  typed text + the lines, elsewhere lines first. Reply opens "I read N items from <file>." (Slack/WhatsApp photos keep "From your
+  photo I read"). A file with no list next to a real typed request is ignored (logos). Google Sheets: "anyone with the link" is
+  read via the CSV export; a private sheet is NOT readable — the service account's delegation lacks spreadsheets.readonly
+  (DC can add it in Workspace admin; the code already tries it) — and the customer is asked to share it or attach a file.
+  List + "place the order" on an EMPTY basket (new thread): that turn builds the basket from the list lines only, the reply
+  carries `followup` {message: the typed text}, and email-agent sends it straight back (request id <gmail id>-order) so the
+  EMAIL ORDER step places / asks in the same email (was "There's no quote on this thread to order yet"). qa/unit/order-file.test.js.
+  precheck --deploy now restarts rachel-whatsapp when rachel_whatsapp_bot.py changes (it never did).
+- A one-result search (product_query / recommendation / alternatives) at or above CONFIRM_ADD_PRICE ($200) is never captured as
+  the basket: it becomes pendingAddOffer (confirm) like add-item's offer — a yes / a quantity adds it ([product-discussed] NOT
+  captured). Oct 22 smoke: "I need an opus" (add_item 0.70 < 0.8 -> LLM search) put Opus One $1,099.99 in the cart at 1x.
 - The client an email subject names: email-subject.js clientFromSubject ("Goody alcohol order" -> Goody, "... - Gen II
   Fund", "Bar order for Acme"), used by the quote PDF, quote edits and the proposal flow. An email that carries its own
   item list (3+ item lines) never enters the step-by-step proposal flow — it takes the [quote-pdf] path (client from the
@@ -354,8 +372,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   the web lookup (~10-30s, capped at 35s) — DC: an accurate price beats a fast reply.
 - Events: a request mixing drink types asks "what will your guests drink most?" (server.js parseServingMix)
   -> eventParams.serving_mix -> buildPackage serving_mix (menu_build and cocktail custom_list). Drinks per
-  guest = rule of thumb (2 first hour + 1/hour). Quantities use real bottle sizes; a full bar (1 bottle per
-  spirit type) is kept and stated (never an offer to trim). Packages spend toward the budget: no downsell,
+  guest = rule of thumb (2 first hour + 1/hour). Quantities use real bottle sizes; spirit TYPES follow
+  the event size (Oct 21, DC — Voiceflow parity): under 60 target drinks 3 (tequila, vodka, bourbon), under 100 4 (+ gin),
+  else the full bar of 5, stated (never an offer to trim); the customer's own spirit list is never trimmed; "heavy on the
+  spirits" with 20+ guests = 5 types x 2. Packages spend toward the budget: no downsell,
   price-tier critic notes are dropped (rachel.js), prompt SPEND-THE-BUDGET rule. Every menu_build logs a supply check (OK/FAILED).
   "just/only beer + wine", "no liquor" set the other categories to 0%. A held PRODUCT LIST + guest count answered
   with the mix = the listed products sized for the event (eventParams.list_scale -> rachel.js [list-scale]:
@@ -575,6 +595,24 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - Email orders: delivery instructions in an EARLIER email of the thread ride on the order ([email-order] delivery
   instructions from an earlier email); text on the label's own line ("delivery instructions below:Main POC ...") is read
   (Oct 3, Foodie For All: the POC/COI/loading-dock notes never reached the order).
+
+- Voiceflow parity (DC, Oct 21: "ensure this logic is captured within rachel so ... slack, whatsapp, MCP ... reflect it").
+  The Voiceflow agent's functions + prompt live in ops/voiceflow/ (BuildPackage.js, ParseRequest.js, SearchProducts.js,
+  rachel-prompt.md; offline tests ops/voiceflow/run-tests.sh — live-catalog reads, LIVE=0 skips them). Ported to Rachel, every
+  channel: tequila in any package = Mi Campo (rachel/mi-campo.js: generic tequila line / slot / cocktail base, Blanco 750 first,
+  below the derived price floor too; only the customer's spirit caps or stated size rule it out; never upgraded or downgraded
+  away; Casa Noble not preferred); mixer lines never a soft drink they don't name, never food, soda water = plain soda not tonic
+  (rachel/mixer-guard.js, [mixer-guard]); "more white than red" / "more beer than wine" / "heavy on the spirits" read in code
+  (rachel/event-wishes.js — parity-tested against ParseRequest.js in qa/unit/voiceflow-sync.test.js) -> menu_build wine_lean /
+  mix_bias (mix weights only when no serving mix); the drinks-per-person sentence ("about N drinks per person for your G guests
+  over H hours (about T drinks total)", whole numbers) on EVERY package reply, appended in code from the FINAL items
+  (rachel/package-facts.js via shopping-agent eventFacts; recomputed after a basket change), "why that many drinks?" answered
+  in code (why_drinks_statement), the WINE heading rewritten in code with real red/white/sparkling counts; a bartender /
+  sommelier PRICE or QUOTE ask -> fixed reply + ONE alert email per conversation to bevvi-support + the customer
+  (rachel/staff-quote.js, QA = logged only), any drinks request in the same message still built. NOT synced (DC's choice):
+  Rachel keeps her red-leaning default wine split and the 2 + 1/hour drinks rule; the Voiceflow display format (☐, ** bold)
+  is Voiceflow-only. Connector: rachel_build_package result carries drinks_statement / why_drinks_statement / wine_heading.
+  Live builder check: SA_URL=http://127.0.0.1:8301/mcp node ops/tests/voiceflow_sync_live.js (staging --with-shopping-agent).
 
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days

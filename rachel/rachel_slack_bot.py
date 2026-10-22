@@ -189,19 +189,25 @@ def handle(event: dict, say, client):
         return _handle_unlocked(event, say, client)
 
 import base64 as _b64
-SUPPORTED_MEDIA = ("image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf")
+# Order lists as files (DC, Oct 22): photos / PDFs (Claude reads them) and CSV / Excel (read in code, order-file.js).
+SUPPORTED_MEDIA = ("image/jpeg", "image/png", "image/webp", "image/gif", "application/pdf",
+                   "text/csv", "text/comma-separated-values", "application/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 def fetch_slack_files(event: dict):
     """Photos/scans of an order attached to a Slack message. Needs the files:read scope."""
     out = []
     for f in (event.get("files") or [])[:4]:
         ct = (f.get("mimetype") or "").lower(); url = f.get("url_private_download") or f.get("url_private")
-        if not url or ct not in SUPPORTED_MEDIA: continue
+        name = f.get("name") or ""
+        if name.lower().endswith(".csv"): ct = "text/csv"
+        elif name.lower().endswith(".xlsx"): ct = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        if not url or ct not in SUPPORTED_MEDIA:
+            log.info(f"[files] {name or '?'} ({ct or '?'}) — not a type Rachel reads, skipped"); continue
         try:
             r = httpx.get(url, headers={"Authorization": f"Bearer {SLACK_BOT_TOKEN}"}, follow_redirects=True, timeout=30)
             if r.status_code != 200 or r.headers.get("content-type", "").startswith("text/html"):
                 log.warning(f"[files] fetch failed ({r.status_code}) — is the files:read scope granted?"); continue
             if len(r.content) > 15 * 1024 * 1024: log.warning("[files] too large, skipped"); continue
-            out.append({"media_type": ct, "data": _b64.b64encode(r.content).decode()})
+            out.append({"media_type": ct, "data": _b64.b64encode(r.content).decode(), "name": name})
         except Exception as e:
             log.error(f"[files] error: {e}")
     return out
@@ -270,7 +276,7 @@ def _handle_unlocked(event: dict, say, client):
     try:
         client.chat_postEphemeral(
             channel=channel, user=user_id,
-            text=("Reading your photo... 📷 (this takes a moment)" if images else "Rachel is thinking... 🍷")
+            text=("Reading your file... 📄 (this takes a moment)" if images else "Rachel is thinking... 🍷")
         )
     except Exception:
         pass

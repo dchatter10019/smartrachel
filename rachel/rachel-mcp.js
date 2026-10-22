@@ -588,10 +588,14 @@ async function runTool(name, input, callerEmail, apiKey) {
       if (mixers.length || mixed) console.log('[rachel-mcp] build_package mixers: ' + (mixers.join(', ') || 'none named') + (mixed ? ' — mixed drinks' : ''));
       // Which spirits / which beer (event-prefs.js; Oct 7: "bourbon and tequila bar", "Oktoberfest beer" were never passed).
       const EP = require('./event-prefs.js'), sp = cats.includes('spirits') ? EP.spiritTypesIn(saidText) : null, bs = cats.includes('beer') ? EP.beerStyleIn(saidText) : null;
+      // "more white than red", "more beer than wine", "heavy on the spirits" (event-wishes.js — the Voiceflow ParseRequest rules, Oct 21).
+      const EW = require('./event-wishes.js'), wl = EW.wineLeanIn(saidText), mb = EW.mixBiasIn(saidText);
+      if (wl || mb) console.log('[rachel-mcp] build_package wishes:' + (wl ? ' wine lean ' + wl : '') + (mb ? ' mix bias ' + mb : ''));
       if (sp || bs) console.log('[rachel-mcp] build_package asked for: ' + (sp ? 'spirits ' + sp.types.join(', ') + ' (' + sp.why + ')' : '') + (sp && bs ? ' · ' : '') + (bs ? 'beer ' + bs.label : ''));
       result = await callShoppingAgent('menu_build', {
       mixers, mixed_drinks: mixed,
       spirit_types: sp ? sp.types : undefined, beer_style: bs || undefined,
+      wine_lean: wl || undefined, mix_bias: mb || undefined,
       guests: input.guests,
       hours: input.hours,
       drinks_per_person: input.drinks_per_person || undefined,
@@ -604,7 +608,7 @@ async function runTool(name, input, callerEmail, apiKey) {
     }
     // Rachel is the expert (DC, Oct 7): the client presents the package as built — it does not review it, list changes or
     // ask the customer to approve a rebuild ("A few things I'd change before ordering..." on a 30-guest package).
-    if (result && result.line_items) result.presentation = 'This is Rachel\'s finished expert package for this brief. Present it as-is: the items, quantities and totals, plus budget_note / mixers_not_carried / full_bar_note / beer_note as plain statements if present. Do not critique it, suggest changes, list alternatives or offer to rebuild it. End with ONE question: place the order, or get a PDF proposal? If the customer asks for a change, call rachel_build_package or rachel_chat with it.';
+    if (result && result.line_items) result.presentation = 'This is Rachel\'s finished expert package for this brief. Present it as-is: the items, quantities and totals, plus budget_note / mixers_not_carried / full_bar_note / beer_note as plain statements if present. Head the wine with wine_heading exactly as given, and always include drinks_statement word for word — never state any other drinks-per-person figure. Only if the customer asks why the package has that many drinks, answer with why_drinks_statement word for word and nothing else. Do not critique it, suggest changes, list alternatives or offer to rebuild it. End with ONE question: place the order, or get a PDF proposal? If the customer asks for a change, call rachel_build_package or rachel_chat with it.';
     // Internal fields stay internal: the reviewer's price-tier note and tier warning invite price commentary
     // (rachel.js drops them for Slack/email too), the rest is store plumbing.
     ['kitchen', 'client', 'buyer_discount', 'review_note', 'review_layer', 'tier_warning', 'preferred_brands', 'swaps', 'unavailable_qty']

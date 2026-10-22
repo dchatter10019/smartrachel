@@ -217,10 +217,10 @@ async function transcribeOrderImages(images, caption) {
       else content.push({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } });
     }
     content.push({ type: 'text', text: 'This was sent to a beverage-ordering assistant' + (caption ? ' with the caption: "' + caption + '"' : '') + `.
-If it contains a list of drinks to order (handwritten, printed, an invoice, a receipt, an order form), transcribe it as a shopping list — ONE item per line, in the form "<qty> x <product name> <size if shown>". Use the quantities shown; if a quantity is missing, use 1. Correct obvious misspellings of well-known brands. When a line is a category rather than a brand, write it as a clean search phrase with the distinctive term first and NO parentheses — e.g. "2 x Burgundy red wine 750 mL", "1 x Napa Cabernet 750 mL", "6 x IPA beer". Ignore prices, totals, dates, and non-drink lines.
+If it contains a list of drinks to order (handwritten, printed, an invoice, a receipt, an order form), transcribe it as a shopping list — ONE item per line, in the form "<qty> x <product name> <size if shown>". Use the quantities shown; if a quantity is missing, use 1 — except on an order form that lists products with a quantity column: skip the rows whose quantity is blank or 0. Correct obvious misspellings of well-known brands. When a line is a category rather than a brand, write it as a clean search phrase with the distinctive term first and NO parentheses — e.g. "2 x Burgundy red wine 750 mL", "1 x Napa Cabernet 750 mL", "6 x IPA beer". Ignore prices, totals, dates, and non-drink lines.
 If it is NOT a list of drinks to order (a menu photo, a bottle photo, a screenshot, something unrelated), do not invent a list.
 Reply ONLY with JSON: {"is_order": true|false, "list": "<lines joined with \\n, or empty>", "note": "<one short sentence about what the image is, or what was unclear>"}` });
-    const r = await vc.messages.create({ model: 'claude-sonnet-4-6', max_tokens: 800, messages: [{ role: 'user', content }] });
+    const r = await vc.messages.create({ model: 'claude-sonnet-4-6', max_tokens: 4000, messages: [{ role: 'user', content }] });   // 800 cut a 40-line order PDF
     require('./ai-spend.js').record('image', 'claude-sonnet-4-6', r.usage);
     const txt = (r.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
     const m = txt.match(/\{[\s\S]*\}/); const j = m ? JSON.parse(m[0]) : null;
@@ -251,6 +251,10 @@ async function geocodeAddress(text) {
 // (Oct 1, Sean / Foodie For All): this was inferred from "the last message is an assistant reply", so a turn
 // answered in code right after an LLM turn (proposal client -> date -> PDF) was never recorded; the next LLM
 // turn said "I don't have a previously generated PDF in this conversation" about a PDF sent 4 minutes earlier.
+// A basket's identity for package-facts (which products at which quantities).
+function basketKeyOf(items) {
+  try { const a = typeof items === 'string' ? JSON.parse(items || '[]') : (items || []); return a.map(x => String(x.name || '').toLowerCase() + ':' + (x.qty || x.quantity)).sort().join('|'); } catch (e) { return ''; }
+}
 function recordTurn(sessionKey, userText, replyText, llmRan) {
   try {
     if (!replyText || /^__/.test(String(userText || ''))) return;
@@ -1363,8 +1367,16 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       // Full-bar note (DC: keep one bottle of each spirit type, but tell the customer when that's
       // more than they need). Appended to this turn's reply in code — not left to the LLM.
       // + the beer-style note (event-prefs.js; "This store has no Oktoberfest beers right now, so I picked German beers instead.")
-      try { const notes = [saResult && saResult.full_bar_note, saResult && saResult.beer_note && String(saResult.beer_note).replace(/\s*Say this in one plain line.*$/, '')].filter(Boolean);
-        if (notes.length) getState(sessionKey).replyNote = notes.join(' '); } catch (e) {}
+      // + drinks per person (package-facts.js, DC Oct 21): "This package delivers about N drinks per person for your G
+      // guests over H hours (about T drinks total)." — with EVERY package, in code; the model never states its own figure.
+      try { const notes = [saResult && saResult.full_bar_note, saResult && saResult.beer_note && String(saResult.beer_note).replace(/\s*Say this in one plain line.*$/, ''), saResult && saResult.drinks_statement].filter(Boolean);
+        if (notes.length) { const stRN = getState(sessionKey); stRN.replyNote = (stRN.replyNote ? stRN.replyNote + ' ' : '') + notes.join(' '); }   // after a note set earlier this turn ("Left out, ..."), never over it
+        if (saResult && (saResult.drinks_statement || saResult.wine_heading)) {
+          const stF = getState(sessionKey);
+          stF.eventFacts = { guests: saInput && saInput.guests, hours: saInput && saInput.hours, dpp: saInput && saInput.drinks_per_person, target: saResult.total_drinks,
+            statement: saResult.drinks_statement || '', why: saResult.why_drinks_statement || '', wineHeading: saResult.wine_heading || '', key: basketKeyOf(saResult.line_items) };
+          stF.factsBuiltTurn = true;
+        } } catch (e) {}
       // The customer's mixers are already in the package (shopping-agent menu_build, mixers.js; DC Oct 7: fewer back-and-forths):
       // no "would you also like to add mixers...?" question after it — the follow-up is order or proposal.
       try { const li = typeof lineItems === 'string' ? JSON.parse(lineItems || '[]') : (lineItems || []); if (li.some(x => x && x.category === 'mixer')) { getState(sessionKey).mixerAsked = true; console.log('[mixers] package has the customer\'s mixers — no mixers question'); }
@@ -1543,6 +1555,19 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
         // not >3), captured all three, and the order shipped with four items.
         if (hasMultiPerRequest || arr.length > 1) {
           console.log('[product-discussed] SKIPPED capture — multi-option pick list (' + arr.length + ' candidates), waiting for the customer to choose');
+          return;
+        }
+      } catch (e) {}
+      // A costly bottle the search found is OFFERED, never put in the basket (the add-item rule, CONFIRM_ADD_PRICE).
+      // Real (Oct 22 smoke, add-confirm-costly): "I need an opus" scored add_item 0.70 (< 0.8), went to the LLM's search,
+      // and this capture put Opus One $1,099.99 in the cart at 1x while Rachel was still asking "magnum or 750?".
+      try {
+        const one = JSON.parse(lineItems || '[]')[0] || {};
+        const pOne = Number(one.price || one.unit_price || 0);
+        if (one.name && pOne >= CONFIRM_ADD_PRICE) {
+          state.pendingAddOffer = { name: one.name, price: pOne, size: one.size || '', qty: 0, confirm: true };
+          saveFlowState();
+          console.log('[product-discussed] NOT captured — ' + one.name + ' $' + pOne.toFixed(2) + ' >= $' + CONFIRM_ADD_PRICE + ': offered, a yes or a quantity adds it (add-confirm)');
           return;
         }
       } catch (e) {}
@@ -1731,22 +1756,7 @@ app.post('/chat', async (req, res) => {
     const _jR = res.json.bind(res);
     res.json = (payload) => { entry.payload = payload; resolveDone(payload); return _jR(payload); };
   }
-  let imagePrefix = '';
-  if (Array.isArray(images) && images.length) {
-    const caption = String(message || '').trim();
-    const t = await transcribeOrderImages(images, caption);
-    console.log('[vision] is_order=' + t.is_order + ' lines=' + (t.list ? t.list.split('\n').length : 0) + ' | ' + t.note);
-    if (t.is_order) {
-      message = t.list + (caption && !/^(here|this is|my order|order|list|photo|image)/i.test(caption) ? '\n' + caption : '');
-      imagePrefix = 'From your photo I read:\n' + t.list + '\n\n(Tell me if anything\'s off.)\n\n';
-    } else {
-      const rNI = 'I looked at the photo but didn\'t see a drinks list to order from' + (t.note ? ' — ' + t.note : '') + '. Send a photo of a written or printed list and I\'ll build it, or just type what you\'d like.';
-      return res.json({ text: rNI, response: rNI });
-    }
-  }
-  if (imagePrefix) { const _j0 = res.json.bind(res); res.json = (payload) => { try { if (payload && typeof payload.text === 'string') { payload.text = imagePrefix + payload.text; payload.response = imagePrefix + (payload.response || ''); } } catch (e) {} return _j0(payload); }; }
-
-  if (!message) return res.status(400).json({ error: 'message required' });
+  if (!message && !(Array.isArray(images) && images.length) && !(Array.isArray(req.body.files) && req.body.files.length)) return res.status(400).json({ error: 'message required' });
 
   // EMAIL: act on the new text (+ a forwarded message), never the quoted history below it (email-body.js).
   // Real case (Sep 29, Gen II Fund): a forwarded edit request also carried the customer's ORIGINAL order list.
@@ -1756,6 +1766,83 @@ app.post('/chat', async (req, res) => {
     const sig = require('./email-body.js').stripSignature(message, context && context.user_name);
     if (sig.cut) { console.log('[email-body] signature cut: ' + JSON.stringify(sig.cut.slice(0, 80))); message = sig.text; }
   }
+
+  // ── ORDER FILES (order-file.js; DC, Oct 22) ── an order list sent as a file: photos / PDFs (Claude reads them, as
+  // before), CSV / Excel attachments and Google Sheets links (read in code). Every channel: email attachments, Slack
+  // files, WhatsApp media, a Sheets link in any message (the connector's rachel_chat too). Runs after the email cut so
+  // the appended list is never taken for quoted history or a signature. The list becomes ordinary "<qty> x <product>"
+  // lines: the email quote / order, custom_list and original-compare paths take it unchanged.
+  let imagePrefix = '';
+  {
+    const OF = require('./order-file.js');
+    const atts = [].concat(Array.isArray(images) ? images : [], Array.isArray(req.body.files) ? req.body.files : []).filter(f => f && f.data);
+    const links = OF.sheetLinksIn(message);
+    if (atts.length || links.length) {
+      const isEmailF = /^email-/.test(String(session_id || '')) || !!(context && context.email_subject);
+      const caption = String(message || '').trim();
+      const lines = [], read = [], unreadable = [], visual = [], oddRows = [];
+      let sheetShareFailed = false;
+      const fromRows = (rows, label) => {
+        const r = OF.rowsToList(rows);
+        console.log('[order-file] ' + label + ': ' + rows.length + ' row(s) -> ' + r.lines.length + ' line(s)' + (r.header ? '' : ' (no header row)')
+          + (r.skipped.length ? ' | skipped: ' + JSON.stringify(r.skipped.slice(0, 12).map(x => x.why + ': ' + x.row.slice(0, 60))) : ''));
+        oddRows.push(...r.skipped.filter(x => /not a number|whole count/.test(x.why)).map(x => x.row));
+        if (r.lines.length) { lines.push(...r.lines); read.push(label); }
+        return r.lines.length;
+      };
+      for (const f of atts.slice(0, 6)) {
+        const k = OF.kindOf(f), label = f.name || (k === 'image' ? 'your photo' : 'your ' + (k || 'file'));
+        try {
+          if (k === 'csv') fromRows(OF.parseCsv(Buffer.from(f.data, 'base64').toString('utf8')), label);
+          else if (k === 'xlsx') fromRows(OF.parseXlsx(Buffer.from(f.data, 'base64')), label);
+          else if (k === 'pdf' || k === 'image') visual.push(f);
+          else { unreadable.push(label); console.log('[order-file] ' + label + ' (' + (f.media_type || '?') + ') — not a file type Rachel reads, ignored'); }
+        } catch (e) { unreadable.push(label); console.log('[order-file] ' + label + ' could not be read: ' + e.message); }
+      }
+      for (const l of links.slice(0, 3)) {
+        const g = await OF.fetchSheetCsv(l);
+        if (!g.ok) { sheetShareFailed = true; console.log('[order-file] Google Sheet ' + l.id.slice(0, 12) + '… NOT read — ' + g.why); continue; }
+        console.log('[order-file] Google Sheet ' + l.id.slice(0, 12) + '… read (' + g.via + ')');
+        fromRows(OF.parseCsv(g.csv), 'your Google Sheet');
+      }
+      if (visual.length) {
+        const t = await transcribeOrderImages(visual, caption);
+        console.log('[vision] is_order=' + t.is_order + ' lines=' + (t.list ? t.list.split('\n').length : 0) + ' | ' + t.note);
+        if (t.is_order) {
+          lines.push(...t.list.split('\n').map(x => x.trim()).filter(Boolean));
+          read.push(...visual.map(f => f.name || (OF.kindOf(f) === 'pdf' ? 'your PDF' : 'your photo')));
+        } else console.log('[order-file] ' + visual.length + ' PDF/photo(s) with no drinks list: ' + t.note);
+      }
+      const textLeft = caption.replace(/https?:\/\/docs\.google\.com\/spreadsheets\/\S+/gi, '').trim();
+      if (!lines.length) {
+        if (sheetShareFailed) { console.log('[order-file] the Google Sheet is the list and it is not shared — asked to share it'); return res.json({ text: OF.SHARE_ASK, response: OF.SHARE_ASK }); }
+        // An email's logo / a signature image / an unrelated PDF next to a typed request: the text is handled as usual.
+        if (textLeft.length > 15 && !/^(here|this is|attached|see attached|my order|order|list|photo|image|pdf|file)\b[^\n]{0,30}$/i.test(textLeft)) {
+          console.log('[order-file] no list in the file(s) — the message text is handled as usual');
+        } else {
+          const rNI = visual.length && visual.every(f => OF.kindOf(f) === 'image')
+            ? "I looked at the photo but didn't see a drinks list to order from. Send a photo of a written or printed list and I'll build it, or just type what you'd like."
+            : "I opened " + (unreadable.concat(visual.map(f => f.name || 'the file'))[0] || 'the file') + " but couldn't find a drinks list in it. I can read PDFs, Excel (.xlsx) and CSV files and Google Sheets — a column with the product and one with the quantity works best. Or just type what you'd like.";
+          return res.json({ text: rNI, response: rNI });
+        }
+      } else {
+        const rest = textLeft && !/^(here|this is|attached|see attached|my order|order|list|photo|image|pdf|file)\b[^\n]{0,30}$/i.test(textLeft) ? textLeft : '';
+        // Email: the typed request first (address, date, "place the order"), then the list. Elsewhere the list leads, as before.
+        message = isEmailF ? (rest ? rest + '\n\n' : '') + lines.join('\n') : lines.join('\n') + (rest ? '\n' + rest : '');
+        const names = [...new Set(read)];
+        const photoOnly = read.length === visual.length && visual.every(f => OF.kindOf(f) === 'image');   // Slack/WhatsApp photos keep their old reply
+        imagePrefix = photoOnly && !isEmailF
+          ? 'From your photo I read:\n' + lines.join('\n') + '\n\n(Tell me if anything\'s off.)\n\n'
+          : 'I read ' + lines.length + ' item' + (lines.length === 1 ? '' : 's') + ' from ' + names.join(', ') + '.'
+            + (oddRows.length ? ' I left out ' + oddRows.length + ' row' + (oddRows.length === 1 ? '' : 's') + ' I couldn\'t read a quantity from: ' + oddRows.slice(0, 5).map(r => '"' + r.slice(0, 50) + '"').join(', ') + '.' : '')
+            + (sheetShareFailed ? ' (I couldn\'t open the Google Sheet — it isn\'t shared with me.)' : '')
+            + (unreadable.length ? ' (I couldn\'t read ' + unreadable.join(', ') + '.)' : '') + '\n\n';
+        console.log('[order-file] ' + lines.length + ' line(s) from ' + JSON.stringify(names) + ' -> the request' + (rest ? ' (with the message text)' : ''));
+      }
+    }
+  }
+  if (imagePrefix) { const _j0 = res.json.bind(res); res.json = (payload) => { try { if (payload && typeof payload.text === 'string') { payload.text = imagePrefix + payload.text; payload.response = imagePrefix + (payload.response || ''); } } catch (e) {} return _j0(payload); }; }
+  if (!message) return res.status(400).json({ error: 'message required' });
 
   if (context && context.kitchen_location && KITCHEN_TO_CLIENT[context.kitchen_location]) {
     context.client_id = KITCHEN_TO_CLIENT[context.kitchen_location];
@@ -1999,6 +2086,39 @@ app.post('/chat', async (req, res) => {
       })();
     };
   }
+  // PACKAGE FACTS in the reply (package-facts.js, DC Oct 21 — Voiceflow BuildPackage v2.7.18-20, every channel):
+  //  - the WINE heading carries the real red / white / sparkling counts of the basket (the model wrote "WINE — 7 bottles"
+  //    and dropped the sparkling) — rewritten in code from the current basket;
+  //  - after a basket change on an event (no rebuild this turn) the drinks-per-person sentence is recomputed and added;
+  //  - a lead line set this turn (the bartender-quote alert) goes first.
+  { const _jP = res.json.bind(res); res.json = (payload) => {
+    try {
+      const stP = flowState[sessionKey];
+      if (stP && payload && typeof payload.text === 'string') {
+        const PF = require('./package-facts.js');
+        let items = []; try { items = JSON.parse(stP.lastLineItems || '[]'); } catch (e) {}
+        const fixHeading = (t) => String(t || '').replace(/WINE\s*[—–-]\s*\d+\s*bottles?(?:\s*\([^)\n]*\))?/g, (m) => {
+          const h = (stP.factsBuiltTurn && stP.eventFacts && stP.eventFacts.wineHeading) || PF.wineHeading(items);
+          if (h && h !== m) console.log('[package-facts] WINE heading "' + m + '" -> "' + h + '"');
+          return h || m;
+        });
+        payload.text = fixHeading(payload.text); if (typeof payload.response === 'string') payload.response = fixHeading(payload.response);
+        const ef = stP.eventFacts;
+        if (ef && !stP.factsBuiltTurn && items.length && basketKeyOf(items) !== ef.key && /\b\d+\s*x\s+\S/i.test(payload.text) && !/drinks per person/i.test(payload.text)) {
+          const f = PF.packageFacts(items, { guests: ef.guests, hours: ef.hours, drinksPerPerson: ef.dpp, targetDrinks: ef.target });
+          if (f.drinks_statement) {
+            ef.statement = f.drinks_statement; ef.why = f.why_drinks_statement; ef.wineHeading = f.wine_heading; ef.key = basketKeyOf(items);
+            stP.replyNote = (stP.replyNote ? stP.replyNote + ' ' : '') + f.drinks_statement;
+            console.log('[package-facts] basket changed — drinks statement recomputed: ' + f.drinks_statement);
+          }
+        }
+        if (stP.replyLead) { payload.text = stP.replyLead + '\n\n' + payload.text; if (typeof payload.response === 'string') payload.response = stP.replyLead + '\n\n' + payload.response; stP.replyLead = null; }
+        stP.factsBuiltTurn = false;
+        saveFlowState();
+      }
+    } catch (e) { console.log('[package-facts] reply step skipped: ' + e.message); }
+    return _jP(payload);
+  }; }
   // A note produced while building this turn (e.g. the full-bar note) is added to the reply — before a
   // closing question ("Would you also like to add mixers…?") so that question stays last.
   { const _jN = res.json.bind(res); res.json = (payload) => { try { const stN = flowState[sessionKey]; if (stN && stN.replyNote && payload && typeof payload.text === 'string') { console.log('[reply] appended note: ' + stN.replyNote.slice(0, 80)); const addNote = (t) => { const paras = String(t || '').trimEnd().split(/\n\s*\n/); if (paras.length > 1 && /\?\s*\**\s*$/.test(paras[paras.length - 1])) paras.splice(paras.length - 1, 0, stN.replyNote); else paras.push(stN.replyNote); return paras.join('\n\n'); }; payload.text = addNote(payload.text); payload.response = addNote(payload.response || ''); stN.replyNote = null; saveFlowState(); } } catch (e) {} return _jN(payload); }; }
@@ -3076,7 +3196,26 @@ app.post('/chat', async (req, res) => {
       const eoQ = state.emailOrder || {};
       const zoneAnswer = !!((eoQ.pending_when || eoQ.awaiting_zone) && String(message).trim().length <= 120 && explicitZoneIn(message));
       const provided = !!(x.name || x.phone || x.when || x.date || x.time || x.instructions || x.tip || zoneAnswer);
-      if (!oItems.length && cmd) {
+      // A NEW thread with its list (typed, attached, a Google Sheet) AND "place the order" (DC, Oct 22): the basket is
+      // built from the list this turn, then the email agent sends the email's typed text back (`followup`) and this block
+      // places the order / asks for what's missing, in the same reply. Before: "There's no quote on this thread yet".
+      const ITEM_LINE = /^\s*(?:\d+|an?)\s*(?:x|×|cases?\s+of|bottles?\s+of|cans?\s+of)\s+\S/i;
+      const listLines = String(message).split('\n').filter(l => ITEM_LINE.test(l));
+      if (!oItems.length && cmd && !(poE && poE.payment_url) && listLines.length) {
+        const typed = String(message).split('\n').filter(l => !ITEM_LINE.test(l)).join('\n').trim();
+        console.log('[email-order] order command + a ' + listLines.length + '-line list on an empty basket — building the basket first, the order follows (typed text: ' + JSON.stringify(typed.slice(0, 80)) + ')');
+        // This turn sees only the list: with "place the order" still in it the generic checkout started on the empty basket.
+        message = listLines.join('\n');
+        const _jF = res.json.bind(res);
+        res.json = (payload) => {
+          try {
+            const stF = flowState[sessionKey] || state; let n = 0; try { n = JSON.parse(stF.lastLineItems || '[]').length; } catch (e) {}
+            if (payload && n && typed) { payload.followup = { message: typed }; console.log('[email-order] basket built (' + n + ' lines) — the order step follows'); }
+            else console.log('[email-order] basket not built this turn (' + n + ' lines) — order not continued, the reply stands');
+          } catch (e) {}
+          return _jF(payload);
+        };
+      } else if (!oItems.length && cmd) {
         const t = poE && poE.payment_url
           ? 'Happy to help — this order was already created (order #' + poE.order_id + '). Here is your Payment Link again: ' + poE.payment_url + '\n\nIf anything should change before it\'s paid, just reply with the change and I\'ll put together an updated order.\n\nWarmly,\nRachel\nYour personal mixologist at Bevvi'
           : 'There\'s no quote on this thread to order yet — send the list of items (and the delivery address) and I\'ll put it together.';
@@ -3621,6 +3760,36 @@ app.post('/chat', async (req, res) => {
         return res.json({ text: rY, response: rY });
       }
       console.log('[add-confirm] offer for ' + off.name + ' lapsed — reply is not a yes or a quantity: ' + JSON.stringify(message.slice(0, 60)));
+    }
+    // "WHY N DRINKS PER PERSON?" — answered in code with the package's why sentence (package-facts.js, DC Oct 21: the
+    // Voiceflow agent pastes why_drinks_statement verbatim and nothing else; never a "standard rate" or "sized to budget").
+    if (state.eventFacts && !state.orderStep && !state.proposalStep && !isInternalMsg && /\bwhy\b[^.?!\n]{0,80}\b(drinks?|servings?|so much|so many)\b/i.test(message)) {
+      let itW = []; try { itW = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+      const efW = state.eventFacts, fW = itW.length ? require('./package-facts.js').packageFacts(itW, { guests: efW.guests, hours: efW.hours, drinksPerPerson: efW.dpp, targetDrinks: efW.target }) : {};
+      const rW = fW.why_drinks_statement || efW.why;
+      if (rW) { console.log('[package-facts] "why that many drinks" answered in code'); recordTurn(sessionKey, message, rW, false); return res.json({ text: rW, response: rW }); }
+    }
+    // BARTENDER / STAFF PRICE OR QUOTE (staff-quote.js, DC Oct 21): Rachel can't price staff. Fixed reply + ONE alert email
+    // per conversation to bevvi-support + the customer (QA: logged, not sent). A drinks request in the same message is
+    // still handled — the alert line leads that reply.
+    if (!state.orderStep && !isInternalMsg) {
+      const SQ = require('./staff-quote.js'), sq = SQ.staffQuoteAsk(message);
+      if (sq) {
+        if (!state.staffAlertSent) {
+          const ep = state.eventParams || {};
+          let menu = ''; try { menu = JSON.parse(state.lastLineItems || '[]').map(x => x.qty + 'x ' + x.name).join('; ').slice(0, 400); } catch (e) {}
+          const al = SQ.alertEmail(sq.word, { customerEmail: email || (context && context.user_email) || '', location: state.address || state.zip || '', guests: ep.guests, hours: ep.hours, date: state.savedEventDate || '', menu, message });
+          state.staffAlertSent = Date.now(); saveFlowState();
+          if (isQA) console.log('[staff-quote] QA — alert NOT sent: to ' + al.to.join(', ') + ' | ' + al.subject);
+          else sendEmail(al.to, al.subject, al.body).then(() => console.log('[staff-quote] alert sent: to ' + al.to.join(', ') + ' | ' + al.subject)).catch(e => console.log('[staff-quote] alert email FAILED: ' + e.message));
+        } else console.log('[staff-quote] alert already sent this conversation — reply only');
+        const rS = SQ.reply(sq.word);
+        const rest = String(message).replace(/[^.?!\n]*\b(bartend\w*|bar[- ]?tenders?|mixologists?|sommeliers?|bar[- ]?staff)\b[^.?!\n]*[.?!]?/ig, ' ').trim();
+        const drinksAsk = /\b(\d+\s*(?:guests|people|persons|ppl|attendees)|wine|beer|spirits|liquor|cocktails?|package|menu|quote|proposal|budget|\$\s*\d)\b/i.test(rest);
+        if (!drinksAsk) { recordTurn(sessionKey, message, rS, false); return res.json({ text: rS, response: rS }); }
+        state.replyLead = rS; saveFlowState();
+        console.log('[staff-quote] the message also asks for drinks — handled as usual, the alert line leads the reply');
+      }
     }
     let clsIntent = null, clsRef = '';
     // clear stale classifier label: eventParams persists across turns (guests/budget for
