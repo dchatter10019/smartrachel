@@ -6364,6 +6364,21 @@ app.post('/internal/age-verified', (req, res) => {
   res.json({ ok: true });
 });
 
+// Did the customer answer Rachel's own age question in this conversation? (DC, Oct 23.) claude.ai's safety check blocked
+// rachel_verify_age as the assistant vouching for the customer's age, so the connector relays the customer's reply through
+// rachel_chat and reads the result here: via 'rachel' = the customer answered Rachel (parseAgeAnswer), 'rachel-mcp' = the
+// connector's earlier check. Internal only, like /internal/age-verified.
+app.post('/internal/age-status', (req, res) => {
+  const { session_id } = req.body || {};
+  if (req.headers['x-forwarded-for'] || req.headers['x-real-ip']) { console.log('[age] /internal/age-status REFUSED: proxied request'); return res.status(403).json({ ok: false }); }
+  if (!session_id) return res.status(400).json({ ok: false, error: 'session_id required' });
+  const st = flowState[session_id];
+  if (!st) return res.json({ ok: true, verified: false, refused: false });
+  const idle = !/^email-/.test(session_id) && st.lastActive && (Date.now() - st.lastActive) / 3600000 > IDLE_HOURS;
+  res.json({ ok: true, verified: !!st.ageVerified && !idle, via: st.ageVia || 'rachel',
+    refused: !!(st.ageRefusedAt && Date.now() - st.ageRefusedAt < 24 * 3600 * 1000) });
+});
+
 app.post('/internal/session-basket', async (req, res) => {
   const { session_id, sent_text, from_proposal } = req.body || {};
   let line_items = req.body && req.body.line_items, prop = null;

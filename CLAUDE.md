@@ -17,7 +17,15 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   verify_age confirmed:false clears it), never saved to the profile (rule 4). rachel_verify_age takes customer_said = the
   customer's exact reply to "Are you 21 or older?", read by rachel/age-answer.js parseAgeAnswer (the /chat gate's parser):
   under 21 = refused + cleared, unsure = not verified + asked again; optional (Voiceflow's copy lacks it) (Oct 20: Claude Code's
-  permission check refused a bare confirmed:true as the assistant self-asserting age). Every tool is gated EXCEPT rachel_generate_proposal
+  permission check refused a bare confirmed:true as the assistant self-asserting age). Oct 23 (DC, claude.ai blocked
+  rachel_verify_age even with customer_said, before it reached us): the age question is RACHEL'S, through rachel_chat —
+  rachel_chat runs before the check (caller's own session mcp-<email>[-x] / qa-, format plain, never a client channel
+  without the gate); held tools say "ask 'Are you 21 or older?' and send the reply word for word to rachel_chat"; after
+  each unverified rachel_chat the connector reads POST /internal/age-status {session_id} (internal only): the customer
+  answered Rachel (via 'rachel', not a check the connector passed her) = connection verified + age_confirmed:true; a
+  refusal = connection refused 24h (memory; every tool and verify_age, AGE_BYE). rachel_verify_age stays for
+  integration forms (Voiceflow); its description tells chat clients not to use it. Connector test 'age via chat'.
+  Every tool is gated EXCEPT rachel_generate_proposal
   called WITH line_items (DC, Oct 15, for Voiceflow: "no age only if the drinks are already provided"; a PDF, no sale;
   rachel-mcp.js ageExempt; without line_items it reads the saved basket and is gated; proposal_from_list, search, build,
   chat and orders stay gated; the connector test checks all three). rachel_generate_proposal send_to / cc (DC, Oct 15, for
