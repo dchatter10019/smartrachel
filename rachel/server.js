@@ -961,7 +961,9 @@ function estimateFor(state, base) {
   const tc = tipFor(state || {}, base);
   const PT = require('./generate-proposal.js').proposalTotals(Object.assign({ tax_exempt: !!(state && state.taxExempt) }, fa,
     tipSet ? {} : (tc.choice && tc.choice.pct == null ? { tip_amount: tc.tip } : { tip_rate: tc.choice ? tc.choice.pct / 100 : 0.05 })), [{ qty: 1, price: base }]);
-  return { tax: PT.tax, svc: PT.service, tip: PT.tip, del: PT.delivery, grand: PT.grandTotal, taxL: PT.taxLabel, svcL: PT.serviceLabel, tipL: tipSet ? PT.tipLabel : tc.label };
+  // In chat a $0 tax reads "Estimated tax (exempt)" like the order summary; the PDF keeps "(0%)" (F-0073: the Oct 15 PDF
+  // label change reached the basket too).
+  return { tax: PT.tax, svc: PT.service, tip: PT.tip, del: PT.delivery, grand: PT.grandTotal, taxL: state && state.taxExempt ? taxLabelFor(state) : PT.taxLabel, svcL: PT.serviceLabel, tipL: tipSet ? PT.tipLabel : tc.label };
 }
 // The basket with every estimate line (show basket, tax change).
 function basketTotalsText(state, items, format) {

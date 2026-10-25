@@ -8,8 +8,13 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { addToCart } = require('./functions.js');
 const fetch = (url, opts) => import('node-fetch').then(({default: f}) => f(url, require('./log-tag.js').withQAHeader(url, opts)));   // QA turns tag shopping-agent's log lines too
 
+// A hard limit per call (F-0061/F-0074): the SDK default is 10 minutes x 3 attempts, so a connection that stalled right
+// after a restart left the turn silent. 90s covers a full 4096-token reply; one retry, then the turn's error reply.
+const RACHEL_LLM_TIMEOUT_MS = Number(process.env.RACHEL_LLM_TIMEOUT_MS) || 90000;
 const client = new Anthropic.Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY
+  timeout: RACHEL_LLM_TIMEOUT_MS,
+  maxRetries: 1,
+  apiKey:process.env.ANTHROPIC_API_KEY
 });
 
 // ─── TOOL DEFINITIONS ─────────────────────────────────────────────────────────
@@ -966,7 +971,11 @@ RULES:
       messages: withHistoryCache(claudeMessages)
     }, /^claude-sonnet-5/.test(RACHEL_MODEL)
       ? { thinking: { type: 'between_tools' }, output_config: { effort: RACHEL_EFFORT }, betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default' }
-      : { temperature: 0.3 }));   // Sonnet 4.6 (RACHEL_MODEL=claude-sonnet-4-6): exactly as before Oct 3
+      : { temperature: 0.3 }))   // Sonnet 4.6 (RACHEL_MODEL=claude-sonnet-4-6): exactly as before Oct 3
+      .catch(e => {
+        if (e instanceof Anthropic.APIConnectionTimeoutError) console.error('[rachel] iteration ' + iterations + ': no answer from the model in ' + RACHEL_LLM_TIMEOUT_MS + 'ms (after 1 retry) — giving up this turn');
+        throw e;
+      });
     require('./ai-spend.js').record('rachel', RACHEL_MODEL, response.usage, { qa: (eventParams && eventParams.qa) || /^(qa-[^@]*|rachel_qa)@getbevvi\.com$/i.test(String((context && context.user_email) || '')) });
     if (response.stop_reason === 'refusal') console.log('[rachel] REFUSED by the model (' + ((response.stop_details && response.stop_details.category) || '?') + ') — the customer gets the fallback reply');
 

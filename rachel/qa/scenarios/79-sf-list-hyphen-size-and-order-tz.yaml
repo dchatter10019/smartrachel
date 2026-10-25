@@ -18,7 +18,8 @@ turns:
       matches: "(?i)3\\s*x\\s*Fever[ -]Tree Ginger Beer[^\\n]*6\\.8"
       contains: ["Owen's Transfusion"]
       not_matches: "(?i)(Fever-Tree Ginger Beer|Owen's Transfusion)[^\\n]*(isn't|is not|not) (available|carried)"
-      log_contains: ["its name states 250ml"]
+      # Oct 22 (F-0073): the catalog renamed it "Owen's Craft Mixers Transfusion - 4 x 8.5 OZ" — no 250 ML in the name, so
+      # the "its name states 250ml" log no longer fires; the not-UNAVAILABLE check below still covers the size match.
       matches: "3x Fever.Tree Ginger Beer - 6\\.8 OZ"
       log_not_contains: ["UNAVAILABLE (size mismatch): \"Owen", "UNAVAILABLE (size mismatch): \"Fever"]
   - send: "place the order"

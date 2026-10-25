@@ -47,6 +47,11 @@ eq('two quotes share the date -> ask between just those two', [tie.session_id, (
 const amb = pick(S('Fwd: changes', 'Can you update the quote? Remove the Malbec please.'), [q1, q2], now);
 eq('no signal, two recent quotes -> ask between them', [amb.session_id, (amb.ask || []).map(c => c.session_id)], [null, ['email-q1-sean', 'email-q2-sean']]);
 eq('a new request with a matching date is NOT linked (not about changing a quote)', pick(S('New event', 'Need 3 cases of Bud Light for Oct 12 at 100 Federal St'), [q1], now).session_id, null);
+// F-0073: a NEW quote request naming the same client is its own conversation; one that points at the earlier quote still links.
+const ll = Object.assign({}, q1, { session_id: 'email-ll-sean', client: 'Liquid Labs QA', event_date: 'December 5', address: '1460 Broadway, New York, NY 10036', zip: '10036' });
+eq('a new quote request for the same client -> new session', pick(S('Menu Request - Liquid Labs QA 12/5', 'Good morning, Rachel.\n\nI am 21. Can you please get me a quote for the items below? The delivery date is\n12/5 to address 1460 Broadway, New York, NY 10036.\n\n   - Blanton\'s Single Barrel x 2'), [ll], now).session_id, null);
+eq('"send a quote" for the same client -> new session', pick(S('Drinks quote - Contoso QA', 'Please send a quote for the items below.\n\n2 Josh Cellars Cabernet Sauvignon'), [Object.assign({}, q2, { client: 'Contoso QA' })], now).session_id, null);
+eq('a new quote that points at the earlier one still links', pick(S('Liquid Labs QA', 'Can you send a new quote like the last proposal, with 2 more cases?'), [ll], now).session_id, 'email-ll-sean');
 eq('same client twice: the date picks the right one', pick(S('Gen II changes', 'update the Oct 12 proposal'), [Object.assign({}, q1, { session_id: 'email-q1b-sean', event_date: 'Nov 3', last_active: now - H }), q1], now).session_id, 'email-q1-sean');
 const qt = question([q1, q2]);
 eq('the question lists each quote with its details', [/1\. Gen II Fund — event October 12 — 100 Federal Street, Boston — \$1,840\.50 \(12 items\)/.test(qt), /2\. Acme Robotics/.test(qt), /Reply with the number or the client name/.test(qt)], [true, true, true]);

@@ -9,6 +9,20 @@ const fetch = (...args) => import('node-fetch').then(({default: f}) => f(...args
 const PORT = Number(process.env.SHOPPING_AGENT_PORT) || 8300;   // staging: 8301 (ops/staging.sh --with-shopping-agent)
 const GBRAIN_URL = 'http://127.0.0.1:7700';
 const GBRAIN_TOKEN = process.env.GBRAIN_TOKEN || '';  // /etc/gbrain.env
+// Memory is optional for a search: give up after this, as rachel/gbrain.js does. Oct 24 (F-0077): gbrain stopped
+// accepting connections and getCustomerProfile's get_page waited for the OS connect timeout (~127s), so a WhatsApp
+// "do you have Tito's" sat 145s with no reply while the catalog search itself took a second.
+const GBRAIN_TIMEOUT_MS = Number(process.env.GBRAIN_TIMEOUT_MS) || 15000;
+function gbrainFetch(opts, what) {
+  return globalThis.fetch(GBRAIN_URL + '/mcp', Object.assign({}, opts, { signal: AbortSignal.timeout(GBRAIN_TIMEOUT_MS) }))
+    .catch(function(e) {
+      if (e.name === 'TimeoutError') {
+        console.error('[gbrain] no answer in ' + GBRAIN_TIMEOUT_MS + 'ms (' + what + ') — continuing without memory');
+        throw new Error('gbrain timeout after ' + GBRAIN_TIMEOUT_MS + 'ms');
+      }
+      throw e;
+    });
+}
 const BEVVI_API = 'https://api-client.getbevvi.com';
 const { guardAsync: guardCatalog } = require('./catalog-guard.js');
 // Rachel's modules from THIS tree's rachel/ (production: /home/ubuntu/rachel) — a staging shopping-agent run from a
@@ -136,7 +150,7 @@ function friendlyStore(kitchen) {
 
 async function gbrainQuery(query) {
   try {
-    const res = await fetch(GBRAIN_URL + '/mcp', {
+    const res = await gbrainFetch({
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -147,7 +161,7 @@ async function gbrainQuery(query) {
         jsonrpc: '2.0', id: 1, method: 'tools/call',
         params: { name: 'query', arguments: { query } }
       })
-    });
+    }, 'query');
     const text = await res.text();
     const line = text.split('\n').find(l => l.startsWith('data:'));
     if (!line) return null;
@@ -189,11 +203,11 @@ async function getCustomerProfile(email) {
       if (slug) { profileSlugCache[email] = slug; console.log('[getCustomerProfile] slug resolved and cached:', email, '->', slug); }
     }
     if (!slug) throw new Error('no slug');
-    const pageRes = await fetch(GBRAIN_URL + '/mcp', {
+    const pageRes = await gbrainFetch({
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + GBRAIN_TOKEN, 'Accept': 'application/json, text/event-stream' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_page', arguments: { slug } } })
-    });
+    }, 'get_page');
     const pageText = await pageRes.text();
     const pageLine = pageText.split('\n').find(function(l) { return l.startsWith('data:'); });
     if (pageLine) {
@@ -1217,11 +1231,11 @@ async function executeTool(name, input) {
     try {
       const emailSlug = email.replace('@', '-at-').replace(/\./g, '-').replace(/[^a-z0-9-]/g, '');
       const slugPrefix = 'orders/' + emailSlug + '-';
-      const res = await fetch(GBRAIN_URL + '/mcp', {
+      const res = await gbrainFetch({
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + GBRAIN_TOKEN, 'Accept': 'application/json, text/event-stream' },
         body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'list_pages', arguments: { limit: 100, sort: 'updated_desc' } } })
-      });
+      }, 'list_pages');
       const text = await res.text();
       const line = text.split('\n').find(function(l) { return l.startsWith('data:'); });
       if (!line) return { success: false, error: 'No response from gbrain' };
@@ -1237,11 +1251,11 @@ async function executeTool(name, input) {
       const fetchCap = 50;
       const allOrders = [];
       for (const p of matching.slice(0, fetchCap)) {
-        const getRes = await fetch(GBRAIN_URL + '/mcp', {
+        const getRes = await gbrainFetch({
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + GBRAIN_TOKEN, 'Accept': 'application/json, text/event-stream' },
           body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_page', arguments: { slug: p.slug } } })
-        });
+        }, 'get_page');
         const getText = await getRes.text();
         const getLine = getText.split('\n').find(function(l) { return l.startsWith('data:'); });
         if (!getLine) continue;

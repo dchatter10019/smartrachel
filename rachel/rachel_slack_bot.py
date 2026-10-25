@@ -422,6 +422,37 @@ def _act_on_fix(client, ch, post_ts, fid, user, action):
             _fix_runs.discard(fid)
     threading.Thread(target=run, daemon=True).start()
 
+def _approve_all(client, ch, reply_ts, user):
+    """'✅ all': every fix waiting for review goes live in turn, newest first, through ops/deploy-fix.sh (each one tested on
+    staging, rolled back on failure). A fix made before an earlier one went live can't fast-forward any more; deploy-fix
+    says so and nothing of it changes. One summary reply."""
+    if user not in OPS_APPROVERS:
+        client.chat_postMessage(channel=ch, thread_ts=reply_ts, text="Only the people allowed to approve fixes can put one live or throw it away.")
+        log.info(f"[fix-review] approve-all by {user} — not an approver"); return
+    waiting = [f for _, f in _fix_posts(client, ch, limit=200) if _finding_status(f) == "review" and f not in _fix_runs]
+    waiting = list(dict.fromkeys(waiting))   # newest first (channel history order), each once
+    if not waiting:
+        client.chat_postMessage(channel=ch, thread_ts=reply_ts, text="There's no fix waiting for approval right now, so nothing changed.")
+        log.info(f"[fix-review] approve-all by {user} — no fix waiting"); return
+    _fix_runs.update(waiting)
+    log.info(f"[fix-review] approve-all by {user} -> {', '.join(waiting)}")
+    client.chat_postMessage(channel=ch, thread_ts=reply_ts, text=f"Putting {len(waiting)} fixes live one at a time ({', '.join(waiting)}). Each is tested first; about 5 minutes each. I'll reply here when they're done.")
+    def run():
+        lines = []
+        try:
+            for fid in waiting:
+                try:
+                    r = subprocess.run(["/home/ubuntu/ops/deploy-fix.sh", fid], capture_output=True, text=True, timeout=1800)
+                    out = (r.stdout.strip().split("\n") or ["(no output)"])[-1]
+                except Exception as e:
+                    out = f"⛔ Something went wrong with {fid} and nothing changed for customers. (tech: {e})"
+                lines.append(f"• {fid}: {out}")
+                log.info(f"[fix-review] approve-all {fid} -> {out[:160]}")
+        finally:
+            _fix_runs.difference_update(waiting)
+            client.chat_postMessage(channel=ch, thread_ts=reply_ts, text="Done:\n" + "\n".join(lines))
+    threading.Thread(target=run, daemon=True).start()
+
 # A TYPED ✅ / ❌ in #rachel-ops counts like the reaction (Oct 5: DC typed ✅ as a new channel message under the F-0016 post;
 # only reactions were handled, so it was silently ignored and the fix sat unapproved). Approve = a short message that is a
 # check mark or "approve / deploy / go live / ship it"; reject = ❌ or "throw it away / discard / reject". It acts on
@@ -429,6 +460,13 @@ def _act_on_fix(client, ch, post_ts, fid, user, action):
 # (several waiting: asks which). Anything else in the channel is ignored (logged).
 _APPROVE_RE = re.compile(r"^(?:(?::white_check_mark:|:heavy_check_mark:|✅|✔️?)+|approved?|deploy(?: it)?|go live|put it live|ship it)[.!]*$", re.I)
 _REJECT_RE  = re.compile(r"^(?:(?::x:|❌)+|reject(?:ed)?|discard(?: it)?|throw it away)[.!]*$", re.I)
+# "✅ all" / "approve all" / "all ✅" = every fix waiting for review. A bare "all" / "all of them" / "both" only answers
+# Rachel's own "Several fixes are waiting... Which one?" in the last 30 minutes (Oct 23: DC answered that question with
+# "All" and then "✅ all"; both were ignored as "not an approval", and the fixes sat unapproved for days).
+_CHECK = r"(?::white_check_mark:|:heavy_check_mark:|✅|✔️?)+"
+_APPROVE_ALL_RE = re.compile(r"^(?:(?:" + _CHECK + r"|approve|deploy|ship|go live with|put)\s*(?:them\s+)?all(?: of them)?(?: live)?|all\s*" + _CHECK + r")[.!]*$", re.I)
+_BARE_ALL_RE = re.compile(r"^(?:all(?: of them)?|both|yes,? all)[.!]*$", re.I)
+_asked_which = {}   # channel -> time Rachel last asked "which one?"
 
 def _fix_posts(client, ch, limit=50):
     """Fix posts in the channel, newest first: [(ts, fid)]."""
@@ -448,6 +486,8 @@ def handle_ops_message(event, client):
     idm = re.search(r"\bF-\d{4}\b", text, re.I)
     fid = idm.group(0).upper() if idm else ""
     core = re.sub(r"\bF-\d{4}\b", "", text, flags=re.I).strip(" ,-")
+    if not fid and (_APPROVE_ALL_RE.match(core) or (_BARE_ALL_RE.match(core) and time.time() - _asked_which.get(ch, 0) < 1800)):
+        _approve_all(client, ch, event.get("thread_ts") or ts, user); return
     action = "approve" if _APPROVE_RE.match(core) else "x" if _REJECT_RE.match(core) else ""
     if not action:
         log.info(f"[fix-review] message in ops channel by {user} is not an approval — ignored: {text[:80]!r}"); return
@@ -470,7 +510,8 @@ def handle_ops_message(event, client):
             log.info(f"[fix-review] {action} by {user} — no fix waiting"); return
         else:
             ids = ", ".join(f for _, f in waiting)
-            client.chat_postMessage(channel=ch, thread_ts=reply_ts, text=f"Several fixes are waiting ({ids}). Which one? Reply \"✅ F-nnnn\" or react ✅ on its post.")
+            client.chat_postMessage(channel=ch, thread_ts=reply_ts, text=f"Several fixes are waiting ({ids}). Which one? Reply \"✅ F-nnnn\", react ✅ on its post, or reply \"✅ all\" to put every one live.")
+            _asked_which[ch] = time.time()
             log.info(f"[fix-review] {action} by {user} — ambiguous ({ids}), asked"); return
     post_ts = next((t for t, f in posts if f == fid), reply_ts)
     if post_ts != reply_ts and not thread and user in OPS_APPROVERS:

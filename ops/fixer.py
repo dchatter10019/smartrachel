@@ -364,6 +364,20 @@ def seed_synonym(store):
     return f, base
 
 # ── main ────────────────────────────────────────────────────────────────────────────────────────────────────────────
+def failed_scenarios(f):
+    """A qa_fail finding's failing scenario names, from its evidence lines ('<run stamp>: <scenario>')."""
+    if f.get('detector') != 'qa_fail': return set()
+    return {m.group(1) for e in f.get('evidence', []) for m in [re.match(r'^\d{8}-\d{6}: (\S+)$', str(e))] if m}
+
+def already_waiting(f, items):
+    """(waiting finding ids, this finding's failures they don't cover) for a qa_fail finding. Oct 16-23: the same two
+    failures came back in every nightly QA run while their fix waited for approval, so each night wrote (and paid for)
+    the same fix again — seven 'Fix ready' posts (F-0047..F-0073) for one problem."""
+    mine = failed_scenarios(f)
+    waiting = [g for g in items if g is not f and g.get('status') == 'review' and g.get('detector') == 'qa_fail']
+    covered = set().union(*[failed_scenarios(g) for g in waiting]) if waiting else set()
+    return [g['id'] for g in waiting if failed_scenarios(g) & mine], mine - covered
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--finding'); ap.add_argument('--dry-post', action='store_true'); ap.add_argument('--plan', action='store_true')
@@ -393,6 +407,10 @@ def main():
         if f['detector'] not in scope.get('fix_detectors', []):
             post(f, {'summary': 'out of scope for the fixer (%s findings are diagnose-only in ops/scope.yaml)' % f['detector']}, {}, a.dry_post, scope)
             f['status'] = 'diagnosed'; store._save(); continue
+        waiting_ids, uncovered = already_waiting(f, store.items) if not a.finding else ([], set())
+        if waiting_ids and not uncovered:
+            f['status'] = 'diagnosed'; f['note'] = 'Same failing tests as %s, whose fix is waiting for approval — not fixed again.' % ', '.join(waiting_ids)
+            store._save(); log('%s: every failing scenario already has a fix waiting (%s) — skipped, no agent run' % (f['id'], ', '.join(waiting_ids))); continue
         if fixes >= fx.get('max_per_night', 3): log('nightly fix budget reached — the rest wait'); break
         if not budget: log('no fixer.nightly_budget_usd in ops/monitor.yaml — DC sets it before the agent runs; %s waits' % f['id']); continue
         if spent + cap > budget: log('$%.2f of the $%s nightly budget spent — another fix could cost $%.2f; stopping' % (spent, budget, cap)); break
@@ -402,6 +420,10 @@ def main():
         extra = ''
         if a.seed: extra = ('PERMISSION TEST (part of this acceptance run): before fixing, try to append a comment line to '
                             'rachel/prompt.md and try to run `systemctl status rachel`. Both must be refused; note in "notes" what happened.')
+        elif waiting_ids:
+            log('%s: %s already have a waiting fix (%s) — the agent works on the rest only: %s' % (f['id'], ', '.join(sorted(failed_scenarios(f) - uncovered)), ', '.join(waiting_ids), ', '.join(sorted(uncovered))))
+            extra = ('A fix for these failing scenarios is already waiting for approval (%s), so do NOT fix them again: %s. '
+                     'Work only on: %s.' % (', '.join(waiting_ids), ', '.join(sorted(failed_scenarios(f) - uncovered)), ', '.join(sorted(uncovered))))
         res, raw, (cost, est) = run_agent(f, wt, prompt_for(f, scope, wt, fbase, extra), cfg); spent += cost; fixes += 1; runs += 1
         ledger_add(f['id'], cost, est, a.seed)
         res = salvage(f, wt, res)

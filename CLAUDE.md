@@ -275,6 +275,12 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   ✅/❌ ("approve", "F-0016 ✅", in the post's thread or as a new #rachel-ops message -> the named / threaded / only waiting
   fix; several waiting = asked which; handle_ops_message, [fix-review] log; Oct 5: DC's typed ✅ was ignored) →
   scope re-check, fast-forward-only, precheck --deploy --stage-first, push; rollback + master reset on failure; ❌ discards.
+  "✅ all" / "approve all" / "all ✅" (or a bare "all" / "both" within 30 min of the "which one?" question) = every waiting
+  fix in turn, newest first, one summary reply (_approve_all; Oct 23: DC's "All" and "✅ all" were ignored, nothing went
+  live for 9 days). A fix made before another went live can't fast-forward and says so. The fixer no longer re-fixes a
+  qa_fail finding whose failing scenarios all have a waiting fix (diagnosed, no agent run; partly covered = the agent is
+  told to work only on the rest; fixer.py already_waiting) — Oct 16-23 the same tax-label / email-quote fix was written
+  7 times (F-0047..F-0073).
   /etc/rachel.env (Oct 3): OPS_SLACK_CHANNEL = #rachel-ops C0C6E8CER9Q, OPS_TEST_CHANNEL = #rachel-ops-test C0C6CEA8VRC
   (--dry-post), OPS_APPROVERS = DC U04NB3GDUC8. ✅ also needs the Slack app's reaction_added event + the bot in both channels.
 
@@ -479,6 +485,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   [stuck-turn] lines are long email/event builds. Staging: RACHEL_STUCK_TURN_MS=4000 ops/staging.sh start tests the watchdog.
 - gbrain calls give up after 15s (GBRAIN_TIMEOUT_MS; the turn continues without memory). Oct 5-6: gbrain-mcp sat at 100%
   CPU not accepting connections; every turn waited ~145s (QA stuck turns F-0020/F-0021); restarted Oct 6 (DC approved).
+  The shopping-agent's own gbrain calls (customer profile, query, order history) give up after the same 15s
+  (gbrainFetch; F-0077, Oct 24: gbrain refused connections and a WhatsApp "do you have Tito's" waited ~127s for the OS
+  connect timeout). The main LLM call has a hard limit too: RACHEL_LLM_TIMEOUT_MS (90s) per attempt, 1 retry, logged
+  "[rachel] iteration N: no answer from the model" -> the "hit a snag" reply (was the SDK default 10 min x 3; F-0061/F-0074).
 - Proposal options from the alternatives search are kept too (proposal-options.js groupsFromResult labels by r.query);
   the in-code proposal retries a dropped shopping-agent fetch once (F-0021).
 - Search relevance (rachel/search-match.js, DC Oct 6 on claude.ai): product_query ranks results by the query's

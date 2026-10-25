@@ -105,6 +105,10 @@ function pick(msg, candidates, now = Date.now()) {
   const pdfs = pdfsIn(msg);
   const byPdf = pdfs.length ? pool.filter(c => (c.pdfs || []).some(p => pdfs.includes(p))) : [];
   if (byPdf.length) return { session_id: byPdf[0].session_id, reason: 'proposal PDF ' + pdfs.filter(p => (byPdf[0].pdfs || []).includes(p))[0] + ' in the email' };
+  // A request for a NEW quote ("get me a quote for the items below") that points at no earlier one starts its own
+  // conversation even when it names the same client (F-0073: each night's "Menu Request - Liquid Labs QA" joined the
+  // previous night's thread and was answered as an edit of that quote).
+  if (NEW_QUOTE.test(text) && !PRIOR.test(text)) return { session_id: null, reason: pool.length + ' earlier quote(s) from this sender — a request for a new quote, not about an earlier one' };
   const hits = pool.filter(c => { const cl = clientOf(c); return cl && mentions(text, cl); });
   if (hits.length === 1) return { session_id: hits[0].session_id, reason: 'client name "' + clientOf(hits[0]) + '" in the email' };
   if (hits.length > 1) {

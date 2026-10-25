@@ -1,0 +1,19 @@
+name: fix-f-0073-tax-exempt-basket-label
+# F-0073 (Oct 23 nightly; failing since Oct 15): after "the tax should be 0" the basket estimate said
+# "Estimated tax (0%): $0.00" — the Oct 15 change that put "(0%)" back on the PDF also reached the in-chat basket,
+# whose label is "Estimated tax (exempt)" everywhere else (order summary, LLM totals corrected in code).
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "1 Rockefeller Plaza, New York, NY 10019"
+  - send: "Add 2 bottles of Tito's 750ml"
+    expect: {contains: ["Tito"]}
+  - send: "the tax should be 0"
+    expect:
+      contains: ["tax is set to $0", "Estimated tax (exempt): $0.00"]
+      not_contains: ["Estimated tax (0%)"]
+      log_contains: ["[tax/address] tax is set to $0"]
+  - send: "show me the basket"
+    expect:
+      contains: ["Estimated tax (exempt): $0.00"]
+      not_contains: ["Estimated tax (0%)"]
