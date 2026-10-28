@@ -1,7 +1,7 @@
 name: order-paid-detail-change
 # Oct 4, Foodie For All: after the order was placed, BJ wrote "I just made the payment. Could you please update the
-# recipient name to Mara Miller ..." — Rachel re-sent the payment link and asked reopen/new. A payment report never
-# gets the link again; a recipient / driver-note change is passed to the team, not a reopen question.
+# recipient name to Mara Miller ..." — Rachel re-sent the payment link and asked reopen/new. A payment report never gets
+# the link again. Since Oct 28 (DC) a change is applied to the order and a corrected order placed — also when it was paid.
 stop_on_fail: true
 turns:
   - send: reset
@@ -19,12 +19,17 @@ turns:
   - send: "10%"
   - send: "yes"
     expect: {matches: "placed|confirmed|submitted", log_contains: ["basket cleared"]}
-  - send: "Hi, I just made the payment. Could you please update the recipient name to Mara Miller, and that the delivery people say they are delivering from Foodie For All for COI purposes?"
+  - send: "Hi, I just made the payment. Could you please update the name on the order to Mara Miller?"
     expect:
-      contains: ["paid", "support team has been made aware", "update the order"]
-      not_contains: ["direct-checkout", "reopen", "Payment is still open"]
-      log_contains: ["paid — change request not sent (QA/dry-run"]
-  - send: "Also please change the on-site contact phone to 862-252-5077"
+      contains: ["Mara Miller", "replaces order #", "Order Summary"]
+      not_contains: ["direct-checkout", "reopen", "support team has been made aware"]
+      log_contains: ["customer said PAID"]
+  - send: "Also please change the phone number to 862-252-5077"
     expect:
-      contains: ["support team has been made aware"]
+      contains: ["8622525077", "Order Summary"]
       not_contains: ["direct-checkout", "reopen"]
+  - send: "yes"
+    expect:
+      matches: "placed|confirmed|submitted"
+      contains: ["replaces your earlier order #"]
+      not_contains: ["pay only the new link"]

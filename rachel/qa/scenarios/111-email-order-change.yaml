@@ -1,0 +1,40 @@
+name: email-order-change
+fresh: true
+tags: [email]
+# DC (Oct 28): a change to an order Rachel already placed is applied to it and a corrected order placed with a new
+# Payment Link that names the order it replaces (no order-update API; no support email). Email has no confirm step:
+# a detail change places at once, an item change too when the quote edits applied it in code.
+format: plain
+context: {email_subject: "Drinks quote - Acme Test Co", user_name: "QA Tester"}
+turns:
+  - send: "Hi,\r\n\r\nPlease send a quote for the items below.\r\n\r\nI am 21 years old. Deliver to 100 Federal Street, Floor 6\r\nBoston, MA 02110\r\n\r\n2 x Bud Light (30 cans per case)\r\n2 Josh Cellars Cabernet Sauvignon\r\n\r\nThanks!"
+    expect:
+      contains: ["PDF proposal is attached"]
+  - send: "Looks good - please create the order and send me the payment link.\r\n\r\nThanks,\r\nQA"
+    expect:
+      contains: ["full name", "email", "phone number", "delivery date and time", "in one email"]
+      not_contains: ["Payment link:"]
+      log_contains: ["[email-order] command", "MISSING (asked in one reply)"]
+  # A date without a time (Sep 29, Gen II: "note the delivery date is Monday, October 5th" was ignored): kept,
+  # and only the time is asked, with that day's real windows.
+  - send: "Name: Jane Roe\r\nEmail: jane.roe@example.com\r\nPhone: 617-555-0142\r\nThe delivery date is next Tuesday. Please also send qa-link-copy@getbevvi.com the payment link.\r\n\r\nOn Tue, Sep 29, 2026 at 3:00 PM Rachel <rachelai@getbevvi.com> wrote:\r\n> I'll create the order and send the payment link as soon as I have"
+    expect:
+      contains: ["as soon as I know your time zone", "Which time zone should I show the delivery times in", "delivery date:"]
+      not_contains: ["the delivery date and time", "Payment link:"]
+      log_contains: ["date only \"next Tuesday\" (time asked)", "link also to: qa-link-copy@getbevvi.com", "no time zone known, asking it first"]
+  # The time zone is asked before any time is read (DC, Oct 5); the answer comes with the time.
+  - send: "Eastern, 2pm please"
+    expect:
+      contains: ["Hi Jane", "is all set", "QA dry run", "Here is your Payment Link: https://corporate.getbevvi.com/direct-checkout?token=QA_DRY_RUN", "Jane Roe", "(617) 555-0142", "Tip (5%)", "Your personal mixologist at Bevvi"]
+      log_contains: ["[email-order] details reply", "complete -> placing", "[QA] place_order dry run"]
+  - send: "Please change the delivery time to 4pm Eastern.\r\n\r\nThanks,\r\nQA"
+    expect:
+      contains: ["replaces order #", "Here is your Payment Link", "Jane Roe"]
+      not_contains: ["support team has been made aware"]
+      log_contains: ["[order-change] email: order", "complete -> placing"]
+  - send: "Please remove the Bud Light from the order.\r\n\r\nThanks,\r\nQA"
+    expect:
+      contains: ["replaces order #", "Here is your Payment Link", "Josh Cellars", "Removed:"]
+      not_contains: ["support team has been made aware"]
+      not_matches: "\\n2x Bud Light"
+      log_contains: ["[order-change] email: order", "complete -> placing"]

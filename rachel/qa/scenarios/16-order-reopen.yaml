@@ -1,6 +1,8 @@
 name: order-reopen
-# After an order is placed the cart is empty. There is no order-update API: a change to the placed order (paid or not)
-# is escalated to bevvi-support and the customer told so (DC, Oct 4) — never a reopen question, never a silent re-order.
+# DC (Oct 28): "once a order is created, if the user asks for any change of the order, fetch the last order and apply the
+# change, seamlessly". No order-update API: the placed order comes back into checkout, the change is applied, the updated
+# summary is shown in the same reply and one "yes" places the corrected order, naming the order it replaces. (Oct 4-28 a
+# change was emailed to bevvi-support instead.)
 tags: [smoke]
 stop_on_fail: true
 turns:
@@ -23,8 +25,11 @@ turns:
     expect: {matches: "placed|confirmed|submitted", log_contains: ["basket cleared"]}
   - send: "can you add 2 more bottles to that order?"
     expect:
-      contains: ["support team has been made aware", "update the order"]
-      not_contains: ["reopen", "direct-checkout"]
-      log_contains: ["items — change request not sent (QA/dry-run"]
-  - send: "actually make it 3 instead"
-    expect: {contains: ["support team has been made aware"], not_contains: ["reopen"]}
+      contains: ["Kim Crawford", "replaces order #", "Order Summary", "Shall I go ahead"]
+      not_contains: ["support team has been made aware", "should I reopen", "direct-checkout"]
+      matches: "(?i)Kim Crawford Prosecco - 750 ML x4 — \\$17\\.59 ea = \\$70\\.36"
+      log_contains: ["[order-change] order", "[order-change] updated summary added"]
+  - send: "yes"
+    expect:
+      matches: "placed|confirmed|submitted"
+      contains: ["replaces your earlier order #"]

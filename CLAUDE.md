@@ -631,12 +631,21 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   store-agent/shopping-agent.js, env RACHEL_ORDER_ACCOUNT_EMAIL); customerData.email = the customer; who asked is kept
   in our order log (requested_by) and [place_order] account | customer email | requested by. Until Oct 3 the top-level
   email was the requester (email sender / Slack user).
-- A placed order (API success only) leaves the cart → state.placedOrder. There is no order-update API: ANY change to a
-  placed order, paid or not (items, recipient, contact, driver note, COI, cancel), is emailed to bevvi-support and the reply
-  only says "Our support team has been made aware of this request — we'll update the order and let you know" (DC, Oct 4;
-  placed-order-msg.js). No reopen question any more (the old awaitingReopen branch only finishes sessions asked before
-  Oct 4). "I paid" is noted (po.paid_reported) and never gets the link again. Only "a new / separate order" starts fresh.
-  QA/dry-run orders: the support email is not sent. email-agent reply-all reads a glued cc ("...comand") as the real address.
+- A placed order (API success only) leaves the cart → state.placedOrder (+ order_data: contact, delivery, driver note, tip;
+  email: email_order). There is no order-update API. Since Oct 28 (DC: "fetch the last order and apply the change, seamlessly")
+  a CHANGE to a placed order (items, recipient, contact, time, driver note — paid or not) is APPLIED: Slack / WhatsApp /
+  claude.ai (rachel_chat) = server.js PLACED ORDER block puts the order back into checkout at the confirm step, the confirm
+  handlers apply the change, the reply shows "Here's your updated order — it replaces order #X" + the full summary (after an
+  item change it is added under the edited cart by installReplaceSummary, every turn while state.replacingOrder, unless a
+  pick is still open); one "yes" places the corrected order ("This updated order replaces your earlier order #X — please pay
+  only the new link"). Email = the block before QUOTE EDITS restores the lines + email_order (state.emailReplace); a detail
+  change, or an item change the quote edits applied in code, places the corrected order at once with a new Payment Link
+  naming the replaced order; an item change left to the LLM waits for "place the order" (replyNote). DC chose: NO support
+  email, also when the customer said it was PAID (placedOrder.replaces_paid; the old order stays in Bevvi — no cancel API).
+  A CANCEL ("cancel the order", ORDER_CANCEL) still goes to bevvi-support with "Our support team has been made aware...".
+  "I paid" is noted (po.paid_reported) and never gets the link again. Only "a new / separate order" starts fresh.
+  [order-change] logs. Scenarios 16, 17, 18, 111. QA/dry-run orders: the support email is not sent. email-agent reply-all
+  reads a glued cc ("...comand") as the real address.
 - Delivery instructions are the DRIVER's note only (rachel/delivery-instructions.js clean; DC, Oct 28): a "Company: X" line
   and order bookkeeping (BEVVI-... numbers, "replaces unpaid order", "ice swapped to ...") are removed on every channel
   (shopping-agent place_order, [place_order] delivery instructions cleaned) and in the connector's summary. Oct 28 claude.ai

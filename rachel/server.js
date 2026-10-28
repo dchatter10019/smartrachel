@@ -394,9 +394,13 @@ async function catalogSearch(zip, name, category) {
 function recordPlacedOrder(sessionKey, email, format, result, lineItems, orderData) {
       const st = getState(sessionKey);
       const prev = st.placedOrder;
-      if (prev && prev.reopened) console.log('[order] ' + (result.order_id || '?') + ' replaces reopened order ' + prev.order_id + ' — no cancel API; the earlier order stays in Bevvi unpaid');
-      st.placedOrder = { order_id: result.order_id || '', payment_url: result.payment_url || '', line_items: typeof lineItems === 'string' ? lineItems : JSON.stringify(lineItems || []), placedAt: Date.now(), dry_run: !!result.dry_run, replaces: prev && prev.reopened ? prev.order_id : null };
+      if (prev && prev.reopened) console.log('[order] ' + (result.order_id || '?') + ' REPLACES ' + prev.order_id + (prev.paid_reported ? ' — the customer said ' + prev.order_id + ' was PAID' : '') + ' — no cancel API; ' + prev.order_id + ' stays in Bevvi (DC, Oct 28: replace only, no support email)');
+      // order_data: the order's details (contact, delivery, driver note, tip) so a later change can rebuild it (DC, Oct 28).
+      const odSnap = orderData && Object.keys(orderData).length ? orderData : st.orderData;
+      st.placedOrder = { order_id: result.order_id || '', payment_url: result.payment_url || '', line_items: typeof lineItems === 'string' ? lineItems : JSON.stringify(lineItems || []), placedAt: Date.now(), dry_run: !!result.dry_run, replaces: prev && prev.reopened ? prev.order_id : null,
+        replaces_paid: !!(prev && prev.reopened && prev.paid_reported), order_data: odSnap ? JSON.parse(JSON.stringify(odSnap)) : null };
       st.lastLineItems = '[]';   // '[]', not '': an empty string triggers the getPackage() rehydrate
+      st.replacingOrder = null;
       if ((orderData || st.orderData) && (orderData || st.orderData).name) { const odP = orderData || st.orderData; contacts.save(email, { name: odP.name, phone: odP.phone, email: odP.email }); };
       st.pendingSubstitutes = []; st.pendingAddOffer = null; st.pendingQtyFor = null; st.savedTipChoice = null; st.tipAsk = false;   // the next order asks for its own tip
       if (email) { Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; }); clearBasket(email, format || 'slack'); }
@@ -468,7 +472,7 @@ function clearCart(state, email, format, why) {
   state.shownOptions = null; state.proposalWithOptions = false; state.originalRequest = ''; state.onHand = []; state.onHandReleased = [];
   state.lastProposalUrl = ''; state.savedClientName = ''; state.savedEventDate = ''; state.eventDateNone = false;
   state.taxExempt = false; state.proposalHideAddress = false; state.proposalOpts = {}; state.eventParams = state.qa ? { qa: true } : {}; state.savedTipChoice = null;
-  state.orderStep = null; state.orderData = null; state.proposalStep = null; state.lastCta = null;
+  state.orderStep = null; state.orderData = null; state.proposalStep = null; state.lastCta = null; state.replacingOrder = null; state.emailReplace = null;
   if (email) { Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; }); try { clearBasket(email, format || 'slack'); } catch (e) {} }
   console.log('[cart] cleared (' + why + ')' + (n ? ': ' + n + ' line(s) ' + was : ': was empty'));
   return n;
@@ -1246,7 +1250,9 @@ async function validateDeliveryTime(state, message, email, format, res) {
 const cta = require('./cta.js');
 const QE = require('./quote-edits.js');   // edits to a quote the customer already has, applied in code
 const EO = require('./email-order.js');
-const POM = require('./placed-order-msg.js');   // a payment report / detail change on a placed order
+const POM = require('./placed-order-msg.js');
+// Cancelling a placed order: nothing to replace it with and no cancel API, so it still goes to bevvi-support (DC, Oct 28).
+const ORDER_CANCEL = /\bcancel\b[^.?!\n]{0,25}\b(?:order|it|everything|delivery|the whole)\b|^\W*cancel\W*$/i;   // a payment report / detail change on a placed order
 const LR = require('./line-resolve.js');   // unlinked basket lines (a hand-built quote) -> catalog products, exact matches only   // "create the order" / "payment link" from an email, placed in code
 const OW = require('./order-wording.js');   // order words that are not a checkout (a negated order, a message with its own list)
 const listReply = require('./list-reply.js');   // shopping-list replies composed in code (see the NEXT-BEST-ACTION wrapper)
@@ -3161,6 +3167,27 @@ app.post('/chat', async (req, res) => {
     console.log('[turn] state.step:', state.step, '| pendingSubstitutes:', JSON.stringify(state.pendingSubstitutes), '| message:', JSON.stringify(message).slice(0,80));
     { const _turnMsg = message; const _json = res.json.bind(res); const _hist0 = sessions[sessionKey], _len0 = (_hist0 || []).length;
       res.json = (payload) => { try { const h = sessions[sessionKey]; recordTurn(sessionKey, _turnMsg, payload && (payload.text || payload.response), h !== _hist0 || (h || []).length !== _len0); } catch (e) {} return _json(payload); }; }
+    // ── A CHANGE TO A PLACED ORDER, EMAIL (DC, Oct 28: "fetch the last order and apply the change, seamlessly") ──────────
+    // Bevvi has no order-update API, so the change is applied to a copy: the placed order's lines and details come back
+    // (placedOrder.line_items / email_order), the change is applied by the usual email paths (quote edits, the email order
+    // step's details), and the email order step places the corrected order with a new Payment Link that names the order it
+    // replaces. DC chose: replace only (no support email), also when the customer said it was paid. A cancel still goes to
+    // support (nothing to replace it with). An item change the code couldn't apply (the LLM handles it) is not placed blind:
+    // the reply asks for "place the order". Slack / WhatsApp / claude.ai: the PLACED ORDER block below.
+    if ((/^email-/.test(sessionKey) || (context && context.email_subject)) && state.step === 'ready' && state.placedOrder && !state.placedOrder.resolved && !state.orderStep && !state.proposalStep && !isInternalMsgEarly(message)) {
+      const poX = state.placedOrder;
+      let cartX = 0, itemsX = []; try { cartX = JSON.parse(state.lastLineItems || '[]').length; itemsX = JSON.parse(poX.line_items || '[]'); } catch (e) {}
+      const kindX = POM.classify(message);
+      const changeX = POM.requestSentences(message).length > 0 && (kindX !== null || POM.changeRequest(message));
+      if (!cartX && itemsX.length && changeX && !ORDER_CANCEL.test(message)) {
+        if (POM.paidClaim(message) && !poX.paid_reported) { poX.paid_reported = true; poX.paid_reported_at = Date.now(); }
+        state.lastLineItems = poX.line_items;
+        state.emailOrder = Object.assign({}, poX.email_order || {});
+        poX.reopened = true; poX.resolved = true; state.emailReplace = poX.order_id;
+        saveFlowState();
+        console.log('[order-change] email: order ' + poX.order_id + ' restored (' + itemsX.length + ' line(s)' + (poX.paid_reported ? ', customer said PAID' : '') + ') — applying the change, then placing the replacement: ' + JSON.stringify(message).slice(0, 80));
+      }
+    }
     // ── QUOTE EDITS (quote-edits.js) ─────────────────────────────────────────────────────────────────
     // "Remove the following ... remove all beer in bottles ... I only need 1 case ... resend the updated
     // quote" against a quote the customer already has: parsed and applied in code, every change listed,
@@ -3207,8 +3234,10 @@ app.post('/chat', async (req, res) => {
           state.pendingSubstitutes = []; state.lastCta = null; saveFlowState();
         }
         let txt = QE.describe(r, qItems);
-        const alsoOrder = EO.isOrderCommand(message) && !r.ambiguous.length && r.items.length;
-        if (alsoOrder) { preText = txt; console.log('[quote-edits] the email also asks to create the order — continuing to the email order'); }
+        // A change to a placed order (state.emailReplace, DC Oct 28) goes on to place the corrected order, like "create the order".
+        const replaceNow = !!state.emailReplace && r.changes.length > 0;
+        const alsoOrder = (EO.isOrderCommand(message) || replaceNow) && !r.ambiguous.length && r.items.length;
+        if (alsoOrder) { preText = txt.replace(/\n\nReply with any other changes[\s\S]*$/, ''); if (replaceNow) state.emailReplaceReady = true; console.log('[quote-edits] ' + (replaceNow ? 'a change to placed order ' + state.emailReplace + ' — placing the corrected order' : 'the email also asks to create the order — continuing to the email order')); }
         else if (r.changes.length && r.items.length) {
           const subj = String(state.emailSubject || (context && context.email_subject) || '');
           const client = state.savedClientName || require('./email-subject.js').clientFromSubject(subj) || String((context && context.user_name) || '').trim();
@@ -3233,7 +3262,12 @@ app.post('/chat', async (req, res) => {
     if ((/^email-/.test(sessionKey) || (context && context.email_subject)) && !state.orderStep && !state.proposalStep
         && (EO.isOrderCommand(message) || state.emailOrder)) {
       let oItems = []; try { oItems = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
-      const cmd = EO.isOrderCommand(message), poE = state.placedOrder;
+      // A change to a placed order (restored above): details are applied here and placed; an item change only when the quote
+      // edits applied it in code this turn — else the LLM makes it and the customer says "place the order" (never blind).
+      const replaceReady = !!state.emailReplace && (!POM.itemChange(message) || !!state.emailReplaceReady || (state.codeDoneThisTurn || []).some(d => !/^(?:not in the quote|several lines)/.test(d)));
+      state.emailReplaceReady = null;
+      if (state.emailReplace && !replaceReady && !state.replyNote) { state.replyNote = 'When this looks right, reply "place the order" and I\'ll create the updated order (it replaces order #' + state.emailReplace + ') with a new Payment Link.'; console.log('[order-change] email: item change left to the LLM — the replacement waits for "place the order"'); }
+      const cmd = EO.isOrderCommand(message) || replaceReady, poE = state.placedOrder;
       const x = EO.extract(message, { name: context && context.user_name, email }, new Date());
       // A bare "2pm" answers the time question; a bare "ET" / "Pacific" answers the time-zone question (DC, Oct 5).
       const eoQ = state.emailOrder || {};
@@ -3392,7 +3426,9 @@ app.post('/chat', async (req, res) => {
           return res.json({ text: t, response: t, email_cc: od.link_to || [] });
         }
         recordPlacedOrder(sessionKey, email, format, r, state.lastLineItems, {});   // {}: a forwarded customer is not saved as the sender's own contact
-        state.emailOrder = null; saveFlowState();
+        if (state.placedOrder) state.placedOrder.email_order = JSON.parse(JSON.stringify(od));   // a later change rebuilds the order from these (DC, Oct 28)
+        const replacedE = state.placedOrder && state.placedOrder.replaces;
+        state.emailOrder = null; state.emailReplace = null; saveFlowState();
         const tax = Math.round(pt * 10) / 100, svc = Math.round(pt * 10) / 100, grand = Math.round((pt + tax + svc + tipAmt + 25) * 100) / 100;
         const m2 = n => QE.money(n);
         // Written to the CUSTOMER (they are the To — DC, Oct 3), in Rachel's voice: a personal mixologist, warm, never a log line.
@@ -3400,7 +3436,8 @@ app.post('/chat', async (req, res) => {
         const forWhom = state.savedClientName ? ' for ' + state.savedClientName : '';
         const lines = oItems.map(li => { const q = li.qty || li.quantity || 1, p = parseFloat(li.price) || 0; return q + 'x ' + li.name + ' — ' + m2(p) + ' ea = ' + m2(p * q); }).join('\n');
         const t = (preText ? preText + '\n\n' : '') + 'Hi ' + first + ',\n\n' +
-          'Wonderful news — your order' + forWhom + ' is all set, and I\'m so glad to be part of it!' + (r.dry_run ? ' (QA dry run — order #' + r.order_id + '.)' : '') +
+          (replacedE ? 'Done — I\'ve updated your order' + forWhom + ' with your change.' + (r.dry_run ? ' (QA dry run — order #' + r.order_id + '.)' : '') + ' This order replaces order #' + replacedE + ' — please use only the Payment Link below, not the earlier one.'
+            : 'Wonderful news — your order' + forWhom + ' is all set, and I\'m so glad to be part of it!' + (r.dry_run ? ' (QA dry run — order #' + r.order_id + '.)' : '')) +
           '\n\nHere is your Payment Link: ' + r.payment_url + '\nYour order is confirmed as soon as it\'s paid.' +   // the email's HTML part shows "Here is your Payment Link." with the link on "Payment Link" (DC, Oct 3)
           '\n\nHere\'s what\'s coming your way:\n' + lines +
           '\n\nProduct total: ' + m2(pt) + '\nEstimated tax: ' + m2(tax) + '\nService charge (10%): ' + m2(svc) + '\n' + tipLabel + ': ' + m2(tipAmt) + '\nEstimated delivery: ' + m2(25) + '\nEstimated total: ' + m2(grand) +
@@ -3645,6 +3682,35 @@ app.post('/chat', async (req, res) => {
     // to bevvi-support and the customer told support will update it (DC, Oct 4). Decided here, in
     // code — the LLM never re-populates a placed order on its own. (The reopen question below only
     // finishes sessions that were asked it before Oct 4.)
+    // A placed order being replaced (DC, Oct 28): every reply until it is placed again shows the updated order — the confirm
+    // step's own summary gets a heading; a finished cart change (a reply that doesn't end in a question, e.g. "which size?")
+    // gets the summary added under it, rebuilt from the order's saved details. One "yes" then places the corrected order.
+    const installReplaceSummary = () => {
+      const _jR = res.json.bind(res);
+      res.json = (payload) => {
+        try {
+          const stR = flowState[sessionKey] || state, replacing = stR.replacingOrder, snap = stR.replaceSnap;
+          const t0 = payload && (payload.text || payload.response);
+          const head = 'Here\'s your updated order — it replaces order #' + replacing + '. Say yes and I\'ll place it with a new payment link.';
+          if (replacing && typeof t0 === 'string' && /Order Summary/.test(t0)) {
+            if (!t0.includes('it replaces order #')) { payload.text = head + '\n\n' + t0; if (typeof payload.response === 'string') payload.response = payload.text; }
+          } else if (replacing && typeof t0 === 'string' && !stR.orderStep && !stR.proposalStep && snap && snap.name && snap.delivery_datetime_iso
+              && !stR.pendingQtyFor && !stR.pendingAddOffer && !/^\s*\d{1,2}[.)]\s+\S/m.test(t0)) {   // a pick still open ("which size?", "how many?") waits
+            let n = 0; try { n = JSON.parse(stR.lastLineItems || '[]').length; } catch (e) {}
+            if (n) {
+              stR.orderData = Object.assign(JSON.parse(JSON.stringify(snap)), { instructions_asked: true, datetime_validated: true }); stR.orderStep = 'confirm';
+              { let li = []; try { li = JSON.parse(stR.lastLineItems || '[]'); } catch (e) {} if (li.length === 1) stR.orderData.qty = li[0].qty || li[0].quantity || 1; }   // the edited cart, not the old order's qty
+              const sm = renderOrderSummary(stR, email, format, { json: p => p });
+              const st = sm && (sm.text || sm.response);
+              const body = t0.replace(/\n*[^\n]*\b(?:anything else|ready to (?:place|order|check ?out)|place the order|shall i)\b[^\n]*\?\s*$/i, '').trim();   // the summary asks the one question
+              if (st && /Order Summary/.test(st)) { payload.text = body + '\n\n' + head + '\n\n' + st; if (typeof payload.response === 'string') payload.response = payload.text; console.log('[order-change] updated summary added after the cart change (replaces ' + replacing + ')'); }
+            }
+          }
+        } catch (e) { console.log('[order-change] summary not added: ' + e.message); }
+        return _jR(payload);
+      };
+    };
+    if (state.replacingOrder && !isInternalMsg) installReplaceSummary();
     if (state.placedOrder && !state.placedOrder.resolved && !state.orderStep && !state.proposalStep && !isInternalMsg) {
       const po = state.placedOrder;
       let cartN = 0; try { cartN = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
@@ -3666,6 +3732,29 @@ app.post('/chat', async (req, res) => {
         po.awaitingReopen = false;
         let asks = POM.requestSentences(message);
         if (!asks.length && pom !== 'paid') asks = [String(message).trim()];
+        // A CHANGE IS APPLIED, seamlessly (DC, Oct 28: "fetch the last order and apply the change"). No order-update API, so
+        // the placed order comes back into checkout (its lines + placedOrder.order_data: contact, delivery, driver note,
+        // tip) at the confirm step; the confirm step's own handlers apply the change (contact / time / address / driver
+        // note re-render the summary; an item change edits the cart and the summary is added after it), and one "yes"
+        // places the corrected order, whose reply names the order it replaces. DC chose: no support email, also when the
+        // customer said it was paid. A cancel still goes to support. Email: the block before QUOTE EDITS.
+        let itemsR = []; try { itemsR = JSON.parse(po.line_items || '[]'); } catch (e) {}
+        const emailS = /^email-/.test(sessionKey) || !!(context && context.email_subject);
+        if (asks.length && itemsR.length && !emailS && !ORDER_CANCEL.test(message)) {
+          const od = Object.assign({}, po.order_data || {});
+          state.lastLineItems = po.line_items; po.reopened = true; po.resolved = true; state.replacingOrder = po.order_id;
+          if (od.name && od.phone && od.delivery_datetime_iso) {
+            state.orderData = Object.assign(od, { instructions_asked: true, datetime_validated: true }); state.orderStep = 'confirm';
+            if (itemsR.length === 1) state.orderData.qty = itemsR[0].qty || itemsR[0].quantity || 1;
+          } else {   // an order placed before Oct 28 has no saved details: checkout asks for what's missing
+            if (od.name || od.phone) state.savedCustomer = { name: od.name || '', phone: od.phone || '', email: od.email || '' };
+          }
+          saveFlowState();
+          console.log('[order-change] order ' + po.order_id + ' restored into checkout (' + itemsR.length + ' line(s), ' + (state.orderStep === 'confirm' ? 'details kept' : 'details to ask') + (po.paid_reported ? ', customer said PAID' : '') + ') — applying: ' + JSON.stringify(message).slice(0, 80));
+          state.replaceSnap = po.order_data || null; saveFlowState();
+          installReplaceSummary();
+          // fall through: the confirm step (or, with details missing, the normal path) handles the change
+        } else {
         let fwd = false;
         if (asks.length) {
           if (isQA || po.dry_run) console.log('[order] QA/dry-run — support note for ' + po.order_id + ' NOT sent');
@@ -3686,6 +3775,7 @@ app.post('/chat', async (req, res) => {
         if (asks.length) rP += ' Our support team has been made aware of this request — we\'ll update the order and let you know once it\'s done.';
         else rP += ' Your delivery is all set — just reply here if anything needs a tweak.';
         return res.json({ text: rP, response: rP });
+        }   // end support path (a cancel, or nothing to rebuild)
       }
       if (po.awaitingReopen) {
         const wantsNew = /^(no|nope|nah|2|new|separate|fresh)\b/.test(msgLower) || /\b(new|separate|another|different) order\b|\bstart (a )?(new|fresh|over)\b/.test(msgLower);
@@ -4816,7 +4906,9 @@ app.post('/chat', async (req, res) => {
         console.log('[order] change request at confirm — exiting order flow, details saved for re-entry');
         // Fall through: the message is handled as a normal request below (add/swap/etc.),
         // and the LLM is told to prompt for 'place the order' once done.
-        context.order_change_note = 'The customer was at the order-confirmation step and asked for a change. Make the change, then say: "Done — say \'place the order\' when you\'re ready and I\'ll show the updated summary."';
+        context.order_change_note = state.replacingOrder
+          ? 'The customer asked to change their placed order #' + state.replacingOrder + ' (its items are back in the basket). Make exactly that change and list the basket. The updated order summary is added after your reply in code — do not ask them to say "place the order", and do not write a summary or totals of your own.'
+          : 'The customer was at the order-confirmation step and asked for a change. Make the change, then say: "Done — say \'place the order\' when you\'re ready and I\'ll show the updated summary."';
       } else
       if (yesWords.some(w => msgLower.includes(w))) {
         state.orderStep = 'placing';
@@ -4950,7 +5042,8 @@ app.post('/chat', async (req, res) => {
         const poR = state.placedOrder;
         if (poR && poR.replaces && Date.now() - poR.placedAt < 5 * 60 * 1000 && !poR.replaceNoted) {
           poR.replaceNoted = true; saveFlowState();
-          const note = '\n\nThis updated order replaces your earlier order #' + poR.replaces + ' — please pay only the new link above, not the earlier one.';
+          const note = poR.replaces_paid ? '\n\nThis updated order replaces your earlier order #' + poR.replaces + '.'
+            : '\n\nThis updated order replaces your earlier order #' + poR.replaces + ' — please pay only the new link above, not the earlier one.';
           return res.json({ text: orderOutput + note, response: orderOutput + note });
         }
         return res.json({ text: orderOutput, response: orderOutput });
