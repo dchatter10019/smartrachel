@@ -168,6 +168,8 @@ function trimGenericAlternative(text) {
 function findCta(id) { for (const rows of Object.values(TABLE)) for (const c of rows) if (c.id === id) return c; return null; }
 function accepted(ctaOrId, message) {
   const c = typeof ctaOrId === 'string' ? findCta(ctaOrId) : ctaOrId;
+  // "Here is what I want to order: <list>" / "do not place the order yet" is never a yes (order-wording.js, Oct 27).
+  if (require('./order-wording.js').notACheckout(message)) return false;
   return !!(c && c.accept && c.accept.test(String(message || '')));
 }
 

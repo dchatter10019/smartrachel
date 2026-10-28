@@ -105,6 +105,12 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   carries `followup` {message: the typed text}, and email-agent sends it straight back (request id <gmail id>-order) so the
   EMAIL ORDER step places / asks in the same email (was "There's no quote on this thread to order yet"). qa/unit/order-file.test.js.
   precheck --deploy now restarts rachel-whatsapp when rachel_whatsapp_bot.py changes (it never did).
+- Order words that are NOT a checkout (rachel/order-wording.js, every /chat channel; Oct 27 connector, DC): a negated order
+  ("do not place the order yet") or a message carrying its own 2+ item list ("Here is what I want to order:" + bullets /
+  "A x2, B x1") never starts or restarts checkout and is never a "yes" to the checkout CTA (cta.accepted) — the list is
+  built (replacing the basket) and the reply offers the order ([order] order wording NOT a checkout). Was: checkout ran on
+  an OLD saved basket ($1,175 of other wines) and "clear the basket, rebuild with only..." looped on the tip question.
+  Scenario 108.
 - A one-result search (product_query / recommendation / alternatives) at or above CONFIRM_ADD_PRICE ($200) is never captured as
   the basket: it becomes pendingAddOffer (confirm) like add-item's offer — a yes / a quantity adds it ([product-discussed] NOT
   captured). Oct 22 smoke: "I need an opus" (add_item 0.70 < 0.8 -> LLM search) put Opus One $1,099.99 in the cart at 1x.

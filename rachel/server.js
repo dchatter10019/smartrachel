@@ -1217,6 +1217,7 @@ const QE = require('./quote-edits.js');   // edits to a quote the customer alrea
 const EO = require('./email-order.js');
 const POM = require('./placed-order-msg.js');   // a payment report / detail change on a placed order
 const LR = require('./line-resolve.js');   // unlinked basket lines (a hand-built quote) -> catalog products, exact matches only   // "create the order" / "payment link" from an email, placed in code
+const OW = require('./order-wording.js');   // order words that are not a checkout (a negated order, a message with its own list)
 const listReply = require('./list-reply.js');   // shopping-list replies composed in code (see the NEXT-BEST-ACTION wrapper)
 const contacts = require('./customer-contacts.js');   // name/phone from the last placed order + channel profile name (order flow)
 const isInternalMsgEarly = m => /^__/.test(m) || /^\d{1,2}:\d{2}\s*[AP]M\s*-\s*\d{1,2}:\d{2}\s*[AP]M/i.test(m);
@@ -3871,8 +3872,13 @@ app.post('/chat', async (req, res) => {
         }
       } catch (e) { console.log('[classify->no-route] error:', e.message); }
     }
-    const hasOrderIntent = clsIntent === 'place_order' || orderIntentRe.test(message) || orderTriggers.some(t => msgLower.includes(t));
-    if ((hasOrderIntent || isDirectOrderRequest) && state.orderStep && state.orderStep !== 'placing' && !state.proposalStep) {
+    // Not a checkout (order-wording.js, Oct 27 connector): a negated order phrase, or a message carrying its own item list.
+    const orderNegated = OW.orderNegated(message);
+    const ownListN = OW.ownListCount(message);
+    const orderPhrase = clsIntent === 'place_order' || orderIntentRe.test(message) || orderTriggers.some(t => msgLower.includes(t));
+    if (orderPhrase && (orderNegated || ownListN >= 2)) console.log('[order] order wording NOT a checkout — ' + (orderNegated ? 'negated ("do not place...")' : 'the message carries its own ' + ownListN + '-item list (built first)') + ' | ' + JSON.stringify(message).slice(0, 70));
+    const hasOrderIntent = orderPhrase && !orderNegated && ownListN < 2;
+    if ((hasOrderIntent || (isDirectOrderRequest && !orderNegated && ownListN < 2)) && state.orderStep && state.orderStep !== 'placing' && !state.proposalStep) {
       // An explicit order request always restarts the flow. Real bug: a crash mid-entry
       // left orderStep='confirm' on disk; the next 'place the order' didn't trigger and
       // fell into the stale confirm handler ('$0.00 estimated'). Same guard proposals have.
@@ -3887,7 +3893,7 @@ app.post('/chat', async (req, res) => {
     // The delivery-time check reads the store from the lines, so an unlinked basket couldn't even confirm a
     // delivery window (Sep 29 QA: "I couldn't confirm a delivery window" on a hand-built basket). Unmatched
     // lines are asked about before any checkout question.
-    if ((hasOrderIntent || isDirectOrderRequest) && !state.orderStep && !state.proposalStep && state.zip) {
+    if ((hasOrderIntent || (isDirectOrderRequest && !orderNegated && ownListN < 2)) && !state.orderStep && !state.proposalStep && state.zip) {
       let itemsE = []; try { itemsE = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
       if (itemsE.some(LR.needsLink)) {
         const rr = await LR.resolveLines(itemsE, (n, c) => catalogSearch(state.zip, n, c));
@@ -4216,7 +4222,7 @@ app.post('/chat', async (req, res) => {
         return res.json({ text: askT, response: askT });
       }
     }
-    if ((hasOrderIntent || isDirectOrderRequest) && !state.orderStep && !state.proposalStep) {
+    if ((hasOrderIntent || (isDirectOrderRequest && !orderNegated && ownListN < 2)) && !state.orderStep && !state.proposalStep) {
       const caps = getCapabilities(format);
       if (!caps.can_place_order) {
         // Capability disabled — never start the real order state machine. Let Rachel

@@ -1,0 +1,22 @@
+name: order-wording-with-own-list
+# Oct 27 (connector, DC): "Here is what I want to order:" + a list started checkout on the OLD saved basket and the
+# list was ignored; then "...rebuild it with only: ... Do not place the order yet" restarted checkout again.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "add 2 bottles of Kim Crawford Sauvignon Blanc"
+  - send: "1"
+  - send: "2"
+  - send: "Here is what I want to order:\n- Tito's Handmade Vodka 750ml x2\n- Stella Artois 12 pack x1"
+    expect:
+      contains: ["Tito"]
+      not_contains: ["What delivery date", "tip for your driver", "full name", "Kim Crawford"]
+      log_contains: ["[order] order wording NOT a checkout"]
+  - send: "place the order"
+    expect: {matches: "full name|delivery date|date and time|Ordering as"}
+  - send: "Wait, the basket is wrong. Rebuild it with only: Tito's Handmade Vodka 750ml x3, Stella Artois 12 pack x1. Do not place the order yet."
+    expect:
+      contains: ["Tito"]
+      not_contains: ["tip for your driver", "Shall I go ahead"]
+      log_not_contains: ["explicit re-request while orderStep"]
