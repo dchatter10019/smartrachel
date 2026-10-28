@@ -1,0 +1,25 @@
+name: list-built-in-code-plain
+format: plain
+# DC (Oct 28): "make this behaviour deterministic". A message that is only a product list is built in code
+# (order-wording.js listItems -> custom_list through the same tool code, no model decision) and the reply is written in
+# code from the basket. Plain format = the claude.ai connector's rachel_chat. DC's own Oct 27 messages.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "Here is what I want to order:\n- Whispering Angel Côtes de Provence Rosé 750ml x2\n- Cloudy Bay Sauvignon Blanc 750ml x1\n- Rombauer Carneros Chardonnay 750ml x1\n- Ice Bag x3"
+    expect:
+      contains: ["Whispering Angel", "Cloudy Bay", "Rombauer", "Product total"]
+      not_contains: ["full name", "What delivery date"]
+      log_contains: ["[list-build] 4 list line(s) built in code", "[rachel] scripted ShoppingAgent call", "[list-reply] composed in code"]
+  - send: "Wait, the basket is wrong. Rebuild it with only: Whispering Angel Côtes de Provence Rosé 750ml x2, Cloudy Bay Sauvignon Blanc 750ml x1. Do not place the order yet. Show me the basket and total first."
+    expect:
+      contains: ["Whispering Angel", "Cloudy Bay", "Product total"]
+      not_contains: ["Rombauer", "tip for your driver", "full name"]
+      log_contains: ["[list-build] 2 list line(s) built in code"]
+  # Something that needs judgment stays with the LLM.
+  - send: "for 40 guests:\n- 2 x Tito's 750ml\n- 3 x Whispering Angel"
+    expect:
+      log_not_contains: ["[list-build]"]
+  - send: "place the order"
+    expect: {matches: "full name|Ordering as|delivery date"}

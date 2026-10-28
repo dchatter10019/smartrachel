@@ -830,7 +830,7 @@ const MAX_ITERATIONS = 10;
 const RACHEL_MODEL = process.env.RACHEL_MODEL || 'claude-sonnet-4-6';
 const RACHEL_EFFORT = process.env.RACHEL_EFFORT || 'medium';
 
-async function rachelChat({ messages, context, rachelPrompt, gbrain_context = '', channel_format = 'voiceflow', address_rule = '', onPackageBuilt = null, onProposalGenerated = null, sendEmailFn = null, lastProposalUrl = '', customerMessage = '', alreadyConfirmed = false, onUnavailableItems = null, onProductDiscussed = null, onSubstituteConfirmed = null, currentLineItems = '', onShowBasket = null, eventParams = null, onUpdateQuantity = null, onOrderPlaced = null, sessionState = null }) {
+async function rachelChat({ messages, context, rachelPrompt, gbrain_context = '', channel_format = 'voiceflow', address_rule = '', onPackageBuilt = null, onProposalGenerated = null, sendEmailFn = null, lastProposalUrl = '', customerMessage = '', alreadyConfirmed = false, onUnavailableItems = null, onProductDiscussed = null, onSubstituteConfirmed = null, currentLineItems = '', onShowBasket = null, eventParams = null, onUpdateQuantity = null, onOrderPlaced = null, sessionState = null, scriptedToolCall = null }) {
   const channelNotes = {
     html: `
 
@@ -956,6 +956,22 @@ RULES:
   let iterations = 0;
 
   const tools = getTools(channel_format, context);
+
+  // A tool call decided IN CODE (server.js: a message that is only a product list -> ShoppingAgent custom_list; DC, Oct 28
+  // "make this behaviour deterministic"). Run through executeTool exactly like the model's call (same guards, callbacks
+  // and basket handling), recorded in the history as an ordinary tool turn — no model call; the reply is written in code.
+  if (scriptedToolCall) {
+    const id = 'toolu_code_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+    console.log('[rachel] scripted ' + scriptedToolCall.name + ' call (no model call): ' + JSON.stringify(scriptedToolCall.input).slice(0, 300));
+    const result = await executeTool(scriptedToolCall.name, scriptedToolCall.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems, onShowBasket, eventParams, onUpdateQuantity, onOrderPlaced, sessionState, customerSaid);
+    claudeMessages = [...claudeMessages,
+      { role: 'assistant', content: [{ type: 'tool_use', id, name: scriptedToolCall.name, input: scriptedToolCall.input }] },
+      { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: JSON.stringify(result) }] }];
+    const ok = result && (result.success === true || result.success === 'true');
+    finalResponse = ok ? "Here's your list." : (result && /CATALOG_UNREACHABLE/.test(String(result.error || '')) ? "I couldn't reach the store's catalog just now — please send the list again in a moment." : "I couldn't build that list at this store just now — please send it again in a moment.");
+    if (!ok) console.log('[rachel] scripted call did not succeed: ' + String((result && result.error) || 'no result').slice(0, 200));
+    return { response: finalResponse, messages: claudeMessages };
+  }
 
   while (iterations < MAX_ITERATIONS) {
     iterations++;

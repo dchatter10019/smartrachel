@@ -111,6 +111,13 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   built (replacing the basket) and the reply offers the order ([order] order wording NOT a checkout). Was: checkout ran on
   an OLD saved basket ($1,175 of other wines) and "clear the basket, rebuild with only..." looped on the tip question.
   Scenario 108.
+- A message that is ONLY a product list is built IN CODE (DC, Oct 28: "make this behaviour deterministic"): order-wording.js
+  listItems reads the lines (original-compare.js namedFromListLine, bullets / "2 x X" / "X x2", or inline "only: A x2, B x1")
+  -> callRachel passes scriptedToolCall -> rachel.js runs that ShoppingAgent custom_list through executeTool with no model
+  call ([list-build] / [rachel] scripted ShoppingAgent call), recorded as an ordinary tool turn; the reply is list-reply.js.
+  Left to the LLM: a question, event words (guests/hours/budget), proposal/quote, on-hand stock, swaps/removals/
+  alternatives, "->" notes, a "case" line, a line the reader can only file as a "mixer" (unknown brand: "Stella Artois
+  12 pack"), email threads, an active event (eventParams.guests), checkout/proposal in progress. Scenario 110 (plain).
 - A one-result search (product_query / recommendation / alternatives) at or above CONFIRM_ADD_PRICE ($200) is never captured as
   the basket: it becomes pendingAddOffer (confirm) like add-item's offer — a yes / a quantity adds it ([product-discussed] NOT
   captured). Oct 22 smoke: "I need an opus" (add_item 0.70 < 0.8 -> LLM search) put Opus One $1,099.99 in the cart at 1x.

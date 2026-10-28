@@ -1315,7 +1315,21 @@ async function findSubstitute(name, zip, email) {
 }
 
 async function callRachel({ sessionKey, message, context, format, gbrainContext, addressRule, email, onProposalGenerated, alreadyConfirmed }) {
-  events.note({ handled_by: 'llm' });   // event log: the LLM wrote this turn's reply
+  // A message that is only a product list is built IN CODE (order-wording.js listItems -> custom_list; DC, Oct 28: "make
+  // this behaviour deterministic"): the model never decides whether or how to build it, and the reply is composed in code
+  // from the basket (list-reply.js). Not for email threads (their quote paths), an active event (guests: the LLM sizes it
+  // with the event), a checkout / proposal in progress, or an order / proposal call.
+  let scriptedToolCall = null;
+  try {
+    const stS = getState(sessionKey);
+    const named = !onProposalGenerated && !alreadyConfirmed && !/^email-/.test(String(sessionKey || '')) && !(context && context.email_subject)
+      && stS.step === 'ready' && stS.zip && !stS.orderStep && !stS.proposalStep && !(stS.eventParams && stS.eventParams.guests) ? OW.listItems(message) : null;
+    if (named) {
+      scriptedToolCall = { name: 'ShoppingAgent', input: { intent: 'custom_list', zip: stS.zip, email: email || '', named_products: named } };
+      console.log('[list-build] ' + named.length + ' list line(s) built in code (no model decision): ' + named.map(n => n.qty + ' x ' + n.name).join('; '));
+    }
+  } catch (e) { console.log('[list-build] not used (' + e.message + ') — the LLM handles the list'); }
+  events.note({ handled_by: scriptedToolCall ? 'code' : 'llm' });   // event log: who wrote this turn's reply
   const messages = sessions[sessionKey] || [];
   let channelNote = getChannelNote(format);
   const stateForEmail = getState(sessionKey);
@@ -1378,6 +1392,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
     alreadyConfirmed: alreadyConfirmed || false,
     sendEmailFn: sendEmail,
     lastProposalUrl: stateForEmail.lastProposalUrl || '',
+    scriptedToolCall,
     // A placed order leaves the active cart. Real bug: after "Your order has been placed",
     // the basket stayed live — "what's in my cart?" showed the ordered items and "place the
     // order" started checkout for them again (a duplicate order). Fired only on a real
