@@ -151,6 +151,11 @@ def apikey():
     tlC=sorted(t['name'] for t in call('tools/list')[1][0]['result']['tools'])
     rC,errC=tool('rachel_search',{'products':["Tito's"],'zip':'10019'})
     print('claude chat only ->', 'ok' if (tlC==['rachel_chat','rachel_feedback'] and rC.get('error')=='not_available' and errC and 'word for word' in insC) else 'FAILED', '|', tlC, rC.get('error'))
+    # A new Claude chat = a new Rachel conversation: never the old address (DC, Oct 28)
+    import re
+    rN,_=tool('rachel_chat',{'message':'hi','email':'qa-mcp@getbevvi.com'})
+    respN=rN.get('response','') if isinstance(rN,dict) else ''
+    print('claude new chat ->', 'fresh' if re.search(r'21 or older|delivery address|street address', respN, re.I) else 'OLD CONVERSATION', '|', respN[:120].replace(chr(10),' '))
     call('initialize',{'protocolVersion':'2025-06-18','capabilities':{},'clientInfo':{'name':'t','version':'1'}})   # this key back to every tool
 
 if __name__ == '__main__':
@@ -162,6 +167,7 @@ if __name__ == '__main__':
             out = buf.getvalue()
             bad = [l for l in out.splitlines() if l.startswith('confirm ->') and ' True ' not in l] + [l for l in out.splitlines() if 'forged token ->' in l and '401' not in l] + [l for l in out.splitlines() if l.startswith(('search urls ->', 'package urls ->')) and '-> none' not in l] + [l for l in out.splitlines() if l.startswith(('chat after age ->', 'package intake ->', 'package mix question ->', 'package cocktail question ->', 'package cocktails built ->')) and '-> asks' not in l and '-> no re-ask' not in l] + [l for l in out.splitlines() if l.startswith('search before age ->') and not l.startswith('search before age -> held | isError: False')] + [l for l in out.splitlines() if l.startswith('proposal $0 line ->') and '-> refused' not in l] + [l for l in out.splitlines() if l.startswith('proposal tax-exempt ->') and '-> built' not in l] + [l for l in out.splitlines() if l.startswith('proposal from list ->') and '-> built' not in l] + [l for l in out.splitlines() if l.startswith('proposal before age ->') and '-> built' not in l] + [l for l in out.splitlines() if l.startswith('proposal email ->') and '-> ok' not in l] + [l for l in out.splitlines() if l.startswith(('list proposal before age ->', 'basket proposal before age ->', 'proposal email no lines ->', 'order before age ->')) and '-> held' not in l] + [l for l in out.splitlines() if l.startswith('proposal prices+fees ->') and '-> built' not in l] + [l for l in out.splitlines() if l.startswith('feedback ->') and '-> recorded' not in l] + [l for l in out.splitlines() if l.startswith('feedback told ->') and '-> yes' not in l] + [l for l in out.splitlines() if l.startswith('age via chat ->') and '-> ok' not in l]
             bad += [l for l in out.splitlines() if l.startswith('claude chat only ->') and '-> ok' not in l]
+            bad += [l for l in out.splitlines() if l.startswith('claude new chat ->') and '-> fresh' not in l]
             print(('  ✗ ' if bad else '  ✓ ') + 'connector ' + name + (': ' + '; '.join(bad) if bad else ''))
             if bad: FAILS.append(name)
         except Exception as e:

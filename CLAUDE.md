@@ -71,6 +71,19 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   got "Order summary ready. Grand total: $X. Confirm?"); delivery instructions are cleaned when taken (setDriverNote ->
   orderData.company_name); Slack "<url|label>" links become "label: url" outside Slack (formatResponse); a message that is
   a product list is never routed by the classifier ("[classify] show_basket NOT routed — the message is a product list").
+- A NEW claude.ai / Claude Code chat = a NEW Rachel conversation (DC, Oct 28: "never use the old address, ask for it"):
+  every chat of one caller shares mcp-<email>, so a new chat continued the old one (Mountain View address, cart). A Claude
+  app's initialize marks the key (rachel-mcp freshChat); the next rachel_chat on the caller's own session calls
+  POST /internal/new-conversation (internal only, mcp- sessions) -> resetState (no address / cart / history; the placed order
+  is kept so "change my last order" works; age per the connector rules). Connector test 'claude new chat'. Fresh /chat
+  conversations already never inherit a saved address (greeting drops the profile's).
+- Not found = the store is named (DC, Oct 28: "need a bottle of opus" -> "I couldn't find opus at this store" while Rachel
+  searched the Mountain View address; NYC carries Opus One): add-item's reply and every LLM [not-found] (rachel.js -> replyNote
+  "(I searched the store that delivers to <address>...)") name the delivery address; the request is kept
+  (state.notFoundAsk). A bare new zip ("10019", "deliver to 10019") asks for the street there (state.pendingZip; the next
+  street line is geocoded with that zip); after an address change the not-found request (30 min) is run again at the new
+  store ("Updated — delivering to X. Here's what that store has:"). Also fixed: an address alone in "New York" was read as
+  address + request ("new" is a filler word) — the address text is now removed before the filler words. Scenario 112.
 - rachel-slack: rachel/rachel_slack_bot.py (Bolt, Socket Mode). Log: logs/slack-rachel.log
 - rachel-email: rachel/email-agent.py (polls rachelai@ inbox every 60s, every email → Rachel chat,
   thread→session map in logs/email-thread-sessions.json). Log: logs/email-agent.log. "New" = an inbox email

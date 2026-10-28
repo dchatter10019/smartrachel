@@ -699,6 +699,13 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           }
           if (sessionState && checked.length) {
             sessionState.lastNotFound = notFound.length ? { items: notFound, at: Date.now() } : null;
+            // Say WHICH store (DC, Oct 28: "I couldn't find opus" — Rachel was searching the Mountain View address from an
+            // earlier order; Opus One is carried in NYC). Appended in code (replyNote); the request is kept so a new address
+            // re-runs it at that store (server.js address change).
+            if (notFound.length) {
+              sessionState.notFoundAsk = { message: String(customerMessage || ''), at: Date.now() };
+              if (sessionState.address && !/delivers to/.test(sessionState.replyNote || '')) sessionState.replyNote = (sessionState.replyNote ? sessionState.replyNote + ' ' : '') + '(I searched the store that delivers to ' + sessionState.address + '. Delivering somewhere else? Send that address and I\'ll check that store.)';
+            }
           }
         }
         if (result.success && result.line_items && ['menu_build','custom_list'].includes(saInput.intent) && onPackageBuilt) {

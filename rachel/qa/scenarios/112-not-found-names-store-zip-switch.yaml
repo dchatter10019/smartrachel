@@ -1,0 +1,22 @@
+name: not-found-names-store-zip-switch
+format: plain
+# DC (Oct 28, claude.ai): "need a bottle of opus" -> "I couldn't find opus at this store" — Rachel was delivering to the
+# Mountain View address from an earlier order (that store has no Opus One; NYC does), and the reply never said which store.
+# "10019" was then ignored. Now: the store's address is named, a bare zip asks for the street there, and the request that
+# wasn't found is run again at the new store.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "1395 Charleston Rd, Mountain View, CA 94043"
+  - send: "need a bottle of opus"
+    expect:
+      contains: ["1395 Charleston Rd"]
+      not_contains: ["at this store."]
+  - send: "10019"
+    expect:
+      contains: ["street address in 10019"]
+      log_contains: ["[addr] bare zip 10019"]
+  - send: "425 W 53rd St"
+    expect:
+      contains: ["delivering to 425 W 53rd St", "Opus One"]
+      log_contains: ["[addr] street for zip 10019", "re-running the request that wasn't found"]

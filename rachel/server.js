@@ -2896,6 +2896,30 @@ app.post('/chat', async (req, res) => {
       // address-extract.js, not a one-line pattern: "100 Federal Street, Floor 6, Boston, MA 02110" (a unit with a
       // number) didn't match, so the change fell through to the LLM (Sep 29, Gen II session).
       const AX = require('./address-extract.js');
+      // A bare zip that isn't the delivery zip ("10019", "zip 10019", "deliver to 10019"): another store — ask for the street
+      // there (an order needs it), then the next street line is read with that zip (DC, Oct 28: "10019" was ignored and the
+      // Mountain View store searched again).
+      const zipOnly = String(message).trim().match(/^(?:(?:my |the |delivery )?zip(?:\s*code)?\s*(?:is|:)?\s*|(?:deliver(?:y|ing|ed)?\s+)?(?:to|in|at)\s+)?(\d{5})\s*[.!]?$/i);
+      if (zipOnly && zipOnly[1] !== state.zip) {
+        const covZ = await checkStoreCoverage(zipOnly[1]);
+        if (covZ && covZ.store_count === 0) {
+          console.log('[addr] bare zip ' + zipOnly[1] + ' — no store serves it');
+          const rZ0 = 'I can\'t deliver to ' + zipOnly[1] + ' yet — no store serves that zip. I\'m still delivering to ' + state.address + '.';
+          return res.json({ text: rZ0, response: rZ0 });
+        }
+        state.pendingZip = zipOnly[1]; saveFlowState();
+        console.log('[addr] bare zip ' + zipOnly[1] + ' (delivery zip ' + state.zip + ') — asking for the street there');
+        const rZ = 'Right now I\'m delivering to ' + state.address + '. What\'s the street address in ' + zipOnly[1] + '? I\'ll switch to the store that delivers there.';
+        return res.json({ text: rZ, response: rZ });
+      }
+      if (state.pendingZip) {
+        const pz = state.pendingZip; state.pendingZip = null; saveFlowState();
+        if (!AX.findAddress(message) && /^\s*\d+[a-z]?(?:-\d+)?\s+[a-z]/i.test(message) && !/\b\d{5}\b/.test(message) && String(message).length < 120) {
+          const gZ = await geocodeAddress(String(message).trim().replace(/[.,\s]+$/, '') + ', ' + pz);
+          if (gZ && gZ.zip === pz && gZ.formatted) { console.log('[addr] street for zip ' + pz + ': ' + JSON.stringify(message) + ' -> ' + JSON.stringify(gZ.formatted)); message = /\d{5}$/.test(gZ.formatted) ? gZ.formatted : gZ.formatted + ' ' + pz; msgLower = message.toLowerCase(); }
+          else console.log('[addr] street for zip ' + pz + ' not geocoded there: ' + JSON.stringify(message));
+        }
+      }
       let afR = AX.findAddress(message), afTyped = afR;
       // No zip ("to address 1460 Broadway, New York, NY"): geocoded for it. Real (Oct 13, Sean's email quote): the
       // session kept its Boston address; the LLM priced NYC, but the PDF said "Delivery: 100 Federal Street, Boston".
@@ -2908,7 +2932,11 @@ app.post('/chat', async (req, res) => {
       const am = afR ? [afR, afR, (afR.match(/(\d{5})(?:-\d{4})?$/) || [])[1]] : null;
       // What's left once the address is taken out (letters only, so line breaks and commas don't matter).
       const lettersOf = x => String(x || '').replace(/[^a-z]/gi, '').toLowerCase();
-      const rest = am ? lettersOf(String(message).replace(/\b(please|change|update|use|switch|new|my|the|delivery|address|deliver|ship|send|it|to|is|at|instead|actually|now)\b|[^a-z]/gi, '')).replace(lettersOf(afTyped), '') : 'x';
+      // The address comes out FIRST, then the filler words: "new" is filler, so "425 W 53rd St, New York, NY 10019" alone
+      // left "york" behind and was read as an address + a request (Oct 28).
+      const FILLER = /\b(please|change|update|use|switch|new|my|the|delivery|address|deliver|ship|send|it|to|is|at|instead|actually|now)\b|[^a-z]/gi;
+      const rest = am ? (String(message).includes(afTyped) ? lettersOf(String(message).split(afTyped).join(' ').replace(FILLER, ''))
+        : lettersOf(String(message).replace(FILLER, '')).replace(lettersOf(String(afTyped).replace(FILLER, '')), '')) : 'x';
       // An address that comes WITH a request ("quote for the items below ... to address <new address>"): the address
       // is applied here, then the request goes on to the LLM. Only a cued address ("address", "deliver to") that is
       // not the one already saved — a venue named in passing is left alone.
@@ -2944,6 +2972,16 @@ app.post('/chat', async (req, res) => {
         if (items.length && !sameAddr && !/^email-/.test(sessionKey)) cleared = clearCart(state, email, format, 'address changed ' + JSON.stringify(prevAddrA) + ' -> ' + JSON.stringify(am[1]));
         saveFlowState();
         if (email) { try { const d2c = await getD2CSession(email) || {}; await saveD2CSession(email, Object.assign({}, d2c, { delivery_address: state.address, delivery_zip: newZip })); } catch (e) {} }
+        // The request that wasn't found at the old store is run again at the new one (DC, Oct 28: Opus One, Mountain View ->
+        // NYC), within 30 minutes.
+        const nfA = state.notFoundAsk;
+        if (!addrWithRequest && nfA && nfA.message && Date.now() - nfA.at < 30 * 60e3) {
+          state.notFoundAsk = null;
+          state.replyLead = 'Updated — delivering to ' + state.address + '.' + (cleared ? ' I cleared your earlier cart.' : '') + ' Here\'s what that store has:';
+          console.log('[addr] re-running the request that wasn\'t found at the old store: ' + JSON.stringify(nfA.message).slice(0, 80));
+          message = nfA.message; msgLower = message.toLowerCase().trim().replace(/\*/g, '').replace(/_/g, '');
+          addrWithRequest = true;
+        }
         if (addrWithRequest) {
           // The request is answered next (LLM); a proposal from it now prints the new address.
           if (email) Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; });
@@ -4291,7 +4329,8 @@ app.post('/chat', async (req, res) => {
           const rC = 'I found a few options for ' + clsRef + ':\n\n' + lines.join('\n') + '\n\nWhich one would you like to add?';
           return res.json({ text: rC, response: rC });
         }
-        const rD = 'I couldn\'t find ' + clsRef + ' at this store. Want me to look for something similar?';
+        state.notFoundAsk = { message, at: Date.now() }; saveFlowState();   // a new address re-runs it there (DC, Oct 28)
+        const rD = 'I couldn\'t find ' + clsRef + ' at the store that delivers to ' + (state.address || 'your address') + '. Want me to look for something similar — or if it\'s for another address, send it and I\'ll check that store.';
         return res.json({ text: rD, response: rD });
       } catch (e) { console.log('[add-item] error, falling through:', e.message); }
     }
@@ -6494,6 +6533,24 @@ app.post('/internal/order-preview', async (req, res) => {
   const totals = { product_total: pt, estimated_tax: tax, service_charge: svc, tip, estimated_delivery: 25, estimated_total: Math.round((pt + tax + svc + tip + 25) * 100) / 100 };
   console.log('[order-preview] ' + items.length + ' line(s), ' + (problems.length ? problems.length + ' problem(s): ' + JSON.stringify(problems).slice(0, 300) : 'ready') + ' | delivery ' + JSON.stringify(delivery));
   res.json({ ok: !problems.length, problems, line_items: items, delivery, totals });
+});
+
+// A NEW claude.ai / Claude Code chat starts a new Rachel conversation (DC, Oct 28: "when a new chat session starts it
+// should never use the old address, it should ask for the address"). Every chat of one caller shares the session
+// mcp-<email>, so a new chat continued the old one — its Mountain View address, cart and history. rachel-mcp calls this
+// on the first rachel_chat after the client's initialize. Internal only. The placed order is kept so "change my last
+// order" still works; age follows the connector's rules (refusals survive resetState).
+app.post('/internal/new-conversation', (req, res) => {
+  const { session_id } = req.body || {};
+  if (req.headers['x-forwarded-for'] || req.headers['x-real-ip']) { console.log('[session] /internal/new-conversation REFUSED: proxied request'); return res.status(403).json({ ok: false }); }
+  if (!session_id || !/^mcp-/.test(String(session_id))) return res.status(400).json({ ok: false, error: 'an mcp- session_id is required' });
+  const old = flowState[session_id];
+  const po = old && old.placedOrder;
+  console.log('[session] new chat on the connector — fresh conversation for ' + session_id + (old && old.address ? ' (old address ' + JSON.stringify(old.address) + ' not reused)' : ''));
+  resetState(session_id, '');
+  if (po) getState(session_id).placedOrder = po;
+  saveFlowState();
+  res.json({ ok: true });
 });
 
 // The Rachel connector (rachel-mcp.js) confirmed age on its connection: this ONE conversation skips Rachel's own age
