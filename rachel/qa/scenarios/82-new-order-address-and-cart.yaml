@@ -12,7 +12,7 @@ turns:
   - send: "start a new order"
     expect:
       contains: ["cleared the previous cart", "425 W 53rd St", "again?"]
-      log_contains: ["[new-order] cart cleared", "[new-order] asking whether to use the previous address"]
+      log_contains: ["[cart] cleared (new order", "[new-order] asking whether to use the previous address"]
   - send: "no"
     expect: {contains: ["new delivery address"]}
   - send: "100 Federal St Boston MA 02110"

@@ -214,7 +214,8 @@ def send(session, text, fmt, email, images=None, idle=False, ctx=None):
     payload = {"message": text, "session_id": session, "format": fmt, "gbrain_context": "", "qa": True,
                "context": {"kitchen_location": "", "client_id": "airculinaire", "user_email": email, "account_id": "", **(ctx or {})}}
     if images: payload["images"] = images
-    if idle: payload["simulate_idle"] = True   # server treats the session as idle past RACHEL_IDLE_HOURS
+    if idle is True: payload["simulate_idle"] = True   # server treats the session as idle past RACHEL_IDLE_HOURS
+    elif idle: payload["simulate_idle_hours"] = float(idle)   # `idle: 1.5` = this many hours of silence before the turn
     t0 = time.time()
     # Above the email agent's own wait (RACHEL_EMAIL_TIMEOUT 300s): a 22-line quote email takes ~3.5 min alone and passed
     # 240s under the nightly's parallel load (Oct 2, email-quote-list: the reply was right, the harness had hung up).

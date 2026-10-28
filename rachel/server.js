@@ -286,7 +286,8 @@ const packageCache = {};   // cacheKey -> line_items (L1)
 
 // flowState persisted to disk
 const FLOW_STATE_PATH = dataDir.file('flow-state.json');
-const IDLE_HOURS = Number(process.env.RACHEL_IDLE_HOURS) || 4;   // silence after which the next message starts a fresh conversation
+const IDLE_HOURS = Number(process.env.RACHEL_IDLE_HOURS) || 4;
+const BASKET_IDLE_HOURS = Number(process.env.RACHEL_BASKET_IDLE_HOURS) || 1;   // silence after which the cart is emptied (DC, Oct 28)   // silence after which the next message starts a fresh conversation
 const CONFIRM_ADD_PRICE = Number(process.env.RACHEL_CONFIRM_ADD_PRICE) || 200;   // a single search match at/above this per-bottle price is offered, not added (add-item)
 const usd = n => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 let flowState = {};
@@ -454,6 +455,23 @@ function resetState(sessionKey, email) {
   sessions[sessionKey] = [];
   // Clear L1 cache for this user
   if (email) Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; });
+}
+
+// Empty the cart and everything of the old order (DC, Oct 5 / Oct 28): basket, not-carried lines, shown options, the
+// original list / on-hand stock, the proposal's client, date, tax and address choices, an unfinished checkout, and the
+// saved last basket (baskets.json) — else checkout reloads it (Oct 27: a $1,175 basket from an earlier conversation came
+// back after the idle reset). Address, age and contact details stay. Returns the number of lines cleared.
+function clearCart(state, email, format, why) {
+  let n = 0; try { n = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
+  const was = String(state.lastLineItems || '').slice(0, 120);
+  state.lastLineItems = '[]'; state.pendingSubstitutes = []; state.unavailableQty = {}; state.pendingAddOffer = null; state.pendingQtyFor = null;
+  state.shownOptions = null; state.proposalWithOptions = false; state.originalRequest = ''; state.onHand = []; state.onHandReleased = [];
+  state.lastProposalUrl = ''; state.savedClientName = ''; state.savedEventDate = ''; state.eventDateNone = false;
+  state.taxExempt = false; state.proposalHideAddress = false; state.proposalOpts = {}; state.eventParams = state.qa ? { qa: true } : {}; state.savedTipChoice = null;
+  state.orderStep = null; state.orderData = null; state.proposalStep = null; state.lastCta = null;
+  if (email) { Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; }); try { clearBasket(email, format || 'slack'); } catch (e) {} }
+  console.log('[cart] cleared (' + why + ')' + (n ? ': ' + n + ' line(s) ' + was : ': was empty'));
+  return n;
 }
 
 // ── Format helpers ─────────────────────────────────────────────────────────
@@ -1930,11 +1948,28 @@ app.post('/chat', async (req, res) => {
   // conversation, and a reply days later continues it on purpose.
   {
     const st0 = flowState[sessionKey];
-    const idleH = st0 && st0.lastActive ? (Date.now() - st0.lastActive) / 3600000 : 0;
+    const idleSim = isQA && Number(req.body.simulate_idle_hours);   // QA: `idle: 1.5` in a scenario turn
+    const idleH = idleSim > 0 && st0 ? idleSim : st0 && st0.lastActive ? (Date.now() - st0.lastActive) / 3600000 : 0;
     const forced = isQA && req.body.simulate_idle && st0;   // QA: test the expiry without waiting
     if (st0 && message !== '__greeting__' && !/^email-/.test(sessionKey) && (idleH > IDLE_HOURS || forced)) {
       console.log(`[session] idle ${forced ? '(simulated)' : idleH.toFixed(1) + 'h'} > ${IDLE_HOURS}h — fresh conversation for ${sessionKey} (was step=${st0.step}${st0.orderStep ? ' orderStep=' + st0.orderStep : ''}${st0.proposalStep ? ' proposalStep=' + st0.proposalStep : ''})`);
       resetState(sessionKey, email);
+      try { if (email) clearBasket(email, format || 'slack'); } catch (e) {}   // the saved last basket too, else checkout reloads it
+    } else if (st0 && message !== '__greeting__' && !/^email-/.test(sessionKey) && idleH > BASKET_IDLE_HOURS && !st0.newOrderAddrAsk) {
+      // DC (Oct 28): "if it's idle for 1 hour you clear the basket" — the conversation (age, address) goes on.
+      if (clearCart(st0, email, format, 'idle ' + idleH.toFixed(1) + 'h > ' + BASKET_IDLE_HOURS + 'h')) {
+        // Said once, in code, at the top of this turn's reply — the customer may have come back to "place the order".
+        const _jI = res.json.bind(res);
+        res.json = (payload) => {
+          try {
+            const note = "It's been over an hour, so I cleared your earlier cart — let's start fresh.";
+            if (payload && typeof payload.text === 'string' && payload.text.trim() && !/cleared your earlier cart/.test(payload.text)) {
+              payload.text = note + '\n\n' + payload.text; if (typeof payload.response === 'string') payload.response = payload.text;
+            }
+          } catch (e) {}
+          return _jI(payload);
+        };
+      }
     }
     getState(sessionKey).lastActive = Date.now();
     saveFlowState();
@@ -2766,8 +2801,14 @@ app.post('/chat', async (req, res) => {
     // "start a new order" kept the last address without a word (Oct 5: the prosecco order quietly went to 332 Pine St,
     // SF). Now Rachel shows it and asks: "yes" keeps it, a new address replaces it (the address-change block below),
     // "no" asks for the new one. Anything else the customer said with or before the answer is held and replayed after.
+    // "create a new menu / new order" mid-checkout or mid-proposal leaves that flow first (DC, Oct 28) — it restarted the
+    // checkout of the OLD basket ("explicit re-request").
+    const NEW_ORDER = /\b(?:new|separate|another|different|second|fresh) (?:order|menu|basket|cart)\b|\bstart (?:a )?(?:new|fresh|over)\b/i;
+    if (state.step === 'ready' && (state.orderStep || state.proposalStep) && state.orderStep !== 'placing' && state.address && NEW_ORDER.test(message)) {
+      console.log('[new-order] asked during ' + (state.orderStep ? 'checkout (' + state.orderStep + ')' : 'the proposal flow (' + state.proposalStep + ')') + ' — leaving it: ' + JSON.stringify(message).slice(0, 60));
+      state.orderStep = null; state.orderData = null; state.proposalStep = null;
+    }
     if (state.step === 'ready' && !state.orderStep && !state.proposalStep && state.address) {
-      const NEW_ORDER = /\b(?:new|separate|another|different|second|fresh) order\b|\bstart (?:a )?(?:new|fresh|over)\b/i;
       const addrIn = require('./address-extract.js').findAddress(message);
       if (state.newOrderAddrAsk) {
         const yesA = /^\s*(?:yes|yep|yeah|yup|y|sure|correct|same|same (?:one|address|place)|that'?s (?:right|correct|fine)|ok(?:ay)?|use (?:it|that|the (?:old|same|previous) (?:one|address))|the (?:old|same|previous) (?:one|address)|keep it|please do)\b/i.test(message) && !/\b(?:no|not|different|change|new)\b/i.test(message);
@@ -2801,12 +2842,7 @@ app.post('/chat', async (req, res) => {
         }
         // A new order starts with an empty cart and nothing of the old one (DC, Oct 5): basket, not-carried lines,
         // shown options, the original list / on-hand stock, and the proposal's client, date, tax and address choices.
-        if (cartN0) console.log('[new-order] cart cleared (' + cartN0 + ' line(s)): ' + String(state.lastLineItems).slice(0, 120));
-        state.lastLineItems = '[]'; state.pendingSubstitutes = []; state.unavailableQty = {}; state.pendingAddOffer = null; state.pendingQtyFor = null;
-        state.shownOptions = null; state.proposalWithOptions = false; state.originalRequest = ''; state.onHand = []; state.onHandReleased = [];
-        state.lastProposalUrl = ''; state.savedClientName = ''; state.savedEventDate = ''; state.eventDateNone = false;
-        state.taxExempt = false; state.proposalHideAddress = false; state.proposalOpts = {}; state.eventParams = isQA ? { qa: true } : {}; state.savedTipChoice = null;
-        if (email) { Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; }); try { clearBasket(email, format || 'slack'); } catch (e) {} }
+        clearCart(state, email, format, 'new order: ' + JSON.stringify(String(message).slice(0, 60)));
         // What else the message asks for ("new order: 10 Tito's") is held until the address is settled.
         const rest = String(message).replace(NEW_ORDER, '').replace(/\b(?:i'?d like|i want|i need|let'?s|please|can (?:you|we)|to|a|an|the|for|place|make|create|do|start|begin)\b|[^a-z0-9]/gi, '');
         state.newOrderAddrAsk = true; state.newOrderHeld = rest.length > 6 ? message : ''; saveFlowState();
@@ -2865,34 +2901,13 @@ app.post('/chat', async (req, res) => {
         const storeChanged = cov && cov.establishmentId && basketEst ? cov.establishmentId !== basketEst
           : !!(prevCov && cov && prevCov.client && cov.client && prevCov.client !== cov.client);
         console.log('[addr] address changed at ready: ' + JSON.stringify(state.address) + ' -> ' + JSON.stringify(am[1]) + ' | store changed: ' + storeChanged + ' | basket items: ' + items.length);
+        const prevAddrA = state.address, prevZipA = state.zip;
         state.address = am[1]; state.zip = newZip; state.addrConfirmed = true; state.geocoded = null;
-        // Another store: each line is found again there (same product by name) at that store's price; a line it
-        // doesn't carry is told and offered a stand-in. Before, the basket was emptied ("tell me what you'd like").
-        let moved = null;
-        if (storeChanged && items.length) {
-          moved = { kept: [], repriced: [], missing: [] };
-          const nkA = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-          const out = [];
-          for (const li of items) {
-            let prods = []; try { prods = await catalogSearch(newZip, li.name || li.label, li.category || ''); } catch (e) { console.log('[addr] search failed for ' + JSON.stringify(li.name) + ': ' + e.message); }
-            const p = prods.find(x => nkA(x.name) === nkA(li.name));
-            if (!p) { moved.missing.push(li); continue; }
-            const np = parseFloat(p.salePrice || p.price) || parseFloat(li.price) || 0;
-            if (Math.abs(np - (parseFloat(li.price) || 0)) >= 0.01) moved.repriced.push({ name: li.name, from: parseFloat(li.price) || 0, to: np });
-            out.push(Object.assign({}, li, { price: np, product_id: (p.corpProductFilter && p.corpProductFilter.corpProductId) || p.product_id || p.id || li.product_id,
-              upc: p.upc || li.upc, establishmentId: p.establishmentId || cov.establishmentId, url: p.url || '' }));
-          }
-          state.lastLineItems = JSON.stringify(out);
-          Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; });
-          if (moved.missing.length && addrWithRequest) {
-            console.log('[addr] not carried at the new store, NOT offered as substitutes (the message brings its own request): ' + moved.missing.map(li => li.name).join('; '));
-          } else if (moved.missing.length) {
-            state.pendingSubstitutes = (state.pendingSubstitutes || []).concat(moved.missing.map(li => li.label || li.name));
-            state.unavailableQty = Object.assign({}, state.unavailableQty || {}, Object.fromEntries(moved.missing.map(li => [li.label || li.name, li.qty || li.quantity || 1])));
-          }
-          console.log('[addr] basket moved to the store for ' + newZip + ' (' + cov.establishmentId + '): ' + out.length + ' line(s) kept' + (moved.repriced.length ? ', repriced: ' + moved.repriced.map(r => r.name + ' $' + r.from.toFixed(2) + ' -> $' + r.to.toFixed(2)).join('; ') : '') + (moved.missing.length ? ', NOT CARRIED there: ' + moved.missing.map(li => li.name).join('; ') : ''));
-          if (email) { try { saveBasket(email, state.lastLineItems, '', format || 'slack').catch(() => {}); } catch (e) {} }
-        }
+        // A new address empties the cart (DC, Oct 28: "if you change address ... you clear the basket"); it was moved to the
+        // new store line by line (Oct 5). Not an email thread: there the address corrects the thread's own quote.
+        const sameAddr = newZip === prevZipA && streetKey(am[1]) === streetKey(prevAddrA);
+        let cleared = 0;
+        if (items.length && !sameAddr && !/^email-/.test(sessionKey)) cleared = clearCart(state, email, format, 'address changed ' + JSON.stringify(prevAddrA) + ' -> ' + JSON.stringify(am[1]));
         saveFlowState();
         if (email) { try { const d2c = await getD2CSession(email) || {}; await saveD2CSession(email, Object.assign({}, d2c, { delivery_address: state.address, delivery_zip: newZip })); } catch (e) {} }
         if (addrWithRequest) {
@@ -2902,11 +2917,8 @@ app.post('/chat', async (req, res) => {
         const usd2 = n => '$' + n.toFixed(2);
         // The whole basket, one line too (basketAfterChange lists 2+ lines only).
         const listB = () => { let b = []; try { b = JSON.parse(state.lastLineItems || '[]'); } catch (e) {} return b.length ? '\n\n' + b.map(li => (li.qty || li.quantity || 1) + 'x ' + li.name + ' — ' + usd2(parseFloat(li.price) || 0) + ' ea = ' + usd2((li.qty || li.quantity || 1) * (parseFloat(li.price) || 0))).join('\n') : ''; };
-        const rA = 'Updated — delivering to ' + state.address + '.' + (moved
-          ? ' That address is served by a different store, so I moved your basket there.'
-            + (moved.repriced.length ? ' Prices there: ' + moved.repriced.map(r => r.name + ' ' + usd2(r.from) + ' → ' + usd2(r.to)).join('; ') + '.' : '')
-            + listB()
-            + (moved.missing.length ? '\n\n' + moved.missing.map(li => (li.qty || li.quantity || 1) + 'x ' + li.name).join(', ') + (moved.missing.length === 1 ? ' isn\'t' : ' aren\'t') + ' carried at that store — want me to find an alternative?' : '\n\nAnything else, or ready to place the order?')
+        const rA = 'Updated — delivering to ' + state.address + '.' + (cleared
+          ? ' New address, new order — I cleared your earlier cart (' + cleared + (cleared === 1 ? ' item' : ' items') + '). What can I get you?'
           : items.length ? ' Your basket stays the same.' + listB() + '\n\nAnything else, or ready to place the order?' : ' What can I get you?')
           + (state.lastProposalUrl && items.length ? '\n\n(Your earlier proposal shows the old address — say "send the proposal" for an updated one.)' : '');
         return res.json({ text: rA, response: rA });
@@ -4235,6 +4247,19 @@ app.post('/chat', async (req, res) => {
         const outputOB = await callRachel({ sessionKey, message, context, format, gbrainContext: gbrainContextOB, addressRule: addressRuleOB, email });
         return res.json({ text: outputOB, response: outputOB });
       }
+      // Nothing in the cart (cleared after an hour idle, a new address or a new order — DC, Oct 28): no checkout of
+      // nothing — it asked "How many bottles?" and then name / email / phone for an empty order.
+      if (!isDirectOrderRequest && !(clsIntent === 'place_order' && clsRef)) {
+        if (email && !state.lastLineItems) {
+          try { const bE = await require('./gbrain.js').getPackage(email, format || 'slack', /^email-/.test(sessionKey) ? 0 : BASKET_IDLE_HOURS); if (bE) state.lastLineItems = typeof bE === 'string' ? bE : JSON.stringify(bE); } catch (e) {}
+        }
+        let nE = 0; try { nE = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
+        if (!nE) {
+          console.log('[order] checkout asked on an EMPTY cart — not started: ' + JSON.stringify(message).slice(0, 60));
+          const rE = 'Your cart is empty right now — what would you like to order?';
+          return res.json({ text: rE, response: rE });
+        }
+      }
       state.orderData = {};
       // FAST-PATH re-entry: if the customer's details AND a validated delivery instant
       // are already known (saved when they changed course at the confirm step, or from a
@@ -4264,7 +4289,7 @@ app.post('/chat', async (req, res) => {
       if (email && !state.lastLineItems) {
         try {
           const { getPackage } = require('./gbrain.js');
-          const basket = await getPackage(email, format || 'slack');
+          const basket = await getPackage(email, format || 'slack', /^email-/.test(sessionKey) ? 0 : BASKET_IDLE_HOURS);
           if (basket) { state.lastLineItems = typeof basket === 'string' ? basket : JSON.stringify(basket); }
         } catch(e) {}
       }
@@ -4349,7 +4374,7 @@ app.post('/chat', async (req, res) => {
       if (email && !state.lastLineItems) {
         try {
           const { getPackage } = require('./gbrain.js');
-          const basket = await getPackage(email, format || 'slack');
+          const basket = await getPackage(email, format || 'slack', /^email-/.test(sessionKey) ? 0 : BASKET_IDLE_HOURS);
           if (basket) { state.lastLineItems = typeof basket === 'string' ? basket : JSON.stringify(basket); saveFlowState(); }
         } catch(e) {}
       }
@@ -5035,7 +5060,7 @@ app.post('/chat', async (req, res) => {
       if (!state.lastLineItems && email) {
         try {
           const { getPackage } = require('./gbrain.js');
-          const reloadedBasket = await getPackage(email, format || 'slack');
+          const reloadedBasket = await getPackage(email, format || 'slack', /^email-/.test(sessionKey) ? 0 : BASKET_IDLE_HOURS);
           if (reloadedBasket) {
             state.lastLineItems = typeof reloadedBasket === 'string' ? reloadedBasket : JSON.stringify(reloadedBasket);
           }
@@ -5156,7 +5181,7 @@ app.post('/chat', async (req, res) => {
       if (email && !state.lastLineItems) {
         try {
           const { getPackage } = require('./gbrain.js');
-          const basket = await getPackage(email, format || 'slack');
+          const basket = await getPackage(email, format || 'slack', /^email-/.test(sessionKey) ? 0 : BASKET_IDLE_HOURS);
           if (basket) {
             state.lastLineItems = typeof basket === 'string' ? basket : JSON.stringify(basket);
             console.log('[proposal] basket loaded:', state.lastLineItems.slice(0,80));

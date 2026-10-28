@@ -1,0 +1,41 @@
+name: cart-cleared-idle-address-new-menu
+# DC (Oct 28): "if it's idle for 1 hour you clear the basket, if you change address or if you say create a new menu or
+# create a new order you clear the basket". Oct 27 (connector): a basket from an earlier conversation came back into
+# checkout ($1,175) — the idle reset emptied the session but checkout reloaded the saved last basket (baskets.json).
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+    expect: {contains: ["Kim Crawford"]}
+  # 1.5h of silence: the cart is gone, the customer is told, checkout doesn't start on the old basket.
+  - send: "place the order"
+    idle: 1.5
+    expect:
+      contains: ["cleared your earlier cart"]
+      not_contains: ["Kim Crawford", "full name", "Ordering as"]
+      log_contains: ["[cart] cleared (idle 1.5h > 1h)"]
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+    expect: {contains: ["Kim Crawford"]}
+  # Mid-checkout "create a new menu" leaves checkout and clears the cart.
+  - send: "place the order"
+  - send: "actually, create a new menu"
+    expect:
+      contains: ["cleared the previous cart", "again?"]
+      not_contains: ["full name", "tip for your driver"]
+      log_contains: ["[new-order] asked during checkout", "[cart] cleared (new order"]
+  - send: "yes"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+    expect: {contains: ["Kim Crawford"]}
+  - send: "100 Federal St, Boston, MA 02110"
+    expect:
+      contains: ["delivering to 100 Federal St, Boston, MA 02110", "cleared your earlier cart"]
+      log_contains: ["[cart] cleared (address changed"]
+  - send: "show my basket"
+    expect: {not_contains: ["Kim Crawford"]}

@@ -207,7 +207,9 @@ async function clearBasket(userEmail, channel) {
   } catch(e) { console.error('[gbrain] clearBasket error:', e.message); }
 }
 
-async function getPackage(userEmail, channel) {
+// maxAgeHours: a saved basket older than that is not reloaded (DC, Oct 28: an idle cart is cleared after 1h; Oct 27 a
+// $1,175 basket from an earlier conversation came back into checkout). 0 = no limit (email threads).
+async function getPackage(userEmail, channel, maxAgeHours) {
   if (!userEmail) return null;
   try {
     const fs = require('fs');
@@ -217,6 +219,8 @@ async function getPackage(userEmail, channel) {
     try { baskets = JSON.parse(fs.readFileSync(basketFile, 'utf8')); } catch(e) {}
     const entry = baskets[key];
     if (!entry || !entry.basket) return null;
+    const ageH = entry.updated ? (Date.now() - Date.parse(entry.updated)) / 3600000 : Infinity;
+    if (maxAgeHours && !(ageH <= maxAgeHours)) { console.log('[gbrain] saved basket NOT reloaded for ' + userEmail + ' (' + (isFinite(ageH) ? ageH.toFixed(1) + 'h' : 'no date') + ' old > ' + maxAgeHours + 'h)'); return null; }
     return entry.basket;
   } catch(e) { return null; }
 }
