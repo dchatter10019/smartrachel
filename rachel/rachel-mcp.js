@@ -109,11 +109,11 @@ const TOOLS = [
         last_name:            { type: 'string', description: 'Customer last name' },
         customer_email:       { type: 'string', description: 'The customer\'s email (goes on the order). Defaults to your own verified email.' },
         phone:                { type: 'string', description: 'Customer phone' },
-        address:              { type: 'string', description: 'Full delivery address: street, city, state zip' },
+        address:              { type: 'string', description: 'Full delivery address: street, city, state zip — starting with the street number. No company or building name in front (use company_name).' },
         zip:                  { type: 'string', description: 'Delivery zip code' },
         delivery_datetime:    { type: 'string', description: 'Requested delivery date and time, e.g. "2026-10-05 17:00" or "Monday Oct 5 at 5pm". ALWAYS include the customer\'s time zone ("5pm ET", "11am Pacific"); if they haven\'t said one, ask them which time zone before calling — a time with no zone comes back as a problem asking for it. The prepared order\'s delivery.window is in the customer\'s zone; quote it as given.' },
         delivery_instructions:{ type: 'string', description: 'Only what the DRIVER needs at the door: on-site contact and phone, buzzer / gate code, floor or suite, loading dock, COI. Never the company name (use company_name), order numbers, or notes about earlier or replaced orders — those are removed.' },
-        company_name:         { type: 'string', description: 'The customer\'s company, when the order is for one (e.g. "Google"). Goes on the order\'s company field — never in delivery_instructions.' },
+        company_name:         { type: 'string', description: 'The customer\'s company, when the order is for one (e.g. "Google"). Goes on the order\'s company field — never in delivery_instructions or the address.' },
         tip_amount:           { type: 'number', description: 'Tip in USD (default 5% of the product total)' }
       },
       required: ['line_items', 'first_name', 'last_name', 'phone', 'address', 'zip', 'delivery_datetime']
@@ -686,6 +686,9 @@ async function runTool(name, input, callerEmail, apiKey) {
   }
 
   if (name === 'rachel_place_order') {
+    // No name in front of the street (address-extract.js stripLeadingName; DC, Oct 28: "Google, 1395 Charleston Rd").
+    { const sa = require('./address-extract.js').stripLeadingName(input.address);
+      if (sa.dropped) { console.log('[rachel-mcp] address: dropped ' + JSON.stringify(sa.dropped) + ' in front of the street (' + callerEmail + ')'); input = Object.assign({}, input, { address: sa.address, company_name: input.company_name || (/\d/.test(sa.dropped) ? '' : sa.dropped) }); } }
     const customerEmail = String(input.customer_email || callerEmail || '').trim().toLowerCase();
     const missing = ['first_name', 'last_name', 'phone', 'address', 'zip', 'delivery_datetime'].filter(k => !String(input[k] || '').trim());
     if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(customerEmail)) missing.push('customer_email (a valid email)');

@@ -1356,6 +1356,12 @@ async function executeTool(name, input) {
         if (m) return { street: m[1].trim(), city: m[2].trim(), state: m[3], zip: m[4] };
         return { street: a, city: c.city || '', state: c.state || '', zip: c.zipcode || zip || '' };
       };
+      // No company / building name in front of the street, on any channel (DC, Oct 28: "Google, 1395 Charleston Rd").
+      const AXs = require(RACHEL_DIR + '/address-extract.js');
+      for (const k of ['address', 'streetAddress']) {
+        const sa = AXs.stripLeadingName(c[k]);
+        if (sa.dropped) { console.log('[place_order] address: dropped ' + JSON.stringify(sa.dropped) + ' in front of the street (' + k + ')'); c[k] = sa.address; if (!input.company_name && !/\d/.test(sa.dropped)) input.company_name = sa.dropped; }
+      }
       const pa = parseAddr(c.address);
       // Delivery instructions are for the driver: a "Company: X" line and order bookkeeping ("Replaces unpaid order BEVVI-...")
       // are taken out on every channel (rachel/delivery-instructions.js; DC, Oct 28).

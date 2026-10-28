@@ -635,6 +635,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   rachel_place_order company_name (or the removed "Company:" line) -> shopping-agent company_name -> the createCorpOrder field
   named in env BEVVI_ORDER_COMPANY_FIELD ("customerData.companyName" or a top-level name) — UNSET until Bevvi confirms which
   field the API reads, so for now it is only logged ([place_order] company ...). qa/unit/delivery-instructions.test.js.
+  No name in front of the street on the order address either (address-extract.js stripLeadingName: leading comma parts
+  dropped until the one with the street number; connector rachel_place_order + shopping-agent place_order, "[place_order]
+  address: dropped ..."; a digit-free name becomes company_name). Oct 28: claude.ai then sent "Google, 1395 Charleston Rd".
 - Email orders: delivery instructions in an EARLIER email of the thread ride on the order ([email-order] delivery
   instructions from an earlier email); text on the label's own line ("delivery instructions below:Main POC ...") is read
   (Oct 3, Foodie For All: the POC/COI/loading-dock notes never reached the order).

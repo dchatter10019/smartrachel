@@ -106,4 +106,16 @@ function formatGeocoded(components, typed) {
     .filter(Boolean).join(', ');
 }
 
-module.exports = { splitAddress, findAddress, findAddressNoZip, formatGeocoded };
+// A name in front of the street ("Google, 1395 Charleston Rd, Mountain View, CA 94043") never goes on the order address
+// (DC, Oct 28: claude.ai put the company there once it was kept out of the delivery instructions). Leading comma parts are
+// dropped until one starts with the street number; an address with no numbered part (PO box, rural) is left as it is.
+// Returns { address, dropped } — the caller logs what was dropped.
+function stripLeadingName(addr) {
+  const a = String(addr || '').trim();
+  const parts = a.split(/\s*,\s*/);
+  const i = parts.findIndex(p => /^\d+[a-z]?(?:-\d+)?\s+\S/i.test(p));
+  if (i <= 0) return { address: a, dropped: '' };
+  return { address: parts.slice(i).join(', '), dropped: parts.slice(0, i).join(', ') };
+}
+
+module.exports = { splitAddress, findAddress, findAddressNoZip, formatGeocoded, stripLeadingName };

@@ -18,5 +18,12 @@ eq('a real driver note is kept', C('Main POC is Mara (862) 555-0100. Loading doc
 eq('doorman note kept', C('Leave with the doorman; call if no answer'), { text: 'Leave with the doorman; call if no answer', company: '' });
 eq('empty', C(''), { text: '', company: '' });
 
+// No name in front of the street on the order address (DC, Oct 28: "Google, 1395 Charleston Rd").
+const S = a => require('../../address-extract.js').stripLeadingName(a);
+eq('company before the street dropped', S('Google, 1395 Charleston Rd, Mountain View, CA 94043'), { address: '1395 Charleston Rd, Mountain View, CA 94043', dropped: 'Google' });
+eq('c/o line dropped', S('c/o Acme Corp, 11 Madison Ave, New York, NY 10010').address, '11 Madison Ave, New York, NY 10010');
+eq('suite after the street kept', S('11 Madison Ave, Floor 5, New York, NY 10010').address, '11 Madison Ave, Floor 5, New York, NY 10010');
+eq('PO box left alone', S('PO Box 12, Smalltown, VT 05001').address, 'PO Box 12, Smalltown, VT 05001');
+
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('delivery-instructions: all passed');
