@@ -507,6 +507,13 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   answers about one call at a time, so time ~ number of calls).
 - Catalog 5xx/429: searchProducts retries twice; a build that still hit failures returns CATALOG_UNREACHABLE,
   never "isn't available at this store".
+- The CART is cleared (server.js clearCart, [cart] cleared (<why>); DC, Oct 28) after RACHEL_BASKET_IDLE_HOURS (1) idle (the
+  reply opens "It's been over an hour, so I cleared your earlier cart"; QA: scenario turn `idle: 1.5`), on a new delivery
+  address (was: moved to the new store), and on "new/separate/another order|menu|basket|cart" / "start over" (also mid-
+  checkout or mid-proposal). Email threads are exempt from the idle and address clears (the thread's quote stays). clearCart
+  also drops the saved last basket (baskets.json): gbrain.getPackage never reloads one older than 1h outside email (Oct 27:
+  the idle reset emptied the session, then checkout reloaded a $1,175 basket from an earlier conversation). Checkout on an
+  empty cart is not started ("Your cart is empty right now — what would you like to order?"). Scenario 109.
 - A conversation expires after RACHEL_IDLE_HOURS (4) idle, except email threads; age is re-asked. An email thread's
   conversation is kept until the later of last email + 14 days and EVENT DATE + 14 days (DC, Oct 3; pruneChatSessions,
   event date read relative to the last email; [memory] logs a clear). Flow state (basket, details) is never pruned.
@@ -585,10 +592,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   request line (Oct 5: the Sonoma syrup pending was cleared by the mango syrup line).
 - Address change at ready (server.js, Oct 5 DC): a comma-less address ("375 Revere St Revere MA 02151") is read
   (address-extract.js fallback) — it went to the LLM, which rebuilt the basket for the new zip but never changed
-  state.address (proposals/orders kept 332 Pine St). The store is compared by establishmentId (coverage now returns
-  it; SF and Boston are both client "bevvibot"); another store = each line found again there by exact name at its price
-  ([addr] basket moved ... repriced / NOT CARRIED -> pendingSubstitutes), never an emptied basket; the reply lists the
-  basket. Bevvi has no store for 02210 (Seaport) — a real coverage gap, not a Rachel bug. An address that comes WITH a request ("quote for the
+  state.address (proposals/orders kept 332 Pine St). Since Oct 28 a new address CLEARS the cart (see the cart
+  rule; was: moved to the new store and repriced). Bevvi has no store for 02210 (Seaport) — a real coverage gap, not a Rachel bug. An address that comes WITH a request ("quote for the
   items below ... to address 1460 Broadway, New York, NY") is applied in code too when it is cued ("address", "deliver to")
   and differs from the saved one; a zip-less one is geocoded (address-extract.js findAddressNoZip); then the request goes
   on to the LLM ([addr] new address + request in one message). Subject client drops a trailing date ("Liquid Labs 12/5").
