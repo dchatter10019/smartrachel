@@ -23,3 +23,18 @@ turns:
       log_not_contains: ["[list-build]"]
   - send: "place the order"
     expect: {matches: "full name|Ordering as|delivery date"}
+  - send: "QA Tester"
+  - send: "same"
+  - send: "9175550100"
+  - send: "tomorrow at 5 pm ET"
+  # The driver's note only, cleaned when it is taken (DC, Oct 28); the full summary on every channel, not "Confirm?".
+  - send: "Company: Google. Call Diana at the front desk"
+    expect: {log_contains: ["[order] delivery instructions cleaned"]}
+  - send: "no tip"
+    expect:
+      contains: ["Order Summary", "Delivery instructions: Call Diana at the front desk", "Estimated grand total", "Shall I go ahead"]
+      not_contains: ["Company: Google", "Order summary ready"]
+  - send: "yes"
+    expect:
+      matches: "placed|confirmed|QA-DRY-RUN"
+      not_contains: ["Google", "|https://", "<Complete"]

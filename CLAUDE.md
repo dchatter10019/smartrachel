@@ -62,6 +62,15 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   tokens 30d / refresh 90d rotated, stored hashed in config/mcp-oauth.json; the 401 carries WWW-Authenticate
   resource_metadata. API keys still work. QA emails never get the code mailed. ops/tests/mcp_connector_test.py (nightly)
   runs both paths on the public URL. nginx routes for /rachel/ and the well-known paths are not in the repo. WhatsApp bot (3601).
+- CLAUDE APPS TALK TO RACHEL (DC, Oct 28: "the interaction with rachel to be the same from Claude as with slack, whatsapp"):
+  a key whose last initialize came from a Claude app (clientInfo Anthropic/ClaudeAI, claude-code; rachel-mcp.js
+  CHAT_ONLY_CLIENT, remembered per hashed key in RACHEL_DATA_DIR/mcp-clients.json) gets only rachel_chat + rachel_feedback
+  in tools/list, relay-only server instructions (customer's words to Rachel word for word, her reply shown as written) and
+  every other tool refused ("REFUSED for a Claude app", next_step = use rachel_chat). Voiceflow / other clients keep every
+  tool. Connector test 'claude chat only'. Same day: the order summary is the full Slack summary on every channel (non-Slack
+  got "Order summary ready. Grand total: $X. Confirm?"); delivery instructions are cleaned when taken (setDriverNote ->
+  orderData.company_name); Slack "<url|label>" links become "label: url" outside Slack (formatResponse); a message that is
+  a product list is never routed by the classifier ("[classify] show_basket NOT routed — the message is a product list").
 - rachel-slack: rachel/rachel_slack_bot.py (Bolt, Socket Mode). Log: logs/slack-rachel.log
 - rachel-email: rachel/email-agent.py (polls rachelai@ inbox every 60s, every email → Rachel chat,
   thread→session map in logs/email-thread-sessions.json). Log: logs/email-agent.log. "New" = an inbox email

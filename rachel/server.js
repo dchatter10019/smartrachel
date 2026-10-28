@@ -474,6 +474,15 @@ function clearCart(state, email, format, why) {
   return n;
 }
 
+// The driver's note only, as soon as it is taken (delivery-instructions.js; DC, Oct 28): a "Company: X" line goes to
+// orderData.company_name, order bookkeeping is dropped — so the summary and confirmation show what the driver gets.
+function setDriverNote(od, raw) {
+  const r = require('./delivery-instructions.js').clean(raw);
+  if (r.removed.length) console.log('[order] delivery instructions cleaned: removed ' + r.removed.join('; ') + ' | kept ' + JSON.stringify(r.text));
+  if (r.company && !od.company_name) od.company_name = r.company;
+  od.delivery_instructions = r.text;
+}
+
 // ── Format helpers ─────────────────────────────────────────────────────────
 function formatResponse(text, format) {
   if (!text) return '';
@@ -481,7 +490,10 @@ function formatResponse(text, format) {
     return text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/\*(.*?)\*/g, '<b>$1</b>');
   }
   if (format === 'slack') return text;
-  return text;
+  // Slack link syntax never leaves Slack (Oct 28: the claude.ai connector's order confirmation showed
+  // "<Complete your payment here|https://...>"): "<url|label>" / "<label|url>" -> "label: url".
+  return text.replace(/<(https?:\/\/[^|>\s]+)\|([^>]+)>/g, '$2: $1').replace(/<([^|<>]+)\|(https?:\/\/[^>\s]+)>/g, '$1: $2').replace(/<(https?:\/\/[^>\s]+)>/g, '$1')
+    .replace(/([^\n:]{3,60}):\s*\1:\s*(?=https?:)/g, '$1: ');   // "Complete your payment here: <url|Complete your payment here>" said it twice
 }
 
 const CHANNEL_FORMAT_NOTES = {
@@ -1068,8 +1080,10 @@ function renderOrderSummary(state, email, format, res) {
     state.orderData.service = service;
     state.orderData.tip = tip;
     saveFlowState();
-    const summary = format === 'slack'
-      ? '*Order Summary*\n\n' +
+    // The full summary on every channel (DC, Oct 28: the same as Slack). WhatsApp and the claude.ai connector got only
+    // "Order summary ready. Grand total: $X. Confirm?" — no items, contact, time or instructions to check. Bold = Slack only.
+    const B = format === 'slack' ? '*' : '';
+    const summary = B + 'Order Summary' + B + '\n\n' +
         (multiLines ? multiLines.join('\n') : productName + ' x' + qty + ' — $' + unitPrice.toFixed(2) + ' ea = $' + productTotal.toFixed(2)) + '\n' +
         'For: ' + (state.orderData.name || '') + (state.orderData.phone ? ' | ' + state.orderData.phone : '') + '\n' +
         'Recipient email: ' + (state.orderData.email || email || '') + '\n' +
@@ -1081,9 +1095,8 @@ function renderOrderSummary(state, email, format, res) {
         'Service charge (10%): $' + service.toFixed(2) + '\n' +
         tipLabel + ': $' + tip.toFixed(2) + '\n' +
         'Estimated delivery: $' + delivery.toFixed(2) + '\n' +
-        '*Estimated grand total: $' + grandTotal.toFixed(2) + '*\n\n' +
-        'Shall I go ahead and place this order?'
-      : 'Order summary ready. Grand total: $' + grandTotal.toFixed(2) + '. Confirm?';
+        B + 'Estimated grand total: $' + grandTotal.toFixed(2) + B + '\n\n' +
+        'Shall I go ahead and place this order?';
     return res.json({ text: summary, response: summary });
 }
 // Hoisted so the details step AND the time-change handlers (which sit later in the file)
@@ -3899,6 +3912,10 @@ app.post('/chat', async (req, res) => {
         }
       } catch (e) { console.log('[classify->no-route] error:', e.message); }
     }
+    // A message that is only a product list is built from that list (order-wording.js listItems -> callRachel's in-code
+    // build), whatever the classifier said. Oct 28 staging: "Rebuild it with only: A x2, B x1. ... Show me the basket and
+    // total first." was routed show_basket (0.72) and the old basket was shown, unchanged.
+    if (clsIntent && OW.listItems(message)) { console.log('[classify] ' + clsIntent + ' NOT routed — the message is a product list (built from the list)'); clsIntent = null; clsRef = ''; }
     // Not a checkout (order-wording.js, Oct 27 connector): a negated order phrase, or a message carrying its own item list.
     const orderNegated = OW.orderNegated(message);
     const ownListN = OW.ownListCount(message);
@@ -4429,7 +4446,7 @@ app.post('/chat', async (req, res) => {
       // "5pm, buzzer 4B"). If none, the details step will ask.
       if (timeOnly) {
         const after = t.slice(t.toLowerCase().indexOf(timeOnly[1].toLowerCase()) + timeOnly[1].length).replace(/^[\s,;.\-—]+/, '').trim();
-        if (after && !/^(none|no|nothing)$/i.test(after)) { state.orderData.delivery_instructions = after; state.orderData.instructions_asked = true; }
+        if (after && !/^(none|no|nothing)$/i.test(after)) { setDriverNote(state.orderData, after); state.orderData.instructions_asked = true; }
       }
       state.orderStep = 'details';
       saveFlowState();
@@ -4586,7 +4603,7 @@ app.post('/chat', async (req, res) => {
     }
     if (state.orderStep === 'instructions') {
       const raw = message.trim();
-      state.orderData.delivery_instructions = /^(none|no|nope|n\/a|na|nothing|skip)\.?$/i.test(raw) ? '' : raw;
+      setDriverNote(state.orderData, /^(none|no|nope|n\/a|na|nothing|skip)\.?$/i.test(raw) ? '' : raw);
       // The datetime was already validated and stored as the matched window text
       // (e.g. "02:00 PM - 03:00 PM EST"). Replaying THAT into the details handler
       // made chrono re-parse the window string and land on the wrong hour (real
@@ -4757,7 +4774,7 @@ app.post('/chat', async (req, res) => {
       const isInstrChange = /\b(instruction|instructions|note|notes|tell the driver|driver should|for the driver)\b/i.test(message) && !yesWords.some(w => msgLower === w);
       if (cls === 'change_instructions' || isInstrChange) {
         const newInstr = message.replace(/^.*?\b(instructions?|notes?|driver)\b\s*(to|:|-|—|should|is|are)?\s*/i, '').trim();
-        state.orderData.delivery_instructions = /^(none|no|nothing|remove|clear)\b/i.test(newInstr) ? '' : newInstr;
+        setDriverNote(state.orderData, /^(none|no|nothing|remove|clear)\b/i.test(newInstr) ? '' : newInstr);
         state.savedInstructions = state.orderData.delivery_instructions;
         saveFlowState();
         console.log('[order] instructions change at confirm ->', JSON.stringify(state.orderData.delivery_instructions));
