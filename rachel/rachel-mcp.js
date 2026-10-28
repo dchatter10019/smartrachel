@@ -112,7 +112,8 @@ const TOOLS = [
         address:              { type: 'string', description: 'Full delivery address: street, city, state zip' },
         zip:                  { type: 'string', description: 'Delivery zip code' },
         delivery_datetime:    { type: 'string', description: 'Requested delivery date and time, e.g. "2026-10-05 17:00" or "Monday Oct 5 at 5pm". ALWAYS include the customer\'s time zone ("5pm ET", "11am Pacific"); if they haven\'t said one, ask them which time zone before calling — a time with no zone comes back as a problem asking for it. The prepared order\'s delivery.window is in the customer\'s zone; quote it as given.' },
-        delivery_instructions:{ type: 'string' },
+        delivery_instructions:{ type: 'string', description: 'Only what the DRIVER needs at the door: on-site contact and phone, buzzer / gate code, floor or suite, loading dock, COI. Never the company name (use company_name), order numbers, or notes about earlier or replaced orders — those are removed.' },
+        company_name:         { type: 'string', description: 'The customer\'s company, when the order is for one (e.g. "Google"). Goes on the order\'s company field — never in delivery_instructions.' },
         tip_amount:           { type: 'number', description: 'Tip in USD (default 5% of the product total)' }
       },
       required: ['line_items', 'first_name', 'last_name', 'phone', 'address', 'zip', 'delivery_datetime']
@@ -696,17 +697,22 @@ async function runTool(name, input, callerEmail, apiKey) {
       return { ready: false, problems, message: 'Not ready to place — fix these and call rachel_place_order again.' };
     }
     const code = crypto.randomBytes(5).toString('hex');
+    // The driver's note only; the company goes on its own field (delivery-instructions.js; DC, Oct 28).
+    const di = require('./delivery-instructions.js').clean(input.delivery_instructions);
+    const company = String(input.company_name || '').trim() || di.company;
+    if (di.removed.length) console.log('[rachel-mcp] delivery instructions cleaned (' + callerEmail + '): removed ' + di.removed.join('; ') + ' | kept ' + JSON.stringify(di.text));
     const payload = {
       line_items: JSON.stringify(pr.line_items), zip: input.zip,
       customer: { firstName: input.first_name, lastName: input.last_name, email: customerEmail, phone: input.phone, address: input.address, zipcode: input.zip },
-      tip_amount: pr.totals.tip, delivery_datetime: pr.delivery.iso || pr.delivery.raw, delivery_instructions: input.delivery_instructions || '',
+      tip_amount: pr.totals.tip, delivery_datetime: pr.delivery.iso || pr.delivery.raw, delivery_instructions: di.text, company_name: company,
       account_email: callerEmail, email: callerEmail
     };
     const summary = {
       items: pr.line_items.map(li => ({ name: li.name, qty: li.qty || li.quantity || 1, price: li.price })),
       totals: pr.totals, delivery: { address: input.address, when: [pr.delivery.date, pr.delivery.window].filter(Boolean).join(', ') },
       customer: { name: input.first_name + ' ' + input.last_name, email: customerEmail, phone: input.phone },
-      instructions: input.delivery_instructions || ''
+      instructions: di.text,
+      ...(company ? { company } : {})
     };
     pendingOrders.set(code, { key: apiKey, payload, summary, expires: Date.now() + ORDER_CODE_TTL_MS });
     console.log('[rachel-mcp] order prepared ' + code + ' by ' + callerEmail + ' for ' + customerEmail + ': ' + summary.items.length + ' line(s), $' + pr.totals.estimated_total + ', ' + summary.delivery.when);

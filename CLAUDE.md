@@ -628,6 +628,13 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   placed-order-msg.js). No reopen question any more (the old awaitingReopen branch only finishes sessions asked before
   Oct 4). "I paid" is noted (po.paid_reported) and never gets the link again. Only "a new / separate order" starts fresh.
   QA/dry-run orders: the support email is not sent. email-agent reply-all reads a glued cc ("...comand") as the real address.
+- Delivery instructions are the DRIVER's note only (rachel/delivery-instructions.js clean; DC, Oct 28): a "Company: X" line
+  and order bookkeeping (BEVVI-... numbers, "replaces unpaid order", "ice swapped to ...") are removed on every channel
+  (shopping-agent place_order, [place_order] delivery instructions cleaned) and in the connector's summary. Oct 28 claude.ai
+  sent "Company: Google. Call Diana ... Replaces unpaid orders BEVVI-AI-INFO-..." and it reached the driver. The company:
+  rachel_place_order company_name (or the removed "Company:" line) -> shopping-agent company_name -> the createCorpOrder field
+  named in env BEVVI_ORDER_COMPANY_FIELD ("customerData.companyName" or a top-level name) — UNSET until Bevvi confirms which
+  field the API reads, so for now it is only logged ([place_order] company ...). qa/unit/delivery-instructions.test.js.
 - Email orders: delivery instructions in an EARLIER email of the thread ride on the order ([email-order] delivery
   instructions from an earlier email); text on the label's own line ("delivery instructions below:Main POC ...") is read
   (Oct 3, Foodie For All: the POC/COI/loading-dock notes never reached the order).

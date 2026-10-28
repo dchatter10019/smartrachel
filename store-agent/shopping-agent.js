@@ -1357,6 +1357,11 @@ async function executeTool(name, input) {
         return { street: a, city: c.city || '', state: c.state || '', zip: c.zipcode || zip || '' };
       };
       const pa = parseAddr(c.address);
+      // Delivery instructions are for the driver: a "Company: X" line and order bookkeeping ("Replaces unpaid order BEVVI-...")
+      // are taken out on every channel (rachel/delivery-instructions.js; DC, Oct 28).
+      const diClean = require(RACHEL_DIR + '/delivery-instructions.js').clean(input.delivery_instructions);
+      const companyName = String(input.company_name || c.company || '').trim() || diClean.company;
+      if (diClean.removed.length) console.log('[place_order] delivery instructions cleaned: removed ' + diClean.removed.join('; ') + ' | kept ' + JSON.stringify(diClean.text));
       const body = {
         // Top-level email = the account every Rachel order is placed under: rachelai@getbevvi.com (DC, Oct 3). Until then
         // it was whoever asked (the email sender / Slack user), so orders were spread over staff accounts. The customer is
@@ -1382,8 +1387,17 @@ async function executeTool(name, input) {
         },
         tipAmt, tipPct, serviceChargeAmt, serviceChargePct,
         deliveryDateTime:     input.delivery_datetime || '',
-        deliveryInstructions: input.delivery_instructions || ''
+        deliveryInstructions: diClean.text
       };
+      // The company (DC, Oct 28: "The company name field is Google, not the delivery instruction"). Sent on the API field
+      // named in BEVVI_ORDER_COMPANY_FIELD (e.g. "customerData.companyName") once Bevvi confirms which field createCorpOrder
+      // reads; until then it is only logged ([place_order] company), never put in the driver's note.
+      if (companyName) {
+        const cf = String(process.env.BEVVI_ORDER_COMPANY_FIELD || '').trim();
+        if (/^customerData\.\w+$/.test(cf)) body.customerData[cf.split('.')[1]] = companyName;
+        else if (/^\w+$/.test(cf)) body[cf] = companyName;
+        console.log('[place_order] company ' + JSON.stringify(companyName) + (cf ? ' -> API field ' + cf : ' — no API company field configured (BEVVI_ORDER_COMPANY_FIELD), logged only'));
+      }
       console.log('[shopping-agent] createCorpOrder body:', JSON.stringify(body));
       const ctrlCO = new AbortController(); const tCO = setTimeout(() => ctrlCO.abort(), 20000);
       let res;
