@@ -18,7 +18,7 @@ Regenerate this picture with: `ps -eo pid,user,rss,args --sort=-rss`, `sudo ss -
 | `gbrain-mcp` | 127.0.0.1:7700 | `bun run src/cli.ts serve --http --port 7700` in /home/ubuntu/gbrain (third-party repo garrytan/gbrain; data in ~/.gbrain/brain.pglite — embedded Postgres, no separate DB server) | logs/gbrain-mcp.log | — |
 | `rachel-monitor` | — | `python3 ops/monitor.py` (findings → logs/findings.jsonl) | logs/monitor.log | — |
 | `rachel-qa` (timer, 08:00 UTC) | — | `rachel/qa/nightly.sh` → full QA suite, monitor --once, ops/fixer.py (worktrees in ~/work/F-*), conversation review, reports | logs/qa-nightly.log, logs/fixer/ | — |
-| `webchat-video` | *:8600, *:8443 (all interfaces, not via nginx) | `node webchat-video/server.js` — video-chat prototype: HeyGen LiveAvatar in front of Rachel's /chat | — | — |
+| `webchat-video` — STOPPED + DISABLED Oct 29 | was *:8600, *:8443 (public, no login) | `node webchat-video/server.js` — video-chat prototype: HeyGen LiveAvatar in front of Rachel's /chat | — | — |
 | `dashboard` | 0.0.0.0:9000 (all interfaces) | `node dashboard/server.js` — "Bevvi Agent Workbench": service status + log viewer | — | — |
 
 Rachel cron jobs (`crontab -l`, user ubuntu):
@@ -81,8 +81,9 @@ OS/AWS services (not project-related): sshd, amazon-ssm-agent (snap), snapd, sys
 3. FIXED (dashboard) — dashboard listened on 0.0.0.0:9000 with no login while exposing /api/file, /api/save-file,
    /api/restart (sudo systemctl) and /api/evals/run to the internet. Now 127.0.0.1 only; open it with
    `ssh -L 9000:localhost:9000 ubuntu@3.138.180.46` then http://localhost:9000.
-   OPEN — webchat-video (8600 / 8443) is still public with no login (a demo page; its /api/heygen-token and /api/tts spend
-   HeyGen / OpenAI credit for anyone who calls them). DC to decide: keep public, add a login, or close.
+   CLOSED (DC, Oct 29) — webchat-video (8600 / 8443) was public with no login (its /api/heygen-token and /api/tts spent
+   HeyGen / OpenAI credit for anyone). Stopped and disabled; code stays in webchat-video/.
+   Bring back: `sudo systemctl enable --now webchat-video` (add a login first).
 4. FIXED — dashboard status list: orchestrator + the six store-agent-* services removed (units disabled since Sep);
    Rachel WhatsApp + Rachel Monitor added. flow.html (old per-store architecture editor) still shows them.
 5. FIXED — nginx: `bevvi-mcp.conf.bak-…` moved from sites-enabled to /etc/nginx/backup/ (it caused the "conflicting
