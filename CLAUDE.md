@@ -230,6 +230,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - The `rachel` service does NOT read /etc/rachel.env — its secrets are Environment= lines in
   /etc/systemd/system/rachel.service. A key changed in one place must be changed in both.
 - Gmail service account: /home/ubuntu/config/gmail-service-account.json (domain-wide delegation).
+- /etc/bevvi-watchdog.env (ubuntu, 600): BEVVI_SLACK_WEBHOOK for the 03:15 nightly-watchdog cron (was inline in the crontab).
+- Every process on the box, its project, port, files and logs: ops/PROCESSES.md. The dashboard (Agent Workbench, :9000) is
+  127.0.0.1 only (it can read/save files and restart services) — reach it with ssh -L 9000:localhost:9000.
 
 ## Rules — follow every time
 1. Deploy rachel/shopping-agent/rachel-email/rachel-mcp ONLY via `/home/ubuntu/precheck.sh --deploy`: lint → restart the
