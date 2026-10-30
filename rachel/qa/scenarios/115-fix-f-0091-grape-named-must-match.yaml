@@ -1,0 +1,13 @@
+name: fix-f-0091-grape-named-must-match
+tags: [search]
+# F-0091 (Oct 27, connector): "Hess Cabernet" came back as Hess Select Treo Red Blend — the only Hess at the 10038 store.
+# search-match.js checked only the producer ("hess"); the grape the customer named was a generic word, so a red blend
+# passed as their Cabernet. A grape named next to a producer must be in the product's name too.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "100 Gold St, New York, NY 10038"
+  - send: "do you have Hess Cabernet?"
+    expect:
+      not_contains: ["Treo"]
+      log_contains: ["NOT FOUND \"Hess Cabernet\""]

@@ -540,8 +540,36 @@ async function executeTool(name, input) {
         results.push({ query: q.name, found: false, products: [], note: 'Not carried at this store. Say only that it is not available here — no comment on the search or its results.' });
         continue;
       }
+      // The producer key matched but the wine's own name didn't ("Orin Swift Prisoner" -> only other Orin Swift wines;
+      // the store lists "The Prisoner Napa Valley Red Blend" without the producer). Search the missing name words alone
+      // and take the rows that carry them; none = not carried, never another bottle of that producer (F-0089, Oct 27).
+      const missing = require(RACHEL_DIR + '/search-match.js').missingNameWords(searchName, rm.products);
+      if (missing.length) {
+        const alone = missing.join(' ');
+        let named = [];
+        // Same catalog category as the producer's rows ("Johnnie Walker Blue" never becomes Blue Moon beer).
+        const cat0 = String((rm.products[0] && rm.products[0].category) || '').toLowerCase();
+        // One short word alone ("blue" of "Johnnie Walker Blue") matches unrelated bottles (Blue Chair Bay) — not searched;
+        // the producer's other bottles still never stand in for it.
+        if (missing.length === 1 && missing[0].length < 5) console.log('[product_query] ' + JSON.stringify(alone) + ' too short to search alone');
+        else try {
+          named = ((await searchWithFallbacks(loc.kitchen, loc.client, alone, Math.max(q.limit || 5, 12))) || [])
+            .filter(p => { const pr = p.salePrice || p.price || 0; return pr >= priceRange.min && pr <= priceRange.max && pr > 0; })
+            .filter(p => missing.every(w => require(RACHEL_DIR + '/search-match.js').carries(p.name, w)))
+            .filter(p => !cat0 || !p.category || String(p.category).toLowerCase() === cat0);
+        } catch (e) { console.log('[product_query] name-word search failed for ' + JSON.stringify(alone) + ': ' + e.message); }
+        if (named.length) {
+          console.log('[product_query] ' + JSON.stringify(searchName) + ' — no result carries "' + missing.join(' ') + '" (dropped ' + rm.products.slice(0, 5).map(p => p.name).join(' | ') + '); searched "' + alone + '" alone: ' + named.slice(0, 5).map(p => p.name).join(' | '));
+          rm.products = coreFirst(alone, named);
+          rm.searchedAs = alone;   // rachel.js [not-found] checks the rows against these words, not the producer key
+        } else {
+          console.log('[product_query] NOT FOUND ' + JSON.stringify(searchName) + ' — no result carries "' + missing.join(' ') + '" (dropped ' + rm.products.slice(0, 5).map(p => p.name).join(' | ') + '), nor a search for it alone');
+          results.push({ query: q.name, found: false, products: [], note: 'Not carried at this store. Say only that it is not available here — no comment on the search or its results.' });
+          continue;
+        }
+      }
       const filtered = rm.products.slice(0, q.limit || 3).map(formatProduct);
-      results.push({ query: q.name, found: filtered.length > 0, products: filtered });
+      results.push(Object.assign({ query: q.name, found: filtered.length > 0, products: filtered }, rm.searchedAs ? { searched_as: rm.searchedAs } : {}));
     }
     // Save first product as basket for proposal/order reuse — but ONLY if there isn't
     // already a multi-item basket in progress, since overwriting a real multi-item order

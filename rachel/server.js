@@ -1593,6 +1593,18 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       try { existingCount = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
       if (existingCount > 0) {
         console.log('[product-discussed] SKIPPED overwrite — existing basket has', existingCount, 'item(s), narrow search result not saved as active order');
+        // ONE product found is still OFFERED (add-confirm): a yes / a quantity adds it in code. Real (F-0095, Oct 28):
+        // add-item's lookup failed, the LLM's search found the one Macallan 18 ($428.99) and asked "how many?"; the
+        // "1" was only narrated ("1x Macallan ... added") and the basket kept the prosecco alone.
+        try {
+          const arr1 = JSON.parse(lineItems || '[]'), one1 = arr1[0] || {};
+          const p1 = Number(one1.price || one1.unit_price || 0);
+          if (arr1.length === 1 && one1.name && p1 > 0) {
+            state.pendingAddOffer = { name: one1.name, price: p1, size: one1.size || '', qty: 0, confirm: true, fromSearch: true };
+            saveFlowState();
+            console.log('[product-discussed] NOT captured — ' + one1.name + ' $' + p1.toFixed(2) + ' (basket has ' + existingCount + ' line(s)): offered, a yes or a quantity adds it (add-confirm)');
+          }
+        } catch (e) {}
         return;
       }
       // A multi-option pick list is NOT an order. Real bug: "need a KJ Chardonnay and
@@ -3905,7 +3917,11 @@ app.post('/chat', async (req, res) => {
       const NW = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12, 'a dozen': 12, dozen: 12 };
       const qm = msgLower.trim().replace(/[.!]+$/, '').match(/^(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)[,!\s]+)?(?:(?:add|get|give me|i'?ll take|make it|let'?s do|lets do)\s+)?(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|twelve|a dozen|dozen)(?:\s*x)?(?:\s+(?:bottles?|of (?:them|it|those)))?(?:\s+please)?$/);
       const yes = /^\s*(yes|yes please|yeah|yep|sure|ok|okay|please|do it|do that|add it|go ahead|absolutely|sounds good)\b/i.test(message);
-      if (qm || yes) {
+      // An offer held from a search result whose product the LLM already put in the basket that turn: never added twice.
+      let inBasketAlready = false;
+      if (off.fromSearch) { try { const nzB = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); inBasketAlready = JSON.parse(state.lastLineItems || '[]').some(x => nzB(x.name) === nzB(off.name)); } catch (e) {} }
+      if (inBasketAlready) console.log('[add-confirm] offer for ' + off.name + ' dropped — already in the basket (added on the search turn)');
+      else if (qm || yes) {
         const q = qm ? (NW[qm[1]] || parseInt(qm[1])) : off.qty;
         const rrOff = await applyBasketSubstitute(sessionKey, email, '', off.name, off.price, off.size);
         const nzA = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -3930,7 +3946,7 @@ app.post('/chat', async (req, res) => {
         const rY = 'Added ' + labelA + '. How many bottles would you like?';
         return res.json({ text: rY, response: rY });
       }
-      console.log('[add-confirm] offer for ' + off.name + ' lapsed — reply is not a yes or a quantity: ' + JSON.stringify(message.slice(0, 60)));
+      if (!inBasketAlready) console.log('[add-confirm] offer for ' + off.name + ' lapsed — reply is not a yes or a quantity: ' + JSON.stringify(message.slice(0, 60)));
     }
     // "WHY N DRINKS PER PERSON?" — answered in code with the package's why sentence (package-facts.js, DC Oct 21: the
     // Voiceflow agent pastes why_drinks_statement verbatim and nothing else; never a "standard rate" or "sized to budget").

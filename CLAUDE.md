@@ -142,7 +142,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   12 pack"), email threads, an active event (eventParams.guests), checkout/proposal in progress. Scenario 110 (plain).
 - A one-result search (product_query / recommendation / alternatives) at or above CONFIRM_ADD_PRICE ($200) is never captured as
   the basket: it becomes pendingAddOffer (confirm) like add-item's offer — a yes / a quantity adds it ([product-discussed] NOT
-  captured). Oct 22 smoke: "I need an opus" (add_item 0.70 < 0.8 -> LLM search) put Opus One $1,099.99 in the cart at 1x.
+  captured). With a basket already
+  there (F-0095, Oct 30) any one-result search is held as that offer too (was: neither captured nor offered, so "1" was only
+  narrated as added); a held offer whose product the LLM already put in the basket is dropped, never added twice. Scenario 116. Oct 22 smoke: "I need an opus" (add_item 0.70 < 0.8 -> LLM search) put Opus One $1,099.99 in the cart at 1x.
 - The client an email subject names: email-subject.js clientFromSubject ("Goody alcohol order" -> Goody, "... - Gen II
   Fund", "Bar order for Acme"), used by the quote PDF, quote edits and the proposal flow. An email that carries its own
   item list (3+ item lines) never enters the step-by-step proposal flow — it takes the [quote-pdf] path (client from the
@@ -534,6 +536,13 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   + note); rachel.js [not-found] uses the same module. Was price-only: "Green Chartreuse" -> Johnnie Walker Green, "Rioja" ->
   an Argentine blend first, and the connector (which calls product_query directly) showed them as found. The catalog has
   no subcategory data (all None) — no category search; Veuve Clicquot 6 Liter is filed as Beer (catalog data).
+  Oct 30 (F-0089/0090/0091): a match must also carry the grape the query names next to a producer (a name with another
+  grape or "blend" is not it; no grape in the name still counts; syrah=shiraz), a bottling number ("Bin 407", "Macallan 18";
+  never sizes, counts, packs, vintages) and the wine's own name after the producer: missing -> product_query searches that
+  name alone in the same category ("Orin Swift Prisoner" -> "The Prisoner Napa Valley Red Blend", searched_as), else NOT
+  FOUND — never the producer's other bottles (places / "original" / "label" don't count; one word < 5 letters isn't
+  searched alone). qa/unit/search-match.test.js, scenarios 113-115. Smoke tip-choice matches tip amounts by shape (the
+  pinned $4.93 broke when the bottle's price changed Oct 29 and blocked every fixer smoke run).
 - buildPackage memoizes catalog searches per build (rawSearch; successful answers only) and hyphen-join retries only the first two
   word pairs, never packaging/style words (Oct 15: a 16-line email quote made 167 calls, 152s -> 82s, same picks; the catalog API
   answers about one call at a time, so time ~ number of calls).

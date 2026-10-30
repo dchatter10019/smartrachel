@@ -1,0 +1,15 @@
+name: fix-f-0089-producer-plus-wine-name
+tags: [search]
+# F-0089 (Oct 27, claude.ai connector): "Orin Swift Prisoner" came back as Orin Swift Abstract and Sign of the Times —
+# product_query's match key was only the first two distinctive words ("orin swift"), so any Orin Swift wine counted as
+# found. The store lists the wine as "The Prisoner Napa Valley Red Blend" (no producer in the name).
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "1 Rockefeller Plaza, New York, NY 10019"
+  # The LLM sometimes searches "The Prisoner Red Blend" (no bug path) — the reply checks hold either way; the
+  # product_query log line ("— no result carries "prisoner"") shows when the producer path ran.
+  - send: "do you have \"Orin Swift Prisoner\"?"
+    expect:
+      matches: "(?i)prisoner.{0,80}\\$\\d"
+      not_contains: ["Abstract", "Sign of the Times", "Papillon", "8 Years in the Desert", "Machete", "Mercury Head", "isn't showing", "not showing"]

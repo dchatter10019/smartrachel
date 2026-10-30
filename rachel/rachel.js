@@ -688,7 +688,10 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             const key = SM.keyOf(qname);
             if (!key.length) continue;   // generic query ("Chardonnay", "red wine") — nothing to verify
             checked.push(qname);
-            const hit = (r.products || []).some(p => SM.isMatch(qname, p.name));   // "titos" = "Tito's" (Oct 2)
+            // searched_as = the wine's own name, searched alone by product_query when the producer isn't in the store's
+            // name ("Orin Swift Prisoner" -> "The Prisoner Napa Valley Red Blend"; F-0089) — rows carrying it are the product.
+            const hit = (r.products || []).some(p => SM.isMatch(qname, p.name) || (r.searched_as && SM.distinctiveWords(r.searched_as).every(w => SM.carries(p.name, w))));   // "titos" = "Tito's" (Oct 2)
+            if (hit && r.searched_as) console.log('[not-found] ' + JSON.stringify(qname) + ' — found by its own name "' + r.searched_as + '" (the store lists it without the producer)');
             if (!hit) {
               try { require('./events.js').unmatched(qname); } catch (e) {}
               console.log('[not-found] ' + JSON.stringify(qname) + ' — no result carries "' + key.join(' ') + '"; dropped ' + (r.products || []).length + ' unrelated result(s): ' + (r.products || []).map(p => p.name).join(' | '));

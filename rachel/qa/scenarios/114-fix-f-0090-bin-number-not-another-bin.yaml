@@ -1,0 +1,13 @@
+name: fix-f-0090-bin-number-not-another-bin
+tags: [search]
+# F-0090 (Oct 27, connector): "Penfolds Bin 407" came back as Penfolds Bin 389 / Bin 600 / Bin 311 as found. The search
+# match ignored numbers, so the key was "penfolds bin" and every Bin matched. A model number after Bin / No. / Lot / #
+# is now part of the key (search-match.js modelNumbers): another Bin is not the wine asked for.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "1 Rockefeller Plaza, New York, NY 10019"
+  - send: "do you have Penfolds Bin 407?"
+    expect:
+      matches: "(?i)(not|don't|do not|isn't|aren't).{0,60}(carr|stock|availab|have)"
+      log_contains: ["NOT FOUND \"Penfolds Bin 407\""]

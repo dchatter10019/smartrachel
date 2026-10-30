@@ -1,6 +1,6 @@
 // Unit tests for search-match.js — real catalog rows returned for queries the store doesn't carry (DC, Oct 6, claude.ai).
 // (precheck.sh runs qa/unit/*.test.js.)
-const { rankByMatch } = require('../../search-match.js');
+const { rankByMatch, missingNameWords, modelNumbers } = require('../../search-match.js');
 let failed = 0;
 function eq(label, got, want) {
   const ok = JSON.stringify(got) === JSON.stringify(want);
@@ -41,4 +41,20 @@ r = rankByMatch('Modelo can', P('Modelo Especial 24x12 Oz Bottle'));
 eq('"can" is a container', r.found, true);
 r = rankByMatch('Green Chartreuse', P('Johnnie Walker Green 15yr - 750 ML'));
 eq('a real producer word still required', r.found, false);
+// F-0091: a grape named next to a producer must be in the name (or the name shows no grape at all).
+r = rankByMatch('Hess Cabernet', P('Hess Select Treo Red Blend 750 ML'));
+eq('Hess Cabernet: a Hess red blend is not it', r.found, false);
+r = rankByMatch('Hess Cabernet', P('Hess Select Treo Red Blend 750 ML', 'Hess Shirtail Ranches Cabernet Sauvignon 750 ML'));
+eq('Hess Cabernet: the Cabernet kept', names(r), ['Hess Shirtail Ranches Cabernet Sauvignon 750 ML']);
+eq('Opus One Cabernet = Opus One Red Wine (no grape in the name)', rankByMatch('Opus One Cabernet', P('Opus One Napa Valley Red Wine 750 ML')).found, true);
+eq('syrah = shiraz', rankByMatch('Meiomi Shiraz', P('Meiomi Syrah 750 ML')).found, true);
+eq('a grape alone is unchanged', rankByMatch('cabernet', P('Hess Select Treo Red Blend 750 ML')).found, true);
+// F-0090: a bottling number is part of the name; sizes, counts, packs and vintages are not.
+eq('Penfolds Bin 407: other bins dropped', rankByMatch('Penfolds Bin 407', P('Penfolds Bin 389 Cabernet Shiraz', 'Penfolds Bin 600 Cabernet Shiraz')).found, false);
+eq('Penfolds Bin 407 found', names(rankByMatch('Penfolds Bin 407', P('Penfolds Bin 389 Cabernet Shiraz', 'Penfolds Bin 407 Cabernet Sauvignon 750 ML'))), ['Penfolds Bin 407 Cabernet Sauvignon 750 ML']);
+eq('Macallan 18 is not the 12', rankByMatch('Macallan 18', P('The Macallan 12 Year Double Cask')).found, false);
+eq('numbers read', [modelNumbers('Penfolds Bin 407'), modelNumbers('Macallan 18'), modelNumbers('Glenlivet 12 year old'), modelNumbers("3 Tito's 750"), modelNumbers('Stella Artois 12 pack'), modelNumbers('Caymus 2021'), modelNumbers('Don Julio 1942')], [['407'], ['18'], ['12'], [], [], [], []]);
+// F-0089: the wine's own name after the producer; places and descriptors don't count.
+eq('Orin Swift Prisoner: prisoner missing', missingNameWords('Orin Swift Prisoner', P('Orin Swift Abstract Red', 'Orin Swift Sign of the Times')), ['prisoner']);
+eq('Napa / Original / Label never missing', [missingNameWords('Caymus Napa Valley', P('Caymus Cabernet')), missingNameWords('Grey Goose Vodka Original', P('Grey Goose Vodka 750 ML')), missingNameWords('Johnnie Walker Black Label', P('Johnnie Walker Black 750 ML'))], [[], [], []]);
 process.exit(failed ? 1 : 0);

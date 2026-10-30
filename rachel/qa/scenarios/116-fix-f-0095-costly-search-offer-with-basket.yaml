@@ -1,0 +1,27 @@
+name: fix-f-0095-costly-search-offer-with-basket
+fresh: true
+# Real (F-0095, Oct 28 nightly, search-pick-quantity): "add a Macallan 18" with 2 prosecco already in the basket;
+# add-item's catalog lookup failed ("fetch failed") so the LLM searched, found the one $428.99 bottle and asked
+# "how many?". With a basket already there the search result was neither captured nor held as an offer
+# ([product-discussed] SKIPPED overwrite), so the "1" was only narrated ("1x Macallan ... added") and the
+# basket showed the prosecco alone. "do you have ...?" (product_query, never routed in code) takes the same
+# LLM-search path on purpose.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+  - send: "do you have Macallan 18?"
+    expect:
+      matches: "Macallan 18"
+      not_contains: ["Added"]
+      log_contains: ["[product-discussed] NOT captured"]
+  - send: "1"
+    expect:
+      matches: "Macallan"
+      log_contains: ["[add-confirm] accepted"]
+  - send: "show my basket"
+    expect:
+      contains: ["Macallan", "Kim Crawford"]
