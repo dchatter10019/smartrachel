@@ -499,6 +499,21 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   applied in code and the PDF regenerated (parseProposalFieldEdit). Turns answered in code are recorded in the LLM
   history (recordTurn llmRan=false) — else the LLM denies a PDF it never saw being sent.
   Any LLM-generated proposal reply gets the real URL (rachel.js replaces a placeholder like "<url|...>").
+- Distributor-style lists (Oct 29, Sean's Premier 360 email, F-0114..F-0121): a bare "NA" word = non-alcoholic (drink-type.js
+  isNA), and a stand-in keeps alcoholic/non-alcoholic for EVERY line, typed or not (was: "APLOS NA CHILI MARGARITA" ->
+  Cutwater Tequila Margarita, "GHIA NA ... LIME" -> Bud Light Lime); an NA line with no NA stand-in is unavailable, said.
+  "VRTY" = variety, "XPRSO" = espresso (product-match SYN), "FZ" = oz in pack sizes ("12X11.2FZ"). Pack containers are
+  compared in mL (4x100ml = 4 x 3.4 OZ, kept); same count + a near container size = kept and said ("12 x 12 OZ here — 12 x
+  11.2 OZ isn't carried"); the exact asked pack among the candidates wins; only a BIGGER pack of the same product here =
+  that pack, enough for the units asked, said ("12-pack, not 8"). A canned line's stand-in is a can when one fits. The
+  "look for an alternative?" CTA names the item or the count ("alternatives to those 5 items?"). A "Client is: X" /
+  "Client: X" line in the message or the original request is the proposal client (email-subject.js clientLabeledIn; before
+  the subject; every proposal path); "menu" is a generic subject word ("Menu request" named client "Menu"); a labeled answer
+  ("Event Date: TBD") is read without its label and TBD/TBA = no date. Scenario 117.
+- A file that never arrived (Oct 29, DC on claude.ai, F-0110): a Claude app passes an attachment as a path on its own machine
+  ("@/mnt/user-data/attachments/...pdf"); /chat answers in code "Your file (<name>) didn't come through ... paste the drinks"
+  ([order-file] a file path with no file); the Claude-app instructions (rachel-mcp.js CHAT_INSTRUCTIONS) tell the client to
+  send the file's drink lines as text, exactly as the file has them. Scenario 118.
 - A not-carried product's stand-in is the SAME TYPE (rachel/drink-type.js: aperitif / fortified / sparkling / rose / red /
   white / spirit type; non-alcoholic only for non-alcoholic), in buildPackage and the alternatives intent (originals[].type
   only when the customer asks for another type); none of that type = unavailable, never another type. Then anchored

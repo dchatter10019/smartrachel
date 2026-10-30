@@ -1,0 +1,14 @@
+name: attachment-path-no-file
+format: plain
+# DC (Oct 29, claude.ai, F-0110): "@/mnt/user-data/attachments/.../arch_ny_proposal_40guests.pdf the alcohol in this menu" —
+# claude.ai passed only the file's path; the LLM said it couldn't read attachments, "a limitation on my end", and DC asked
+# "why can't you read a pdf?". Now answered in code: the file didn't come through, paste the drinks.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "199 Water Street New York NY 10038"
+  - send: "@\"/mnt/user-data/attachments/a7855201-8d1e-50f7-88b5-3d17307ba067/4a6013d1-arch_ny_proposal_40guests.pdf\" the alcohol in this menu"
+    expect:
+      contains: ["arch_ny_proposal_40guests.pdf) didn't come through", "Paste the drinks"]
+      not_contains: ["limitation on my end"]
+      log_contains: ["[order-file] a file path with no file"]

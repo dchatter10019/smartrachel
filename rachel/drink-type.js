@@ -36,7 +36,8 @@ function typeOf(p) {
 
 // Non-alcoholic ("Ritual Zero Proof Aperitif Alt", "KSA Kolsch Non-Alcoholic"): a stand-in only for a non-alcoholic
 // original, and never the reverse (QA, Sep 30: Ritual Zero Proof was the first alternative for Lillet Blanc).
-const isNA = p => / (zero proof|non alcoholic|nonalcoholic|alcohol free|alcohol removed|dealcoholized|0 0|n a|na beer|mocktail|spirit free) /.test(norm(p && p.name)) || /non.?alcoholic/i.test(String((p && (p.subCategory || p.subcategory)) || ''));
+// A bare "NA" word counts ("APLOS NA CHILI MARGARITA", Oct 29): it read as alcoholic and got a tequila margarita.
+const isNA = p => / (zero proof|non alcoholic|nonalcoholic|alcohol free|alcohol removed|dealcoholized|0 0|n a|na|mocktail|spirit free) /.test(norm(p && p.name)) || /non.?alcoholic/i.test(String((p && (p.subCategory || p.subcategory)) || ''));
 
 const TERMS = { aperitif: 'aperitif', fortified: 'port', sparkling: 'champagne', rose: 'rose', red: 'red wine', white: 'white wine' };
 function searchTerm(type) { return TERMS[type] || (String(type).startsWith('spirit:') ? type.slice(7) : ''); }

@@ -4,8 +4,8 @@
 //   "Goody alcohol order"         -> "Goody"            (before an order/request word)
 //   "Bar order for Acme Corp"     -> "Acme Corp"        (after "for")
 // Returns '' when the subject names no one (e.g. "Drinks order", "Quote request").
-const ORDER_WORDS = '(?:alcohol|drinks?|beverages?|bar|wine|liquor|beer|booze|cocktails?|party|event|holiday|office|team)?\\s*(?:order|request|quote|proposal|estimate|needs|list|delivery)';
-const GENERIC = /^(?:new|drinks?|beverages?|bar|alcohol|wine|liquor|beer|order|quote|proposal|request|estimate|event|party|our|my|the|a|an|urgent|updated|revised|final|re|fwd?|question)$/i;
+const ORDER_WORDS = '(?:alcohol|drinks?|beverages?|bar|wine|liquor|beer|booze|cocktails?|party|event|holiday|office|team|menu)?\\s*(?:order|request|quote|proposal|estimate|needs|list|delivery)';
+const GENERIC = /^(?:new|menu|drinks?|beverages?|bar|alcohol|wine|liquor|beer|order|quote|proposal|request|estimate|event|party|our|my|the|a|an|urgent|updated|revised|final|re|fwd?|question)$/i;
 
 function clientFromSubject(subject) {
   // A trailing long number (a ticket / run id: "Menu Request - Liquid Labs QA 12/5 1792052356") is not the client.
@@ -37,4 +37,14 @@ function clientFromSubject(subject) {
   return '';
 }
 
-module.exports = { clientFromSubject };
+// The client a message body states on its own labeled line: "Client is: Premier 360", "Client: Acme", "Company name - X".
+// Real (Oct 29, Sean): the email said "Client is: Premier 360" and the proposal step still asked for the client.
+function clientLabeledIn(text) {
+  const m = String(text || '').match(/^[ \t>*•-]*(?:client|company|customer|account)(?:\s+name)?\s*(?:is\s*:?|:|-|–)\s*([^\n]{1,60})$/im);
+  if (!m) return '';
+  const c = m[1].replace(/[\s,;:.!?]+$/, '').trim();
+  if (!c || /@|\d{3}[\s.-]?\d{4}/.test(c) || c.split(/\s+/).length > 6 || GENERIC.test(c) || /^(?:tbd|tba|n\/?a|none)$/i.test(c)) return '';
+  return c;
+}
+
+module.exports = { clientFromSubject, clientLabeledIn };

@@ -24,5 +24,9 @@ eq('Ritual Zero Proof is non-alcoholic', isNA({ name: 'Ritual Zero Proof Aperiti
 eq('KSA Kolsch Non-Alcoholic is non-alcoholic', isNA({ name: 'Fort Point Beer Co. KSA Kolsch Non-Alcoholic 6-pack' }), true);
 eq('Lillet Blanc is not', isNA({ name: 'Lillet Blanc 750 mL' }), false);
 eq('Napa is not "na"', isNA({ name: 'Mumm Napa Brut' }), false);
+eq('Oct 29: "APLOS NA CHILI MARGARITA" is non-alcoholic', isNA({ name: 'APLOS NA CHILI MARGARITA CAN 4X8.5FZ' }), true);
+eq('Oct 29: "GHIA NA LE SPRITZ" is non-alcoholic', isNA({ name: 'GHIA NA LE SPRITZ LIME & SALT CAN 4X8FZ' }), true);
+eq('Cutwater Tequila Margarita is not', isNA({ name: 'Cutwater Tequila Strawberry Margarita 4 x 12 OZ Cans' }), false);
+eq('Bud Light Lime is not', isNA({ name: 'Bud Light Lime 24 x 12 OZ Bottles' }), false);
 console.log(failed ? '\ndrink-type: ' + failed + ' FAILED' : '\ndrink-type: all passed');
 if (failed) process.exit(1);

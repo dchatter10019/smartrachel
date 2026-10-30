@@ -48,7 +48,11 @@ const TABLE = {
     { id: 'sub.offer_named', when: t => t.substitute && t.substitute.name && t.substitute.price > 0,
       text: t => t.substitute.name + (t.substitute.size ? ' ' + String(t.substitute.size).replace(/(\d)\s*(ml|l|oz)\b/i, (m, d, u) => d + ' ' + (u.toLowerCase() === 'ml' ? 'mL' : u.toUpperCase() === 'L' ? 'L' : u)) : '') + ' is in stock at ' + money(t.substitute.price) + ' — swap it in?',
       accept: /\bswap\b|^\s*(?:yes|yep|yeah|sure|ok)\b/i },
-    { id: 'sub.offer_search', text: 'Want me to look for an alternative?', accept: /^\s*(?:yes|yep|sure)\b|\blook\b/i },
+    // It names what it would look for. Real (Oct 29, Sean): five Tip Top cans + a Ghia flavour not carried, then one
+    // bare "Want me to look for an alternative?" — the reviewer called it a dead end (F-0119).
+    { id: 'sub.offer_search', text: t => (t.unmatchedCount || 1) > 1 ? 'Want me to look for alternatives to those ' + t.unmatchedCount + ' items?'
+        : t.unmatchedName ? 'Want me to look for an alternative to ' + String(t.unmatchedName).replace(/\s+/g, ' ').trim() + '?' : 'Want me to look for an alternative?',
+      accept: /^\s*(?:yes|yep|sure)\b|\blook\b/i },
   ],
   order_placed: [
     // Phase 2 territory: disabled until DC wants the acceptance signal (spec).

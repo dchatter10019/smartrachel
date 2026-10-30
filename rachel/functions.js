@@ -1254,6 +1254,17 @@ async function buildPackage(iv) {
         // complaint (DC, Sep 30): "Lillet Blanc" -> searching "blanc" -> Ruinart Blanc de Blancs, a $138 champagne.
         // None of that type here: unavailable (and said), never a different type.
         var DT=require('./drink-type.js'), origT=DT.typeOf({name:np.name});
+        // Non-alcoholic for non-alcoholic, alcoholic for alcoholic — also when the line has no wine/spirit type. Real
+        // (Oct 29, Sean): "APLOS NA CHILI MARGARITA" -> Cutwater Tequila Margarita, "GHIA NA LE SPRITZ LIME & SALT" ->
+        // Bud Light Lime 24-pack (the NA check ran only for typed lines).
+        var naWant=DT.isNA({name:np.name}), naAlt=alt0.filter(function(p){return DT.isNA(p)===naWant;});
+        if (naAlt.length<alt0.length) console.log('[buildPackage] ALTERNATIVE for '+JSON.stringify(np.name)+': dropped '+(alt0.length-naAlt.length)+' '+(naWant?'alcoholic':'non-alcoholic')+' candidate(s)'+(naAlt.length?'':' — none left'));
+        alt0=naAlt;
+        if (!origT && naWant && !alt0.length && sq0) {   // style words only: a bare "non alcoholic" search is any NA drink
+          var naQ=sq0+' non alcoholic';
+          alt0=(await doSearch(naQ)).filter(function(p){return !isMini(p)&&DT.isNA(p);});
+          console.log('[buildPackage] ALTERNATIVE for '+JSON.stringify(np.name)+': searched "'+naQ+'" — '+alt0.length+' non-alcoholic candidate(s)');
+        }
         if (origT) {
           var origNA=DT.isNA({name:np.name});
           var sameT=alt0.filter(function(p){return DT.typeOf(p)===origT&&DT.isNA(p)===origNA;}), viaT='';
@@ -1266,6 +1277,13 @@ async function buildPackage(iv) {
           alt0=sameT;
         }
         if (!alt0.length){console.log('[buildPackage] UNAVAILABLE (no search results'+(sq0?', no "'+sq0+'" alternative':', no style words to search')+'):', JSON.stringify(np.name));unavailable.push(np.name);continue;}
+        // The container asked for leads: a canned line's stand-in is a can when one fits. Real (Oct 29, Sean): "ARCHER
+        // ROOSE PINOT GRIGIO CAN 4X250ML" -> Mezzacorona Pinot Grigio 1.5 L.
+        if (/\bcans?\b/i.test(np.name||'')) {
+          var canAlt=alt0.filter(function(p){return /\bcans?\b/i.test(String(p.name||'')+' '+String(p.sizeStr||''));});
+          console.log('[buildPackage] ALTERNATIVE for '+JSON.stringify(np.name)+': cans asked — '+(canAlt.length?canAlt.length+' can candidate(s) kept':'no can here, other containers kept'));
+          if (canAlt.length) alt0=canAlt;
+        }
         found=alt0; altNote=PM.brandWords(reqForFit).length ? PM.displayName(np.name)+' isn\'t in stock here' : '';
         console.log('[buildPackage] ALTERNATIVE for '+JSON.stringify(np.name)+' (not carried): searching "'+sq0+'" — '+alt0.length+' candidate(s)');
         // Anchored to the original's web market price (as the alternatives intent is), closest price first.
@@ -1470,10 +1488,12 @@ async function buildPackage(iv) {
       // pack string "24 x 11 OZ bottle" -> mismatch -> reported unavailable, even
       // though the search had found it. If the request has a pack format (NxM OZ),
       // compare pack-to-pack with whitespace removed; otherwise compare bottle sizes.
-      var reqPack = np.name.match(/(\d+)\s*x\s*(\d+(?:\.\d+)?)\s*(oz|OZ|ml|ML)\b/i);
+      // "FZ" is a fluid ounce on distributor lists ("STELLA ARTOIS LAGER BTL 12X11.2FZ", Oct 29, Sean): read as oz.
+      var nearNote = '';
+      var reqPack = np.name.match(/(\d+)\s*x\s*(\d+(?:\.\d+)?)\s*(oz|fz|ml)\b/i);
       var requestedSizeMatch = reqPack ? null : np.name.match(/\d+(\.\d+)?\s*(mL|ML|L|oz|OZ)\b/i);
       if (reqPack && best.sizeStr) {
-        var packKey = function(s){ var m=String(s||'').toLowerCase().match(/(\d+)\s*x\s*(\d+(?:\.\d+)?)\s*(oz|ml)/); return m ? (m[1]+'x'+m[2]+m[3]) : ''; };
+        var packKey = function(s){ var m=String(s||'').toLowerCase().match(/(\d+)\s*x\s*(\d+(?:\.\d+)?)\s*(oz|fz|ml)/); return m ? (m[1]+'x'+m[2]+(m[3]==='fz'?'oz':m[3])) : ''; };
         var reqPK = packKey(np.name), foundPK = packKey(best.sizeStr) || packKey(best.name);
         // A smaller pack of the SAME product and container makes up the volume: "Stella 24 x 11 oz" with only the
         // 6 x 11 oz here = 4 six-packs per 24-pack. Real (Oct 4 nightly, SF): the 24-pack left the catalog and the line
@@ -1482,14 +1502,36 @@ async function buildPackage(iv) {
         // A near container size counts as the same (11 oz bottles asked, 12 oz cans here). Real (Oct 5 nightly, SF,
         // F-0016): the 6 x 11 oz Stella left too; only 12 x 12 oz cans came back and the line went UNAVAILABLE.
         var unitSz = function(s){ var m = String(s || '').match(/^(\d+(?:\.\d+)?)(oz|ml)$/); return m ? { n: +m[1], u: m[2] } : null; };
+        // Compared in mL, so 100 ml and 3.4 oz are the same can. Real (Oct 29, Sean): "TIP TOP MARGARITA COCKTAIL CAN
+        // 4X100ML" with "Tip Top Proper Cocktails Margarita 4 x 3.4 OZ Cans" on the shelf went UNAVAILABLE (pack mismatch).
         var rU = rpm && unitSz(rpm[2]), fU = fpm && unitSz(fpm[2]);
-        var nearSz = !!(rU && fU && rU.u === fU.u && rpm[2] !== fpm[2] && Math.abs(rU.n - fU.n) / Math.max(rU.n, fU.n) <= 0.1);
+        var inMl = function(z){ return z.u === 'oz' ? z.n * 29.5735 : z.n; };
+        var nearSz = !!(rU && fU && rpm[2] !== fpm[2] && Math.abs(inMl(rU) - inMl(fU)) / Math.max(inMl(rU), inMl(fU)) <= 0.1);
         if (nearSz) console.log('[buildPackage] pack: ' + JSON.stringify(np.name) + ' container ' + rpm[2] + ' asked, ' + fpm[2] + ' here (' + best.name + ') — near enough, counted as the same');
-        if (reqPK && foundPK && reqPK !== foundPK && rpm && fpm && (rpm[2] === fpm[2] || nearSz) && +fpm[1] < +rpm[1] && +fpm[1] > 1 && !PM.fit(reqForFit, best).missing.filter(function(w){return PM.brandWords(reqForFit).indexOf(w)>=0;}).length) {
+        // Same count, near container: that product, said (never silent). Real (Oct 29, Sean): 12 x 11.2 oz Stella asked,
+        // 12 x 12 oz on the quote with no word about it.
+        if (reqPK && foundPK && reqPK !== foundPK && rpm && fpm && nearSz && +fpm[1] === +rpm[1]) {
+          if (Math.abs(inMl(rU) - inMl(fU)) > 1.5) nearNote = fpm[1] + ' x ' + fpm[2].replace(/(oz|ml)$/, ' $1').toUpperCase() + ' here — ' + rpm[1] + ' x ' + rpm[2].replace(/(oz|ml)$/, ' $1').toUpperCase() + ' isn\'t carried';
+          console.log('[buildPackage] pack: ' + JSON.stringify(np.name) + ' wanted ' + reqPK + ', ' + foundPK + ' here (' + best.name + ') — same count, kept' + (nearNote ? ' (said: ' + nearNote + ')' : ''));
+        } else if (reqPK && foundPK && reqPK !== foundPK && rpm && fpm && (rpm[2] === fpm[2] || nearSz) && +fpm[1] < +rpm[1] && +fpm[1] > 1 && !PM.fit(reqForFit, best).missing.filter(function(w){return PM.brandWords(reqForFit).indexOf(w)>=0;}).length) {
           var packMult = Math.ceil(+rpm[1] / +fpm[1]);
           np._packMult = packMult;
           console.log('[buildPackage] pack: ' + JSON.stringify(np.name) + ' wanted ' + reqPK + ', only ' + foundPK + ' here (' + best.name + ') — ' + packMult + ' per requested pack');
-        } else if (reqPK && foundPK && reqPK !== foundPK) { console.log('[buildPackage] UNAVAILABLE (pack mismatch):', JSON.stringify(np.name), 'wanted', reqPK, 'found', foundPK); unavailable.push(np.name); continue; }
+        } else if (reqPK && foundPK && reqPK !== foundPK) {
+          // The asked pack may be another candidate: take it before calling the line unavailable. Real (Oct 30 staging):
+          // "SURFSIDE ICED TEA VODKA VRTY CAN 8X12FZ" ranked the 12 x 12 OZ first with the 8 x 12 OZ on the shelf.
+          var bwPk=PM.brandWords(reqForFit);
+          var samePk=found.find(function(p){ return p.product_id!==best.product_id && (packKey(p.sizeStr)||packKey(p.name))===reqPK && !PM.fit(reqForFit,p).missing.filter(function(w){return bwPk.indexOf(w)>=0;}).length; });
+          if (samePk) { console.log('[buildPackage] pack: '+JSON.stringify(np.name)+' wanted '+reqPK+' — '+samePk.name+' instead of '+best.name+' ('+foundPK+')'); best=samePk; }
+          // Only a BIGGER pack of the same product + container here: that pack, enough of them for the cans asked, said.
+          // Real (Oct 30): the Surfside Iced Tea 8 x 12 OZ left the 10017 store, the 12 x 12 OZ is there.
+          else if (rpm && fpm && (rpm[2] === fpm[2] || nearSz) && +fpm[1] > +rpm[1] && !PM.fit(reqForFit, best).missing.filter(function(w){return bwPk.indexOf(w)>=0;}).length) {
+            np._packDiv = +fpm[1] / +rpm[1];
+            nearNote = fpm[1] + '-pack here — the ' + rpm[1] + '-pack isn\'t carried';
+            console.log('[buildPackage] pack: ' + JSON.stringify(np.name) + ' wanted ' + reqPK + ', only the bigger ' + foundPK + ' here (' + best.name + ') — kept, said');
+          }
+          else { console.log('[buildPackage] UNAVAILABLE (pack mismatch):', JSON.stringify(np.name), 'wanted', reqPK, 'found', foundPK); unavailable.push(np.name); continue; }
+        }
       }
       // An amount of liquid ("3L mango purée", "1L lemon juice": np.volume_ml, set in code from the customer's own line)
       // takes any bottle size — the quantity covers the amount below. Real bug (Oct 2, DC's Goody list): "Lemon Juice 1L"
@@ -1525,6 +1567,7 @@ async function buildPackage(iv) {
         }
       }
       var pq=plannedQty[n], qty=pq.qty, packMultFrom=0;
+      if (np._packDiv) { var qD=Math.max(1, Math.ceil(qty / np._packDiv - 1e-9)); if (qD!==qty) console.log('[buildPackage] pack: ' + qty + ' x ' + JSON.stringify(np.name) + ' -> ' + qD + ' x ' + best.name + ' (bigger pack)'); qty=qD; delete np._packDiv; }
       if (np._packMult && !(!pq.hasExplicitQty && !pq.mod && (catN==='wine'||catN==='beer'||catN==='spirits') && pq.servings>0)) { console.log('[buildPackage] pack: ' + qty + ' x ' + JSON.stringify(np.name) + ' -> ' + (qty * np._packMult) + ' x ' + best.name); packMultFrom = qty; qty = qty * np._packMult; }
       // Size the line on the product actually picked (a 1 L bottle, a 24-pack) — the plan assumed
       // 750 mL and the default pack. Real bug: 40 beer servings bought 4x 24-packs (96).
@@ -1571,6 +1614,7 @@ async function buildPackage(iv) {
       }
       if (typeof packNote==='string' && packNote) vd.note=vd.note.replace(/\d+-pack, not \d+/, packNote);
       var match=altNote ? {kind:'alternative',asked:np.name,note:altNote+(vd.note&&/packs here/.test(vd.note)?'; '+packNote:'')} : vd.kind==='exact' ? {kind:'exact'} : {kind:'closest',asked:np.name,note:vd.note};
+      if (nearNote && match.kind==='exact') match={kind:'closest',asked:np.name,note:nearNote};
       // The request names two brands' words and the pick has only one of them ("Remy Cointreau" -> Remy Martin
       // 1738): the other word may be a product of its own. Real bug (Oct 1, DC): the note said "no cointreau in
       // stock" while Cointreau Orange Liqueur 750 mL was on the shelf. Search the missing brand words and

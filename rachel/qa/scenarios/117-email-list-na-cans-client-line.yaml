@@ -1,0 +1,35 @@
+name: email-list-na-cans-client-line
+fresh: true
+tags: [email]
+# Sean's real email (Oct 29, NYC 10017; F-0114..F-0121). Bugs it covers:
+# - "APLOS NA CHILI MARGARITA" -> Cutwater Tequila Margarita and "GHIA NA LE SPRITZ LIME & SALT" -> Bud Light Lime 24-pack:
+#   the non-alcoholic check ran only for wine/spirit-typed lines, and a bare "NA" was not read as non-alcoholic.
+# - "TIP TOP MARGARITA COCKTAIL CAN 4X100ML" with Tip Top Margarita 4 x 3.4 OZ Cans on the shelf: UNAVAILABLE (pack
+#   mismatch), 100 ml vs 3.4 oz were never compared in mL.
+# - "HIGH NOON CAN VRTY" / "SURFSIDE ... VRTY": "no vrty in stock" next to the variety pack that was picked.
+# - "STELLA ARTOIS LAGER BTL 12X11.2FZ" -> 12 x 12 OZ with no word ("FZ" was not read as oz).
+# - one bare "Want me to look for an alternative?" for six missing items.
+# - "Client is: Premier 360" in the email, and the proposal step still asked for the client; "Event Date: TBD" printed
+#   as "Event date: Event Date: TBD".
+format: plain
+context: {email_subject: "Menu request", user_name: "Sean Fitzgibbons"}
+turns:
+  - send: "Rachel,\r\n\r\nCan we have a menu proposed for the below items?\r\n\r\nClient is: Premier 360\r\nAddress is: 12 E 49th St, New York, NY 10017\r\n\r\nMenu:\r\n\r\nAPLOS NA CHILI MARGARITA CAN 4X8.5FZ\r\n\r\nGHIA NA LE SPRITZ GINGER CAN 4X8FZ\r\n\r\nGHIA NA LE SPRITZ LIME & SALT CAN 4X8FZ\r\n\r\nSTELLA ARTOIS LAGER BTL 12X11.2FZ\r\n\r\nESPOLON TEQUILA BLANCO 1L\r\n\r\nHIGH NOON CAN VRTY 8X12FZ\r\n\r\nSURFSIDE ICED TEA VODKA VRTY CAN 8X12FZ\r\n\r\nTIP TOP MARGARITA COCKTAIL CAN 4X100ML\r\n\r\nTIP TOP NEGRONI COCKTAIL CAN 4X100ML\r\n\r\nTITOS HANDMADE VODKA 1L\r\n\r\nARCHER ROOSE PINOT GRIGIO CAN 4X250ML\r\n\r\nARCHER ROOSE PINOT NOIR CAN 4X250ML"
+    expect:
+      contains: ["21 or older"]
+  - send: "Yes"
+    expect:
+      contains: ["Tip Top Proper Cocktails Margarita", "Espol"]
+      not_contains: ["Cutwater", "Bud Light Lime", "no vrty", "no variety"]
+      matches: "(?i)look for (?:alternatives to those \\d+ items|an alternative to)|swap it in"
+      log_contains: ["near enough, counted as the same", "Surfside Iced Tea & Vodka Variety Pack"]
+      log_not_contains: ["UNAVAILABLE (pack mismatch): \"TIP TOP MARGARITA"]
+  - send: "Thanks, Rachel.\r\n\r\nCan you please draft this a pdf proposal?"
+    expect:
+      not_contains: ["What is the client or company name?"]
+      log_contains: ["[proposal] client from a \"Client:\" line: \"Premier 360\""]
+  - send: "Event Date: TBD"
+    expect:
+      contains: ["Premier 360"]
+      not_contains: ["Event Date: TBD", "Event date: TBD"]
+      pdf_contains: ["Premier 360"]

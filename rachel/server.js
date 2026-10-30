@@ -1289,7 +1289,7 @@ function ctaTurn(st, body, question, msg, context) {
   if (has('placed_order')) return Object.assign(base, { kind: 'order_placed', basketItems: items.length });
   if (has('generated_proposal')) return Object.assign(base, { kind: 'proposal_sent' });
   // Something the customer named isn't available: offering its substitute beats the basket follow-up.
-  if (e.unmatched.length) return Object.assign(base, { kind: 'item_unavailable', unmatchedName: e.unmatched[0], substitute: opts[0] || null });
+  if (e.unmatched.length) return Object.assign(base, { kind: 'item_unavailable', unmatchedName: e.unmatched[0], unmatchedCount: new Set(e.unmatched).size, substitute: opts[0] || null });
   if (has('built_basket')) return Object.assign(base, { kind: 'basket_built' });
   if (has('updated_basket') || has('showed_basket') || changed) return Object.assign(base, { kind: 'basket_updated', basketItems: items.length });
   if (opts.length >= 2) return Object.assign(base, { kind: 'search_multi', options: opts.length });
@@ -3232,6 +3232,19 @@ app.post('/chat', async (req, res) => {
     console.log('[turn] state.step:', state.step, '| pendingSubstitutes:', JSON.stringify(state.pendingSubstitutes), '| message:', JSON.stringify(message).slice(0,80));
     { const _turnMsg = message; const _json = res.json.bind(res); const _hist0 = sessions[sessionKey], _len0 = (_hist0 || []).length;
       res.json = (payload) => { try { const h = sessions[sessionKey]; recordTurn(sessionKey, _turnMsg, payload && (payload.text || payload.response), h !== _hist0 || (h || []).length !== _len0); } catch (e) {} return _json(payload); }; }
+    // ── A FILE THAT NEVER ARRIVED (Oct 29, DC on claude.ai: "@/mnt/user-data/attachments/...arch_ny_proposal.pdf the alcohol
+    // in this menu") ── a Claude app passes the customer's attachment as a path on its own machine; the file itself never
+    // reaches Rachel, and the LLM said "that's a limitation on my end" (F-0110). Answered in code, every channel.
+    {
+      const lostFile = String(message || '').match(/(?:^|[\s"'@(])(\/mnt\/(?:user-data|data)\/[^\s"')]+?\.(pdf|xlsx?|csv|png|jpe?g|heic|docx?))\b/i);
+      const gotFiles = [].concat(Array.isArray(images) ? images : [], Array.isArray(req.body.files) ? req.body.files : []).some(f => f && f.data);
+      if (lostFile && !gotFiles && (OW.listItems(message) || []).length < 2) {
+        const nm = lostFile[1].split('/').pop().replace(/^[0-9a-f]{8}-/i, '');
+        console.log('[order-file] a file path with no file: ' + JSON.stringify(lostFile[1]) + ' — asked for the list as text');
+        const t = 'Your file (' + nm + ') didn\'t come through to me — only its name did, so I can\'t see what\'s in it. Paste the drinks from it here (names, sizes and quantities) and I\'ll build the order right away.';
+        return res.json({ text: t, response: t });
+      }
+    }
     // ── A CHANGE TO A PLACED ORDER, EMAIL (DC, Oct 28: "fetch the last order and apply the change, seamlessly") ──────────
     // Bevvi has no order-update API, so the change is applied to a copy: the placed order's lines and details come back
     // (placedOrder.line_items / email_order), the change is applied by the usual email paths (quote edits, the email order
@@ -3305,7 +3318,7 @@ app.post('/chat', async (req, res) => {
         if (alsoOrder) { preText = txt.replace(/\n\nReply with any other changes[\s\S]*$/, ''); if (replaceNow) state.emailReplaceReady = true; console.log('[quote-edits] ' + (replaceNow ? 'a change to placed order ' + state.emailReplace + ' — placing the corrected order' : 'the email also asks to create the order — continuing to the email order')); }
         else if (r.changes.length && r.items.length) {
           const subj = String(state.emailSubject || (context && context.email_subject) || '');
-          const client = state.savedClientName || require('./email-subject.js').clientFromSubject(subj) || String((context && context.user_name) || '').trim();
+          const client = state.savedClientName || require('./email-subject.js').clientLabeledIn(state.originalRequest || message) || require('./email-subject.js').clientFromSubject(subj) || String((context && context.user_name) || '').trim();
           try {
             const url = await quotePdf(state, r.items, String(client || '').trim(), state.savedEventDate || '', r.items.filter(li => li.match && li.match.kind && li.match.kind !== 'exact').length);
             txt += '\n\nYour updated PDF proposal is attached: ' + url;
@@ -3552,7 +3565,7 @@ app.post('/chat', async (req, res) => {
                 // "just send the proper proposal"). Real gap: Sean's quote request got a basket and no PDF.
                 const subj = String((context && context.email_subject) || '');
                 if ((/^email-/.test(sessionKey) || subj) && /\b(quote|proposal|pdf|estimate)\b/i.test(turnMsg + ' ' + subj) && !cL.blocks.length) {
-                  const client = st.savedClientName || require('./email-subject.js').clientFromSubject(st.emailSubject || subj) || String((context && context.user_name) || '').trim() || '';
+                  const client = st.savedClientName || require('./email-subject.js').clientLabeledIn(st.originalRequest || message) || require('./email-subject.js').clientFromSubject(st.emailSubject || subj) || String((context && context.user_name) || '').trim() || '';
                   const eventDate = require('./event-date.js').findEventDateIn(turnMsg);   // not cta.DATE_RE: "Sun" Cruiser was a date
                   if (eventDate) console.log('[quote-pdf] event date read from the email: ' + JSON.stringify(eventDate));
                   const lt = listText;
@@ -5282,6 +5295,10 @@ app.post('/chat', async (req, res) => {
           if (reqF.date) { state.savedEventDate = reqF.date; state.eventDateNone = false; }
           console.log('[proposal] from the request: ' + JSON.stringify(reqF));
         }
+        if (!state.savedClientName) {   // an explicit "Client:" line beats a guess from the subject
+          const labC = require('./email-subject.js').clientLabeledIn(message) || require('./email-subject.js').clientLabeledIn(state.originalRequest || '');
+          if (labC) { state.savedClientName = labC; console.log('[proposal] client from a "Client:" line: ' + JSON.stringify(labC)); }
+        }
         if (!state.savedClientName) {
           const subjC = require('./email-subject.js').clientFromSubject(state.emailSubject || (context && context.email_subject) || '');
           if (subjC) { state.savedClientName = subjC; console.log('[proposal] client from the email subject: ' + JSON.stringify(subjC)); }
@@ -5338,7 +5355,13 @@ app.post('/chat', async (req, res) => {
     // pdf" to both prompts and the state machine stored that literal text as the client
     // name and event date (PDF showed "—"), and would have remembered it for the rest of
     // the session. Treat it as "proceed with this field blank" and never persist it.
-    const isNonAnswer = (m) => /^\s*(generate|create|make|build)\b.*(pdf|proposal|quote)|^\s*(proposal|pdf|quote|skip|none|n\/a|na|no|-)\s*$/i.test(m || '');
+    // An answer typed with its label ("Event Date: TBD", "Client: Premier 360") is the value after the label; TBD is
+    // no date. Real (Oct 30, Sean): the PDF printed "Event date: Event Date: TBD".
+    if (state.proposalStep === 'client' || state.proposalStep === 'date') {
+      const unl = String(message || '').replace(/^\s*(?:(?:the\s+)?(?:event\s+)?date|client(?:\s+name)?|company(?:\s+name)?)\s*(?:is\s*:?|:|-|–)\s*/i, '');
+      if (unl !== message && unl.trim()) { console.log('[proposal] answer label removed: ' + JSON.stringify(message.trim()) + ' -> ' + JSON.stringify(unl.trim())); message = unl; }
+    }
+    const isNonAnswer = (m) => /^\s*(generate|create|make|build)\b.*(pdf|proposal|quote)|^\s*(proposal|pdf|quote|skip|none|n\/a|na|no|-|tbd|tba|to be (?:determined|decided|confirmed)|not (?:sure|decided|set) yet|unknown)\s*\.?\s*$/i.test(m || '');
     if (state.proposalStep === 'client') {
       if (isNonAnswer(message)) {
         state.proposalData.client_name = '';

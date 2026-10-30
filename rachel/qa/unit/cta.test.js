@@ -87,6 +87,8 @@ console.log('trailer and closers');
   eq('substitute offer + "just say the word" -> both removed (Sep 29 QA)', [sub.generic, sub.question, sub.body.endsWith('$54.40 ea')], [true, false, true]);
   const mixed = splitCloser('Which size works for you? If you want, just say the word!');
   eq('real question + nudge -> nudge removed, still a question turn', [mixed.generic, mixed.question], [true, true]);
+  eq('Oct 29 Sean: several not carried -> names how many', text({ kind: 'item_unavailable', unmatchedName: 'TIP TOP NEGRONI', unmatchedCount: 5 }), 'Want me to look for alternatives to those 5 items?');
+  eq('one not carried -> names it', text({ kind: 'item_unavailable', unmatchedName: 'Ghia Le Spritz Ginger', unmatchedCount: 1 }), 'Want me to look for an alternative to Ghia Le Spritz Ginger?');
   eq('substitute size spaced', text({ kind: 'item_unavailable', substitute: { name: 'Grey Goose Vodka', size: '1.75L', price: 54.4 } }), 'Grey Goose Vodka 1.75 L is in stock at $54.40 — swap it in?');
     eq('"For the X, would you like me to search for alternatives…?" is generic (Sep 29 QA)', splitCloser('Grey Goose 3.5 L isn\'t available.\n\nFor the *Grey Goose Vodka 3.5 L*, would you like me to search for alternatives — either a different Grey Goose size or a similar premium vodka?').generic, true);
     eq('"place an order, or anything else I can help with?" is generic (Sep 29 QA)', splitCloser('Tito\'s 1.75 L — $43.99\n\nWould you like to place an order, or is there anything else I can help with?').generic, true);

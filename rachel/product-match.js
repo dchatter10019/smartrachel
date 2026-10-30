@@ -21,7 +21,8 @@ const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ
 // Spelling variants that must count as the same word.
 const SYN = { oktoberfest: 'octoberfest', pilsner: 'pilsener', pils: 'pilsener', cran: 'cranberry', margaritas: 'margarita',
   ciders: 'cider', ipas: 'ipa', budlight: 'bud light', michelop: 'michelob', pumkin: 'pumpkin', smithwick: 'smithwicks',
-  tea: 'tea', iced: 'iced', ice: 'iced', seltzers: 'seltzer', lemonades: 'lemonade', cocktails: 'cocktail', vp: 'variety' };
+  tea: 'tea', iced: 'iced', ice: 'iced', seltzers: 'seltzer', lemonades: 'lemonade', cocktails: 'cocktail', vp: 'variety',
+  vrty: 'variety', xprso: 'espresso', expresso: 'espresso' };   // distributor abbreviations (Oct 29, Sean: "HIGH NOON CAN VRTY" -> "no vrty in stock")
 const canon = w => SYN[w] || w;
 // A sentence period is not part of the word ("Beer Co." -> co, a filler word; it was a brand word the pick lacked, Oct 11).
 const words = s => norm(s).split(/\s+/).map(w => w.replace(/\.+$/, '')).map(canon).join(' ').split(/\s+/).filter(Boolean);
