@@ -1000,6 +1000,8 @@ RULES:
       : { temperature: 0.3 }))   // Sonnet 4.6 (RACHEL_MODEL=claude-sonnet-4-6): exactly as before Oct 3
       .catch(e => {
         if (e instanceof Anthropic.APIConnectionTimeoutError) console.error('[rachel] iteration ' + iterations + ': no answer from the model in ' + RACHEL_LLM_TIMEOUT_MS + 'ms (after 1 retry) — giving up this turn');
+        // "Connection error." alone never said why (Oct 27-30: ~8 QA turns a night got "hit a snag"); log the socket cause.
+        else if (e instanceof Anthropic.APIConnectionError) console.error('[rachel] iteration ' + iterations + ': connection error (after 1 retry) — cause: ' + require('./fetch-cause.js').causeOf(e));
         throw e;
       });
     require('./ai-spend.js').record('rachel', RACHEL_MODEL, response.usage, { qa: (eventParams && eventParams.qa) || /^(qa-[^@]*|rachel_qa)@getbevvi\.com$/i.test(String((context && context.user_email) || '')) });

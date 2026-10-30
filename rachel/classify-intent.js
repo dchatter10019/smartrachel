@@ -112,7 +112,7 @@ async function classifyIntent(message, ctx = {}) {
         // A dropped connection ("fetch failed") is retried once on the SAME model: the Haiku fallback routes some
         // messages differently (Sep 30: "I need an opus" -> other, twice in smoke, skipping the add-item confirm).
         if (e0.name === 'AbortError' || !/fetch failed|ECONNRESET|socket|network/i.test(String(e0.message))) throw e0;
-        errs.push(model.split('-')[1] + ':' + e0.message + '(retried)');
+        errs.push(model.split('-')[1] + ':' + e0.message + ' [' + require('./fetch-cause.js').causeOf(e0) + '](retried)');
         j = await callClassifier(model, ms, user, key);
       }
       const intent = INTENTS.includes(j.intent) ? j.intent : 'other';

@@ -214,6 +214,11 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   tax to 0" -> change_instructions); Sonnet 5.5 is less confident and sends more turns to the (dearer) main LLM. The
   SHADOW classifier call (a paid call per message, label only logged) was removed. catalog-guard web prices: Opus 5.5
   (was Opus 5; same tokenizer, 20% cheaper).
+- flow-state.json saves are coalesced (server.js saveFlowState: one atomic write per 250ms, saveFlowStateNow on SIGTERM) and
+  QA sessions idle 2+ days are pruned at start (Oct 30: 7,577 of 9,298 sessions were QA, 28 MB rewritten synchronously
+  ~180 places, ~300ms each; the nightly QA got ~8 "hit a snag" / "fetch failed" a night, production only — staging starts
+  empty). Connection failures now log their socket cause (rachel/fetch-cause.js: [rachel] connection error ... cause:,
+  classifier "fetch failed [cause]", [quote-pdf] failed [cause]).
 - Rachel's state (flow-state.json, chat-sessions.json, conversations.jsonl, baskets.json, customer-contacts.json,
   events.jsonl) lives in RACHEL_DATA_DIR (rachel/data-dir.js; default /home/ubuntu/logs). A Rachel on any port but
   3500 REFUSES to start on the production dir — a second instance would rewrite live sessions.

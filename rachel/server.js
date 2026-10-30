@@ -295,9 +295,24 @@ try {
   flowState = JSON.parse(fs.readFileSync(FLOW_STATE_PATH, 'utf8'));
   console.log('[flowState] loaded', Object.keys(flowState).length, 'sessions');
 } catch(e) { flowState = {}; }
+// QA sessions («qa-», rule 5) idle 2+ days are dropped: by Oct 30 they were 7,577 of 9,298 sessions in a 28 MB file.
+// Customer sessions are never pruned here.
+{
+  const cut = Date.now() - 2 * 86400000, gone = Object.keys(flowState).filter(k => /^qa-/.test(k) && ((flowState[k] && flowState[k].lastActive) || 0) < cut);
+  gone.forEach(k => delete flowState[k]);
+  if (gone.length) console.log('[flowState] pruned ' + gone.length + ' QA session(s) idle 2+ days; ' + Object.keys(flowState).length + ' left');
+}
 
+// Saves are coalesced: one write at most every 250ms (atomic tmp + rename), flushed on SIGTERM. Until Oct 30 every one of
+// ~180 call sites rewrote the whole file synchronously (~300ms each at 28 MB), stalling the process several times a turn.
+let flowSaveTimer = null;
+function saveFlowStateNow() {
+  if (flowSaveTimer) { clearTimeout(flowSaveTimer); flowSaveTimer = null; }
+  try { const tmp = FLOW_STATE_PATH + '.tmp'; fs.writeFileSync(tmp, JSON.stringify(flowState)); fs.renameSync(tmp, FLOW_STATE_PATH); }
+  catch (e) { console.error('[flowState] save failed:', e.message); }
+}
 function saveFlowState() {
-  try { fs.writeFileSync(FLOW_STATE_PATH, JSON.stringify(flowState)); } catch(e) {}
+  if (!flowSaveTimer) flowSaveTimer = setTimeout(saveFlowStateNow, 250);
 }
 
 // Conversation history persisted to disk. Real bug (DC, Sep 27): sessions[] and the recent-reply
@@ -348,7 +363,7 @@ function scheduleChatSessionsSave() {
 }
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.on(sig, () => {
-    const stop = () => { try { if (chatSaveTimer) clearTimeout(chatSaveTimer); saveChatSessionsNow(); saveFlowState(); console.log('[sessions] saved on ' + sig); } catch (e) {} process.exit(0); };
+    const stop = () => { try { if (chatSaveTimer) clearTimeout(chatSaveTimer); saveChatSessionsNow(); saveFlowStateNow(); console.log('[sessions] saved on ' + sig); } catch (e) {} process.exit(0); };
     // Finish the chats already running (up to 80s — systemd kills at 90s), taking no new connections.
     if (!INFLIGHT) return stop();
     console.log('[shutdown] ' + sig + ' with ' + INFLIGHT + ' chat(s) in flight — finishing them first (max 80s)');
@@ -3546,7 +3561,7 @@ app.post('/chat', async (req, res) => {
                     if (typeof payload.response === 'string') payload.response = payload.text;
                     st.lastCta = null; saveFlowState();
                     _jC(payload);
-                  }).catch(e => { console.log('[quote-pdf] failed (list sent without it): ' + e.message); payload.text = lt; payload.response = lt; _jC(payload); });
+                  }).catch(e => { console.log('[quote-pdf] failed (list sent without it): ' + e.message + ' [' + require('./fetch-cause.js').causeOf(e) + ']'); payload.text = lt; payload.response = lt; _jC(payload); });
                   return res;
                 }
               } else console.log('[list-reply] custom_list turn with an empty basket — LLM reply kept');
