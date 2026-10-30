@@ -16,7 +16,10 @@ turns:
   - send: "{pick_full} looks good. Do you have Casamigos Blanco?"
     expect:
       contains: ["Casamigos"]
-      log_contains: ["[substitute-merge] skipped — the pick resolver handed this message to the LLM"]
+      # Oct 30: Bacardi Superior 750 mL is carried again, so there is no pending line and the substitute merge never runs;
+      # assert its wrong outcome can't happen (added beside the line / "not the same kind") and the pick took the 5.
+      log_not_contains: ["is not the same kind as any pending item"]
+      log_contains: ["qty 5"]
   - send: "show my basket"
     expect: {matches: "(?i)\\b5\\s*x?\\b[^\\n]*{pick_re}", not_contains: ["Bacardi"]}
   - send: reset

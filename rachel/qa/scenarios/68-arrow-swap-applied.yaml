@@ -13,14 +13,15 @@ turns:
     expect:
       contains: ["Product total", "Grey Goose"]
       not_contains: ["no cointreau in stock", "no from in stock"]
-  - send: "Rose from Provence -&gt; can we do whispering agnel?\nRemy Cointreau -&gt; Cointreau 750 ML"
+  - send: "Rose from Provence -&gt; can we do whispering agnel?\nRemy Cointreau -&gt; Cointreau 1 L"
     expect:
       contains: ["Whispering Angel"]
       # Every way of reaching the basket: by the LLM's tool call or the arrow-swap in code. Never only narrated.
       not_contains: ["I haven't done"]
   - send: "show my basket"
     expect:
-      matches: "(?m)^\\s*1x Cointreau Orange Liqueur - 750 ML"
+      # Oct 30: the 10010 store lists Cointreau only as 1 L now (the 750 mL left the catalog).
+      matches: "(?m)^\\s*1x Cointreau Orange Liqueur - 1 L"
       not_matches: "(?m)^\\s*\\d+x Remy Martin"
   - send: "send me a proposal"
   - send: "Foodie QA"
