@@ -1,0 +1,15 @@
+name: fix-f-0098-list-qty-dash-count
+format: plain
+# F-0098 (Oct 28, DC on claude.ai): a list written "<product> 750ml — qty 2" was built in code with the count left in the
+# name ("Whispering Angel Côtes de Provence Rosé — qty 2", qty 1) and the 750ml read as an AMOUNT of liquid, so the
+# basket got 1x Whispering Angel 1.5 L (and 1x Rombauer 1.5 L) instead of 2x 750 mL. DC had to correct it twice.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "1395 Charleston Rd, Mountain View, CA 94043"
+  - send: "Here's exactly what I want to order:\n- Whispering Angel Côtes de Provence Rosé 750ml — qty 2\n- Cloudy Bay Sauvignon Blanc 750ml — qty 1\n- Rombauer Carneros Chardonnay 750ml — qty 1\n- Ice Bag — qty 3"
+    expect:
+      contains: ["2x Château d'Esclans Whispering Angel Côtes de Provence Rosé - 750 ML", "Rombauer Carneros Chardonnay - 750 ML", "3x Ice Bag"]
+      not_contains: ["1.5 L", "qty 2", "qty 3"]
+      log_contains: ["[list-qty]", "[list-build] 4 list line(s) built in code (no model decision): 2 x Whispering Angel"]
+      log_not_contains: ["is an amount (750 mL), not a count"]

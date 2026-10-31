@@ -40,9 +40,13 @@ function parseRequest(text, onHand) {
       part = part.replace(/\([^)]*\)/g, m0 => /^\(\s*or\b/i.test(m0) ? '' : ' ' + m0.slice(1, -1) + ' ').trim();
       const qm = part.match(/^\s*(\d+)\s*[x×]\s*/i);
       // A trailing count too: "Tito's 750ml x 2" (Oct 15 nightly: read as 750 mL of Tito's -> 1 bottle).
-      const qt = qm ? null : part.match(/(?<!\d)\s[x×]\s*(\d{1,4})\s*$/i);   // never a pack "12 x 12"
+      // "Whispering Angel 750ml — qty 2" / "qty: 2" / "quantity 2" too (F-0098, Oct 28 claude.ai: the count stayed in the
+      // name, the 750ml was read as an amount -> 1x the 1.5 L).
+      const qt = qm ? null : part.match(/(?<!\d)\s[x×]\s*(\d{1,4})\s*$/i)   // never a pack "12 x 12"
+        || part.match(/(?:\s*[-–—,:]\s*|\s+)\b(?:qty|quantity)\b\.?\s*[:=]?\s*(\d{1,4})\s*$/i);
       let qty = qm ? +qm[1] : qt ? +qt[1] : null;
       let rest = qm ? part.slice(qm[0].length) : qt ? part.slice(0, qt.index).trim() : part;
+      if (qt && /qty|quantity/i.test(qt[0])) console.log('[list-qty] "' + part.trim() + '" -> ' + qty + ' x ' + rest);
       const isCase = /\bcase\b/i.test(rest);
       if (qty == null) qty = 1;
       const pack = /\b(\d+)\s*-?\s*packs?\b/i.test(rest) ? +rest.match(/\b(\d+)\s*-?\s*packs?\b/i)[1] : (isCase ? 24 : 1);
