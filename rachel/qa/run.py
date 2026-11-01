@@ -339,6 +339,12 @@ def run_scenario(sc, verbose, parallel=False):
     session = f"qa-{name}-{int(time.time())}"
     say(f"\n▶ {name}  [{transport if transport != 'http' else fmt}]")
     replies = []; failures = []; vars_ = {}
+    # setup_internal: [{path, body}] posted to the server before the turns ({email} / {session} filled) — state another
+    # service would have created (e.g. the connector's /internal/proposal-emailed record, F-0122).
+    for su in sc.get("setup_internal", []) or []:
+        su = _fill(su, {"email": email, "session": session})
+        try: httpx.post(RACHEL[:-len("/chat")] + su["path"], json=su.get("body", {}), timeout=30)
+        except Exception as e: failures.append({"turn": 0, "send": "", "fails": [f"setup_internal {su.get('path')}: {e}"], "reply": ""})
     for i, turn in enumerate(sc["turns"], 1):
         turn = _fill(turn, vars_)
         text = turn.get("send", ""); images = load_image(turn["image"]) if turn.get("image") else None

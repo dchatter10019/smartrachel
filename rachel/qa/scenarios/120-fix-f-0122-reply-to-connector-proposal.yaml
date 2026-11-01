@@ -1,0 +1,21 @@
+name: fix-f-0122-reply-to-connector-proposal
+fresh: true
+tags: [email]
+# F-0122 (Oct 30, DC): claude.ai emailed "Your Bevvi proposal – withatwist" (connector send_to). DC replied "Can you take
+# the address out and resend the proposal" — a new email session with no quote, so Rachel asked for a delivery address
+# (twice). The connector now records each emailed proposal; a reply from a recipient with the same subject loads it.
+format: plain
+context: {email_subject: "Re: Your Bevvi proposal – withatwist", user_name: "QA Tester"}
+setup_internal:
+  - path: /internal/proposal-emailed
+    body: {pdf: "bevvi-proposal-withatwist-2026-10-30-bhgdg5.pdf", subject: "Your Bevvi proposal – withatwist", to: ["{email}"], caller: "{email}", client_name: "withatwist"}
+turns:
+  - send: "Can you take the address out and resend the proposal"
+    expect:
+      contains: ["21 or older"]
+      log_contains: ["[proposal-thread] loaded bevvi-proposal-withatwist-2026-10-30-bhgdg5.pdf"]
+  - send: "Yes"
+    expect:
+      contains: ["delivery address is left off the proposal"]
+      not_contains: ["street address", "To deliver, I need"]
+      pdf_not_contains: ["15188 Park"]

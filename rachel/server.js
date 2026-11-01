@@ -2103,6 +2103,29 @@ app.post('/chat', async (req, res) => {
       saveFlowState();
     }
   } catch (e) { console.log('[original-request] error: ' + e.message); }
+  // A reply to / forward of a proposal the CONNECTOR emailed (F-0122): this email thread has no quote of its own, so load
+  // that PDF's lines, client, date, fees and delivery address — "take the address out and resend" then edits it. (Oct 30:
+  // the thread started empty and Rachel asked DC for a delivery address twice.) Only the email's sender who received it.
+  try {
+    const stPT = getState(sessionKey);
+    const isEmailPT = /^email-/.test(String(sessionKey)) || !!(context && context.email_subject);
+    if (isEmailPT && !stPT.lastLineItems && !stPT.lastProposalUrl && !stPT.proposalThreadChecked && !/^__/.test(String(message || ''))) {
+      stPT.proposalThreadChecked = true;
+      const PT = require('./proposal-threads.js');
+      const hit = PT.find({ session_id: sessionKey, sender: email, subject: context && context.email_subject });
+      if (hit) {
+        let prop = null;
+        try { prop = JSON.parse(fs.readFileSync(path.join('/home/ubuntu/logs/proposal-items', path.basename(hit.pdf) + '.json'), 'utf8')); } catch (e) {}
+        if (prop && Array.isArray(prop.line_items) && prop.line_items.length) {
+          loadProposalInto(stPT, prop, prop.line_items, sessionKey);
+          const ad = !stPT.address && PT.addressFromNotes(prop.notes);
+          if (ad) { stPT.address = ad.address; stPT.zip = ad.zip; stPT.addrConfirmed = true; if (stPT.step === 'addr_new' || stPT.step === 'addr') stPT.step = 'ready'; }
+          console.log('[proposal-thread] loaded ' + hit.pdf + ' (' + prop.line_items.length + ' line(s), client ' + JSON.stringify(prop.client_name || '') + ') — ' + hit.why + (ad ? ' | address ' + JSON.stringify(ad.address) : ' | no address in its notes'));
+        } else console.log('[proposal-thread] ' + hit.pdf + ' matched (' + hit.why + ') but its saved lines are missing — not loaded');
+      }
+      saveFlowState();
+    }
+  } catch (e) { console.log('[proposal-thread] error: ' + e.message); }
   // EVENT LOG (events.js): one line per turn to logs/events.jsonl. Installed before the other reply
   // wrappers so it sees the final text; state_in is taken after the idle reset.
   {
@@ -6648,6 +6671,31 @@ app.post('/internal/age-status', (req, res) => {
     refused: !!(st.ageRefusedAt && Date.now() - st.ageRefusedAt < 24 * 3600 * 1000) });
 });
 
+// A proposal PDF's saved lines (+ its fees, client, date, link) become the session's quote.
+function loadProposalInto(st, prop, line_items, session_id) {
+  // The fees saved with that PDF (tax / service / tip / delivery the customer set) hold for the session's next proposals.
+  if (prop && prop.fees) {
+    const fa = feeArgs(prop.fees);
+    if (Object.keys(fa).length || prop.fees.tax_exempt) {
+      st.proposalOpts = Object.assign({}, st.proposalOpts || {}, fa, { tax_exempt: !!prop.fees.tax_exempt }); st.taxExempt = !!prop.fees.tax_exempt;
+      st.eventParams = Object.assign({}, st.eventParams || {}, { proposalOpts: st.proposalOpts });
+      console.log('[internal] session-basket: ' + session_id + ' proposal fees from ' + prop.pdf + ': ' + JSON.stringify(fa));
+    }
+  }
+  if (prop) { st.lastProposalUrl = require('./generate-proposal.js').proposalUrl(prop.pdf); if (prop.client_name) st.savedClientName = prop.client_name; if (prop.event_date) st.savedEventDate = prop.event_date; }
+  st.lastLineItems = JSON.stringify(line_items); st.pendingSubstitutes = []; st.pendingAddOffer = null; st.pendingQtyFor = null; st.lastCta = null;
+}
+
+// rachel-mcp: a proposal the connector EMAILED (send_to) -> proposal-threads.js, so a reply to it finds its quote (F-0122).
+app.post('/internal/proposal-emailed', (req, res) => {
+  try {
+    const row = require('./proposal-threads.js').record(req.body || {});
+    if (!row) return res.status(400).json({ ok: false, error: 'pdf required' });
+    console.log('[proposal-thread] recorded ' + row.pdf + ' | ' + JSON.stringify(row.subject) + ' to ' + row.to.join(', ') + (row.thread_id ? ' | thread ' + row.thread_id : ''));
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 app.post('/internal/session-basket', async (req, res) => {
   const { session_id, sent_text, from_proposal } = req.body || {};
   let line_items = req.body && req.body.line_items, prop = null;
@@ -6670,17 +6718,7 @@ app.post('/internal/session-basket', async (req, res) => {
   // address + zip: a corrected delivery address (Oct 13: Sean's NYC quote sat in a session with his Boston address).
   const addrIn = req.body && req.body.address, zipIn = req.body && req.body.zip;
   if (addrIn && /^\d{5}$/.test(String(zipIn || ''))) { console.log('[internal] session-basket: ' + session_id + ' address ' + JSON.stringify(st.address) + ' -> ' + JSON.stringify(addrIn)); st.address = String(addrIn); st.zip = String(zipIn); st.addrConfirmed = true; st.geocoded = null; }
-  // The fees saved with that PDF (tax / service / tip / delivery the customer set) hold for the session's next proposals.
-  if (prop && prop.fees) {
-    const fa = feeArgs(prop.fees);
-    if (Object.keys(fa).length || prop.fees.tax_exempt) {
-      st.proposalOpts = Object.assign({}, st.proposalOpts || {}, fa, { tax_exempt: !!prop.fees.tax_exempt }); st.taxExempt = !!prop.fees.tax_exempt;
-      st.eventParams = Object.assign({}, st.eventParams || {}, { proposalOpts: st.proposalOpts });
-      console.log('[internal] session-basket: ' + session_id + ' proposal fees from ' + prop.pdf + ': ' + JSON.stringify(fa));
-    }
-  }
-  if (prop) { st.lastProposalUrl = require('./generate-proposal.js').proposalUrl(prop.pdf); if (prop.client_name) st.savedClientName = prop.client_name; if (prop.event_date) st.savedEventDate = prop.event_date; }
-  st.lastLineItems = JSON.stringify(line_items); st.pendingSubstitutes = []; st.pendingAddOffer = null; st.pendingQtyFor = null; st.lastCta = null;
+  loadProposalInto(st, prop, line_items, session_id);
   if (!sessions[session_id]) sessions[session_id] = [];
   if (sent_text) sessions[session_id].push({ role: 'assistant', content: String(sent_text) });
   saveFlowState();

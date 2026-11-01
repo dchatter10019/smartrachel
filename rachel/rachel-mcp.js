@@ -294,6 +294,11 @@ async function emailProposal(input, pdf, callerEmail) {
     const id = await require('./email-utils.js').sendEmailWithAttachment({ to: r.to, cc: r.cc, bcc: PE.BCC, subject, body,
       attachment: { filename: pdf.filename, path: pdfPath, contentType: 'application/pdf' } });
     console.log('[rachel-mcp] proposal emailed — to ' + r.to.join(', ') + (r.cc.length ? ' cc ' + r.cc.join(', ') : '') + ' bcc ' + PE.BCC.join(', ') + ' | ' + subject + ' | ' + pdf.filename + ' | gmail id ' + id + ' — caller ' + who);
+    // A reply to this email opens a new Rachel email session: tell Rachel which PDF it was so that session starts
+    // with this quote (F-0122: "take the address out and resend the proposal" got "I need a street address").
+    fetch('http://127.0.0.1:3500/internal/proposal-emailed', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pdf: pdf.filename, thread_id: id || '', subject, to: r.to, cc: r.cc, caller: who, client_name: input.client_name || '' }) })
+      .catch(e => console.log('[rachel-mcp] proposal thread NOT recorded — ' + e.message));
     return Object.assign(res, { emailed: true, sent_to: r.to.concat(r.cc), email_error: why });
   } catch (e) {
     console.log('[rachel-mcp] proposal email FAILED — ' + e.message + ' — to ' + r.to.join(', '));
