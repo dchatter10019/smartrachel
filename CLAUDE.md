@@ -432,8 +432,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - Events: a request mixing drink types asks "what will your guests drink most?" (server.js parseServingMix)
   -> eventParams.serving_mix -> buildPackage serving_mix (menu_build and cocktail custom_list). Drinks per
   guest = rule of thumb (2 first hour + 1/hour). Quantities use real bottle sizes; spirit TYPES follow
-  the event size (Oct 21, DC — Voiceflow parity): under 60 target drinks 3 (tequila, vodka, bourbon), under 100 4 (+ gin),
-  else the full bar of 5, stated (never an offer to trim); the customer's own spirit list is never trimmed; "heavy on the
+  the SPIRIT drinks needed (DC, Nov 9; was by target drinks, Oct 21 Voiceflow parity): up to 16 spirit drinks 2 (tequila,
+  vodka), up to 48 3 (+ bourbon), up to 80 4 (+ gin), else the full bar of 5, stated (never an offer to trim); the customer's own spirit list is never trimmed; "heavy on the
   spirits" with 20+ guests = 5 types x 2. Packages spend toward the budget: no downsell,
   price-tier critic notes are dropped (rachel.js), prompt SPEND-THE-BUDGET rule. Every menu_build logs a supply check (OK/FAILED).
   "just/only beer + wine", "no liquor" set the other categories to 0%. A held PRODUCT LIST + guest count answered
@@ -536,8 +536,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   stripModelDrinkClaims). A basket change after the build rewrites the drinks sentence + WINE heading from the live basket
   (the recompute was never shown before: the replyNote wrapper runs first); eventFacts cleared with the cart. "no
   champagne needed" is not a mixer decline nor a no to checkout (filler-only after "no"). The mixers question is not asked
-  again once a build settled mixers (state.mixersSettled). Still DC's rule: 3 spirit types under 60 target drinks, one
-  bottle each, so a 15-guest bar shows ~6 drinks per person. Scenarios 121, 122 (plain); qa/unit/event-intake-nov9.test.js.
+  again once a build settled mixers (state.mixersSettled). Spirit types now follow the spirit drinks (2 types for this bar ->
+  ~5 drinks per person; ~6 at "4 a person"). Scenarios 121, 122 (plain); qa/unit/event-intake-nov9.test.js.
 - Event ceilings + mixers (DC, Oct 7: "you are the expert, make it easy, not too many back and forth"; claude.ai: 30
   guests / $4,000 / "mostly spirits mixed with coke and oj" got Opus One $1,100, Clase Azul, Weller — targets were $407 a
   spirit, $204 a wine — no Coke/OJ, and Claude listed changes to approve). rachel/event-ceiling.js: per-bottle ceilings for

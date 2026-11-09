@@ -1819,12 +1819,16 @@ async function buildPackage(iv) {
     // list (spirit_types) is never trimmed. Was: always the full bar of 5 (Sep 29).
     var spiritsHeavy=/^spirits(>|$)/.test(mixBias) && guests>=20;   // from the customer's words (no % split) — also when the serving mix carries it
     if (!askedSpirits.length && split.spirits>0) {
-      var typeFloor=spiritsHeavy?5:(totalDrinks>=100?5:(totalDrinks>=60?4:3));
+      // Nov 9 (DC: "I like the new change"): the number of types follows the SPIRIT drinks needed, not the whole event —
+      // one bottle per type pours ~16, so a 15-guest even-mix bar (15 spirit drinks) got 3 bottles (~48 drinks) and showed
+      // ~6 drinks per person; "4 a person" (60 target) added a 4th. Up to 16 spirit drinks 2 types, up to 48 3, up to 80 4,
+      // else 5. Was by target drinks: under 60 3, under 100 4, else 5 (Oct 21, Voiceflow v2.7.18).
+      var typeFloor=spiritsHeavy?5:(spiritDrinks<=16?2:(spiritDrinks<=48?3:(spiritDrinks<=80?4:5)));
       var nTypes=Math.min(5,Math.max(typeFloor,Math.min(5,rawSB)));
       if (nTypes<5) {
         var keepT=["tequila","vodka","bourbon","gin","rum"].slice(0,nTypes);
         spiritTypes2=spiritTypes2.filter(function(t){return keepT.indexOf(t)>=0;});
-        console.log('[buildPackage] spirit types for '+totalDrinks+' target drinks: '+spiritTypes2.join(', ')+' ('+nTypes+' of 5)');
+        console.log('[buildPackage] spirit types for '+spiritDrinks+' spirit drinks ('+totalDrinks+' target drinks): '+spiritTypes2.join(', ')+' ('+nTypes+' of 5)');
       }
     }
     var spiritBottles=split.spirits>0?Math.max(rawSB,spiritTypes2.length,spiritsHeavy?10:0):0;   // one bottle per spirit type at least

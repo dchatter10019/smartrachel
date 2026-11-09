@@ -17,10 +17,10 @@ turns:
   - send: "about even, 2 hours"
     expect:
       contains: ["Product total", "Mi Campo"]
-      # 15 guests x 3 drinks = 45: wine 15, one 24-pack, one bottle each of the 3-type bar (DC's Oct 21 rule) ~ 5-6 a person.
-      matches: "(?i)about [3-6] drinks per person"
+      # 15 guests x 3 drinks = 45: wine 15, one 24-pack, 2 spirit types for 15 spirit drinks (Nov 9) ~ 4-5 a person.
+      matches: "(?i)about [3-5] drinks per person"
       not_matches: "(?i)cidre|cider|\\b375 ?ml|1\\.75 ?l|drinks per person[\\s\\S]*drinks per person|like to add mixers"
-      log_contains: ["[menu] event length in the serving-mix answer", "[bottle-size] the customer asked for 750 mL", "[mixers] \"mixers\" asked for, none named", "[menu_build] mixer", "spirit types for 45 target drinks: vodka, bourbon, tequila"]
+      log_contains: ["[menu] event length in the serving-mix answer", "[bottle-size] the customer asked for 750 mL", "[mixers] \"mixers\" asked for, none named", "[menu_build] mixer", "spirit types for 15 spirit drinks (45 target drinks): vodka, tequila (2 of 5)"]
       log_not_contains: ["[buildPackage] spirits the customer asked for: tequila", "REFUSED menu_build"]
   - send: "can you reduce it to 4 drinks a person"
     expect:
