@@ -699,6 +699,13 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           // A price-tier concern from the critic is a downsell ("leans ultra-premium — rebuild at a moderate tier?")
           // and the goal is to spend the whole budget (DC, Sep 29). Dropped before the LLM sees it; other concerns
           // (wrong category, missing sparkling) stay.
+          // The quantities are the code's (rule of thumb, supply check): a critic's "too small / not enough for N guests" with
+          // the supply check OK is dropped (Nov 9, DC: "far too small for 15 guests" on 55 drinks for 45 needed became a
+          // downsell menu — raise the budget, cheaper wines, drop the spirits).
+          if (result.review_note && (saInput.intent === 'menu_build' || saInput.intent === 'custom_list') && /supply check OK/.test(String(result.supply_check || '')) && /\b(too (?:small|few|little|lean|light|thin)|insufficient|not enough|(?:lean|light|thin|tight|sparse) (?:side|coverage)|coverage|under[- ]?(?:supplied|stocked|sized)|more bottles|only \d+ bottles?|run out)\b/i.test(result.review_note)) {
+            console.log('[ShoppingAgent] review_note dropped (quantity concern — the supply check passed: ' + String(result.supply_check).slice(0, 90) + '): ' + String(result.review_note).slice(0, 120));
+            delete result.review_note; delete result.review_layer;
+          }
           if (result.review_note && (saInput.intent === 'menu_build' || saInput.intent === 'custom_list') && /\b(expensive|pricey|premium|luxur\w*|splurg\w*|costly|price|priced|pricing|tier|budget|cheaper|high[- ]end|overspend\w*|extravagan\w*)\b/i.test(result.review_note)) {
             console.log('[ShoppingAgent] review_note dropped (price concern — the budget is meant to be spent): ' + String(result.review_note).slice(0, 120));
             delete result.review_note; delete result.review_layer;
@@ -749,6 +756,9 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         if (result.full_bar_note) { console.log('[tool] full_bar_note withheld from the model — appended in code'); delete result.full_bar_note; }
         if (result.beer_note) { console.log('[tool] beer_note withheld from the model — appended in code'); delete result.beer_note; }
         if (result.mixers_note) { console.log('[tool] mixers_note withheld from the model — appended in code'); delete result.mixers_note; }
+        // The builder's own upgrade log ("Ruffino -> Château Gloria") is how the package was made, not news for the customer
+        // (Nov 9: "Note: the Ruffino ... was swapped to Château Gloria" under a package the customer had never seen).
+        if ((saInput.intent === 'menu_build' || saInput.intent === 'custom_list') && Array.isArray(result.swaps) && result.swaps.length) { console.log('[tool] ' + result.swaps.length + ' builder upgrade(s) withheld from the model (internal, not a customer change)'); delete result.swaps; }
         // total_drinks / drinks_per_person are the TARGET the builder sized for, not what the package delivers (Nov 9: the
         // model told the customer "about 3 drinks per person (45 total)" for a package that delivers ~6).
         if (result.total_drinks != null || result.drinks_per_person != null) { result.target_drinks_sized_for = { total: result.total_drinks, per_person: result.drinks_per_person, note: 'The planning target, NOT what the package delivers — never quote it to the customer.' }; delete result.total_drinks; delete result.drinks_per_person; }

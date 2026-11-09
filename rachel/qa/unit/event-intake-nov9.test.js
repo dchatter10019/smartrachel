@@ -12,6 +12,7 @@ const brief = 'Hi Rachel, I need an event package for a corporate event. Open ba
 const sp = t => (spiritTypesIn(t) || {}).types || null;
 eq('"Mi Campo for any tequila" is a brand preference, not a tequila-only bar', sp(brief), null);
 eq('"if there\'s tequila, Mi Campo" too', sp("if there's tequila make it Mi Campo"), null);
+eq('"if tequila is included, use Mi Campo tequila" too', sp('Requirements: if tequila is included, use Mi Campo tequila. All wine and spirits must be 750 ML bottles or larger'), null);
 eq('a preferred spirit joins the named ones', sp('for the tequila use Mi Campo, and a bourbon'), ['bourbon', 'tequila']);
 eq('"tequila bar" still narrows', sp('a tequila bar for 20'), ['tequila']);
 eq('750 mL or larger', minBottleMlIn(brief), 750);

@@ -1,0 +1,36 @@
+name: event-brief-bullets-no-downsell
+# Nov 9 (DC on Claude Code, connector rachel_chat), a bulleted brief. "if tequila is included, use Mi Campo tequila" made
+# the bar tequila-only (the second mention wasn't read as part of the condition); the reviewer's "far too small for 15
+# guests" (supply check OK: 55 drinks for 45) became a downsell menu (raise the budget / cheaper wines / drop spirits);
+# "Headcount: 15 people" got "I haven't done this one yet", which pushed the drinks sentence under the question.
+format: plain
+tags: [events]
+turns:
+  - send: reset
+  - send: |
+      Please build a drinks menu/package for an event:
+      - Delivery address: 132 West 32nd Street, New York, NY 10001
+      - Event date: Thursday, 11/12/2026
+      - Delivery time: before 12pm
+      - Menu: open bar including mixed drinks (spirits + mixers), beer, and wine
+      - Headcount: 15 people
+      - Budget: $27 per person ($405 total)
+      - Duration: 2 hours
+      Requirements: if tequila is included, use Mi Campo tequila. All wine and spirits must be 750 ML bottles or larger (no 187 ML or 375 ML).
+    expect: {contains: ["21"]}
+  - send: "yes"
+    expect: {contains: ["drink most"]}
+  - send: "about even"
+    expect:
+      contains: ["Product total", "Mi Campo"]
+      matches: "(?i)vodka"
+      not_matches: "(?i)haven.t done|increase the budget|lean side|trim categories|swap to more approachable|\\b(187|375) ?ml|cidre"
+      log_contains: ["spirit types for 15 spirit drinks (45 target drinks): vodka, tequila (2 of 5)", "[bottle-size] the customer asked for 750 mL"]
+      log_not_contains: ["[event-prefs] from the customer's words: spirits tequila", "[instructions] UNADDRESSED"]
+  - send: "create a pdf proposal"
+    expect: {matches: "(?i)client or company"}
+  - send: "Foodie For All"
+    expect:
+      matches: "(?i)bevvi-proposal-foodie-for-all-2026-11-12"
+      pdf_contains: ["Foodie For All", "Mi Campo", "November 12"]
+      pdf_not_contains: ["375", "187"]

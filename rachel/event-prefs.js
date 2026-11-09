@@ -24,7 +24,14 @@ function spiritTypesIn(text) {
   // Code: an open bar for 15 got only tequila).
   const ALT = ALL.map(k => SPIRITS[k].source.replace(/\\b/g, '')).join('|');
   const COND = new RegExp('\\b(?:for|if|when|whenever)\\s+(?:there\'?s\\s+|there\\s+is\\s+|you\\s+(?:use|include|add|pick)\\s+|we\\s+(?:have|get)\\s+)?(?:any|all|the|some)?\\s*(?:' + ALT + ')|\\bany\\s+(?:' + ALT + ')', 'g');
-  const pos = t.replace(NEG, ' ').replace(COND, ' ');
+  // The same spirit named again in that clause is part of the preference ("if tequila is included, use Mi Campo tequila" —
+  // Nov 9: the second mention made the bar tequila-only again).
+  const pos = t.replace(NEG, ' ').split(/[.;\n!?]+/).map(cl => {
+    const condK = ALL.filter(k => (cl.match(COND) || []).some(m => SPIRITS[k].test(m)));
+    let c = cl.replace(COND, ' ');
+    for (const k of condK) c = c.replace(new RegExp(SPIRITS[k].source, 'g'), ' ');
+    return c;
+  }).join('. ');
   // "mostly whiskey drinkers" / "mainly tequila" leans the bar, it doesn't shrink it to one spirit.
   const lean = new RegExp('\\b(mostly|mainly|primarily|mostly drinking|lots of|plenty of)\\s+(?:[a-z]+\\s+)?(?:' + ALL.map(k => SPIRITS[k].source.replace(/\\b/g, '')).join('|') + ')');
   if (lean.test(pos)) return excluded.size ? { types: ALL.filter(k => !excluded.has(k)), why: 'all but ' + [...excluded].join(', ') } : null;

@@ -59,8 +59,12 @@ function unaddressed(instrs, reply, before, after) {
   // An approval of a line is not a request to do something: "12x Fort Point KSA Kolsch -> good" (Sep 30, DC) got
   // "I haven't done this one yet ... Want me to go ahead?".
   const APPROVAL = /(?:->|→|:|=|-|—|\bis\b|\bare\b)\s*(?:good|ok(?:ay)?|fine|great|perfect|keep(?: it)?|approved|looks good|that'?s (?:good|fine)|yes|👍)\s*[.!]*\s*$/i;
+  // A field of an event brief ("Headcount: 15 people", "Budget: $27 per person", "Duration: 2 hours") is a fact the build
+  // used, not a task (Nov 9, DC: "I haven't done this one yet: • Headcount: 15 people" under the package).
+  const FIELD = /^\s*(?:[-•*]\s*)?(?:head ?count|guests?|guest count|number of (?:guests|people)|people|attendees|budget|duration|length|event (?:date|time|length)|date|delivery (?:time|date|address|window)|address|time|location|venue|occasion|event type|client|company)\s*:/i;
   return instrs.filter(instr => {
     if (APPROVAL.test(String(instr))) return false;
+    if (FIELD.test(String(instr))) return false;
     const kw = keywords(instr);
     if (!kw.length) return false;
     const num = (norm(instr).match(/\bto\s+(\d{1,3})\b|\b(\d{1,3})\s*(?:bottles?|x\b)/) || []).slice(1).find(Boolean);

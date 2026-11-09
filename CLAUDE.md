@@ -546,6 +546,12 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   /internal/new-conversation also clears the caller's saved basket (baskets.json key <email>:plain) and L1 cache.
   "Mixed drinks" is not a cocktail menu (no "which cocktails?"; the mix question says "mixed drinks") and gets the standard
   mixers like "mixers". A second build in one turn replaces the drinks sentence (it showed twice). Scenario 123.
+- Bulleted event brief (Nov 9, DC on Claude Code): "if tequila is included, use Mi Campo tequila" — the second mention
+  made the bar tequila-only (event-prefs.js: a conditional spirit's other mentions in that clause are conditional too); the
+  reviewer's "far too small for 15 guests" with the supply check OK became a downsell menu (rachel.js: a critic QUANTITY
+  concern is dropped when supply_check says OK, like price concerns); "Headcount: 15 people" got "I haven't done this one
+  yet" (instructions.js FIELD: brief field lines are facts, not tasks); the builder's upgrade log (result.swaps) is
+  withheld from the model ("Ruffino was swapped to Château Gloria" notes). Scenario 124.
 - Event ceilings + mixers (DC, Oct 7: "you are the expert, make it easy, not too many back and forth"; claude.ai: 30
   guests / $4,000 / "mostly spirits mixed with coke and oj" got Opus One $1,100, Clase Azul, Weller — targets were $407 a
   spirit, $204 a wine — no Coke/OJ, and Claude listed changes to approve). rachel/event-ceiling.js: per-bottle ceilings for
