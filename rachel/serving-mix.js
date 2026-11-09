@@ -91,7 +91,9 @@ function knownCocktails() {
 function cocktailsUnnamed(text) {
   // The customer's own words only: an item line ("3 x Jack Daniel's & Coca-Cola Cocktail 4-Pack") is a product, not a request
   const t = String(text || '').split('\n').filter(l => !/^\s*[-•*]?\s*\d+\s*(?:x|×)\s*\S/i.test(l)).join('\n');
-  if (!/\b(cocktails?|mixed drinks?)\b/i.test(t)) return false;
+  // "Mixed drinks" is spirits + mixers (highballs; mixers.js), not a cocktail menu — only the word "cocktails" asks which
+  // (Nov 9, DC: "Open bar to include mixed drinks, beer, & wine" got "which cocktails would you like?").
+  if (!/\bcocktails?\b/i.test(t)) return false;
   if (/\b(cocktails?|mixed drinks?)\s*(?::|—|\(|-\s|like\b|such as\b|e\.g\.|including\b|namely\b)/i.test(t)) return false;
   return !knownCocktails().some(n => new RegExp('\\b' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s*&\s*/g, '\\s*(?:&|and)\\s*') + 's?\\b', 'i').test(t));
 }

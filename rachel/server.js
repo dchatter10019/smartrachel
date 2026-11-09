@@ -1459,13 +1459,26 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       // + drinks per person (package-facts.js, DC Oct 21): "This package delivers about N drinks per person for your G
       // guests over H hours (about T drinks total)." — with EVERY package, in code; the model never states its own figure.
       try { const notes = [saResult && saResult.full_bar_note, saResult && saResult.beer_note && String(saResult.beer_note).replace(/\s*Say this in one plain line.*$/, ''), saResult && saResult.mixers_note, saResult && saResult.drinks_statement].filter(Boolean);
-        if (notes.length) { const stRN = getState(sessionKey); stRN.replyNote = (stRN.replyNote ? stRN.replyNote + ' ' : '') + notes.join(' '); }   // after a note set earlier this turn ("Left out, ..."), never over it
+        // A second build in the same turn replaces the first one's drinks sentence and never repeats a note (Nov 9: the
+        // sentence appeared twice when the model built twice).
+        if (notes.length) { const stRN = getState(sessionKey); let prevN = String(stRN.replyNote || '');
+          if (saResult && saResult.drinks_statement) prevN = prevN.replace(/This package delivers about \d+ drinks per person for your \d+ guests(?: over [\d.]+ hours?)? \(about \d+ drinks total\)\.\s*/g, '');
+          const addN = notes.filter(n => prevN.indexOf(n) < 0);
+          stRN.replyNote = ((prevN.trim() ? prevN.trim() + ' ' : '') + addN.join(' ')).trim() || null; }   // after a note set earlier this turn ("Left out, ..."), never over it
         if (saResult && (saResult.drinks_statement || saResult.wine_heading)) {
           const stF = getState(sessionKey);
           stF.eventFacts = { guests: saInput && saInput.guests, hours: saInput && saInput.hours, dpp: saInput && saInput.drinks_per_person, target: saResult.total_drinks,
             statement: saResult.drinks_statement || '', why: saResult.why_drinks_statement || '', wineHeading: saResult.wine_heading || '', key: basketKeyOf(saResult.line_items) };
           stF.factsBuiltTurn = true;
         } } catch (e) {}
+      // A proposal asked for with the brief ([proposal] event brief with no package yet): the package is built, so the
+      // flow starts now at the client step — the next message is the client name, the date from the brief.
+      try { const stPA = getState(sessionKey); if (stPA.proposalAfterBuild && Date.now() - (stPA.proposalAfterBuild.at || 0) < 30 * 60 * 1000) {
+        const dPA = stPA.proposalAfterBuild.date; stPA.proposalAfterBuild = null;
+        stPA.proposalData = {}; stPA.proposalStep = 'client'; if (dPA) { stPA.savedEventDate = dPA; stPA.eventDateNone = false; }
+        stPA.replyTail = 'For the PDF proposal: what is the client or company name?';
+        console.log('[proposal] package built — proposal flow started at the client step' + (dPA ? ' (event date ' + dPA + ')' : ''));
+      } } catch (e) {}
       // The customer's mixers are already in the package (shopping-agent menu_build, mixers.js; DC Oct 7: fewer back-and-forths):
       // no "would you also like to add mixers...?" question after it — the follow-up is order or proposal.
       try { const li = typeof lineItems === 'string' ? JSON.parse(lineItems || '[]') : (lineItems || []); getState(sessionKey).mixersSettled = !!(li.some(x => x && x.category === 'mixer') || (saResult && saResult.mixers_not_carried)); if (li.some(x => x && x.category === 'mixer')) { getState(sessionKey).mixerAsked = true; console.log('[mixers] package has the customer\'s mixers — no mixers question'); }
@@ -2276,7 +2289,7 @@ app.post('/chat', async (req, res) => {
   }; }
   // A note produced while building this turn (e.g. the full-bar note) is added to the reply — before a
   // closing question ("Would you also like to add mixers…?") so that question stays last.
-  { const _jN = res.json.bind(res); res.json = (payload) => { try { const stN = flowState[sessionKey]; if (stN && stN.replyNote && payload && typeof payload.text === 'string') { console.log('[reply] appended note: ' + stN.replyNote.slice(0, 80)); const addNote = (t) => { if (/drinks per person/.test(stN.replyNote)) { const r = require('./package-facts.js').stripModelDrinkClaims(t); if (r.removed) { console.log('[package-facts] removed ' + r.removed + ' drinks-per-person claim(s) the model wrote itself — the code\'s figure is appended'); t = r.text; } } const paras = String(t || '').trimEnd().split(/\n\s*\n/); if (paras.length > 1 && /\?\s*\**\s*$/.test(paras[paras.length - 1])) paras.splice(paras.length - 1, 0, stN.replyNote); else paras.push(stN.replyNote); return paras.join('\n\n'); }; payload.text = addNote(payload.text); payload.response = addNote(payload.response || ''); stN.replyNote = null; saveFlowState(); } } catch (e) {} return _jN(payload); }; }
+  { const _jN = res.json.bind(res); res.json = (payload) => { try { const stN = flowState[sessionKey]; if (stN && stN.replyTail && payload && typeof payload.text === 'string') { const tail = stN.replyTail; stN.replyTail = null; const addTail = (t) => { const paras = String(t || '').trimEnd().split(/\n\s*\n/); if (paras.length > 1 && /\?\s*[*_]*\s*$/.test(paras[paras.length - 1])) paras.pop(); paras.push(tail); return paras.join('\n\n'); }; payload.text = addTail(payload.text); payload.response = addTail(payload.response || ''); console.log('[reply] closing question replaced: ' + tail); saveFlowState(); } if (stN && stN.replyNote && payload && typeof payload.text === 'string') { console.log('[reply] appended note: ' + stN.replyNote.slice(0, 80)); const addNote = (t) => { if (/drinks per person/.test(stN.replyNote)) { const r = require('./package-facts.js').stripModelDrinkClaims(t); if (r.removed) { console.log('[package-facts] removed ' + r.removed + ' drinks-per-person claim(s) the model wrote itself — the code\'s figure is appended'); t = r.text; } } const paras = String(t || '').trimEnd().split(/\n\s*\n/); if (paras.length > 1 && /\?\s*\**\s*$/.test(paras[paras.length - 1])) paras.splice(paras.length - 1, 0, stN.replyNote); else paras.push(stN.replyNote); return paras.join('\n\n'); }; payload.text = addNote(payload.text); payload.response = addNote(payload.response || ''); stN.replyNote = null; saveFlowState(); } } catch (e) {} return _jN(payload); }; }
 
   console.log(`[rachel] chat — session: ${sessionKey} messages: ${sessions[sessionKey].length} — "${message}"`);
 
@@ -2884,7 +2897,7 @@ app.post('/chat', async (req, res) => {
             // "red, hard seltzer or vodka?" from "Prisoner RED Blend", "HARD SELTZER Variety", "Tito's VODKA").
             const own = message.split('\n').filter(l => !/^\s*\d+\s*(?:x|×)?\s+\S/i.test(l)).join('\n');
             const said = k => { const mm = own.match(MIX_SYN[k]); return mm ? mm[0].toLowerCase() : (k === 'spirits' ? 'liquor' : k); };
-            const labels = cats.map(k => k === 'spirits' ? (/\bcocktails?|mixed drinks?\b/i.test(message) ? 'cocktails' : said('spirits')) : said(k));
+            const labels = cats.map(k => k === 'spirits' ? (/\bcocktails?\b/i.test(message) ? 'cocktails' : /\bmixed drinks?\b/i.test(message) ? 'mixed drinks' : said('spirits')) : said(k));
             state.pendingMenu = { message, cats, labels }; saveFlowState();
             console.log('[menu] mixed event (' + cats.join(' + ') + ') with no serving preference — asking what they\'ll drink most');
             const ask = 'Happy to put that together! To get the mix right — what will your guests drink most: ' + labels.slice(0, -1).join(', ') + ' or ' + labels[labels.length - 1] + '? (e.g. "mostly ' + labels[0] + '", "' + labels[0] + ' and ' + labels[1] + '", or "about even")'
@@ -5240,6 +5253,19 @@ app.post('/chat', async (req, res) => {
     const emailListAsk = (/^email-/.test(sessionKey) || !!(context && context.email_subject))
       && String(message).split(/\n/).filter(l => /^\s*(?:[-•*·]|\d+\s*(?:x|×)\s+\S)/i.test(l)).length >= 3;
     if (isProposalTrigger && emailListAsk && !state.proposalStep) { console.log('[proposal] email with its own item list — the quote path builds it (no step-by-step flow)'); isProposalTrigger = false; }
+    // An EVENT BRIEF that also asks for the proposal ("I need an event proposal/menu ... 15 people, 2 hours, $27 a person"),
+    // with no package in this conversation yet: the package is built FIRST, then the proposal flow asks the client (Nov 9,
+    // DC: the flow went straight to "client name?" and made the PDF from an earlier chat's saved basket).
+    if (isProposalTrigger && !state.proposalStep && !state.lastProposalUrl) {
+      let linesNow = 0; try { linesNow = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
+      const briefCats = eventDrinkCats(message), briefGuests = /\b\d+\s*(?:people|guests|ppl|persons|attendees|pax|heads?)\b|\bheadcount\s*[:\-]?\s*\d+/i.test(message);
+      if (!linesNow && briefCats && briefGuests) {
+        isProposalTrigger = false;
+        const dB = (require('./event-date.js').proposalRequestFields(message) || {}).date || require('./event-date.js').findEventDateIn(message) || '';
+        state.proposalAfterBuild = { date: dB, at: Date.now() }; saveFlowState();
+        console.log('[proposal] event brief with no package yet — building the package first, then the proposal' + (dB ? ' (event date ' + dB + ')' : ''));
+      }
+    }
     if (isProposalTrigger && !proposalTriggers.some(t => msgLower.includes(t))) console.log('[proposal] request recognised: ' + JSON.stringify(message).slice(0, 80));
     // An explicit proposal request ALWAYS restarts the flow. Previously it was ignored
     // whenever a step was already in progress (`&& !state.proposalStep`), so a request
@@ -6675,7 +6701,11 @@ app.post('/internal/new-conversation', (req, res) => {
   const old = flowState[session_id];
   const po = old && old.placedOrder;
   console.log('[session] new chat on the connector — fresh conversation for ' + session_id + (old && old.address ? ' (old address ' + JSON.stringify(old.address) + ' not reused)' : ''));
-  resetState(session_id, '');
+  // The caller's saved last basket (baskets.json) goes too — else the next proposal / checkout reloads the previous chat's
+  // cart (Nov 9, DC: a new Claude Code chat's proposal came out as the earlier chat's basket, 375 mL Chandon and all).
+  const emNC = (String(session_id).match(/^mcp-(.+?@[^-\s]+?\.[a-z]{2,})(?:-|$)/i) || [])[1] || '';
+  resetState(session_id, emNC);
+  if (emNC) { try { clearBasket(emNC, 'plain'); } catch (e) {} }
   if (po) getState(session_id).placedOrder = po;
   saveFlowState();
   res.json({ ok: true });

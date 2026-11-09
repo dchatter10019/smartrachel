@@ -1,0 +1,27 @@
+name: event-brief-proposal-builds-first
+# Nov 9 (DC on Claude Code, connector rachel_chat): "I need an event proposal/menu ... Open bar with mixed drinks, beer, and
+# wine. 15 people, 2 hours, budget $27 per person ... Mi Campo for any tequila and only 750ML or larger". The proposal flow
+# took the request first: "which cocktails?" (mixed drinks are not a cocktail menu), then "client name?", then a PDF made
+# from the PREVIOUS chat's saved basket (375 mL Chandon, Stella Cidre, tequila only) — nothing was built. Now: no cocktail
+# question, the package is built first, then the client is asked; the PDF is that package with the brief's date.
+format: plain
+tags: [events]
+turns:
+  - send: reset
+  - send: "Hi Rachel, I need an event proposal/menu. Address: 132 West 32nd Street, New York, NY 10001. Event date: Thursday 11/12. Delivery before 12pm. Open bar with mixed drinks, beer, and wine. 15 people, 2 hours, budget $27 per person ($405 total). Please use Mi Campo for any tequila and only 750ML or larger bottles for wine and spirits."
+    expect: {contains: ["21"]}
+  - send: "yes"
+    expect:
+      contains: ["drink most"]
+      not_matches: "(?i)how long is the event|client or company"
+  - send: "equal"
+    expect:
+      contains: ["Product total", "Mi Campo"]
+      matches: "(?i)client or company name\\?\\s*$"
+      not_matches: "(?i)which cocktails|cidre|cider|\\b375 ?ml|1\\.75 ?l|drinks per person[\\s\\S]*drinks per person"
+      log_contains: ["[proposal] event brief with no package yet", "[proposal] package built — proposal flow started at the client step", "[bottle-size] the customer asked for 750 mL", "[menu_build] mixer"]
+  - send: "Foodie For All"
+    expect:
+      matches: "(?i)proposals/bevvi-proposal-foodie-for-all-2026-11-12"
+      pdf_contains: ["Foodie For All", "Mi Campo", "November 12"]
+      pdf_not_contains: ["375", "Cidre", "Chandon Brut"]

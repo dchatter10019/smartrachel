@@ -36,7 +36,7 @@ function mixedDrinks(text) {
   return mixersIn(t).length > 0 || /\b(mixed\s+drinks?|mixers?|highballs?|rum\s+and|vodka\s+(sodas?|tonics?|cran)|gin\s+and\s+tonics?)\b/i.test(t);
 }
 
-// "Mixers" asked for without naming any ("open bar with mixed drinks (spirits + mixers)") -> a standard set, none of them a
+// "Mixers" / "mixed drinks" asked for without naming any ("open bar with mixed drinks (spirits + mixers)") -> a standard set, none of them a
 // soft drink the customer didn't name (mixer-guard.js): tonic, club soda, cranberry and orange juice. Nov 9 (DC, Claude
 // Code): the package had no mixers at all and the reply never said so. "no mixers" / "we have mixers" -> none.
 const DEFAULT_MIXERS = ['tonic', 'soda_water', 'cranberry', 'orange'];
@@ -44,7 +44,7 @@ function mixersFor(text) {
   const named = mixersIn(text).map(m => m.key);
   if (named.length) return { keys: named, defaulted: false };
   const t = clean(text).toLowerCase();
-  if (!/\bmixers?\b/.test(t)) return { keys: [], defaulted: false };
+  if (!/\bmixers?\b|\bmixed\s+drinks?\b/.test(t)) return { keys: [], defaulted: false };   // mixed drinks need mixers too (Nov 9)
   if (/\b(no|without|skip|not|don'?t need|(?:we|i)\s+(?:have|already have|bring|will bring|'ll bring))\s+(?:any\s+|the\s+|our\s+own\s+)?mixers?\b|\bmixers?\s+(?:on hand|covered|taken care of)\b/.test(t)) return { keys: [], defaulted: false };
   return { keys: DEFAULT_MIXERS.slice(), defaulted: true };
 }

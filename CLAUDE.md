@@ -538,6 +538,14 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   champagne needed" is not a mixer decline nor a no to checkout (filler-only after "no"). The mixers question is not asked
   again once a build settled mixers (state.mixersSettled). Spirit types now follow the spirit drinks (2 types for this bar ->
   ~5 drinks per person; ~6 at "4 a person"). Scenarios 121, 122 (plain); qa/unit/event-intake-nov9.test.js.
+- Event brief + proposal ask (Nov 9, DC on Claude Code: "I need an event proposal/menu ... 15 people, 2 hours, $27 a
+  person"): the proposal flow took it first ("client name?") and made the PDF from the PREVIOUS Claude chat's saved basket
+  (375 mL Chandon, Stella Cidre). Now: an event brief (drink types + a guest count) that asks for the proposal with no
+  package in the conversation builds the package first (state.proposalAfterBuild, [proposal] event brief with no package
+  yet), then the flow starts at the client step with the brief's date (state.replyTail replaces the closing question).
+  /internal/new-conversation also clears the caller's saved basket (baskets.json key <email>:plain) and L1 cache.
+  "Mixed drinks" is not a cocktail menu (no "which cocktails?"; the mix question says "mixed drinks") and gets the standard
+  mixers like "mixers". A second build in one turn replaces the drinks sentence (it showed twice). Scenario 123.
 - Event ceilings + mixers (DC, Oct 7: "you are the expert, make it easy, not too many back and forth"; claude.ai: 30
   guests / $4,000 / "mostly spirits mixed with coke and oj" got Opus One $1,100, Clase Azul, Weller — targets were $407 a
   spirit, $204 a wine — no Coke/OJ, and Claude listed changes to approve). rachel/event-ceiling.js: per-bottle ceilings for

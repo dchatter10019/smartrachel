@@ -18,6 +18,7 @@ eq('750 mL or larger', minBottleMlIn(brief), 750);
 eq('no half bottles', minBottleMlIn('wine for 30, no half bottles'), 750);
 eq('a plain size is not a minimum', minBottleMlIn('2 x Tito\'s 750ml'), 0);
 eq('unnamed mixers -> the standard set', mixersFor(brief), { keys: ['tonic', 'soda_water', 'cranberry', 'orange'], defaulted: true });
+eq('"mixed drinks" alone -> the standard set', mixersFor('Open bar with mixed drinks, beer, and wine').defaulted, true);
 eq('named mixers win', mixersFor('mixers: coke and oj').keys, ['cola', 'orange']);
 eq('"no mixers" -> none', mixersFor('no mixers, we have our own').keys, []);
 eq('"we have mixers" -> none', mixersFor('we have mixers already').keys, []);
