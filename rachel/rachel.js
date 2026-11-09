@@ -369,6 +369,33 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           }
           if (filled.length) console.log('[ShoppingAgent] filled missing params from persisted eventParams:', filled.join(', '));
         }
+        // GENERIC EVENT LIST -> menu_build (rule 6; Nov 9, staging replay of DC's Claude Code brief "Open bar with mixed drinks
+        // (spirits + mixers), beer, and wine for 15 people ... use Mi Campo for any tequila"): the LLM sometimes sent a
+        // custom_list of category words ("Vodka", "Gin", "Rum", "Red Wine") plus cocktail ingredients nobody asked for
+        // (Triple Sec, bitters) instead of the event package. A list made only of category words, with no spirit types /
+        // cocktails the customer named, is the standard package: menu_build, with the brand lines (Mi Campo) kept.
+        if (saInput.intent === 'custom_list' && saInput.guests && Array.isArray(saInput.named_products) && saInput.named_products.length) {
+          try {
+            const said = (String(customerSaid || '') + '\n' + String(customerMessage || '') + '\n' + String((sessionState && sessionState.originalRequest) || '') + '\n' + String((eventParams && eventParams.serving_mix_text) || '')).toLowerCase();
+            const core = n => String(n || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\(.*?\)/g, ' ').replace(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz|cl|liters?)\b/g, ' ').replace(/[-–—,]/g, ' ').replace(/\s+/g, ' ').trim();
+            const GENERIC = /^(?:(?:a|an|some|assorted|house|premium|mixing|classic)\s+)?(?:mi campo\s+)?(?:tequila|vodka|gin|rum|bourbon|whiske?y|scotch|rye|mezcal|red(?: wine)?|white(?: wine)?|wine|beer|lager|ipa|sparkling(?: wine)?|champagne|prosecco|rose(?: wine)?|hard seltzer|seltzer)(?:\s+(?:blanco|silver|reposado|white|light|dark|london dry|tequila|blanco tequila|bottles?|cases?|case))*$/;
+            const MOD = /^(?:triple sec|cointreau|orange liqueur|(?:angostura\s+)?(?:\w+\s+)?bitters|lime juice|lemon juice|simple syrup|ginger beer|tonic(?: water)?|club soda|soda water|cranberry juice|orange juice|(?:sweet|dry)\s+vermouth|margarita mix|sour mix|limes?|lemons?)$/;
+            const names = saInput.named_products.map(np => core(np && np.name));
+            const invented = names.filter(c => MOD.test(c) && said.indexOf(c.split(' ')[0]) < 0);
+            const allGeneric = names.every(c => GENERIC.test(c) || invented.indexOf(c) >= 0);
+            const EPg = require('./event-prefs.js'), SMg = require('./serving-mix.js');
+            const ownSpirits = EPg.spiritTypesIn(said), cocktailNamed = SMg.knownCocktails().some(n => said.indexOf(String(n).toLowerCase()) >= 0);
+            const listLines = String((sessionState && sessionState.originalRequest) || '').split('\n').filter(l => /^\s*[-•*]?\s*\d+\s*(?:x|×)\s*\S/i.test(l)).length;
+            if (allGeneric && !ownSpirits && !cocktailNamed && !listLines) {
+              const cats = [...new Set(saInput.named_products.map(np => String(np.category || '').toLowerCase()).filter(c => ['wine', 'beer', 'spirits'].includes(c)))];
+              const brands = saInput.named_products.filter(np => /\bmi campo\b/i.test(np.name || ''));
+              console.log('[event-reroute] custom_list of category words ' + JSON.stringify(names) + (invented.length ? ' (cocktail ingredients the customer never named: ' + invented.join(', ') + ')' : '') + ' -> menu_build, categories ' + cats.join(', '));
+              saInput.intent = 'menu_build';
+              if (cats.length) saInput.categories = cats;
+              if (brands.length) saInput.named_products = brands; else delete saInput.named_products;
+            }
+          } catch (e) { console.log('[event-reroute] error: ' + e.message); }
+        }
         // MIXERS + MIXED DRINKS (mixers.js, DC Oct 7) for Slack / email / WhatsApp event builds — read in code from what the
         // customer said ("mixed with coke and oj"): menu_build adds those mixers and keeps the spirits at mixing quality. The
         // connector does the same in rachel-mcp.js. Never from the LLM's own wording.
@@ -376,8 +403,10 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           try {
             const MX = require('./mixers.js');
             const said = String(customerSaid || '') + '\n' + String(customerMessage || '') + '\n' + String((sessionState && sessionState.originalRequest) || '') + '\n' + String((eventParams && eventParams.serving_mix_text) || '');   // the serving-mix answer is handled in code (server.js), not in the LLM's history
-            const mx = MX.mixersIn(said).map(m => m.key);
+            const mxF = MX.mixersFor(said), mx = mxF.keys;
             saInput.mixers = mx; saInput.mixed_drinks = MX.mixedDrinks(said);
+            if (mxF.defaulted) { saInput.mixers_default = true; console.log('[mixers] "mixers" asked for, none named — the standard set: ' + mx.join(', ')); }
+            { const mb = require('./bottle-size.js').minBottleMlIn(said); if (mb) { saInput.min_bottle_ml = mb; console.log('[bottle-size] the customer asked for ' + mb + ' mL or larger wine / spirit bottles'); } }
             if (mx.length || saInput.mixed_drinks) console.log('[mixers] from the customer\'s words: ' + (mx.join(', ') || 'none named') + (saInput.mixed_drinks ? ' — mixed drinks (mixing-grade spirits)' : ''));
           } catch (e) { console.log('[mixers] error: ' + e.message); }
           // Which spirits / which beer the customer asked for (event-prefs.js, Oct 9) — from this message, the original request
@@ -719,9 +748,15 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         // same trim offer twice. The model no longer sees it.
         if (result.full_bar_note) { console.log('[tool] full_bar_note withheld from the model — appended in code'); delete result.full_bar_note; }
         if (result.beer_note) { console.log('[tool] beer_note withheld from the model — appended in code'); delete result.beer_note; }
+        if (result.mixers_note) { console.log('[tool] mixers_note withheld from the model — appended in code'); delete result.mixers_note; }
+        // total_drinks / drinks_per_person are the TARGET the builder sized for, not what the package delivers (Nov 9: the
+        // model told the customer "about 3 drinks per person (45 total)" for a package that delivers ~6).
+        if (result.total_drinks != null || result.drinks_per_person != null) { result.target_drinks_sized_for = { total: result.total_drinks, per_person: result.drinks_per_person, note: 'The planning target, NOT what the package delivers — never quote it to the customer.' }; delete result.total_drinks; delete result.drinks_per_person; }
         // Drinks per person (package-facts.js): the sentence is appended in code with every package and the "why" answer is
         // given in code when asked (server.js) — the model never states its own figure (Voiceflow v2.7.18-19, Oct 21).
-        if (result.drinks_statement || result.why_drinks_statement) { console.log('[tool] drinks_statement withheld from the model — appended in code'); delete result.drinks_statement; delete result.why_drinks_statement; }
+        // The model still gets the FIGURE (Nov 9: withheld entirely, it wrote the target "about 3 drinks per person" next to
+        // the code's "about 5", kept believing 3, and answered "reduce it to 4" with "did you mean increase?").
+        if (result.drinks_statement || result.why_drinks_statement) { console.log('[tool] drinks_statement withheld from the model — appended in code'); result.drinks_fact = (result.drinks_statement ? 'Fact for you (do not repeat it — the reply gets this sentence appended in code): ' + result.drinks_statement : '') + ' Never state a drinks-per-person figure yourself.'; delete result.drinks_statement; delete result.why_drinks_statement; }
         // Track unavailable items via the tool's own structured field, not by
         // trying to parse the LLM's eventual free-text reply — this is what lets
         // a later deterministic "yes, find a substitute" handler in server.js
@@ -972,15 +1007,20 @@ RULES:
   // and basket handling), recorded in the history as an ordinary tool turn — no model call; the reply is written in code.
   if (scriptedToolCall) {
     const id = 'toolu_code_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-    console.log('[rachel] scripted ' + scriptedToolCall.name + ' call (no model call): ' + JSON.stringify(scriptedToolCall.input).slice(0, 300));
+    console.log('[rachel] scripted ' + scriptedToolCall.name + ' call (' + (scriptedToolCall.narrate ? 'decided in code, the model narrates' : 'no model call') + '): ' + JSON.stringify(scriptedToolCall.input).slice(0, 300));
     const result = await executeTool(scriptedToolCall.name, scriptedToolCall.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems, onShowBasket, eventParams, onUpdateQuantity, onOrderPlaced, sessionState, customerSaid);
     claudeMessages = [...claudeMessages,
       { role: 'assistant', content: [{ type: 'tool_use', id, name: scriptedToolCall.name, input: scriptedToolCall.input }] },
       { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: JSON.stringify(result) }] }];
     const ok = result && (result.success === true || result.success === 'true');
+    // narrate: the call is decided in code, the model writes the reply from its result (an event package rebuild —
+    // "make it 4 drinks a person", Nov 9: the model argued "it's already 3" instead of rebuilding).
+    if (scriptedToolCall.narrate && ok) { console.log('[rachel] scripted call done — the model narrates the result'); }
+    else {
     finalResponse = ok ? "Here's your list." : (result && /CATALOG_UNREACHABLE/.test(String(result.error || '')) ? "I couldn't reach the store's catalog just now — please send the list again in a moment." : "I couldn't build that list at this store just now — please send it again in a moment.");
     if (!ok) console.log('[rachel] scripted call did not succeed: ' + String((result && result.error) || 'no result').slice(0, 200));
     return { response: finalResponse, messages: claudeMessages };
+    }
   }
 
   while (iterations < MAX_ITERATIONS) {

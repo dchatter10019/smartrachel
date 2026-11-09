@@ -651,6 +651,7 @@ async function executeTool(name, input) {
       beer_max_price: input.beer_max_price || input.max_price || 0,
       seltzer_max_price: input.seltzer_max_price || 0,
       beer_pack_size: input.beer_pack_size || 0,
+      min_bottle_ml: input.min_bottle_ml || 0,     // rachel/bottle-size.js: "only 750 mL or larger" (Nov 9)
       spirit_types: input.spirit_types || null,   // rachel/event-prefs.js: the spirits the customer asked for (Oct 9)
       wine_lean: input.wine_lean || '',            // rachel/event-wishes.js: "more white than red" (Oct 21)
       mix_bias: input.mix_bias || '',              // rachel/event-wishes.js: "more beer than wine", "heavy on the spirits"
@@ -693,6 +694,10 @@ async function executeTool(name, input) {
       } catch (e) { console.error('[menu_build] mixers error:', e.message); }
     }
     if (mixersNotCarried.length) result.mixers_not_carried = mixersNotCarried.join(', ');
+    if (input.mixers_default && Array.isArray(input.mixers) && input.mixers.length) {   // "mixers" without names -> the standard set (mixers.js)
+      try { const MXd = require(RACHEL_DIR + '/mixers.js'), lbls = MXd.MIXERS.filter(m => input.mixers.includes(m.key) && !mixersNotCarried.includes(m.label)).map(m => m.key);
+        if (lbls.length) result.mixers_note = MXd.defaultMixersNote(lbls); } catch (e) {}
+    }
     const { eventCeiling } = require(RACHEL_DIR + '/event-ceiling.js');
     const mixedEv = !!(input.mixed_drinks || (input.mixers && input.mixers.length));
     // Price scaling: upgrade products to fill budget
@@ -857,6 +862,7 @@ async function executeTool(name, input) {
       success: true, kitchen: loc.kitchen, client: loc.client, store: friendlyStore(loc.kitchen),
       buyer_tier: buyer.tier, buyer_discount: buyer.discount,
       budget_note: budgetNote,
+      mixers_note: result.mixers_note || '',   // the standard mixers added for an unnamed "mixers" (appended in code on /chat)
       mixers_not_carried: result.mixers_not_carried ? 'This store does not carry: ' + result.mixers_not_carried + '. Say so in one plain line (the customer can pick those up locally) — no question.' : '',
       line_items: result.line_items,
       product_total: result.product_total,

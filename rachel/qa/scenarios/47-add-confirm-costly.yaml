@@ -11,15 +11,15 @@ turns:
   # Oct 22: the 2017 row is gone (Opus One 2018 1.5 L, same $1,099.99), and the classifier scores "I need an opus" add_item
   # 0.70 (< 0.8), so the LLM's search shows it; the search capture now holds it as the same offer ([product-discussed]
   # NOT captured) instead of putting it in the cart at 1x. Either route: offered, then the quantity adds it.
-  - send: "I need an opus"
+  # Nov 9: NYC now also lists Opus One 2022 750 mL ($577.49), so "an opus" is a two-option list — the size names the one
+  # costly bottle; the price may be written without the comma.
+  - send: "I need an opus one 1.5L"
     expect:
-      contains: ["$1,099.99"]
-      matches: "Opus One"
+      matches: "Opus One[\\s\\S]*\\$1,?099\\.99"
       not_contains: ["Added"]
   - send: "2"
     expect:
-      contains: ["$2,199.98"]
-      matches: "Added 2x \\*?Opus One"
+      matches: "(?s)(Added 2x \\*?Opus One.*\\$2,?199\\.98|\\$2,?199\\.98.*Added 2x \\*?Opus One)"
       log_contains: ["[add-confirm] accepted"]
   - send: "show me my basket"
     expect:

@@ -96,4 +96,10 @@ function cocktailsUnnamed(text) {
   return !knownCocktails().some(n => new RegExp('\\b' + n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s*&\s*/g, '\\s*(?:&|and)\\s*') + 's?\\b', 'i').test(t));
 }
 
-module.exports = { MIX_SYN, eventDrinkCats, parseServingMix, mixText, cocktailsUnnamed, knownCocktails, COCKTAIL_ASK };
+// How long the event is, in the customer's words (the same test rachel.js uses before an event build: never an assumed
+// duration). Nov 9 (DC, Claude Code): the serving-mix question went out, then a second turn asked "How long is the event?" —
+// now both are asked in one message, and an answer that carries both ("about even, 2 hours") is used as both.
+const DURATION_RE = /\b\d+(?:\.\d+)?\s*(?:-|to)?\s*(?:\d+(?:\.\d+)?\s*)?(?:hours?|hrs?|hr)\b|\b(?:an?|one|two|three|four|five|six|seven|eight|half)[\s-]+(?:an?\s+)?(?:hours?|hrs?|day)\b|\ball[- ](?:day|night|evening)\b|\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\s*(?:-|to|until|till|–)\s*\d{1,2}(?::\d\d)?\s*(?:am|pm)\b|\bdrinks?\s+(?:per|a|each)\s+(?:person|head|guest)/i;
+function durationIn(text) { const m = String(text || '').match(DURATION_RE); return m ? m[0] : ''; }
+
+module.exports = { MIX_SYN, eventDrinkCats, parseServingMix, mixText, cocktailsUnnamed, knownCocktails, COCKTAIL_ASK, DURATION_RE, durationIn };

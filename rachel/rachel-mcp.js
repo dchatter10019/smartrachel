@@ -677,7 +677,10 @@ async function runTool(name, input, callerEmail, apiKey) {
       // Mixers + mixed drinks from the customer's own words (mixers.js; Slack/email read them in rachel.js) — Oct 7: "mixed
       // with coke and oj" got no Coke/OJ and $500 sipping bottles, and Claude listed changes for the customer to approve.
       const MX = require('./mixers.js'), saidText = [input.request, input.serving_mix].filter(Boolean).join('\n');
-      const mixers = MX.mixersIn(saidText).map(m => m.key), mixed = MX.mixedDrinks(saidText);
+      const mixersF = MX.mixersFor(saidText), mixers = mixersF.keys, mixed = MX.mixedDrinks(saidText);
+      if (mixersF.defaulted) console.log('[rachel-mcp] build_package: "mixers" asked for, none named — the standard set: ' + mixers.join(', '));
+      const minBottleMl = require('./bottle-size.js').minBottleMlIn(saidText);
+      if (minBottleMl) console.log('[rachel-mcp] build_package: ' + minBottleMl + ' mL or larger wine / spirit bottles');
       if (mixers.length || mixed) console.log('[rachel-mcp] build_package mixers: ' + (mixers.join(', ') || 'none named') + (mixed ? ' — mixed drinks' : ''));
       // Which spirits / which beer (event-prefs.js; Oct 7: "bourbon and tequila bar", "Oktoberfest beer" were never passed).
       const EP = require('./event-prefs.js'), sp = cats.includes('spirits') ? EP.spiritTypesIn(saidText) : null, bs = cats.includes('beer') ? EP.beerStyleIn(saidText) : null;
@@ -686,7 +689,7 @@ async function runTool(name, input, callerEmail, apiKey) {
       if (wl || mb) console.log('[rachel-mcp] build_package wishes:' + (wl ? ' wine lean ' + wl : '') + (mb ? ' mix bias ' + mb : ''));
       if (sp || bs) console.log('[rachel-mcp] build_package asked for: ' + (sp ? 'spirits ' + sp.types.join(', ') + ' (' + sp.why + ')' : '') + (sp && bs ? ' · ' : '') + (bs ? 'beer ' + bs.label : ''));
       result = await callShoppingAgent('menu_build', {
-      mixers, mixed_drinks: mixed,
+      mixers, mixed_drinks: mixed, mixers_default: mixersF.defaulted || undefined, min_bottle_ml: minBottleMl || undefined,
       spirit_types: sp ? sp.types : undefined, beer_style: bs || undefined,
       wine_lean: wl || undefined, mix_bias: mb || undefined,
       guests: input.guests,
@@ -701,7 +704,7 @@ async function runTool(name, input, callerEmail, apiKey) {
     }
     // Rachel is the expert (DC, Oct 7): the client presents the package as built — it does not review it, list changes or
     // ask the customer to approve a rebuild ("A few things I'd change before ordering..." on a 30-guest package).
-    if (result && result.line_items) result.presentation = 'This is Rachel\'s finished expert package for this brief. Present it as-is: the items, quantities and totals, plus budget_note / mixers_not_carried / full_bar_note / beer_note as plain statements if present. Head the wine with wine_heading exactly as given, and always include drinks_statement word for word — never state any other drinks-per-person figure. Only if the customer asks why the package has that many drinks, answer with why_drinks_statement word for word and nothing else. Do not critique it, suggest changes, list alternatives or offer to rebuild it. End with ONE question: place the order, or get a PDF proposal? If the customer asks for a change, call rachel_build_package or rachel_chat with it.';
+    if (result && result.line_items) result.presentation = 'This is Rachel\'s finished expert package for this brief. Present it as-is: the items, quantities and totals, plus budget_note / mixers_note / mixers_not_carried / full_bar_note / beer_note as plain statements if present. Head the wine with wine_heading exactly as given, and always include drinks_statement word for word — never state any other drinks-per-person figure. Only if the customer asks why the package has that many drinks, answer with why_drinks_statement word for word and nothing else. Do not critique it, suggest changes, list alternatives or offer to rebuild it. End with ONE question: place the order, or get a PDF proposal? If the customer asks for a change, call rachel_build_package or rachel_chat with it.';
     // Internal fields stay internal: the reviewer's price-tier note and tier warning invite price commentary
     // (rachel.js drops them for Slack/email too), the rest is store plumbing.
     ['kitchen', 'client', 'buyer_discount', 'review_note', 'review_layer', 'tier_warning', 'preferred_brands', 'swaps', 'unavailable_qty']

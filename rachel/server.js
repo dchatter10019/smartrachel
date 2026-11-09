@@ -483,7 +483,7 @@ function resetState(sessionKey, email) {
 function clearCart(state, email, format, why) {
   let n = 0; try { n = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
   const was = String(state.lastLineItems || '').slice(0, 120);
-  state.lastLineItems = '[]'; state.pendingSubstitutes = []; state.unavailableQty = {}; state.pendingAddOffer = null; state.pendingQtyFor = null;
+  state.lastLineItems = '[]'; state.pendingSubstitutes = []; state.unavailableQty = {}; state.pendingAddOffer = null; state.pendingQtyFor = null; state.mixersSettled = false; state.eventFacts = null;
   state.shownOptions = null; state.proposalWithOptions = false; state.originalRequest = ''; state.onHand = []; state.onHandReleased = [];
   state.lastProposalUrl = ''; state.savedClientName = ''; state.savedEventDate = ''; state.eventDateNone = false;
   state.taxExempt = false; state.proposalHideAddress = false; state.proposalOpts = {}; state.eventParams = state.qa ? { qa: true } : {}; state.savedTipChoice = null;
@@ -975,7 +975,7 @@ function parseTip(raw) {
 // Keys are the package builder's categories: wine, beer (seltzer/cider count as beer),
 // spirits (liquor, cocktails, mixed drinks).
 // The parser lives in serving-mix.js, shared with the Rachel connector (rachel-mcp.js rachel_build_package).
-const { MIX_SYN, eventDrinkCats, parseServingMix, mixText, cocktailsUnnamed, COCKTAIL_ASK } = require('./serving-mix.js');
+const { MIX_SYN, eventDrinkCats, parseServingMix, mixText, cocktailsUnnamed, COCKTAIL_ASK, durationIn } = require('./serving-mix.js');
 // A product list + a guest count, with the serving mix known: the listed products are sized for the event
 // (rachel.js [list-scale]) — unless the customer says to keep the quantities. Sets eventParams.list_scale.
 function listScaleFor(state, reqMsg, answerMsg, got) {
@@ -1363,7 +1363,26 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       console.log('[list-build] ' + named.length + ' list line(s) built in code (no model decision): ' + named.map(n => n.qty + ' x ' + n.name).join('; '));
     }
   } catch (e) { console.log('[list-build] not used (' + e.message + ') — the LLM handles the list'); }
-  events.note({ handled_by: scriptedToolCall ? 'code' : 'llm' });   // event log: who wrote this turn's reply
+  // "Reduce it to 4 drinks a person" on an event package = the same package rebuilt at that rate, decided in code (Nov 9:
+  // the model answered "it's already about 3, no reduction needed" / "did you mean increase?" — it had quoted the target).
+  // The model still writes the reply from the result (narrate). A question ("why 6 drinks per person?") is not a change.
+  try {
+    const stD = getState(sessionKey), epD = stD.eventParams || {}, msgD = String(message || '').trim();
+    const mD = !scriptedToolCall && !onProposalGenerated && !alreadyConfirmed && stD.step === 'ready' && stD.zip && !stD.orderStep && !stD.proposalStep && epD.guests && epD.intent === 'menu_build'
+      ? msgD.match(/\b(\d+(?:\.\d+)?)\s*(?:drinks?|servings?)\s*(?:a|per|each|for each)\s*(?:person|guest|head|attendee)\b/i) : null;
+    const nD = mD ? parseFloat(mD[1]) : 0;
+    const changeD = /\b(make|reduce|lower|increase|raise|change|set|bump|cut|drop|scale|only|just|go (?:down|up)|instead)\b/i.test(msgD) && !/^\s*(why|how come|what)\b/i.test(msgD);
+    if (nD > 0 && nD <= 12 && changeD) {
+      let named = []; try { named = JSON.parse(epD.named_products || '[]'); } catch (e) {}
+      const inp = { intent: 'menu_build', zip: stD.zip, email: email || '', guests: epD.guests, drinks_per_person: nD, _paramChange: { drinks_per_person: nD } };
+      if (epD.budget) inp.budget = epD.budget;
+      if (epD.categories) inp.categories = epD.categories;
+      if (named.length) inp.named_products = named;
+      scriptedToolCall = { name: 'ShoppingAgent', input: inp, narrate: true };
+      console.log('[event-dpp] ' + nD + ' drinks per person asked — the package is rebuilt in code at that rate (guests ' + epD.guests + ', budget ' + (epD.budget || '?') + ')');
+    }
+  } catch (e) { console.log('[event-dpp] not used (' + e.message + ')'); }
+  events.note({ handled_by: scriptedToolCall ? (scriptedToolCall.narrate ? 'code+llm' : 'code') : 'llm' });   // event log: who wrote this turn's reply
   const messages = sessions[sessionKey] || [];
   let channelNote = getChannelNote(format);
   const stateForEmail = getState(sessionKey);
@@ -1439,7 +1458,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       // + the beer-style note (event-prefs.js; "This store has no Oktoberfest beers right now, so I picked German beers instead.")
       // + drinks per person (package-facts.js, DC Oct 21): "This package delivers about N drinks per person for your G
       // guests over H hours (about T drinks total)." — with EVERY package, in code; the model never states its own figure.
-      try { const notes = [saResult && saResult.full_bar_note, saResult && saResult.beer_note && String(saResult.beer_note).replace(/\s*Say this in one plain line.*$/, ''), saResult && saResult.drinks_statement].filter(Boolean);
+      try { const notes = [saResult && saResult.full_bar_note, saResult && saResult.beer_note && String(saResult.beer_note).replace(/\s*Say this in one plain line.*$/, ''), saResult && saResult.mixers_note, saResult && saResult.drinks_statement].filter(Boolean);
         if (notes.length) { const stRN = getState(sessionKey); stRN.replyNote = (stRN.replyNote ? stRN.replyNote + ' ' : '') + notes.join(' '); }   // after a note set earlier this turn ("Left out, ..."), never over it
         if (saResult && (saResult.drinks_statement || saResult.wine_heading)) {
           const stF = getState(sessionKey);
@@ -1449,9 +1468,9 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
         } } catch (e) {}
       // The customer's mixers are already in the package (shopping-agent menu_build, mixers.js; DC Oct 7: fewer back-and-forths):
       // no "would you also like to add mixers...?" question after it — the follow-up is order or proposal.
-      try { const li = typeof lineItems === 'string' ? JSON.parse(lineItems || '[]') : (lineItems || []); if (li.some(x => x && x.category === 'mixer')) { getState(sessionKey).mixerAsked = true; console.log('[mixers] package has the customer\'s mixers — no mixers question'); }
+      try { const li = typeof lineItems === 'string' ? JSON.parse(lineItems || '[]') : (lineItems || []); getState(sessionKey).mixersSettled = !!(li.some(x => x && x.category === 'mixer') || (saResult && saResult.mixers_not_carried)); if (li.some(x => x && x.category === 'mixer')) { getState(sessionKey).mixerAsked = true; console.log('[mixers] package has the customer\'s mixers — no mixers question'); }
         // Mixers named but not carried: the not-carried note already answers the topic (Oct 11 nightly: Coke missed, the question came back).
-        else if (saResult && saResult.mixers_not_carried) { getState(sessionKey).mixerAsked = true; console.log('[mixers] customer\'s mixers not carried here (said in the reply) — no mixers question'); } } catch (e) {}
+        else if (saResult && saResult.mixers_not_carried) { getState(sessionKey).mixerAsked = true; getState(sessionKey).mixersNotCarriedTurn = true; console.log('[mixers] customer\'s mixers not carried here (said in the reply) — no mixers question'); } } catch (e) {}
       // The totals of the latest build this turn, so the reply always shows them (see [reply] totals below).
       try { if (saResult && saResult.product_total) { getState(sessionKey).builtTotals = { pt: saResult.product_total, tax: saResult.estimated_tax, svc: saResult.estimated_service, tip: saResult.estimated_tip, del: saResult.delivery_fee, grand: saResult.estimated_grand_total, budget: saInput && saInput.budget, lineItems: saResult.line_items }; } } catch (e) {}
       // A successful build supersedes any prior "unavailable" state. Real bug: two
@@ -1499,6 +1518,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
           } else if (pc) {
             if (pc.guests) merged.guests = pc.guests;
             if (pc.hours) merged.hours = pc.hours;
+            if (pc.drinks_per_person) { merged.drinks_per_person = pc.drinks_per_person; delete merged.hours; }   // [event-dpp]: the rate replaces the duration
           }
           // Budget follows the latest explicit value (initial, or a customer change).
           if (isInitial || (pc && pc.budget)) { if (saInput.budget) merged.budget = saInput.budget; }
@@ -2220,17 +2240,30 @@ app.post('/chat', async (req, res) => {
         const PF = require('./package-facts.js');
         let items = []; try { items = JSON.parse(stP.lastLineItems || '[]'); } catch (e) {}
         const fixHeading = (t) => String(t || '').replace(/WINE\s*[—–-]\s*\d+\s*bottles?(?:\s*\([^)\n]*\))?/g, (m) => {
-          const h = (stP.factsBuiltTurn && stP.eventFacts && stP.eventFacts.wineHeading) || PF.wineHeading(items);
+          const h = (stP.factsBuiltTurn && stP.eventFacts && stP.eventFacts.key === basketKeyOf(items) && stP.eventFacts.wineHeading) || PF.wineHeading(items);   // a change after this turn's build (Nov 9: "no champagne") = the live basket
           if (h && h !== m) console.log('[package-facts] WINE heading "' + m + '" -> "' + h + '"');
           return h || m;
         });
         payload.text = fixHeading(payload.text); if (typeof payload.response === 'string') payload.response = fixHeading(payload.response);
         const ef = stP.eventFacts;
-        if (ef && !stP.factsBuiltTurn && items.length && basketKeyOf(items) !== ef.key && /\b\d+\s*x\s+\S/i.test(payload.text) && !/drinks per person/i.test(payload.text)) {
+        // The basket changed after the package was built (a later edit turn, or a build + "no champagne" removal in one turn):
+        // the drinks sentence is recomputed from the live basket and written into the reply HERE. This wrapper runs after the
+        // replyNote one (installed later = called first), so a note set here was never shown (Oct 21 - Nov 9), and a build's
+        // sentence already in the text was stale. Replaced when present, else added before a closing question.
+        if (ef && stP.eventParams && stP.eventParams.guests && items.length && basketKeyOf(items) !== ef.key && /\b\d+\s*x\s+\S/i.test(payload.text)) {
           const f = PF.packageFacts(items, { guests: ef.guests, hours: ef.hours, drinksPerPerson: ef.dpp, targetDrinks: ef.target });
           if (f.drinks_statement) {
             ef.statement = f.drinks_statement; ef.why = f.why_drinks_statement; ef.wineHeading = f.wine_heading; ef.key = basketKeyOf(items);
-            stP.replyNote = (stP.replyNote ? stP.replyNote + ' ' : '') + f.drinks_statement;
+            const CODE_S = /This package delivers about \d+ drinks per person for your \d+ guests(?: over [\d.]+ hours?)? \(about \d+ drinks total\)\./;
+            const put = (t) => {
+              t = String(t || '');
+              if (CODE_S.test(t)) return t.replace(CODE_S, f.drinks_statement);
+              t = PF.stripModelDrinkClaims(t).text;
+              const paras = t.trimEnd().split(/\n\s*\n/);
+              if (paras.length > 1 && /\?\s*[*_]*\s*$/.test(paras[paras.length - 1])) paras.splice(paras.length - 1, 0, f.drinks_statement); else paras.push(f.drinks_statement);
+              return paras.join('\n\n');
+            };
+            payload.text = put(payload.text); if (typeof payload.response === 'string') payload.response = put(payload.response);
             console.log('[package-facts] basket changed — drinks statement recomputed: ' + f.drinks_statement);
           }
         }
@@ -2243,7 +2276,7 @@ app.post('/chat', async (req, res) => {
   }; }
   // A note produced while building this turn (e.g. the full-bar note) is added to the reply — before a
   // closing question ("Would you also like to add mixers…?") so that question stays last.
-  { const _jN = res.json.bind(res); res.json = (payload) => { try { const stN = flowState[sessionKey]; if (stN && stN.replyNote && payload && typeof payload.text === 'string') { console.log('[reply] appended note: ' + stN.replyNote.slice(0, 80)); const addNote = (t) => { const paras = String(t || '').trimEnd().split(/\n\s*\n/); if (paras.length > 1 && /\?\s*\**\s*$/.test(paras[paras.length - 1])) paras.splice(paras.length - 1, 0, stN.replyNote); else paras.push(stN.replyNote); return paras.join('\n\n'); }; payload.text = addNote(payload.text); payload.response = addNote(payload.response || ''); stN.replyNote = null; saveFlowState(); } } catch (e) {} return _jN(payload); }; }
+  { const _jN = res.json.bind(res); res.json = (payload) => { try { const stN = flowState[sessionKey]; if (stN && stN.replyNote && payload && typeof payload.text === 'string') { console.log('[reply] appended note: ' + stN.replyNote.slice(0, 80)); const addNote = (t) => { if (/drinks per person/.test(stN.replyNote)) { const r = require('./package-facts.js').stripModelDrinkClaims(t); if (r.removed) { console.log('[package-facts] removed ' + r.removed + ' drinks-per-person claim(s) the model wrote itself — the code\'s figure is appended'); t = r.text; } } const paras = String(t || '').trimEnd().split(/\n\s*\n/); if (paras.length > 1 && /\?\s*\**\s*$/.test(paras[paras.length - 1])) paras.splice(paras.length - 1, 0, stN.replyNote); else paras.push(stN.replyNote); return paras.join('\n\n'); }; payload.text = addNote(payload.text); payload.response = addNote(payload.response || ''); stN.replyNote = null; saveFlowState(); } } catch (e) {} return _jN(payload); }; }
 
   console.log(`[rachel] chat — session: ${sessionKey} messages: ${sessions[sessionKey].length} — "${message}"`);
 
@@ -2307,6 +2340,7 @@ app.post('/chat', async (req, res) => {
           } else if (pc) {
             if (pc.guests) merged.guests = pc.guests;
             if (pc.hours) merged.hours = pc.hours;
+            if (pc.drinks_per_person) { merged.drinks_per_person = pc.drinks_per_person; delete merged.hours; }   // [event-dpp]: the rate replaces the duration
           }
           // Budget follows the latest explicit value (initial, or a customer change).
           if (isInitial || (pc && pc.budget)) { if (saInput.budget) merged.budget = saInput.budget; }
@@ -2810,7 +2844,9 @@ app.post('/chat', async (req, res) => {
           // (rachel.js [list-scale]: calculator quantities, left-out categories dropped) — unless it says to
           // keep the quantities. Real case (Sep 30, DC): "take the same ones listed but change the quantities".
           listScaleFor(state, pm.message, message, got);
-          message = pm.message; msgLower = message.toLowerCase().trim();
+          { const dur = durationIn(message); const answerMsg = message;
+            message = (dur && !durationIn(pm.message)) ? pm.message.trimEnd() + ' The event is ' + dur + ' long.' : pm.message;   // inline: a new line made instructions.js read it as a second request (the LLM then built a cocktail list) msgLower = message.toLowerCase().trim();
+            if (dur && !durationIn(pm.message)) console.log('[menu] event length in the serving-mix answer: ' + JSON.stringify(dur) + ' (' + JSON.stringify(answerMsg).slice(0, 60) + ')'); }
           // No percentages in this note: given numbers, the LLM put them in category_splits and
           // switched the builder into SPLIT mode (spirits dropped, reviewer blocked the build).
           context.order_change_note = state.eventParams.list_scale
@@ -2851,8 +2887,12 @@ app.post('/chat', async (req, res) => {
             const labels = cats.map(k => k === 'spirits' ? (/\bcocktails?|mixed drinks?\b/i.test(message) ? 'cocktails' : said('spirits')) : said(k));
             state.pendingMenu = { message, cats, labels }; saveFlowState();
             console.log('[menu] mixed event (' + cats.join(' + ') + ') with no serving preference — asking what they\'ll drink most');
-            const ask = 'Happy to put that together! To get the mix right — what will your guests drink most: ' + labels.slice(0, -1).join(', ') + ' or ' + labels[labels.length - 1] + '? (e.g. "mostly ' + labels[0] + '", "' + labels[0] + ' and ' + labels[1] + '", or "about even")';
-            return res.json({ text: ask, response: ask });
+            const ask = 'Happy to put that together! To get the mix right — what will your guests drink most: ' + labels.slice(0, -1).join(', ') + ' or ' + labels[labels.length - 1] + '? (e.g. "mostly ' + labels[0] + '", "' + labels[0] + ' and ' + labels[1] + '", or "about even")'
+            // No event length yet (and none from an earlier build): ask it in the same message — one back-and-forth, not two.
+            const askHours = !durationIn(message) && !(state.eventParams && (state.eventParams.hours || state.eventParams.drinks_per_person));
+            if (askHours) { state.pendingMenu.askedHours = true; saveFlowState(); console.log('[menu] no event length either — asking it with the serving mix'); }
+            const askFull = askHours ? ask + '\n\nAnd how long is the event? (e.g. 2 hours)' : ask;
+            return res.json({ text: askFull, response: askFull });
           }
         }
       }
@@ -3619,7 +3659,10 @@ app.post('/chat', async (req, res) => {
             // "would you also like to add (mixers,) water, soda, ice, or cups?" goes — the follow-up is order or proposal.
             try {
               const liM = JSON.parse((st && st.lastLineItems) || '[]');
-              if (liM.some(x => x && x.category === 'mixer') && /would you (?:also )?like to add[^?\n]*\b(?:water|soda|ice|cups)\b[^?\n]*\?/i.test(t)) {
+              // Also when this build's mixers aren't carried here (Nov 9: "this store doesn't carry tonic ... " then "Would you
+              // also like to add mixers, water, soda, ice, or cups?").
+              const mixNC = !!(st && (st.mixersNotCarriedTurn || st.mixersSettled)); if (st) st.mixersNotCarriedTurn = false;   // settled by this package's build: never asked again on a later edit turn
+              if ((liM.some(x => x && x.category === 'mixer') || mixNC) && /would you (?:also )?like to add[^?\n]*\b(?:water|soda|ice|cups)\b[^?\n]*\?/i.test(t)) {
                 t = t.replace(/[^\n.!?]*would you (?:also )?like to add[^?\n]*\b(?:water|soda|ice|cups)\b[^?\n]*\?[*_]*/i, '').replace(/\n{3,}/g, '\n\n').trimEnd();
                 console.log('[cta] removed the add-mixers/water/ice question — the package already has the customer\'s mixers');
               }
@@ -3725,7 +3768,10 @@ app.post('/chat', async (req, res) => {
       // Declined = an explicit no. Moving on ("show my basket", a new question) is not taken (cta_taken:
       // false, counted in the digest) but doesn't ban the CTA for the session — viewing the basket would
       // otherwise have killed the checkout offer for good (Sep 29 QA).
-      const said_no = !took && /^\s*(?:no|nope|nah|not (?:yet|now|right now)|later|maybe later|no thanks?|not really|i'?m good|all good|that'?s (?:it|all))\b/i.test(message);
+      // "no champagne needed" / "no beer" is a basket change, not a no to the offer (Nov 9): a "no" followed by more than
+      // filler words is never a decline.
+      const said_no = !took && /^\s*(?:no|nope|nah|not (?:yet|now|right now)|later|maybe later|no thanks?|not really|i'?m good|all good|that'?s (?:it|all))\b/i.test(message)
+        && !/^\s*(?:no|nope|nah)\b[\s,]+(?!thanks?\b|thank you\b|not\b|yet\b|i'?m\b|we'?re\b|that'?s\b|all\b|not now\b|maybe\b|later\b|good\b|need\b)[a-z]/i.test(message);
       console.log('[cta] previous ' + lc.id + ' ' + (took ? 'TAKEN' : said_no ? 'not taken — declined, not offered again this session' : 'not taken (customer moved on)') + ' — ' + JSON.stringify(message.slice(0, 60)));
       if (said_no) state.ctaDeclined = [...new Set([...(state.ctaDeclined || []), lc.id])];
       saveFlowState();
@@ -5572,7 +5618,12 @@ app.post('/chat', async (req, res) => {
       // means the customer is answering something else entirely and should fall
       // through to normal processing instead of being cut off here.
       const mixerMsgWordCount = mixerMsgLower.split(/\s+/).filter(Boolean).length;
-      if (mixerNoWords.some(w => mixerMsgLower === w || ((mixerMsgLower.startsWith(w + ' ') || mixerMsgLower.startsWith(w + ',')) && mixerMsgWordCount <= 4))) {
+      // The words after the "no" must only be filler ("no thanks", "no, that's it", "nope all good"). Nov 9 (DC, Claude
+      // Code): "no champagne needed" was read as declining mixers — "No problem!" and the champagne stayed in the basket.
+      const MIXER_NO_FILLER = /^(?:thanks?|thank|you|thx|ty|that'?s|thats|it|all|good|fine|great|i'?m|im|we'?re|were|are|ok|okay|for|now|need|needed|mixers?|nothing|else|worries|we|i|just|the|package|is|looks|perfect|please|pls)$/;
+      const mixerRestOk = (w) => mixerMsgLower.slice(w.length).replace(/[,.!?;:—–-]/g, ' ').split(/\s+/).filter(Boolean).every(x => MIXER_NO_FILLER.test(x));
+      if (/^(no|none|nope)\b/.test(mixerMsgLower) && !mixerNoWords.some(w => mixerMsgLower === w || mixerRestOk(w) && mixerMsgLower.startsWith(w))) console.log('[mixers] "' + mixerMsgLower.slice(0, 60) + '" is not a mixer decline (it names something) — handled as a request');
+      if (mixerNoWords.some(w => mixerMsgLower === w || ((mixerMsgLower.startsWith(w + ' ') || mixerMsgLower.startsWith(w + ',')) && mixerMsgWordCount <= 4 && mixerRestOk(w)))) {
         state.mixerAnswered = true;
         saveFlowState();
         const ctaCapsM = getCapabilities(format);

@@ -520,6 +520,24 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   to its web market price (±30% first). An exact
   product filed under another category (Lillet = Liquor/Aperitif) is kept. In an event list, aperitif/fortified
   wines (Lillet, vermouth, sherry, port...) get 1/4 of a table wine's share of the wine servings (DC). Pack size comes from the name ("6PKC").
+- Small open-bar event (Nov 9, DC on Claude Code via rachel_chat: 15 guests, 2 h, "about even", $450, "spirits + mixers",
+  "Mi Campo for any tequila", "only 750 mL or larger"; reply said "about 3" AND "about 5 drinks per person"). Fixed, every
+  channel: the beer slot's cider filter knows cidre/cidra/sidra (functions.js CIDER_RE; "Stella Artois Cidre" was the 2nd
+  beer) and beer lines whose packs aren't needed are dropped ([buildPackage] beer line dropped; each line had >= 1 pack:
+  2 x 24 for 15 servings); a one-bottle spirit slot needing <= 16 drinks skips bottles over 1 L; "use X for any tequila" /
+  "if there's tequila" is a brand preference, never a tequila-only bar (event-prefs.js COND); "mixers" with none named =
+  tonic, club soda, cranberry, OJ (mixers.js mixersFor -> mixers_note appended in code; NYC 10019/10001 carries none ->
+  "not carried"); "only 750 mL or larger" / "no half bottles" (bottle-size.js -> min_bottle_ml, wine + spirit slots;
+  connector too); the event length is asked WITH the serving-mix question and read from that answer (serving-mix.js
+  durationIn); a custom_list of only category words / cocktail ingredients nobody named -> menu_build ([event-reroute],
+  rachel.js); "make it N drinks a person" rebuilds menu_build in code (server.js [event-dpp], scriptedToolCall narrate:
+  the model writes the reply); the model gets the drinks figure as drinks_fact and never the TARGET total_drinks /
+  drinks_per_person (it quoted "about 3"); its own drinks-per-person sentences are cut (package-facts.js
+  stripModelDrinkClaims). A basket change after the build rewrites the drinks sentence + WINE heading from the live basket
+  (the recompute was never shown before: the replyNote wrapper runs first); eventFacts cleared with the cart. "no
+  champagne needed" is not a mixer decline nor a no to checkout (filler-only after "no"). The mixers question is not asked
+  again once a build settled mixers (state.mixersSettled). Still DC's rule: 3 spirit types under 60 target drinks, one
+  bottle each, so a 15-guest bar shows ~6 drinks per person. Scenarios 121, 122 (plain); qa/unit/event-intake-nov9.test.js.
 - Event ceilings + mixers (DC, Oct 7: "you are the expert, make it easy, not too many back and forth"; claude.ai: 30
   guests / $4,000 / "mostly spirits mixed with coke and oj" got Opus One $1,100, Clase Azul, Weller — targets were $407 a
   spirit, $204 a wine — no Coke/OJ, and Claude listed changes to approve). rachel/event-ceiling.js: per-bottle ceilings for

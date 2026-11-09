@@ -1,0 +1,33 @@
+name: event-open-bar-even-mix
+# Nov 9 (DC on Claude Code, connector rachel_chat): 15 guests, 2 hours, "about even", $450, "Open bar with mixed drinks
+# (spirits + mixers)", "Mi Campo for any tequila", "only 750 mL or larger bottles". Rachel showed "about 3" AND "about 5
+# drinks per person" in one reply: the beer slot took Stella Artois + Stella Artois CIDRE (the cider filter knew only
+# "cider") and each beer line got at least one 24-pack (48 bottles for 15 beer servings); "Mi Campo for any tequila" made
+# the bar tequila-only; "mixers" got none; the event length was asked in a second turn; after "4 drinks a person" a 375 mL
+# Chandon went in; "no champagne needed" was read as declining mixers ("No problem!", nothing removed).
+tags: [events]
+turns:
+  - send: reset
+  - send: "Hi Rachel, I need an event package for a corporate event. Delivery address: 132 West 32nd Street, New York, NY 10001. Event date: Thursday 11/12, deliver before 12pm. Open bar with mixed drinks (spirits + mixers), beer, and wine for 15 people. Budget $25–30 per person ($375–$450 total). Please use Mi Campo for any tequila, and only 750 mL or larger bottles for wine and spirits."
+    expect: {contains: ["21"]}
+  - send: "yes"
+    expect:
+      contains: ["drink most"]
+      matches: "(?i)how long is the event"
+  - send: "about even, 2 hours"
+    expect:
+      contains: ["Product total", "Mi Campo"]
+      # 15 guests x 3 drinks = 45: wine 15, one 24-pack, one bottle each of the 3-type bar (DC's Oct 21 rule) ~ 5-6 a person.
+      matches: "(?i)about [3-6] drinks per person"
+      not_matches: "(?i)cidre|cider|\\b375 ?ml|1\\.75 ?l|drinks per person[\\s\\S]*drinks per person|like to add mixers"
+      log_contains: ["[menu] event length in the serving-mix answer", "[bottle-size] the customer asked for 750 mL", "[mixers] \"mixers\" asked for, none named", "[menu_build] mixer", "spirit types for 45 target drinks: vodka, bourbon, tequila"]
+      log_not_contains: ["[buildPackage] spirits the customer asked for: tequila", "REFUSED menu_build"]
+  - send: "can you reduce it to 4 drinks a person"
+    expect:
+      contains: ["Product total"]
+      not_matches: "(?i)cidre|\\b375 ?ml|1\\.75 ?l|drinks per person[\\s\\S]*drinks per person"
+  - send: "no champagne needed"
+    expect:
+      not_matches: "(?i)^no problem!\\s*would you like|\\d+ sparkling"
+      matches: "(?i)WINE[*_ ]*— 3 bottles[\\s\\S]*about \\d+ drinks per person"
+      log_contains: ["is not a mixer decline"]

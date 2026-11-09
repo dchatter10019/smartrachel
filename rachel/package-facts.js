@@ -58,4 +58,20 @@ function packageFacts(items, o) {
   return out;
 }
 
-module.exports = { packageFacts, wineHeading, servings };
+// The model's OWN drinks-per-person claims, removed when the code's sentence is appended (Nov 9, DC on Claude Code: the model
+// wrote "about 3 drinks per person" — the target — next to the code's "about 5"; after "reduce it to 4 drinks a person" it
+// wrote "delivers 4 drinks per person" next to "about 7"). Only the sentence that states the figure goes; the rest of
+// its paragraph stays ("One heads-up: ...").
+const CLAIM = /\b\d+(?:\.\d+)?\s*(?:-|to)?\s*(?:\d+(?:\.\d+)?\s*)?drinks?\s+(?:per|a|each|for each)\s+(?:person|guest|head|attendee)\b|\b(?:about|around|roughly|approximately|~)\s*\d+\s+drinks?\s+total\b/i;
+function stripModelDrinkClaims(text, keep) {
+  let removed = 0;
+  const out = String(text || '').split('\n').map(line => {
+    if (!CLAIM.test(line) || (keep && line.indexOf(keep) >= 0)) return line;
+    const parts = line.match(/[^.!?]+(?:[.!?]+|$)\s*/g) || [line];
+    const kept = parts.filter(p => { if (CLAIM.test(p)) { removed++; return false; } return true; });
+    return kept.join('').trim();
+  });
+  return { text: removed ? out.join('\n').replace(/\n{3,}/g, '\n\n') : String(text || ''), removed };
+}
+
+module.exports = { packageFacts, wineHeading, servings, stripModelDrinkClaims };

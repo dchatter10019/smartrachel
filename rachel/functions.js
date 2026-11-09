@@ -309,10 +309,17 @@ async function getProductURLByZip({ product_name, zipcode, client_id, min_price,
   return { product_found: false, products_json: '[]', result_count: 0, debug_info: 'No result' };
 }
 
+// A cider in any spelling (Nov 9, DC on Claude Code: "Stella Artois Cidre" passed the English-only filter as the
+// second "beer" of a 15-guest event — 48 bottles for 15 beer servings).
+function bottleMlOf(t){ var s=String(t||'').toLowerCase(); if(/\d\s*x\s*\d/.test(s)) return 0; var m=s.match(/(\d+(?:\.\d+)?)\s*(ml|l|cl|liters?|litres?)\b/); if(!m) return 0; var v=+m[1]; return /^l|^lit/.test(m[2])?v*1000:m[2]==='cl'?v*10:v; }
+var CIDER_RE=/\b(ciders?|cidres?|cidras?|sidras?|sidres?)\b/i;
+
 async function buildPackage(iv) {
   var guests = parseInt(iv.guests) || 0;
   var hours = parseFloat(iv.hours) || 0;
   var drinksPerPersonInput = parseFloat(iv.drinks_per_person) || 0;
+  // "only 750 mL or larger bottles for wine and spirits" (rachel/bottle-size.js; Nov 9: a 375 mL Chandon went in anyway).
+  var minBottleMl = parseFloat(iv.min_bottle_ml) || 0;
   var rawPackageType = iv.package_type;
   var isCustom = (rawPackageType === "CUSTOM" || rawPackageType === "custom");
   var isSplit = (rawPackageType === "SPLIT" || rawPackageType === "split");
@@ -883,6 +890,11 @@ async function buildPackage(iv) {
       var supB=function(){ return beerPlan.reduce(function(a,q,k){return a+q*packs[k];},0); };
       var order=packs.map(function(p,k){return k;}).sort(function(a,b){return packs[a]-packs[b];});
       for (var g=0; supB()<needDrinks*0.95 && g<50; g++) beerPlan[order[0]]++;
+      // Every line got at least one pack: with big packs that is far over the need (Nov 9: 2 x 24 for 15 servings). Drop
+      // the later lines while the rest still covers >= 95% of the need.
+      for (var dk=picks.length-1; dk>=1; dk--) {
+        if (beerPlan[dk]>0 && supB()-beerPlan[dk]*packs[dk] >= needDrinks*0.95) { console.log('[buildPackage] beer line dropped (the other packs already cover '+Math.round(needDrinks)+' servings): '+beerPlan[dk]+'x '+picks[dk].product.name); beerPlan[dk]=0; }
+      }
       console.log('[buildPackage] beer packs sized together: '+Math.round(needDrinks)+' servings -> '+picks.map(function(pp,k){return beerPlan[k]+'x '+pp.product.name;}).join(', ')+' = '+supB());
     }
     for (var i=0;i<picks.length;i++) {
@@ -906,7 +918,7 @@ async function buildPackage(iv) {
         }
       }
       if (category === 'beer' || category === 'seltzer') {
-        if (beerPlan && beerPlan[i] != null) finalQty = beerPlan[i];
+        if (beerPlan && beerPlan[i] != null) { finalQty = beerPlan[i]; if (finalQty <= 0) continue; }
         else {
           var sizeStr = picks[i].product.sizeStr || '';
           var packMatch = sizeStr.match(/^(\d+)\s*x/i);
@@ -1142,12 +1154,12 @@ async function buildPackage(iv) {
       var hitsFor=async function(terms){
         var rs=await Promise.all(terms.map(function(t){return doSearch(t);})), seen={}, out=[];
         rs.forEach(function(r,ti){ (r||[]).forEach(function(p){ var k=p.product_id||p.name;
-          if (!seen[k]&&nzL(p.name).indexOf(nzL(terms[ti]))>=0&&classifyOk('beer',p)&&!/\bcider\b/i.test(p.name||'')) { seen[k]=1; out.push(p); } }); });
+          if (!seen[k]&&nzL(p.name).indexOf(nzL(terms[ti]))>=0&&classifyOk('beer',p)&&!CIDER_RE.test(p.name||'')) { seen[k]=1; out.push(p); } }); });
         return out;
       };
       var hL=await hitsFor(bstL.terms), usedL=bstL.label;
       if (!hL.length&&bstL.then) { hL=await hitsFor(bstL.then.terms); usedL=bstL.then.label; }
-      if (!hL.length) { hL=(await doSearch('Beer')).filter(function(p){return classifyOk('beer',p)&&!/\bcider\b/i.test(p.name||'');}); usedL=''; }
+      if (!hL.length) { hL=(await doSearch('Beer')).filter(function(p){return classifyOk('beer',p)&&!CIDER_RE.test(p.name||'');}); usedL=''; }
       console.log('[buildPackage] beer style line '+JSON.stringify(npB.name)+': '+(usedL?hL.length+' '+usedL+' beer(s)':'none of the style or its family — usual beer')+' — '+hL.slice(0,4).map(function(p){return p.name;}).join(' | '));
       if (usedL!==bstL.label) beerNote='This store has no '+bstL.label+' beers right now, so I picked '+(usedL?usedL+' beers':'popular beers')+' instead.';
       npB.label=npB.label||npB.name; npB.name='Beer'; results[bsI]=hL;
@@ -1926,7 +1938,7 @@ async function buildPackage(iv) {
         var styleHits=async function(terms){
           var rs=await Promise.all(terms.map(function(t){return doSearch(t);})), seen={}, out=[];
           rs.forEach(function(r,ti){ (r||[]).forEach(function(p){ var k=p.product_id||p.name;
-            if (!seen[k]&&nzB(p.name).indexOf(nzB(terms[ti]))>=0&&classifyOk('beer',p)&&!/\bcider\b/i.test(p.name||'')) { seen[k]=1; out.push(p); } }); });
+            if (!seen[k]&&nzB(p.name).indexOf(nzB(terms[ti]))>=0&&classifyOk('beer',p)&&!CIDER_RE.test(p.name||'')) { seen[k]=1; out.push(p); } }); });
           return out;
         };
         var bst=iv.beer_style, bHits=await styleHits(bst.terms), bUsed=bst.label;
@@ -1946,8 +1958,19 @@ async function buildPackage(iv) {
       // "Beer" is beer: a cider is not picked for it while beer is in stock (Oct 4, claude.ai connector: a third of a
       // beer + wine event's "beer" was Stella Artois Cider).
       if (pl.slot==="beer") {
-        var noCider=(resAll[pIdx]||[]).filter(function(p){return !/\bcider\b/i.test(p.name||'');});
+        var noCider=(resAll[pIdx]||[]).filter(function(p){return !CIDER_RE.test(p.name||'');});
         if (noCider.length && noCider.length<(resAll[pIdx]||[]).length) { console.log('[buildPackage] beer slot: '+((resAll[pIdx]||[]).length-noCider.length)+' cider(s) left out — beer was asked for'); resAll[pIdx]=noCider; }
+      }
+      if (minBottleMl>0 && (pl.cat==="wine"||pl.cat==="spirits") && pl.slot!=="mixer" && !pl.miCampo) {
+        var bigEnough=(resAll[pIdx]||[]).filter(function(p){ var ml=bottleMlOf(p.name)||bottleMlOf(p.sizeStr); return !ml || ml>=minBottleMl-10; });
+        if (bigEnough.length<(resAll[pIdx]||[]).length) console.log('[buildPackage] '+pl.slot+' slot: '+((resAll[pIdx]||[]).length-bigEnough.length)+' bottle(s) under '+minBottleMl+' mL left out — the customer asked for '+minBottleMl+' mL or larger'+(bigEnough.length?'':' (none left — slot unavailable)'));
+        resAll[pIdx]=bigEnough;
+      }
+      // One bottle of a spirit type that needs fewer than a 750 mL's 16 drinks is a 750 mL (or 1 L), not a 1.75 L (Nov 9:
+      // Skyy 1.75 L, ~37 drinks, for a 15-guest bar's ~5 vodka drinks).
+      if (pl.cat==="spirits" && pl.slot!=="mixer" && !pl.miCampo && pl.qty===1 && typeof spiritDrinks!=="undefined" && spiritTypes2.length && spiritDrinks/spiritTypes2.length<=16) {
+        var stdS=(resAll[pIdx]||[]).filter(function(p){ var ml=bottleMlOf(p.name)||bottleMlOf(p.sizeStr); return ml && ml<=1000; });
+        if (stdS.length && stdS.length<(resAll[pIdx]||[]).length) { console.log('[buildPackage] '+pl.slot+' slot: one bottle covers ~'+Math.round(spiritDrinks/spiritTypes2.length)+' drinks — '+((resAll[pIdx]||[]).length-stdS.length)+' bottle(s) over 1 L left out'); resAll[pIdx]=stdS; }
       }
       // A spirit-type slot ("Vodka") is the classic, never a flavour (Oct 7: Absolut Mandrin for a mixed-drinks party).
       if (pl.cat==="spirits"&&pl.slot!=="mixer") {

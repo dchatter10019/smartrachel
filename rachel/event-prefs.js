@@ -19,12 +19,19 @@ function spiritTypesIn(text) {
   let m;
   NEG.lastIndex = 0;
   while ((m = NEG.exec(t))) for (const k of ALL) if (SPIRITS[k].test(m[2])) excluded.add(k);
-  // Mentions outside the negated spans count as wanted.
-  const pos = t.replace(NEG, ' ');
+  // Mentions outside the negated spans count as wanted — except a brand preference for a spirit IF it is served ("use Mi
+  // Campo for any tequila", "if there's tequila, make it Mi Campo"): that names the bottle, not the bar (Nov 9, DC on Claude
+  // Code: an open bar for 15 got only tequila).
+  const ALT = ALL.map(k => SPIRITS[k].source.replace(/\\b/g, '')).join('|');
+  const COND = new RegExp('\\b(?:for|if|when|whenever)\\s+(?:there\'?s\\s+|there\\s+is\\s+|you\\s+(?:use|include|add|pick)\\s+|we\\s+(?:have|get)\\s+)?(?:any|all|the|some)?\\s*(?:' + ALT + ')|\\bany\\s+(?:' + ALT + ')', 'g');
+  const pos = t.replace(NEG, ' ').replace(COND, ' ');
   // "mostly whiskey drinkers" / "mainly tequila" leans the bar, it doesn't shrink it to one spirit.
   const lean = new RegExp('\\b(mostly|mainly|primarily|mostly drinking|lots of|plenty of)\\s+(?:[a-z]+\\s+)?(?:' + ALL.map(k => SPIRITS[k].source.replace(/\\b/g, '')).join('|') + ')');
   if (lean.test(pos)) return excluded.size ? { types: ALL.filter(k => !excluded.has(k)), why: 'all but ' + [...excluded].join(', ') } : null;
-  const wanted = ALL.filter(k => SPIRITS[k].test(pos) && !excluded.has(k));
+  const condTxt = (t.replace(NEG, ' ').match(COND) || []).join(' ');
+  let wanted = ALL.filter(k => SPIRITS[k].test(pos) && !excluded.has(k));
+  // With other spirits named, the preferred one is part of the bar too ("for the tequila use Mi Campo, and a bourbon").
+  if (wanted.length) wanted = ALL.filter(k => !excluded.has(k) && (wanted.includes(k) || SPIRITS[k].test(condTxt)));
   if (wanted.length) return { types: wanted, why: 'named: ' + wanted.join(', ') + (excluded.size ? ' (not: ' + [...excluded].join(', ') + ')' : '') };
   if (excluded.size) { const rest = ALL.filter(k => !excluded.has(k)); return { types: rest, why: 'all but ' + [...excluded].join(', ') }; }
   return null;
