@@ -488,16 +488,22 @@ async function executeTool(name, input) {
     for (var i = 0; i < queries.length; i++) {
       const q = queries[i];
       // Only apply price filter if explicitly requested — never filter for named product searches
-      const priceRange = (input.min_price || input.max_price) ?
-        { min: input.min_price || 0, max: input.max_price || 999999 } :
-        { min: 0, max: 999999 };
+      // A per-query price too ({name, max_price}) — the model sends it there. Nov 10 (DC on Claude Code, "find cheaper rum"):
+      // queries:[{name:"Rum 750 ML", max_price:50}] was read only at the top level, so the cap was ignored and the three
+      // DEAREST rums came back ($87.99 / $71.49 / $62.69) — Rachel then said Brugal 1888 $62.69 was the cheapest rum here
+      // (Bacardí Superior $18.58, Cruzan $18.69 ... are carried). The cap also goes to the search itself, else 12 premium-
+      // first rows can hold nothing under it.
+      const qMin = parseFloat(q.min_price || input.min_price) || 0, qMax = parseFloat(q.max_price || input.max_price) || 0;
+      const priceRange = (qMin || qMax) ? { min: qMin, max: qMax || 999999 } : { min: 0, max: 999999 };
+      if (qMin || qMax) console.log('[product_query] ' + JSON.stringify(q.name || q.term || q.label || '') + ' price range $' + qMin + ' - ' + (qMax ? '$' + qMax : 'any'));
       // Support both {name} and {term/label} formats
       const searchName = q.name || q.term || q.label || '';
       const fallbacks = q.fallback_terms || [];
       // Fetch at least 12 rows: Bevvi lists a brand's specialty bottles first, so with limit 3
       // "Don Julio Tequila 750 mL" (zip 33409, Sep 29) returned Primavera / Rosado / Alma Miel and
       // never the Blanco or Reposado the customer meant ("regular Don Julio blanco").
-      let raw = await searchWithFallbacks(loc.kitchen, loc.client, searchName, Math.max(q.limit || 5, 12));
+      let raw = await searchWithFallbacks(loc.kitchen, loc.client, searchName, Math.max(q.limit || 5, 12), priceRange.min || undefined, qMax || undefined);
+      if (!raw.length && (qMin || qMax)) console.log('[product_query] ' + JSON.stringify(searchName) + ' — nothing in the price range');
       // Try fallback terms if main search fails
       for (var fi = 0; fi < fallbacks.length && raw.length === 0; fi++) {
         raw = await searchWithFallbacks(loc.kitchen, loc.client, fallbacks[fi], q.limit || 5);
@@ -567,6 +573,12 @@ async function executeTool(name, input) {
           results.push({ query: q.name, found: false, products: [], note: 'Not carried at this store. Say only that it is not available here — no comment on the search or its results.' });
           continue;
         }
+      }
+      // A generic beer ask ("Beer", "a beer", "IPA") is never answered with a cider (Nov 10 connector: "add a beer" offered
+      // Stella Artois Cidre as a second case of beer). Same pattern as the builder's beer slot (functions.js CIDER_RE).
+      if (/\b(beers?|lagers?|ipas?|ales?|pilsners?|stouts?)\b/i.test(searchName) && !/\b(ciders?|cidres?|sidras?)\b/i.test(searchName)) {
+        const ci = rm.products.filter(p => /\b(ciders?|cidres?|cidras?|sidras?|sidres?)\b/i.test(p.name || ''));
+        if (ci.length && ci.length < rm.products.length) { console.log('[product_query] ' + JSON.stringify(searchName) + ' is a beer ask — dropped cider(s): ' + ci.map(p => p.name).join(' | ')); rm.products = rm.products.filter(p => ci.indexOf(p) < 0); }
       }
       const filtered = rm.products.slice(0, q.limit || 3).map(formatProduct);
       results.push(Object.assign({ query: q.name, found: filtered.length > 0, products: filtered }, rm.searchedAs ? { searched_as: rm.searchedAs } : {}));

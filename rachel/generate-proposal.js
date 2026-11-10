@@ -51,6 +51,13 @@ function groupByCategory(lineItems) {
   
   lineItems.forEach(item => {
     let cat = (item.category || '').toLowerCase().trim();
+    // The catalog's own category names (Nov 10, DC on Claude Code: "Brugal 1888 - 750ML" came with category "Liquor",
+    // not a PDF section, and no spirit word in its name -> filed under Other; Hendrick's / High West were only saved by
+    // their name words).
+    const CAT_ALIAS = { liquor: 'spirits', spirit: 'spirits', liqueur: 'spirits', liqueurs: 'spirits', 'liquor/aperitif': 'spirits', aperitif: 'spirits',
+      wines: 'wine', sparkling: 'wine', 'sparkling wine': 'wine', champagne: 'wine', beers: 'beer', cider: 'beer', seltzer: 'hard seltzer', mixers: 'mixer', 'non-alcoholic': 'mixer' };
+    if (CAT_ALIAS[cat]) cat = CAT_ALIAS[cat];
+    else if (/^liquor\b|\bspirits?\b/.test(cat)) cat = 'spirits';
     // Only trust the upstream category if it's a real, recognized value — an empty,
     // missing, or unrecognized category always gets the name-based classifier applied.
     // Even a recognized category gets double-checked against the name, since a wrong-
@@ -61,6 +68,7 @@ function groupByCategory(lineItems) {
       console.log('[generate-proposal] category correction:', JSON.stringify(item.name || item.label), cat || '(none)', '->', nameGuess);
       cat = nameGuess;
     } else if (!validCategories.has(cat)) {
+      console.log('[generate-proposal] category ' + JSON.stringify(item.category || '') + ' not a section, no type word in ' + JSON.stringify(item.name || item.label) + ' -> Other');
       cat = 'other';
     }
     const displayCat = cat.charAt(0).toUpperCase() + cat.slice(1);
@@ -322,4 +330,4 @@ function proposalFile({ client_name, event_date } = {}) {
 }
 const proposalUrl = filename => PROPOSAL_PUBLIC_BASE + '/' + filename;
 
-module.exports = { generateProposal, proposalTotals, proposalFile, proposalUrl, proposalSlug, proposalDay };
+module.exports = { generateProposal, proposalTotals, groupByCategory, proposalFile, proposalUrl, proposalSlug, proposalDay };

@@ -1,0 +1,36 @@
+name: fee-change-at-confirm
+# Nov 10 (DC on Claude Code): at the order summary "Change the service to 8 pct" left checkout ("Done — service charge 8%
+# on the proposal", then "place the order or a PDF?") and "Nine" (a typo of "none") went to the driver as the delivery
+# instructions. Now a fee change at confirm keeps checkout and shows the summary again with the new fee; a misspelt "none"
+# is no instructions.
+format: plain
+tags: [orders]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+  - send: "place the order"
+    expect: {contains: ["full name"]}
+  - send: "QA Tester"
+  - send: "same"
+  - send: "9175550100"
+  - send: "tomorrow at 5 pm ET"
+    expect: {contains: ["instructions"]}
+  - send: "Nine"
+    expect:
+      not_contains: ["Delivery instructions: Nine"]
+      log_contains: ["[order] delivery instructions \"Nine\" read as \"none\""]
+  - send: "5%"
+    expect: {contains: ["Order Summary", "Shall I go ahead"]}
+  - send: "Change the service to 8 pct"
+    expect:
+      contains: ["Order Summary", "Service charge (8%)", "Shall I go ahead"]
+      not_contains: ["on the proposal", "PDF proposal"]
+      log_contains: ["[order] fee change at confirm — checkout kept"]
+  - send: "yes"
+    expect:
+      matches: "placed|confirmed|submitted"
+      log_contains: ["service_charge_pct 8"]

@@ -20,9 +20,13 @@ function distinctiveWords(query) {
 
 // A word is in a product name as a whole word, without apostrophes ("titos" = "Tito's"), or — 5+ letters — run
 // together ("budlight" = "Bud Light").
+// "Silver" rum / tequila is the white / blanco / plata bottling (Nov 10, DC on Claude Code: "do you have a bacardi rum,
+// maybe a silver" -> "Bacardi Silver isn't available" — the store lists it as "Bacardi Superior White Rum").
+const WORD_ALT = { silver: ['white', 'blanco', 'plata', 'superior', 'light', 'crystal'], plata: ['silver', 'blanco', 'white'] };
 function carries(productName, word) {
   const pn = ' ' + normW(productName) + ' ', pn0 = pn.replace(/'/g, ''), w0 = word.replace(/'/g, '');
   if (pn.includes(' ' + word + ' ') || pn0.includes(' ' + w0 + ' ')) return true;
+  if (WORD_ALT[w0] && WORD_ALT[w0].some(a => pn0.includes(' ' + a + ' '))) return true;
   return w0.length >= 5 && pn0.replace(/\s+/g, '').includes(w0);
 }
 

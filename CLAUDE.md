@@ -77,6 +77,11 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   POST /internal/new-conversation (internal only, mcp- sessions) -> resetState (no address / cart / history; the placed order
   is kept so "change my last order" works; age per the connector rules). Connector test 'claude new chat'. Fresh /chat
   conversations already never inherit a saved address (greeting drops the profile's).
+  Nov 10 (DC: two carts wiped mid-chat): the mark was per API KEY, so any Claude app starting up with the same login (another
+  Claude Code session, a claude.ai tab) reset the chat in progress. Now initialize returns an Mcp-Session-Id and only THAT
+  session's first rachel_chat resets (rachel-mcp newMcpSession / startsNewChat; "[rachel-mcp] new-chat mark NOT applied —
+  this request belongs to MCP session ..."); a client sending no session id keeps the per-key mark. In memory: a deploy
+  never resets a chat. Two Claude chats that both talk to Rachel still share mcp-<email> (one Rachel conversation).
 - Not found = the store is named (DC, Oct 28: "need a bottle of opus" -> "I couldn't find opus at this store" while Rachel
   searched the Mountain View address; NYC carries Opus One): add-item's reply and every LLM [not-found] (rachel.js -> replyNote
   "(I searched the store that delivers to <address>...)") name the delivery address; the request is kept
@@ -534,6 +539,19 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   rewrites every reply's estimate lines (tax / delivery / service / tip / grand total) from estimateFor when the session set
   fees ([fees] estimate lines rewritten) — never at checkout or on an order reply (Bevvi's real fees). The serving-mix
   handler's msgLower update had been inside a comment since Nov 9 (fixed).
+- Nov 10 connector review (DC on Claude Code, Foodie For All, 10001): product_query read max_price only at the top level —
+  the model sends it per query, so "cheaper rum" got the 3 dearest ($88/$71/$63) and Rachel said Brugal $62.69 was the
+  cheapest (Bacardí $18.58 carried), "no wines under $20" likewise; now q.min_price/q.max_price count and go to the catalog
+  search ([product_query] price range). A generic beer ask drops ciders. search-match: "silver" = white/blanco/plata/
+  superior (Bacardi Silver -> Superior White). basket-line.js strips "1x" and "— $15.39 ea = $15.39" from a pasted basket
+  line (the arrow swap found no line). A yes to a held one-product offer that Rachel phrased as a swap ("Shall I swap that in
+  for the Bread & Butter?") replaces that line at its qty ([add-confirm] the offer was a swap for ...; was: added + "How many
+  bottles?", both on the PDF). Proposal PDF: catalog category "Liquor" etc. -> Spirits (Brugal 1888 sat under Other).
+  "<url|Download proposal>: https://..." -> label (formatResponse). Per-person figures in a reply = its grand total / guests
+  ([per-person]); the in-code basket answers "per person" too. A fee change at the order summary stays in checkout and
+  re-shows it ([order] fee change at confirm). "Nine"/"nonw"... at the driver step = none. A fresh-start turn that is a
+  self-contained brief (an address, or 3+ field lines) is held through age/address as usual (13:24: the brief was dropped
+  and the address asked again). Scenario 128, qa/unit/connector-nov10.test.js.
 - A file that never arrived (Oct 29, DC on claude.ai, F-0110): a Claude app passes an attachment as a path on its own machine
   ("@/mnt/user-data/attachments/...pdf"); /chat answers in code "Your file (<name>) didn't come through ... paste the drinks"
   ([order-file] a file path with no file); the Claude-app instructions (rachel-mcp.js CHAT_INSTRUCTIONS) tell the client to

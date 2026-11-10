@@ -518,6 +518,9 @@ function setDriverNote(od, raw) {
 // ── Format helpers ─────────────────────────────────────────────────────────
 function formatResponse(text, format) {
   if (!text) return '';
+  // A link placeholder the LLM wrote NEXT TO the real URL ("<url|Download proposal>: https://...pdf", Nov 10 connector x2):
+  // rachel.js only fills a placeholder when the URL is missing, so it reached the customer as is. -> its label.
+  text = String(text).replace(/<(?!https?:)(?:url|link|proposal_url|pdf_url|payment_url|URL)\|([^<>|\n]{1,60})>/g, '$1');
   if (format === 'voiceflow') {
     return text.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>').replace(/\*(.*?)\*/g, '<b>$1</b>');
   }
@@ -2148,8 +2151,17 @@ app.post('/chat', async (req, res) => {
     // The fresh-start note (freshStartNote): this turn's message is not held through the age / address questions — it
     // usually refers to the old conversation ("send the delivery charge as 0"); the customer is asked to send it again.
     if (flowState[sessionKey].freshNote) {
-      const fnote = flowState[sessionKey].freshNote; flowState[sessionKey].freshNote = null; freshTurn = true; saveFlowState();
-      console.log('[session] fresh-start note shown — this message is not held: ' + JSON.stringify(String(message).slice(0, 60)));
+      const fnote = flowState[sessionKey].freshNote; flowState[sessionKey].freshNote = null; saveFlowState();
+      // A message that stands on its own (a delivery address in it, or a brief of 3+ "Field: value" / bullet lines) is a
+      // NEW request and is held through the age / address questions as usual. Nov 10 (DC on Claude Code, 13:24): the full
+      // event brief with "Delivery address: 132 West 32nd Street..." was dropped after "Yes" and the address asked again.
+      let selfContained = false;
+      try {
+        const fieldLines = String(message).split('\n').filter(l => /^\s*(?:[-•*]\s*)?[A-Za-z][A-Za-z /&]{1,30}:\s*\S/.test(l) || /^\s*[-•*]\s+\S/.test(l)).length;
+        selfContained = fieldLines >= 3 || !!require('./address-extract.js').splitAddress(message);
+      } catch (e) {}
+      freshTurn = !selfContained;
+      console.log('[session] fresh-start note shown — ' + (selfContained ? 'a self-contained request, held as usual: ' : 'this message is not held: ') + JSON.stringify(String(message).slice(0, 60)));
       const _jF = res.json.bind(res);
       res.json = (payload) => {
         try { if (payload && typeof payload.text === 'string' && payload.text.trim()) { payload.text = fnote + '\n\n' + payload.text; if (typeof payload.response === 'string') payload.response = payload.text; } } catch (e) {}
@@ -4165,8 +4177,25 @@ app.post('/chat', async (req, res) => {
       if (off.fromSearch) { try { const nzB = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, ''); inBasketAlready = JSON.parse(state.lastLineItems || '[]').some(x => nzB(x.name) === nzB(off.name)); } catch (e) {} }
       if (inBasketAlready) console.log('[add-confirm] offer for ' + off.name + ' dropped — already in the basket (added on the search turn)');
       else if (qm || yes) {
-        const q = qm ? (NW[qm[1]] || parseInt(qm[1])) : off.qty;
-        const rrOff = await applyBasketSubstitute(sessionKey, email, '', off.name, off.price, off.size);
+        let q = qm ? (NW[qm[1]] || parseInt(qm[1])) : off.qty;
+        // The offer was a SWAP ("Shall I swap that in for the Bread & Butter Pinot Grigio?"): the yes replaces that basket
+        // line at its quantity. Nov 10 (DC on Claude Code): the yes ADDED Kendall-Jackson next to the Bread & Butter and asked
+        // "How many bottles?"; the next proposal carried both. The line is read from Rachel's own question (whole words).
+        let swapFrom = null;
+        try {
+          const lastQ = String((lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '');
+          const mSw = lastQ.match(/\b(?:swap|switch|replace|exchange|trade)\b[^?\n]{0,140}?\b(?:for|with|instead of|in place of|replacing)\s+(?:the\s+|your\s+)?([^?\n]{3,120}?)\s*(?:\?|$|\.(?:\s|$)|,\s)/i)
+            || lastQ.match(/\b(?:replace|swap out|switch out)\s+(?:the\s+|your\s+)?([^?\n]{3,120}?)\s+(?:with|for)\b/i);
+          if (mSw) {
+            const itS = JSON.parse(state.lastLineItems || '[]');
+            const nzS = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            const iS = basketLineFor(itS, mSw[1]);
+            if (iS >= 0 && nzS(itS[iS].name) !== nzS(off.name)) swapFrom = itS[iS];
+            console.log('[add-confirm] the offer was a swap for ' + JSON.stringify(mSw[1]) + ' -> ' + (swapFrom ? 'basket line ' + swapFrom.name : 'no basket line (added)'));
+          }
+        } catch (e) {}
+        if (swapFrom && !qm) q = swapFrom.qty || swapFrom.quantity || 1;
+        const rrOff = await applyBasketSubstitute(sessionKey, email, swapFrom ? swapFrom.name : '', off.name, off.price, off.size);
         const nzA = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
         const labelA = off.name + (off.size && nzA(off.name).indexOf(nzA(off.size)) < 0 ? ' — ' + off.size : '') + ' — ' + usd(off.price);
         // Never say "Added" for a line that isn't in the basket. Real (Oct 13, F-0036): the lookup failed,
@@ -4178,7 +4207,15 @@ app.post('/chat', async (req, res) => {
           return res.json({ text: rX, response: rX });
         }
         retirePendingFor(state, off.name);
-        console.log('[add-confirm] accepted ' + JSON.stringify(message.slice(0, 40)) + ' -> ' + off.name + (q ? ' x' + q : ' (quantity to ask)'));
+        console.log('[add-confirm] accepted ' + JSON.stringify(message.slice(0, 40)) + ' -> ' + off.name + (q ? ' x' + q : ' (quantity to ask)') + (swapFrom ? ' — replacing ' + swapFrom.name : ''));
+        if (swapFrom) {
+          try { const it = JSON.parse(state.lastLineItems || '[]'); const row = it.find(x => nzA(x.name) === nzA(off.name)); if (row) { row.qty = q; row.quantity = q; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); } } catch (e) {}
+          saveFlowState(); events.action('updated_basket');
+          let itD = []; try { itD = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+          const listD = itD.map(li => { const qq = li.qty || li.quantity || 1, pp = parseFloat(li.price) || 0; return qq + 'x ' + String(li.name || li.label || '') + ' \u2014 ' + usd(pp) + ' ea = ' + usd(qq * pp); }).join('\n');
+          const rS = 'Done \u2014 ' + q + 'x ' + labelA + ' replaces the ' + swapFrom.name + '. Here\'s your updated basket:\n\n' + listD;
+          return res.json({ text: rS, response: rS });
+        }
         if (q > 0) {
           try { const it = JSON.parse(state.lastLineItems || '[]'); const row = it.find(x => nzA(x.name) === nzA(off.name)); if (row) { row.qty = q; row.quantity = q; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); } } catch (e) {}
           saveFlowState();
@@ -4341,6 +4378,25 @@ app.post('/chat', async (req, res) => {
     }
     if (clsIntent === 'show_basket') {
       events.action('showed_basket');
+      // "what's the per person cost now" routed here: the basket reply also gives the per-person figure, from its own grand
+      // total (Nov 10, DC on Claude Code: the basket came back and the per-person question was never answered).
+      if (/\bper[- ]?(?:person|peson|preson|guest|head)\b|\beach (?:person|guest)\b|\ba (?:person|head)\b/i.test(message)) {
+        const gPP = parseInt((state.eventParams || {}).guests || (state.eventFacts || {}).guests, 10);
+        const _jPP = res.json.bind(res);
+        res.json = (payload) => {
+          try {
+            const t = payload && typeof payload.text === 'string' ? payload.text : '';
+            const gm = t.match(/(?:Estimated )?grand total:?[*_]*\s*\$([\d,]+\.\d{2})/i);
+            if (gm && gPP > 0 && !/\bper[- ]?(?:person|guest)\b/i.test(t)) {
+              const pp = parseFloat(gm[1].replace(/,/g, '')) / gPP;
+              const ln = 'Per person (' + gPP + ' guests): $' + pp.toFixed(2);
+              payload.text = t.replace(gm[0], gm[0] + '\n' + ln); if (typeof payload.response === 'string') payload.response = payload.text;
+              console.log('[per-person] answered with the basket: ' + ln);
+            } else if (!(gPP > 0)) console.log('[per-person] asked, no guest count known — basket shown without it');
+          } catch (e) {}
+          return _jPP(payload);
+        };
+      }
       try {
         const items = JSON.parse(state.lastLineItems || '[]');
         // single-product estimate: if the previous reply was a lookup of ONE product that
@@ -5000,7 +5056,11 @@ app.post('/chat', async (req, res) => {
     }
     if (state.orderStep === 'instructions') {
       const raw = message.trim();
-      setDriverNote(state.orderData, /^(none|no|nope|n\/a|na|nothing|skip)\.?$/i.test(raw) ? '' : raw);
+      // A misspelt "none" (Nov 10 connector: "Nine" went to the driver as the instructions) — one word, one letter off.
+      const NONE_RE = /^(?:none|no|nope|n\/a|na|nothing|skip|nine|nonw|nome|noen|nnone|non|nopne|none needed|no instructions|not needed|no thanks|nothing needed)[.!]?$/i;
+      const noneAns = NONE_RE.test(raw);
+      if (noneAns && !/^(?:none|no|nope|n\/a|na|nothing|skip)\.?$/i.test(raw)) console.log('[order] delivery instructions ' + JSON.stringify(raw) + ' read as "none"');
+      setDriverNote(state.orderData, noneAns ? '' : raw);
       // The datetime was already validated and stored as the matched window text
       // (e.g. "02:00 PM - 03:00 PM EST"). Replaying THAT into the details handler
       // made chrono re-parse the window string and land on the wrong hour (real
@@ -5197,8 +5257,15 @@ app.post('/chat', async (req, res) => {
         const askT = 'Sure — what delivery date and time would you like instead?';
         return res.json({ text: askT, response: askT });
       } else {
-      const isChange = /\b(add|also|remove|drop|take out|swap|replace|change|instead|different|another|more|less|fewer|update|edit)\b/i.test(message) && !yesWords.some(w => msgLower === w);
-      if (isChange) {
+      // A FEE change at the confirm step ("change the service to 8 pct", "make delivery 0") stays in checkout: the fee block
+      // below applies it and shows the order summary again (Nov 10, DC on Claude Code: the checkout was left and the reply
+      // said "service charge 8% on the proposal").
+      let feeAtConfirm = false; try { feeAtConfirm = !!(TAXCMD.fees(message) || TAXCMD.read(message)); } catch (e) {}
+      if (feeAtConfirm) console.log('[order] fee change at confirm — checkout kept, the summary is shown again with it');
+      const isChange = !feeAtConfirm && /\b(add|also|remove|drop|take out|swap|replace|change|instead|different|another|more|less|fewer|update|edit)\b/i.test(message) && !yesWords.some(w => msgLower === w);
+      if (feeAtConfirm) {
+        // handled by the fee block below (orderStep stays 'confirm'; it re-renders the summary) — never a yes / no / reconfirm
+      } else if (isChange) {
         const od0 = state.orderData || {};
         state.savedCustomer = { name: od0.name || (state.savedCustomer || {}).name || '', phone: od0.phone || (state.savedCustomer || {}).phone || '', email: od0.email || (state.savedCustomer || {}).email || '' };
         // A time-change at confirm ("change the delivery time", "make it 3 pm") must NOT
@@ -5495,7 +5562,16 @@ app.post('/chat', async (req, res) => {
       saveFlowState();
       const said = [taxCmd ? (taxCmd === 'zero' ? 'tax is set to $0' : 'the estimated 10% tax is back') : '', feeCmd ? TAXCMD.feesText(feeCmd) + ' on the proposal' : '', addrCmd ? (addrCmd === 'hide' ? 'the delivery address is left off the proposal' : 'the delivery address is back on the proposal') : ''].filter(Boolean).join(' and ');
       console.log('[tax/address] ' + said + ' (' + JSON.stringify(message).slice(0, 60) + ')' + (state.lastProposalUrl ? ' — proposal regenerated' : ''));
-      if (state.orderStep === 'confirm' && taxCmd) return renderOrderSummary(state, email, format, res);
+      if (state.orderStep === 'confirm' && (taxCmd || feeCmd)) {
+        // The order summary reads the session fees (orderFeesFor); a tip set here replaces the tip chosen at checkout.
+        if (feeCmd && state.orderData && feeCmd.tip_amount != null) state.orderData.tipChoice = { amount: feeCmd.tip_amount };
+        else if (feeCmd && state.orderData && feeCmd.tip_rate != null) state.orderData.tipChoice = { pct: Math.round(feeCmd.tip_rate * 10000) / 100 };
+        saveFlowState();
+        const preC = 'Done — ' + said.replace(/ on the proposal/g, '') + ' on your order.';
+        const _jC = res.json.bind(res);
+        res.json = (payload) => { try { if (payload && typeof payload.text === 'string') { payload.text = preC + '\n\n' + payload.text; if (typeof payload.response === 'string') payload.response = payload.text; } } catch (e) {} return _jC(payload); };
+        return renderOrderSummary(state, email, format, res);
+      }
       let tl = []; try { tl = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
       if (state.lastProposalUrl && tl.length) {
         state.proposalPrefix = 'Done — ' + said + '.';
@@ -6679,6 +6755,23 @@ app.post('/chat', async (req, res) => {
       }
     }
     try { output = rewriteEstimateLines(output, getState(sessionKey)); } catch (e) { console.error('[fees] estimate rewrite failed:', e.message); }
+    // A per-person figure is the reply's own grand total / guests, in code (Nov 10, DC on Claude Code: "~$31.84" for
+    // $470.41 / 15 = $31.36, "~$33.67" for $33.16). Guests = the line's "(15 guests)", else the event's guest count.
+    try {
+      const gm = output.match(/(?:Estimated )?grand total:?\**\s*\$([\d,]+\.\d{2})/i);
+      if (gm) {
+        const grandPP = parseFloat(gm[1].replace(/,/g, ''));
+        output = output.replace(/^([^\n]*\bper[- ](?:person|guest|head)\b[^\n$]*?)(~?\s*\$)([\d,]+(?:\.\d{1,2})?)/gim, (m0, pre, dol, amt) => {
+          const gN = (pre.match(/\b(\d{1,4})\s+(?:guests|people|persons)\b/i) || [])[1] || (getState(sessionKey).eventParams || {}).guests;
+          const g = parseInt(gN, 10);
+          if (!(g > 0)) return m0;
+          const pp = Math.round(grandPP / g * 100) / 100, old = parseFloat(amt.replace(/,/g, ''));
+          if (Math.abs(pp - old) < 0.01) return m0;
+          console.log('[per-person] the reply said $' + old.toFixed(2) + ' — set to $' + pp.toFixed(2) + ' in code (grand total $' + grandPP.toFixed(2) + ' / ' + g + ' guests)');
+          return pre + dol + pp.toFixed(2);
+        });
+      }
+    } catch (e) { console.error('[per-person] rewrite failed:', e.message); }
     // Category subtotals ("Wine total: $X") on every package reply — computed from the build, not left to
     // the LLM (it wrote them in about half the Sep 27-28 QA runs). See package-subtotals.js.
     try {
