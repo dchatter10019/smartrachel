@@ -4221,7 +4221,7 @@ app.post('/chat', async (req, res) => {
         console.log('[staff-quote] the message also asks for drinks — handled as usual, the alert line leads the reply');
       }
     }
-    let clsIntent = null, clsRef = '';
+    let clsIntent = null, clsRef = '', clsSeen = null;   // clsSeen = the classifier's label even when not routed
     // clear stale classifier label: eventParams persists across turns (guests/budget for
     // rebuilds), so last turn's 'recommend' must not rewrite this turn's product query.
     if (state.eventParams && state.eventParams.classified_intent) { delete state.eventParams.classified_intent; delete state.eventParams.classified_ref; }
@@ -4285,6 +4285,7 @@ app.post('/chat', async (req, res) => {
           console.log('[classify] place_order with empty basket + products -> treated as build, not checkout');
           cr.intent = 'custom_list';
         }
+        if (clsUsable) clsSeen = { intent: cr.intent, confidence: cr.confidence };
         if (!(clsUsable && THRESH[cr.intent] !== undefined && cr.confidence >= THRESH[cr.intent])) {
           if (clsUsable && THRESH[cr.intent] !== undefined) events.note({ low_conf_intent: cr.intent, intent_conf: Math.round(cr.confidence * 100) / 100 });
           console.log('[classify->no-route] ' + cr.intent + ' ' + cr.confidence.toFixed(2) + ' [' + cr.source + '] — ' + (!clsUsable ? 'classifier failed' : THRESH[cr.intent] === undefined ? 'not a routed intent' : 'below threshold ' + THRESH[cr.intent]) + ' | ' + JSON.stringify(message).slice(0, 60));
@@ -4603,7 +4604,15 @@ app.post('/chat', async (req, res) => {
       console.log('[order] change_instructions label ignored — no delivery-instruction words in the message: ' + JSON.stringify(message.slice(0, 80)));
       clsIntent = null;
     }
-    if (!state.orderStep && !state.proposalStep && (clsIntent === 'change_instructions' || (/\b(instruction|instructions|note|notes|tell the driver|for the driver)\b/i.test(message) && /\b(change|update|set|add|make it|use)\b/i.test(message)))) {
+    // The word fallback ("notes" + "use") never takes a message the classifier confidently filed as something else,
+    // nor an event brief of "Field: value" lines. Real (Nov 10, DC on claude.ai): a brief with "Notes: If tequila is
+    // included, use Mi Campo" (classifier: build_package 0.97) was saved whole as the delivery instructions, no menu.
+    const briefFields = String(message).split('\n').filter(l => /^\s*(?:[-•*]\s*)?[A-Za-z][\w /&'()-]{1,30}:\s*\S/.test(l)).length;
+    const instrFallback = /\b(instruction|instructions|note|notes|tell the driver|for the driver)\b/i.test(message) && /\b(change|update|set|add|make it|use)\b/i.test(message);
+    if (instrFallback && clsIntent !== 'change_instructions' && ((clsSeen && clsSeen.intent !== 'change_instructions' && clsSeen.confidence >= 0.8) || briefFields >= 3)) {
+      console.log('[order] instructions word fallback NOT applied — ' + (briefFields >= 3 ? 'an event brief (' + briefFields + ' field lines)' : 'classifier says ' + clsSeen.intent + ' ' + clsSeen.confidence.toFixed(2)) + ': ' + JSON.stringify(message.slice(0, 80)));
+    }
+    if (!state.orderStep && !state.proposalStep && (clsIntent === 'change_instructions' || (instrFallback && !(clsSeen && clsSeen.intent !== 'change_instructions' && clsSeen.confidence >= 0.8) && briefFields < 3))) {
       const txt = (clsRef || message.replace(/^.*?\b(instructions?|notes?|driver)\b\s*(to|:|-|—|should|is|are)?\s*/i, '')).trim();
       state.savedInstructions = /^(none|no|nothing|remove|clear)\b/i.test(txt) ? '' : txt;
       if (state.orderData) state.orderData.delivery_instructions = state.savedInstructions;
@@ -5450,7 +5459,25 @@ app.post('/chat', async (req, res) => {
     const taxCmd = TAXCMD.read(message);
     const addrCmd = TAXCMD.proposalAddress(message);
     const feeCmd = TAXCMD.fees(message);   // "tax to 8.8875%", "tip $50 flat", "delivery $0" (Oct 13, Sean)
-    if ((taxCmd || addrCmd || feeCmd) && !pfHandled && !state.proposalStep && (!state.orderStep || state.orderStep === 'confirm')) {
+    // A fee inside a build request (an event brief's "Delivery charge: $0" line, or a message the classifier filed as a
+    // build) is kept for the session and the request goes on to be built — the fee never takes the turn. Real (Nov 10,
+    // DC on claude.ai): the replayed brief got "Noted — delivery $0.00 ... Your cart is empty right now" and no menu.
+    const feeBriefLines = String(message).split('\n').filter(l => /^\s*(?:[-•*]\s*)?[A-Za-z][\w /&'()-]{1,30}:\s*\S/.test(l)).length;
+    const feeInBuild = (taxCmd || feeCmd) && !addrCmd && !pfHandled && !state.proposalStep && !state.orderStep
+      && (feeBriefLines >= 3 || (clsSeen && /^(build_package|custom_list|menu_build|event|recommend)/.test(clsSeen.intent) && clsSeen.confidence >= 0.8));
+    if (feeInBuild) {
+      if (taxCmd) { state.taxExempt = taxCmd === 'zero'; state.proposalOpts = Object.assign({}, state.proposalOpts || {}, { tax_exempt: state.taxExempt }); }
+      if (feeCmd) {
+        const po3 = Object.assign({}, state.proposalOpts || {});
+        if (feeCmd.tip_amount != null) delete po3.tip_rate; if (feeCmd.tip_rate != null) delete po3.tip_amount;
+        if (feeCmd.tax_rate != null) { po3.tax_exempt = feeCmd.tax_rate === 0; state.taxExempt = feeCmd.tax_rate === 0; }
+        state.proposalOpts = Object.assign(po3, feeCmd);
+      }
+      state.eventParams = Object.assign({}, state.eventParams || {}, { proposalOpts: state.proposalOpts });
+      saveFlowState();
+      console.log('[fees] set from a build request (' + (feeBriefLines >= 3 ? feeBriefLines + ' field lines' : 'classifier ' + clsSeen.intent) + ') — the request is built, the fee does not take the turn: ' + (feeCmd ? TAXCMD.feesText(feeCmd) : 'tax ' + taxCmd));
+    }
+    if ((taxCmd || addrCmd || feeCmd) && !feeInBuild && !pfHandled && !state.proposalStep && (!state.orderStep || state.orderStep === 'confirm')) {
       if (taxCmd) {
         state.taxExempt = taxCmd === 'zero';
         state.proposalOpts = Object.assign({}, state.proposalOpts || {}, { tax_exempt: state.taxExempt });

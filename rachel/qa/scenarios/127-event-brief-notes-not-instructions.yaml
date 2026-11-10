@@ -1,0 +1,22 @@
+name: event-brief-notes-not-instructions
+# Nov 10 (DC on claude.ai, connector rachel_chat): a new chat sent an event brief with the address; after "about even"
+# the held brief was replayed and, because it had "Notes: If tequila is included, use Mi Campo" ("notes" + "use"), the
+# delivery-instructions word fallback saved the WHOLE brief as the driver's note ("Got it — delivery instructions set to
+# ...") and no menu was built (the classifier had said build_package 0.97). Now the fallback never takes a message the
+# classifier confidently filed as something else, nor a brief of "Field: value" lines — the package is built.
+format: plain
+tags: [events]
+turns:
+  - send: reset
+  - send: "Please create a beverage menu/package for an event.\nAddress: 132 West 32nd Street, New York, NY 10001\nEvent Date: Thursday, 11/12\nDelivery Time: Before 12pm\nMenu: Open bar to include mixed drinks, beer, & wine\nHeadcount: 15 people\nBudget: $27 per person\nDelivery charge: $0\nDuration: 2 hours\nNotes: If tequila is included, use Mi Campo. Wine and spirits must be 750 ML bottles or larger (no 187 ML or 375 ML)."
+    expect: {contains: ["21"]}
+  - send: "yes"
+    expect: {matches: "(?i)drink most"}
+  - send: "about even"
+    expect:
+      contains: ["drinks per person", "Product total"]
+      not_contains: ["delivery instructions set to"]
+      log_not_contains: ["[order] instructions change outside confirm"]
+  - send: "please add a note for the driver: use the loading dock on 31st St"
+    expect:
+      contains: ["delivery instructions set to"]
