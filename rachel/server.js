@@ -1079,6 +1079,19 @@ function basketTotalsText(state, items, format) {
   return lines.join('\n') + '\n\nProduct total: $' + tot.toFixed(2) + '\n' + E.taxL + ': $' + tax.toFixed(2) + '\n' + E.svcL + ': $' + svc.toFixed(2) +
     '\n' + tipL + ': $' + tip.toFixed(2) + '\nEstimated delivery: $' + del.toFixed(2) + '\n' + b + 'Estimated grand total: $' + grand.toFixed(2) + b + '\n\nEstimates — actual totals may vary.';
 }
+// The fees an ORDER carries (DC, Nov 10: "the delivery fee and the service fee should carry to the create order, and the
+// tip as well"): what the customer set for this conversation (state.proposalOpts — "delivery 0", "service 8%", "tip $50"),
+// else Bevvi's defaults ($25 delivery, 10% service; the tip is asked at checkout). Every order path uses it: the chat
+// checkout summary + place_order (Slack, WhatsApp, rachel_chat), the email order; the connector's rachel_place_order takes
+// the same fees as inputs. Sent to createCorpOrder as deliveryCharge / serviceChargePct / tipAmt (shopping-agent).
+function orderFeesFor(state) {
+  const po = (state && state.proposalOpts) || {};
+  const okN = v => typeof v === 'number' && isFinite(v) && v >= 0;
+  const delivery = okN(po.delivery_fee) ? Math.round(po.delivery_fee * 100) / 100 : 25;
+  const servicePct = okN(po.service_rate) ? Math.round(po.service_rate * 10000) / 100 : 10;
+  const tipChoice = okN(po.tip_amount) ? { amount: po.tip_amount } : okN(po.tip_rate) ? { pct: Math.round(po.tip_rate * 10000) / 100 } : null;
+  return { delivery, servicePct, tipChoice, custom: okN(po.delivery_fee) || okN(po.service_rate) || !!tipChoice };
+}
 function tipFor(state, base) {
   const c = (state.orderData && state.orderData.tipChoice) || state.savedTipChoice || null;
   if (!c) return { tip: Math.round(base * 5) / 100, label: 'Tip (5%)', choice: null };
@@ -1134,6 +1147,11 @@ function renderOrderSummary(state, email, format, res) {
     const productTotal = multiLines ? multiTotal : Math.round(unitPrice * qty * 100) / 100;
     // Every path to the summary comes through here (details, fast-path re-entry, time or
     // instruction changes), so this is the one place the tip question is asked.
+    const OF = orderFeesFor(state);
+    if (!state.orderData.tipChoice && !state.savedTipChoice && OF.tipChoice) {
+      state.orderData.tipChoice = OF.tipChoice; saveFlowState();
+      console.log('[tip] the tip the customer set for this conversation (' + tipText(OF.tipChoice) + ') — not asked again');
+    }
     if (!state.orderData.tipChoice && !state.savedTipChoice) {
       state.orderStep = 'tip'; state.orderData.tipBase = productTotal; saveFlowState();
       const a = p => '$' + (Math.round(productTotal * p) / 100).toFixed(2);
@@ -1143,9 +1161,11 @@ function renderOrderSummary(state, email, format, res) {
     }
     if (!state.orderData.tipChoice) state.orderData.tipChoice = state.savedTipChoice;
     const tax = Math.round(productTotal * taxRateFor(state) * 100) / 100;
-    const service = Math.round(productTotal * 0.10 * 100) / 100;
+    const service = Math.round(productTotal * OF.servicePct / 100 * 100) / 100;
     const { tip, label: tipLabel } = tipFor(state, productTotal);
-    const delivery = 25.00; // the same $25 is sent on the order as createCorpOrder deliveryCharge (shopping-agent place_order; DC, Nov 10)
+    const delivery = OF.delivery;   // sent on the order as createCorpOrder deliveryCharge (orderFeesFor)
+    state.orderData.deliveryCharge = delivery; state.orderData.servicePct = OF.servicePct;
+    if (OF.custom) console.log('[order] fees the customer set: delivery $' + delivery.toFixed(2) + ', service ' + OF.servicePct + '%' + (OF.tipChoice ? ', tip ' + tipText(OF.tipChoice) : ''));
     const grandTotal = Math.round((productTotal + tax + service + tip + delivery) * 100) / 100;
     state.orderData.grandTotal = grandTotal;
     state.orderData.productName = productName;
@@ -1167,7 +1187,7 @@ function renderOrderSummary(state, email, format, res) {
         (state.orderData.delivery_instructions ? 'Delivery instructions: ' + state.orderData.delivery_instructions + '\n' : '') + '\n' +
         'Product total: $' + productTotal.toFixed(2) + '\n' +
         taxLabelFor(state) + ': $' + tax.toFixed(2) + '\n' +
-        'Service charge (10%): $' + service.toFixed(2) + '\n' +
+        'Service charge (' + OF.servicePct + '%): $' + service.toFixed(2) + '\n' +
         tipLabel + ': $' + tip.toFixed(2) + '\n' +
         'Estimated delivery: $' + delivery.toFixed(2) + '\n' +
         B + 'Estimated grand total: $' + grandTotal.toFixed(2) + B + '\n\n' +
@@ -3021,7 +3041,11 @@ app.post('/chat', async (req, res) => {
     // ── Tip: set or change it any time ──────────────────────────────────────
     // "make the tip 15%", "no tip", "tip $8". At the tip step or the summary, re-render the
     // summary with the new tip; earlier, remember it for the order. Decided in code.
-    if (state.step === 'ready' && state.orderStep !== 'tip' && (state.tipAsk || (/\btip\b/i.test(message) && /\b(make|set|change|add|leave|give|remove|no|zero|without|waive|skip|lower|reduce|increase|raise|bump|drop|less|more)\b[^.?!]*\btip\b|\btip\b[^.?!]*\b(to|at|of|is)\s*\$?\d|\btip\b\s*(?:=|:)?\s*\$?\d|\bno tip\b/i.test(message)))) {
+    // A message that also sets delivery / service / tax ("make the delivery charge 0, service charge 8% and tip $20") is the
+    // fee block's (below): it reads all of them; this handler took "8%" (the service) as the tip and dropped the rest (Nov 10).
+    const feeOthers = (() => { const f = TAXCMD.fees(message) || {}; return Object.keys(f).some(k => !/^tip_/.test(k)) || !!TAXCMD.read(message); })();
+    if (feeOthers && /\btip\b/i.test(message)) console.log('[tip] the message sets other fees too — the fee block reads the tip with them: ' + JSON.stringify(String(message).slice(0, 60)));
+    if (state.step === 'ready' && state.orderStep !== 'tip' && !feeOthers && (state.tipAsk || (/\btip\b/i.test(message) && /\b(make|set|change|add|leave|give|remove|no|zero|without|waive|skip|lower|reduce|increase|raise|bump|drop|less|more)\b[^.?!]*\btip\b|\btip\b[^.?!]*\b(to|at|of|is)\s*\$?\d|\btip\b\s*(?:=|:)?\s*\$?\d|\bno tip\b/i.test(message)))) {
       const tc = parseTip(message);
       if (tc && tc.ambiguous == null) {
         state.savedTipChoice = tc; state.tipAsk = false;
@@ -3667,15 +3691,17 @@ app.post('/chat', async (req, res) => {
           return res.json({ text: t, response: t, email_cc: [] });
         }
         const pt = QE.total(oItems);
-        const tipAmt = od.tip ? (od.tip.amount != null ? od.tip.amount : Math.round(pt * od.tip.pct) / 100) : Math.round(pt * 5) / 100;
-        const tipLabel = od.tip ? (od.tip.amount != null ? 'Tip' : 'Tip (' + od.tip.pct + '%)') : 'Tip (5%)';
+        const OFe = orderFeesFor(state), tipE = od.tip || OFe.tipChoice;   // fees the customer set in this thread (orderFeesFor)
+        const tipAmt = tipE ? (tipE.amount != null ? tipE.amount : Math.round(pt * tipE.pct) / 100) : Math.round(pt * 5) / 100;
+        const tipLabel = tipE ? (tipE.amount != null ? 'Tip' : 'Tip (' + tipE.pct + '%)') : 'Tip (5%)';
+        if (OFe.custom) console.log('[email-order] fees the customer set: delivery $' + OFe.delivery.toFixed(2) + ', service ' + OFe.servicePct + '%' + (!od.tip && OFe.tipChoice ? ', tip ' + tipText(OFe.tipChoice) : ''));
         const nm = String(od.name).trim().split(/\s+/);
         let r = null;
         try {
           r = await callShoppingTool('place_order', {
             line_items: state.lastLineItems,
             customer: { firstName: nm[0], lastName: nm.slice(1).join(' '), email: od.email, phone: od.phone, address: state.address, zipcode: state.zip },
-            account_email: email, email, tip_amount: tipAmt,
+            account_email: email, email, tip_amount: tipAmt, delivery_charge: OFe.delivery, service_charge_pct: OFe.servicePct,
             delivery_datetime: od.delivery_iso || od.delivery_window, delivery_instructions: od.instructions || '',
             zip: state.zip, dry_run: isQA });
         } catch (e) { r = { success: false, error: e.message }; }
@@ -3690,7 +3716,7 @@ app.post('/chat', async (req, res) => {
         if (state.placedOrder) state.placedOrder.email_order = JSON.parse(JSON.stringify(od));   // a later change rebuilds the order from these (DC, Oct 28)
         const replacedE = state.placedOrder && state.placedOrder.replaces;
         state.emailOrder = null; state.emailReplace = null; saveFlowState();
-        const tax = Math.round(pt * 10) / 100, svc = Math.round(pt * 10) / 100, grand = Math.round((pt + tax + svc + tipAmt + 25) * 100) / 100;
+        const tax = Math.round(pt * 10) / 100, svc = Math.round(pt * OFe.servicePct) / 100, grand = Math.round((pt + tax + svc + tipAmt + OFe.delivery) * 100) / 100;
         const m2 = n => QE.money(n);
         // Written to the CUSTOMER (they are the To — DC, Oct 3), in Rachel's voice: a personal mixologist, warm, never a log line.
         const first = String(od.name || '').trim().split(/\s+/)[0] || 'there';
@@ -3701,7 +3727,7 @@ app.post('/chat', async (req, res) => {
             : 'Wonderful news — your order' + forWhom + ' is all set, and I\'m so glad to be part of it!' + (r.dry_run ? ' (QA dry run — order #' + r.order_id + '.)' : '')) +
           '\n\nHere is your Payment Link: ' + r.payment_url + '\nYour order is confirmed as soon as it\'s paid.' +   // the email's HTML part shows "Here is your Payment Link." with the link on "Payment Link" (DC, Oct 3)
           '\n\nHere\'s what\'s coming your way:\n' + lines +
-          '\n\nProduct total: ' + m2(pt) + '\nEstimated tax: ' + m2(tax) + '\nService charge (10%): ' + m2(svc) + '\n' + tipLabel + ': ' + m2(tipAmt) + '\nEstimated delivery: ' + m2(25) + '\nEstimated total: ' + m2(grand) +
+          '\n\nProduct total: ' + m2(pt) + '\nEstimated tax: ' + m2(tax) + '\nService charge (' + OFe.servicePct + '%): ' + m2(svc) + '\n' + tipLabel + ': ' + m2(tipAmt) + '\nEstimated delivery: ' + m2(OFe.delivery) + '\nEstimated total: ' + m2(grand) +
           '\n\nDelivery: ' + od.delivery_label + '\n' + state.address + (od.instructions ? '\nNotes for our driver: ' + od.instructions : '') +
           '\nOrder for: ' + od.name + ', ' + od.phone + ', ' + od.email + (r.dry_run ? '' : '\nOrder #' + r.order_id) +
           '\n\nIf anything needs a little tweak before the big day, just reply to this email and I\'ll take care of it. Cheers to a wonderful event!' +
@@ -5275,6 +5301,8 @@ app.post('/chat', async (req, res) => {
           customer: customerObj,
           account_email: od.account_email || email || '',   // top-level createCorpOrder email = the logged-in user
           tip_amount: typeof od.tip === 'number' ? od.tip : undefined,   // the customer's chosen tip (enforced in rachel.js)
+          delivery_charge: typeof od.deliveryCharge === 'number' ? od.deliveryCharge : orderFeesFor(state).delivery,   // enforced in rachel.js
+          service_charge_pct: typeof od.servicePct === 'number' ? od.servicePct : orderFeesFor(state).servicePct,
           delivery_datetime: od.delivery_datetime_iso || od.delivery_datetime,
           // The window as the customer approved it (real zone). Bevvi's raw window says "EST" even for SF — the LLM
           // quoted it in the "order placed" reply (Oct 5, DC: "2:00 PM - 3:00 PM EST" for a Pacific window).
@@ -5286,8 +5314,8 @@ app.post('/chat', async (req, res) => {
           // field, and the LLM was narrating "Tip: $0.00" against an approved $113.91.
           approved_totals: {
             product_total: od.productTotal, tax: od.tax, service: od.service, tip: od.tip,
-            delivery: 25.00,   // estimate; Bevvi applies the real fee at checkout. Real bug: a second `delivery: 0` key overrode this, so the LLM got delivery $0 beside a grand total that includes $25
-            grand_total: Math.round(((od.productTotal || 0) + (od.tax || 0) + (od.service || 0) + (od.tip || 0) + 25) * 100) / 100
+            delivery: typeof od.deliveryCharge === 'number' ? od.deliveryCharge : orderFeesFor(state).delivery,   // the summary's figure (orderFeesFor). Real bug: a second `delivery: 0` key once overrode it
+            grand_total: Math.round(((od.productTotal || 0) + (od.tax || 0) + (od.service || 0) + (od.tip || 0) + (typeof od.deliveryCharge === 'number' ? od.deliveryCharge : orderFeesFor(state).delivery)) * 100) / 100
           }
         });
         // Full, untruncated log of exactly what we hand to the LLM for placement — the
@@ -5298,7 +5326,7 @@ app.post('/chat', async (req, res) => {
         state.lastFingerprint = fp2;
         const gbrainCtx = email ? await getCustomerContext('', '', context?.client_id || 'airculinaire', email).catch(() => '') : '';
         context.saved_zip = state.zip;
-        const addrRule2 = '\n\n## DELIVERY\nZip: ' + state.zip + '. Address: ' + state.address + '. Age and address verified.\n\n## ORDER INSTRUCTION\nThe user message contains a JSON system instruction. Parse it and immediately call ShoppingAgent with intent=place_order using the line_items, customer, delivery_datetime, delivery_instructions and zip from the JSON (pass delivery_instructions through verbatim, even if empty). Do not ask for any more information. In your confirmation reply, state the delivery time exactly as delivery_window (with its time zone) — never convert or relabel it. In your confirmation reply, quote the amounts from approved_totals EXACTLY (product total, tax, service charge, tip, grand total) — never recompute them; the tip is the customer\'s choice and may be $0.00. Label the delivery line "Estimated delivery: $25.00" (it is an estimate; the final delivery charge is confirmed at checkout); the API response does not include these figures and the customer already approved them.';
+        const addrRule2 = '\n\n## DELIVERY\nZip: ' + state.zip + '. Address: ' + state.address + '. Age and address verified.\n\n## ORDER INSTRUCTION\nThe user message contains a JSON system instruction. Parse it and immediately call ShoppingAgent with intent=place_order using the line_items, customer, delivery_datetime, delivery_instructions and zip from the JSON (pass delivery_instructions through verbatim, even if empty). Do not ask for any more information. In your confirmation reply, state the delivery time exactly as delivery_window (with its time zone) — never convert or relabel it. In your confirmation reply, quote the amounts from approved_totals EXACTLY (product total, tax, service charge, tip, grand total) — never recompute them; the tip is the customer\'s choice and may be $0.00. Label the delivery line "Estimated delivery: $' + (typeof state.orderData.deliveryCharge === 'number' ? state.orderData.deliveryCharge : orderFeesFor(state).delivery).toFixed(2) + '" and the service line with approved_totals.service (the customer approved these); the API response does not include these figures and the customer already approved them.';
         const orderOutput = await callRachel({ sessionKey, message: placeMsg, context, format, gbrainContext: gbrainCtx, addressRule: addrRule2, email, alreadyConfirmed: true });
         // Persist the customer's contact details for repeat orders. GBrain stores no
         // name/phone, so the previous successful order is the only source — without
@@ -6817,8 +6845,11 @@ app.post('/internal/order-preview', async (req, res) => {
   }
   const pt = Math.round(items.reduce((a, li) => a + (parseFloat(li.price) || 0) * (li.qty || li.quantity || 1), 0) * 100) / 100;
   const tip = typeof b.tip_amount === 'number' && b.tip_amount >= 0 ? b.tip_amount : Math.round(pt * 5) / 100;
-  const tax = Math.round(pt * 10) / 100, svc = Math.round(pt * 10) / 100;
-  const totals = { product_total: pt, estimated_tax: tax, service_charge: svc, tip, estimated_delivery: 25, estimated_total: Math.round((pt + tax + svc + tip + 25) * 100) / 100 };
+  // Fees the caller passes (rachel_place_order delivery_fee / service_percent; DC, Nov 10), else $25 / 10%.
+  const okF = v => typeof v === 'number' && isFinite(v) && v >= 0;
+  const delP = okF(b.delivery_fee) ? Math.round(b.delivery_fee * 100) / 100 : 25, svcPct = okF(b.service_percent) ? b.service_percent : 10;
+  const tax = Math.round(pt * 10) / 100, svc = Math.round(pt * svcPct) / 100;
+  const totals = { product_total: pt, estimated_tax: tax, service_charge: svc, service_percent: svcPct, tip, estimated_delivery: delP, estimated_total: Math.round((pt + tax + svc + tip + delP) * 100) / 100 };
   console.log('[order-preview] ' + items.length + ' line(s), ' + (problems.length ? problems.length + ' problem(s): ' + JSON.stringify(problems).slice(0, 300) : 'ready') + ' | delivery ' + JSON.stringify(delivery));
   res.json({ ok: !problems.length, problems, line_items: items, delivery, totals });
 });

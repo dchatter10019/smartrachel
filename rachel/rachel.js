@@ -638,6 +638,8 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           // may drop or change it (it used to be told never to show $0). Enforce it here.
           if (saInput.intent === 'place_order') {
             try { const sys = JSON.parse(customerMessage); if (sys && sys._system === 'place_order' && typeof sys.tip_amount === 'number') { console.log('[ShoppingAgent] place_order tip_amount ' + sys.tip_amount + ' from the approved summary' + (saInput.tip_amount !== sys.tip_amount ? ' (LLM passed ' + saInput.tip_amount + ')' : '')); saInput.tip_amount = sys.tip_amount; } } catch (e) {}
+            // The delivery charge / service % the customer approved in the summary (server.js orderFeesFor; DC, Nov 10).
+            try { const sys2 = JSON.parse(customerMessage); if (sys2 && sys2._system === 'place_order') { for (const k of ['delivery_charge', 'service_charge_pct']) if (typeof sys2[k] === 'number') { if (saInput[k] !== sys2[k]) console.log('[ShoppingAgent] place_order ' + k + ' ' + sys2[k] + ' from the approved summary' + (saInput[k] != null ? ' (LLM passed ' + saInput[k] + ')' : '')); saInput[k] = sys2[k]; } } } catch (e) {}
           }
         }
         // confirm_substitute is handled entirely in-process, not via the shopping-agent

@@ -361,7 +361,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   delivery $; "delivery to <address>" is never a fee) -> state.proposalOpts for the session -> every path (in-code
   proposal, email quote PDF, the LLM's generate_proposal — customer fees override the LLM's) -> generate-proposal.js
   proposalTotals (exact % labels; fees + totals saved in proposal-items) and every in-chat estimate (server.js estimateFor).
-  The placed-order email/summary keeps Bevvi's real fees. The LLM's generate_proposal keeps the saved client unless this
+  Since Nov 10 the ORDER carries them too (DC: "the delivery fee and the service fee should carry to the create order, and the
+  tip as well") — see orderFeesFor below. The LLM's generate_proposal keeps the saved client unless this
   message names its own; "Delivery fee" in its notes no longer drops the delivery address. Scenario 102.
 - Customer preferences (customer-prefs.js -> RACHEL_DATA_DIR/customer-prefs.json): lasting statements ("we always do cans",
   "from now on...", "we never serve red", "can you always...") saved per customer email and per client ("client:goody");
@@ -727,8 +728,15 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   in our order log (requested_by) and [place_order] account | customer email | requested by. Until Oct 3 the top-level
   email was the requester (email sender / Slack user).
   createCorpOrder also gets deliveryCharge (DC, Nov 10): place_order input delivery_charge / delivery_fee (USD, 0 = free),
-  else $25 ([place_order] deliveryCharge ...; was never sent — Bevvi added delivery at checkout). The order summaries already
-  quoted $25; orders.jsonl amount now includes it.
+  else $25 ([place_order] deliveryCharge ...; was never sent — Bevvi added delivery at checkout); serviceChargePct = input
+  service_charge_pct, else 10. orders.jsonl amount includes delivery. The fees come from server.js orderFeesFor (the
+  conversation's state.proposalOpts: delivery_fee, service_rate, tip_rate | tip_amount; else $25 / 10% / tip asked) on every
+  path: the chat checkout summary (no tip question when one was set; "Service charge (8%)") -> place_order instruction
+  (delivery_charge / service_charge_pct / tip_amount, enforced in rachel.js from the approved summary) -> shopping-agent; the
+  email order (EMAIL ORDER, reply totals too); the connector's rachel_place_order takes delivery_fee / service_percent inputs
+  -> /internal/order-preview totals -> payload. QA dry runs log the fees ("[QA] place_order dry run ... | fees: ..."). A message
+  that sets other fees with the tip ("delivery 0, service 8% and tip $20") is read by the fee block, never the tip handler
+  (it took the 8% as the tip). Scenario 126.
 - A placed order (API success only) leaves the cart → state.placedOrder (+ order_data: contact, delivery, driver note, tip;
   email: email_order). There is no order-update API. Since Oct 28 (DC: "fetch the last order and apply the change, seamlessly")
   a CHANGE to a placed order (items, recipient, contact, time, driver note — paid or not) is APPLIED: Slack / WhatsApp /

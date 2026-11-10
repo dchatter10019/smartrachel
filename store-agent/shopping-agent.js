@@ -1347,7 +1347,7 @@ async function executeTool(name, input) {
     } catch (e) { console.error('[place_order] line merge failed — sending lines as given:', e.message); }
   }
   if (name === 'place_order' && input.dry_run) {
-    console.log('[QA] place_order dry run — no createCorpOrder call');
+    console.log('[QA] place_order dry run — no createCorpOrder call | fees: delivery_charge ' + JSON.stringify(input.delivery_charge) + ', service_charge_pct ' + JSON.stringify(input.service_charge_pct) + ', tip_amount ' + JSON.stringify(input.tip_amount));
     const oid = 'QA-DRY-RUN-' + Date.now();
     return { success: true, dry_run: true, order_id: oid, order_number: oid, payment_url: 'https://corporate.getbevvi.com/direct-checkout?token=QA_DRY_RUN', message: 'Simulated order (QA)' };
   }
@@ -1379,7 +1379,10 @@ async function executeTool(name, input) {
     }
     try {
       const productTotal = products.reduce((s, p) => s + (parseFloat(p.price) || 0) * (p.qty || p.quantity || 1), 0);
-      const serviceChargePct = 10;
+      // Service % the customer set (service_charge_pct; DC, Nov 10), else 10.
+      const scIn = [input.service_charge_pct, input.service_percent].map(v => (typeof v === 'string' && v.trim() !== '') ? Number(v.replace(/[%\s]/g, '')) : v).find(v => typeof v === 'number' && isFinite(v) && v >= 0 && v <= 100);
+      const serviceChargePct = scIn !== undefined ? scIn : 10;
+      if (scIn !== undefined) console.log('[place_order] serviceChargePct ' + serviceChargePct + ' (passed)');
       const serviceChargeAmt = Math.round(productTotal * (serviceChargePct / 100) * 100) / 100;
       // tip_amount 0 is the customer's "no tip", not a missing value (|| turned it into 5%).
       const tipAmt = (typeof input.tip_amount === 'number' && input.tip_amount >= 0) ? input.tip_amount : Math.round(productTotal * 0.05 * 100) / 100;

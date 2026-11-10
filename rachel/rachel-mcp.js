@@ -114,7 +114,9 @@ const TOOLS = [
         delivery_datetime:    { type: 'string', description: 'Requested delivery date and time, e.g. "2026-10-05 17:00" or "Monday Oct 5 at 5pm". ALWAYS include the customer\'s time zone ("5pm ET", "11am Pacific"); if they haven\'t said one, ask them which time zone before calling — a time with no zone comes back as a problem asking for it. The prepared order\'s delivery.window is in the customer\'s zone; quote it as given.' },
         delivery_instructions:{ type: 'string', description: 'Only what the DRIVER needs at the door: on-site contact and phone, buzzer / gate code, floor or suite, loading dock, COI. Never the company name (use company_name), order numbers, or notes about earlier or replaced orders — those are removed.' },
         company_name:         { type: 'string', description: 'The customer\'s company, when the order is for one (e.g. "Google"). Goes on the order\'s company field — never in delivery_instructions or the address.' },
-        tip_amount:           { type: 'number', description: 'Tip in USD (default 5% of the product total)' }
+        tip_amount:           { type: 'number', description: 'Tip in USD (default 5% of the product total)' },
+        delivery_fee:         { type: 'number', description: 'Optional: delivery charge in USD the customer agreed (default 25; 0 = free delivery). Use the same value as on their proposal.' },
+        service_percent:      { type: 'number', description: 'Optional: service charge percent the customer agreed (default 10, e.g. 8). Use the same value as on their proposal.' }
       },
       required: ['line_items', 'first_name', 'last_name', 'phone', 'address', 'zip', 'delivery_datetime']
     }
@@ -733,7 +735,7 @@ async function runTool(name, input, callerEmail, apiKey) {
     const missing = ['first_name', 'last_name', 'phone', 'address', 'zip', 'delivery_datetime'].filter(k => !String(input[k] || '').trim());
     if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(customerEmail)) missing.push('customer_email (a valid email)');
     const pr = await fetch(`${RACHEL_URL}/internal/order-preview`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ line_items: input.line_items, zip: input.zip, address: input.address, delivery_datetime: input.delivery_datetime, tip_amount: input.tip_amount }) }).then(r => r.json());
+      body: JSON.stringify({ line_items: input.line_items, zip: input.zip, address: input.address, delivery_datetime: input.delivery_datetime, tip_amount: input.tip_amount, delivery_fee: input.delivery_fee, service_percent: input.service_percent }) }).then(r => r.json());
     const problems = missing.map(m => 'missing: ' + m).concat(pr.problems || []);
     if (problems.length) {
       console.log('[rachel-mcp] order NOT ready (' + callerEmail + '): ' + JSON.stringify(problems).slice(0, 300));
@@ -747,7 +749,7 @@ async function runTool(name, input, callerEmail, apiKey) {
     const payload = {
       line_items: JSON.stringify(pr.line_items), zip: input.zip,
       customer: { firstName: input.first_name, lastName: input.last_name, email: customerEmail, phone: input.phone, address: input.address, zipcode: input.zip },
-      tip_amount: pr.totals.tip, delivery_datetime: pr.delivery.iso || pr.delivery.raw, delivery_instructions: di.text, company_name: company,
+      tip_amount: pr.totals.tip, delivery_charge: pr.totals.estimated_delivery, service_charge_pct: pr.totals.service_percent, delivery_datetime: pr.delivery.iso || pr.delivery.raw, delivery_instructions: di.text, company_name: company,
       account_email: callerEmail, email: callerEmail
     };
     const summary = {

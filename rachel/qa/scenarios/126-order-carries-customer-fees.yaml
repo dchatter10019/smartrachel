@@ -1,0 +1,32 @@
+name: order-carries-customer-fees
+# Nov 10 (DC): "the delivery fee and the service fee should carry to the create order, and the tip as well". Fees the
+# customer set in the conversation (delivery $0, service 8%, tip $20) were on the proposal and the in-chat estimates only;
+# the checkout summary showed $25 / 10% and asked the tip again, and createCorpOrder got deliveryCharge 25 + 10% service.
+# Now the summary, the approved totals and the place_order call carry the customer's fees (server.js orderFeesFor).
+format: plain
+tags: [orders]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+  - send: "make the delivery charge 0, service charge 8% and tip $20"
+    expect: {contains: ["Done"], not_matches: "(?i)service charge \\(10%\\)"}
+  - send: "place the order"
+    expect: {contains: ["full name"]}
+  - send: "QA Tester"
+  - send: "same"
+  - send: "9175550100"
+  - send: "tomorrow at 5 pm ET"
+    expect: {contains: ["instructions"]}
+  - send: "none"
+    expect:
+      contains: ["Order Summary", "Service charge (8%)", "Tip: $20.00", "Estimated delivery: $0.00", "Shall I go ahead"]
+      not_contains: ["tip for your driver"]
+      log_contains: ["[tip] the tip the customer set for this conversation", "[order] fees the customer set: delivery $0.00, service 8%"]
+  - send: "yes"
+    expect:
+      matches: "placed|confirmed|submitted"
+      log_contains: ["fees: delivery_charge 0, service_charge_pct 8, tip_amount 20"]
