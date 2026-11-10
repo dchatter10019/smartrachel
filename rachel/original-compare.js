@@ -10,7 +10,7 @@ const DT = require('./drink-type.js');
 const OH = require('./on-hand.js');
 
 const norm = s => String(s || '').toLowerCase().replace(/[‘’]/g, "'").replace(/é/g, 'e');
-const GENERIC = new Set(['the', 'and', 'or', 'of', 'a', 'x', 'pack', 'packs', 'case', 'cases', 'bottle', 'bottles', 'can', 'cans', 'ml', 'l', 'oz', 'liter', 'litre', 'unsweetened', 'if', 'you', 'carry', 'them', 'per', 'include', 'only']);
+const GENERIC = new Set(['the', 'and', 'or', 'of', 'a', 'x', 'pack', 'packs', 'case', 'cases', 'bottle', 'bottles', 'btl', 'btls', 'can', 'cans', 'ml', 'l', 'oz', 'liter', 'litre', 'unsweetened', 'if', 'you', 'carry', 'them', 'per', 'include', 'only']);
 const words = s => norm(s).replace(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz|liter|litre)\b/g, ' ').split(/[^a-z0-9/']+/).map(w => w.replace(/^n\/a$/, 'na')).filter(w => w && !GENERIC.has(w) && !/^\d+$/.test(w) && w.length >= 2);
 
 function sizeMl(s) {
@@ -38,7 +38,10 @@ function parseRequest(text, onHand) {
       const alt = (part.match(/\((?:or\s+)?([^)]*)\)/i) || [])[1] || '';
       const orAlt = /^\s*or\b/i.test(((part.match(/\(([^)]*)\)/) || [])[1]) || '') ? alt.replace(/^\s*\d+\s*[x×]\s*/i, '') : '';
       part = part.replace(/\([^)]*\)/g, m0 => /^\(\s*or\b/i.test(m0) ? '' : ' ' + m0.slice(1, -1) + ' ').trim();
-      const qm = part.match(/^\s*(\d+)\s*[x×]\s*/i);
+      // "2 btls of Woodford Reserve" / "3 bottles of Prosecco" / "6 cans of ..." are counts too (Nov 10, DC's iCapital menu
+      // on Claude Code: read as 1 of "1 btl of Frangelico", which no longer matched the LLM's "Frangelico" line, so it was
+      // re-added as a mixer -> Bloody Mary Mix, and "3 btls of Prosecco" added a 2nd prosecco).
+      const qm = part.match(/^\s*(\d+)\s*[x×]\s*/i) || part.match(/^\s*(\d{1,4})\s+(?:btls?|bts?|bottles?|cans?|units?)\.?\s+(?:of\s+)?(?=[A-Za-z])/i);
       // A trailing count too: "Tito's 750ml x 2" (Oct 15 nightly: read as 750 mL of Tito's -> 1 bottle).
       // "Whispering Angel 750ml — qty 2" / "qty: 2" / "quantity 2" too (F-0098, Oct 28 claude.ai: the count stayed in the
       // name, the 750ml was read as an amount -> 1x the 1.5 L).
@@ -235,7 +238,7 @@ function namedFromRow(r) {
 function namedFromListLine(line0) {
   let line = String(line0 || '').trim().replace(/^\s*[-•*·]\s*/, ''), m;
   if ((m = line.match(/^(\d{1,4}|a|an|one)\s+(cases?)\s+(?:of\s+)?(.+)$/i))) line = (/^\d/.test(m[1]) ? m[1] : 1) + ' x ' + m[3] + ' case';
-  else if ((m = line.match(/^(\d{1,4})\s*(?:[x×]\s*)?(?!\d|ml\b|l\b|oz\b|pk\b|pack)(.+)$/i)) && !/^\s*(?:ml|l|oz|liters?|litres?)\b/i.test(m[2])) line = m[1] + ' x ' + m[2].replace(/^\s*(?:bottles?|cans?)\s+of\s+/i, '');
+  else if ((m = line.match(/^(\d{1,4})\s*(?:[x×]\s*)?(?!\d|ml\b|l\b|oz\b|pk\b|pack)(.+)$/i)) && !/^\s*(?:ml|l|oz|liters?|litres?)\b/i.test(m[2])) line = m[1] + ' x ' + m[2].replace(/^\s*(?:bottles?|btls?|bts?|cans?)\.?\s+of\s+/i, '');
   else if ((m = line.match(/^(.+?)\s*[x×]\s*(\d{1,4})\s*$/i))) line = m[2] + ' x ' + m[1];
   const row = parseRequest('- ' + line)[0];
   const np = row && namedFromRow(row);

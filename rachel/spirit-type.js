@@ -1,4 +1,5 @@
-// Spirit type of a product name: 'tequila' | 'rum' | 'vodka' | 'gin' | 'whiskey' | 'mezcal' | 'cognac' | ''.
+// Spirit type of a product name: 'tequila' | 'rum' | 'vodka' | 'gin' | 'whiskey' | 'mezcal' | 'cognac' | 'liqueur' | ''.
+// 'liqueur' (Nov 10, DC's iCapital menu: Frangelico had no type, so its stand-in could be Master of Mixes Bloody Mary Mix).
 // Basket lines carry only category 'spirits' and names like "Patron Silver" / "Casamigos Blanco" never
 // say tequila, so a type word in the name wins, then the brand. Used to find WHICH basket line a
 // replacement stands in for when the LLM doesn't say (Sep 29: Casamigos went in at 1 bottle instead
@@ -6,6 +7,7 @@
 const WORDS = [
   ['mezcal', /\bmezcal\b/], ['tequila', /\btequila\b/], ['vodka', /\bvodka\b/], ['gin', /\bgin\b/],
   ['rum', /\b(rum|rhum)\b/], ['whiskey', /\b(whiske?y|bourbon|scotch|rye)\b/], ['cognac', /\b(cognac|brandy|armagnac)\b/],
+  ['liqueur', /\b(liqueur|liquore|triple sec|curacao|schnapps|amaretto|creme de)\b/],
 ];
 const BRANDS = {
   tequila: ['patron', 'don julio', 'casamigos', 'clase azul', 'espolon', 'herradura', 'jose cuervo', 'mi campo', '1800', 'hornitos',
@@ -18,6 +20,8 @@ const BRANDS = {
     'makers mark', 'buffalo trace', 'woodford', 'bulleit', 'knob creek', 'jack daniel', 'jim beam', 'wild turkey', 'four roses',
     'crown royal', 'high west', 'elijah craig', 'angel\'s envy', 'basil hayden', 'blanton', 'eagle rare', '1792', 'balvenie', 'dalmore', 'redbreast'],
   cognac: ['hennessy', 'remy martin', 'courvoisier', 'martell'],
+  liqueur: ['frangelico', 'kahlua', 'baileys', 'st-germain', 'st germain', 'disaronno', 'chambord', 'cointreau', 'grand marnier',
+    'drambuie', 'galliano', 'midori', 'licor 43', 'jagermeister', 'chartreuse', 'benedictine', 'tia maria', 'luxardo', 'godiva'],
 };
 function spiritType(name) {
   const n = ' ' + String(name || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '') + ' ';

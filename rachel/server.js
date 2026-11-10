@@ -1922,6 +1922,9 @@ app.post('/chat', async (req, res) => {
   // that node --check cannot catch — on exactly the path where both were remembered.
   let { message, context, gbrain_context, session_id, format = 'markdown', skip_gbrain = false, images = null } = req.body;
   let freshTurn = false;   // the fresh-start note is on this reply (freshStartNote): the message is not held
+  // The fresh-start note's text: added to the reply INSIDE the events / transcript wrappers, so transcripts.jsonl and the
+  // nightly review see what the customer saw (Nov 10: the note reached DC at 18:06 but the transcript row lacked it).
+  let freshPrefix = '';
   // A caller that sends no context object (Oct 5, F-0017: a hand-run curl) crashed the turn at context.saved_zip = ...
   // and the customer got "I hit a snag". Every channel sends one; a missing one is now an empty one.
   if (!context || typeof context !== 'object') { if (context !== undefined) console.log('[chat] context was not an object — treated as empty'); context = {}; }
@@ -2180,11 +2183,7 @@ app.post('/chat', async (req, res) => {
       } catch (e) {}
       freshTurn = !selfContained;
       console.log('[session] fresh-start note shown — ' + (selfContained ? 'a self-contained request, held as usual: ' : 'this message is not held: ') + JSON.stringify(String(message).slice(0, 60)));
-      const _jF = res.json.bind(res);
-      res.json = (payload) => {
-        try { if (payload && typeof payload.text === 'string' && payload.text.trim()) { payload.text = fnote + '\n\n' + payload.text; if (typeof payload.response === 'string') payload.response = payload.text; } } catch (e) {}
-        return _jF(payload);
-      };
+      freshPrefix = fnote;   // put on the reply by the wrapper installed right after the events wrapper (below)
     }
     saveFlowState();
   }
@@ -2288,6 +2287,13 @@ app.post('/chat', async (req, res) => {
     res.json = (payload) => {
       try { if (message !== '__greeting__') events.finish({ st: flowState[sessionKey], stateIn: evIn, basketBefore: evBasket0, sessionKey, format, context, email, isQA, reply: payload && (payload.text || payload.response), message: evMsg }); } catch (e) {}
       return _jE(payload);
+    };
+  }
+  {
+    const _jFP = res.json.bind(res);
+    res.json = (payload) => {
+      try { if (freshPrefix && payload && typeof payload.text === 'string' && payload.text.trim()) { payload.text = freshPrefix + '\n\n' + payload.text; if (typeof payload.response === 'string') payload.response = payload.text; freshPrefix = ''; } } catch (e) {}
+      return _jFP(payload);
     };
   }
   // PROPOSAL GUARD (proposal-guard.js, DC Oct 13: "a self correcting loop"): a reply that carries a proposal PDF is

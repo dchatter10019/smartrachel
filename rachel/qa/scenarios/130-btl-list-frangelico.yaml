@@ -1,0 +1,19 @@
+name: btl-list-frangelico
+# Nov 10 (DC on Claude Code, iCapital, 10165): a menu written "2 btls of Woodford Reserve Bourbon / 1 btl of Frangelico /
+# 3 btls of Prosecco ..." — "N btls of X" was read as 1 of "N btls of X", so the one-word lines no longer matched the
+# LLM's own "Frangelico" / "Prosecco" lines and [list-reconcile] re-added them: Frangelico as a MIXER (stand-in "Master
+# of Mixes Bloody Mary Mix") and a 2nd prosecco (Bartenura on top of 3 Kim Crawford). Now "N btls of" is a count, and a
+# liqueur (Frangelico, Kahlua, St-Germain...) has a type, so its stand-in is a liqueur or nothing — never a mixer.
+format: plain
+tags: [lists]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "60 East 42nd Street, New York, NY 10165"
+    expect: {contains: ["60 E 42nd St"]}
+  - send: "Menu\n\n* 2 btls of Woodford Reserve Bourbon\n* 2 btls of Titos Vodka\n* 1 btl of Frangelico\n* 1 btl of St-Germain elderflower liqueur\n* 2 btls of Bombay Sapphire Gin\n* 3 btls of Prosecco\n* 1 btl of Triple Sec"
+    expect:
+      contains: ["Woodford", "Tito's", "St-Germain", "Bombay Sapphire", "Prosecco", "Triple Sec"]
+      matches: "3x [^\\n]*Prosecco"
+      not_matches: "(?i)bartenura|bloody mary|\\bmixer|btls? of"
+      log_not_contains: ["was missing from the list — added"]

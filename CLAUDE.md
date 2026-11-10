@@ -561,6 +561,13 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   question says "spirits" when 2+ spirits are named ("wine, beer or bourbon?"). Session facts carry the event (guests,
   hours, budget total + per person: "what's your additional budget?" after a $35/person brief). Wine colours know
   appellations (Pouilly-Fuissé white, Saint-Julien red). Scenario 129.
+- "N btls of X" lists + liqueur type (Nov 10, DC on Claude Code, iCapital 10165): "2 btls of Woodford / 1 btl of Frangelico /
+  3 btls of Prosecco" was read as 1 of "N btls of X" (original-compare.js parseRequest / namedFromListLine), so [list-reconcile]
+  re-added the one-word lines: Frangelico as a MIXER (stand-in Master of Mixes Bloody Mary Mix) and a 2nd prosecco. Now
+  "N btl(s)/bottles/cans of" is a count, and spirit-type.js has 'liqueur' (word: liqueur, triple sec, curacao, amaretto...;
+  brands: Frangelico, Kahlua, Baileys, St-Germain, Cointreau...) so a liqueur's stand-in is a liqueur or nothing. The
+  fresh-start note is now added inside the events wrapper (server.js freshPrefix) — customers saw it, but transcripts.jsonl
+  and the nightly review did not. Scenario 130, qa/unit/list-reconcile.test.js.
 - A file that never arrived (Oct 29, DC on claude.ai, F-0110): a Claude app passes an attachment as a path on its own machine
   ("@/mnt/user-data/attachments/...pdf"); /chat answers in code "Your file (<name>) didn't come through ... paste the drinks"
   ([order-file] a file path with no file); the Claude-app instructions (rachel-mcp.js CHAT_INSTRUCTIONS) tell the client to
