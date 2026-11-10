@@ -1,0 +1,21 @@
+name: event-brief-own-spirits
+# Nov 10 (DC on Claude Code, 15:30): "Open bar including bourbon, vodka, gin, tequila, rum, beer, and wine. 15 guests, 2
+# hours, budget $35 per person ... use Mi Campo for the tequila" — the mix question asked "wine, beer or bourbon?", and the
+# LLM's custom_list of category words was kept because the customer named spirits ([event-reroute] skipped it): the reply
+# was "Here's your list:" with only a SPIRITS heading, no estimate, and "Which one would you like?". Now the label is
+# "spirits" and the brief is the event package (menu_build, the customer's five spirit types kept).
+format: plain
+tags: [events]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "I need a drinks package for an event. Delivery address: 425 W 53rd St, New York, NY 10019. Open bar including bourbon, vodka, gin, tequila, rum, beer, and wine. 15 guests, 2 hours, budget $35 per person ($525 total). Please use Mi Campo for the tequila, and no wine or spirits bottles smaller than 750 mL."
+    expect:
+      contains: ["drink most", "spirits"]
+      not_matches: "(?i)beer or bourbon"
+  - send: "about even"
+    expect:
+      contains: ["Mi Campo", "Estimated grand total", "drinks per person"]
+      not_contains: ["Here's your list", "Which one would you like"]
+      matches: "(?i)bourbon"
+      log_not_contains: ["[event-reroute] custom_list kept"]

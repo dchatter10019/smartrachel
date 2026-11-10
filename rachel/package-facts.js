@@ -18,8 +18,9 @@ function servings(li) {
 
 const SPARK = /spark|champ|prosecco|cava|brut|cr[eé]mant|spumante|franciacorta|bubbl/i;
 const ROSE = /\bros[eé](?![a-z])|blush|white zinfandel/i;   // "é" is not a word character: \b after it never matches
-const WHITE = /\bwhite\b|blanc|chardonnay|pinot gri|riesling|moscato|viognier|albari|vermentino|gr[uü]ner|semillon|chenin|torront|chablis|sancerre|soave|gavi|verdejo/i;
-const RED = /\bred\b|cabernet|merlot|pinot noir|malbec|syrah|shiraz|zinfandel|tempranillo|sangiovese|grenache|nebbiolo|chianti|rioja|bordeaux|barolo|montepulciano/i;
+// Appellations that name no grape (Nov 10 connector: "Louis Jadot Pouilly-Fuissé" was "1 other" in the WINE heading).
+const WHITE = /\bwhite\b|blanc|chardonnay|pinot gri|riesling|moscato|viognier|albari|vermentino|gr[uü]ner|semillon|chenin|torront|chablis|sancerre|soave|gavi|verdejo|pouilly|meursault|montrachet|m[aâ]con|saint-v[eé]ran|st-v[eé]ran|muscadet|picpoul|assyrtiko|gew[uü]rz|vinho verde|white burgundy/i;
+const RED = /\bred\b|cabernet|merlot|pinot noir|malbec|syrah|shiraz|zinfandel|tempranillo|sangiovese|grenache|nebbiolo|chianti|rioja|bordeaux|barolo|montepulciano|barbaresco|brunello|amarone|valpolicella|beaujolais|c[oô]tes du rh[oô]ne|ch[aâ]teauneuf|pommard|volnay|gevrey|nuits|saint-julien|st-julien|pauillac|margaux|saint-[eé]milion|pomerol|m[eé]doc|saint-est[eè]phe|pessac|priorat|ribera|carmen[eè]re|petite sirah|primitivo/i;
 function wineHeading(items) {
   const n = { red: 0, white: 0, sparkling: 0, 'rosé': 0, other: 0 }; let tot = 0;
   for (const li of items) {

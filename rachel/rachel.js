@@ -386,14 +386,18 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             const EPg = require('./event-prefs.js'), SMg = require('./serving-mix.js');
             const ownSpirits = EPg.spiritTypesIn(said), cocktailNamed = SMg.knownCocktails().some(n => said.indexOf(String(n).toLowerCase()) >= 0);
             const listLines = String((sessionState && sessionState.originalRequest) || '').split('\n').filter(l => /^\s*[-•*]?\s*\d+\s*(?:x|×)\s*\S/i.test(l)).length;
-            if (allGeneric && !ownSpirits && !cocktailNamed && !listLines) {
+            // The customer's own spirit types ("bourbon, vodka, gin, tequila, rum") are no reason to skip the package: menu_build
+            // takes them as spirit_types below (never trimmed). Nov 10 (DC on Claude Code): that brief went out as a plain
+            // custom_list -> "Here's your list:" with only a Spirits heading, no estimate and a dangling "Which one would you like?".
+            if (allGeneric && !cocktailNamed && !listLines) {
               const cats = [...new Set(saInput.named_products.map(np => String(np.category || '').toLowerCase()).filter(c => ['wine', 'beer', 'spirits'].includes(c)))];
               const brands = saInput.named_products.filter(np => /\bmi campo\b/i.test(np.name || ''));
               console.log('[event-reroute] custom_list of category words ' + JSON.stringify(names) + (invented.length ? ' (cocktail ingredients the customer never named: ' + invented.join(', ') + ')' : '') + ' -> menu_build, categories ' + cats.join(', '));
               saInput.intent = 'menu_build';
               if (cats.length) saInput.categories = cats;
               if (brands.length) saInput.named_products = brands; else delete saInput.named_products;
-            }
+              if (ownSpirits) console.log('[event-reroute] the customer\'s spirits ' + JSON.stringify(ownSpirits) + ' go to menu_build as spirit_types');
+            } else console.log('[event-reroute] custom_list kept (' + [!allGeneric ? 'named products: ' + JSON.stringify(names.filter(c => !GENERIC.test(c) && invented.indexOf(c) < 0).slice(0, 4)) : '', cocktailNamed ? 'cocktails named' : '', listLines ? listLines + ' counted list line(s)' : ''].filter(Boolean).join('; ') + ')');
           } catch (e) { console.log('[event-reroute] error: ' + e.message); }
         }
         // MIXERS + MIXED DRINKS (mixers.js, DC Oct 7) for Slack / email / WhatsApp event builds — read in code from what the
@@ -968,7 +972,16 @@ RULES:
   const sessionFacts = '## SESSION FACTS\n' + ['kitchen_location', 'user_email', 'client_id', 'account_id'].map(k => k + ': ' + ((context && context[k]) || '(none)')).join('\n')
     + '\nage_verified: ' + (context && context.age_verified ? 'true' : 'false')
     + (sessionState && sessionState.taxExempt ? '\ntax: the customer set the tax to $0 — every estimate shows "Estimated tax: $0.00" and generate_proposal gets tax_exempt=true' : '')
-    + (sessionState && sessionState.address ? '\ndelivery_address: ' + sessionState.address + ' (the address change is done in code; never say you cannot change it)' : '');
+    + (sessionState && sessionState.address ? '\ndelivery_address: ' + sessionState.address + ' (the address change is done in code; never say you cannot change it)' : '')
+    // The event the customer already gave (Nov 10, DC on Claude Code: "more expensive wines, we have more budget" got
+    // "What's your additional budget?" — the brief said $35 a person, $525). Never asked again; "use more budget" = upgrade
+    // toward it, all-inclusive (estimated grand total).
+    + (() => {
+      const ep = eventParams || {}, g = parseInt(ep.guests, 10), b = parseFloat(ep.budget);
+      if (!(g > 0) && !(b > 0)) return '';
+      return '\nevent: ' + [g > 0 ? g + ' guests' : '', parseFloat(ep.hours) > 0 ? ep.hours + ' hours' : '', b > 0 ? 'budget $' + b.toFixed(0) + ' total' + (g > 0 ? ' (about $' + (b / g).toFixed(2) + ' a person)' : '') : '']
+        .filter(Boolean).join(', ') + ' — the customer already gave these: never ask for them again; to use more of the budget, upgrade toward it (compare the estimated grand total, all-inclusive)';
+    })();
   const turnNotes = '<rachel_system_notes>\nSession notes from Rachel\'s system for this turn (NOT written by the customer):\n\n'
     + [sessionFacts, address_rule, gbrain_context ? '## CUSTOMER CONTEXT FROM MEMORY\n' + gbrain_context : '', orderNote, listNote, qtyNote].filter(x => String(x || '').trim()).map(x => String(x).trim()).join('\n\n')
     + '\n</rachel_system_notes>';

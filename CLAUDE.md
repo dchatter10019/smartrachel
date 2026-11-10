@@ -552,6 +552,15 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   re-shows it ([order] fee change at confirm). "Nine"/"nonw"... at the driver step = none. A fresh-start turn that is a
   self-contained brief (an address, or 3+ field lines) is held through age/address as usual (13:24: the brief was dropped
   and the address asked again). Scenario 128, qa/unit/connector-nov10.test.js.
+  Same day, later chat: a pick by number / by name / a yes after Rachel asked "which one would you like to swap in for The
+  Prisoner?" still ADDED the wine (only the add-confirm path knew). Now applyBasketSubstitute itself reads the line from
+  Rachel's last question when no original is given (swap-target.js: "swap in for X", "replacing X", "replace X with";
+  "replacing ONE of the X bottles" = that line -1, the pick at 1) and every pick path says the known qty ("in place of")
+  instead of "How many bottles?". [event-reroute] no longer skips a brief whose customer named spirit types (they go to
+  menu_build as spirit_types; was "Here's your list:" with only Spirits) and logs when it keeps a custom_list; the mix
+  question says "spirits" when 2+ spirits are named ("wine, beer or bourbon?"). Session facts carry the event (guests,
+  hours, budget total + per person: "what's your additional budget?" after a $35/person brief). Wine colours know
+  appellations (Pouilly-Fuissé white, Saint-Julien red). Scenario 129.
 - A file that never arrived (Oct 29, DC on claude.ai, F-0110): a Claude app passes an attachment as a path on its own machine
   ("@/mnt/user-data/attachments/...pdf"); /chat answers in code "Your file (<name>) didn't come through ... paste the drinks"
   ([order-file] a file path with no file); the Claude-app instructions (rachel-mcp.js CHAT_INSTRUCTIONS) tell the client to

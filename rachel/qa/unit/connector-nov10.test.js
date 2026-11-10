@@ -29,5 +29,19 @@ const g = groupByCategory([{ name: 'Brugal 1888 - 750ML', category: 'Liquor', pr
 eq('Brugal under Spirits', (g.Spirits || []).map(i => i.name), ['Brugal 1888 - 750ML']);
 eq('an unknown category is still Other', (g.Other || []).map(i => i.name), ['Mystery Item']);
 
+// The basket line a pick replaces, from Rachel's own question (swap-target.js).
+const { swapTarget } = require('../../swap-target.js');
+const wines = [{ name: 'The Prisoner Wine Company Unshackled Red Blend - 750 ML', qty: 2 }, { name: 'Bread & Butter Pinot Grigio - 750 ML', qty: 1 }, { name: 'Louis Jadot Pouilly-Fuissé - 750 ML', qty: 1 }];
+const st = (q, pick) => { const t = swapTarget(q, wines, pick); return t && [t.index, t.oneOf]; };
+eq('"swap in for The Prisoner?"', st('Yes! Three options:\n\n1. Robert Mondavi ...\n\nWhich one would you like to swap in for The Prisoner?', 'Robert Mondavi Winery Napa Valley Cabernet Sauvignon - 750 ML'), [0, false]);
+eq('"Shall I swap that in for the Bread & Butter Pinot Grigio?"', st('Found it! Kendall-Jackson ... — $16.38. Shall I swap that in for the Bread & Butter Pinot Grigio?', 'Kendall-Jackson'), [1, false]);
+eq('"(replacing one of the Prisoner bottles)?" = one of', st('Which one would you like as your second red (replacing one of the Prisoner bottles)?', 'La Crema Monterey Pinot Noir - 750 ML'), [0, true]);
+eq('a plain "which one would you like to add?" is no swap', st('I found a few options:\n1. A\n2. B\n\nWhich one would you like to add?', 'A'), null);
+eq('the swap line is earlier, the closing question has none', st('Swap for the Prisoner done.\n\nWould you like to place the order?', 'X'), null);
+
+// Wine heading colours for appellation names (Pouilly-Fuissé was "1 other").
+const { wineHeading } = require('../../package-facts.js');
+eq('Pouilly-Fuissé is a white, Saint-Julien a red', wineHeading([{ category: 'wine', qty: 1, name: 'The Prisoner Wine Company Unshackled Red Blend - 750 ML' }, { category: 'wine', qty: 1, name: 'Château Gloria Saint-Julien - 750 ML' }, { category: 'Wine', qty: 1, name: 'Louis Jadot Pouilly-Fuissé - 750 ML' }]), 'WINE — 3 bottles (2 red, 1 white)');
+
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('connector-nov10: all passed');

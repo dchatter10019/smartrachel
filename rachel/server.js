@@ -657,7 +657,21 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
         // that wasn't itself just swapped in. Real bug (Sep 29, Slack): "Don Julio and Casamigos as their
         // two options" — Don Julio replaced Mi Campo, then Casamigos came with no original_item and was
         // added at 1 bottle beside the 4 Patron it was meant to replace.
-        if (!originalItem && !(opts && opts.add)) {   // opts.add: a plain add (an accepted CTA), never an inferred replacement
+        // Rachel's own question named the line this pick replaces ("Which one would you like to swap in for The Prisoner?",
+        // "...(replacing one of the Prisoner bottles)?") — swap-target.js. Nov 10 (DC on Claude Code): the pick by number,
+        // by name and the yes to an offer all ADDED the wine, kept The Prisoner and asked "How many bottles?".
+        let oneOfIdx = -1, oneOfName = '';
+        if (!originalItem && !(opts && opts.add)) {
+          try {
+            const tg = require('./swap-target.js').swapTarget(String((lastRepliesBySession[sessionKey] || []).slice(-1)[0] || ''), items, replacementName);
+            if (tg && tg.index >= 0) {
+              const q0 = items[tg.index].qty || items[tg.index].quantity || 1;
+              if (tg.oneOf && q0 > 1) { oneOfIdx = tg.index; oneOfName = tg.name; console.log('[confirm-substitute] Rachel asked to replace ONE of the ' + q0 + 'x ' + tg.name + ' — it goes to ' + (q0 - 1) + 'x, ' + replacementName + ' comes in at 1'); }
+              else { originalItem = tg.name; console.log('[confirm-substitute] no original given — Rachel\'s question offered it in place of ' + JSON.stringify(tg.what) + ' -> basket line ' + tg.name); }
+            } else if (tg) console.log('[confirm-substitute] Rachel\'s question named ' + JSON.stringify(tg.what) + ' — no basket line for it, the pick is added');
+          } catch (e) { console.log('[confirm-substitute] swap-target check failed: ' + e.message); }
+        }
+        if (!originalItem && oneOfIdx < 0 && !(opts && opts.add)) {   // opts.add: a plain add (an accepted CTA), never an inferred replacement
           try {
             const { spiritType } = require('./spirit-type.js');
             const t = spiritType(replacementName);
@@ -728,7 +742,7 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
         }
         // The line being replaced (basketLineFor: whole words — "La" never matches "Blanc").
         let qtyToUse = 1;
-        let qtyKnown = false;   // the quantity came from the line replaced / the request, not the default 1
+        let qtyKnown = oneOfIdx >= 0;   // the quantity came from the line replaced / the request, not the default 1 (one of N: 1)
         let categoryToUse = '';
         let packFrom = '';   // the original's name/size when qtyToUse counts ITS packs (converted once the pick is resolved)
         // No original, but the customer's own list names this product with a count: that count. Real (Oct 5, DC, Slack):
@@ -879,6 +893,10 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
             category: categoryToUse || (resolved ? (resolved.category || resolved.subCategory || resolved.subcategory || '') : '')
           });
         }
+        if (oneOfIdx >= 0 && items[oneOfIdx] && normN(items[oneOfIdx].name) === normN(oneOfName)) {
+          const q1 = Math.max(1, (items[oneOfIdx].qty || items[oneOfIdx].quantity || 1) - 1);
+          items[oneOfIdx].qty = q1; items[oneOfIdx].quantity = q1;
+        }
         const newLineItems = JSON.stringify(items);
         const key2 = makeCacheKey(email, state.zip, state.lastFingerprint);
         packageCache[key2] = newLineItems;
@@ -889,7 +907,7 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
         saveFlowState();
         try { saveBasket(email, newLineItems, '', 'slack').catch(() => {}); } catch (e) {}
         console.log('[confirm-substitute-tool] replaced', JSON.stringify(originalItem), 'with', JSON.stringify(replacementName), 'qty', qtyToUse);
-        return { success: true, replaced: originalItem, with: replacementName, qty: qtyToUse, qty_known: qtyKnown || !!(opts && opts.qty) };
+        return { success: true, replaced: originalItem || (oneOfName ? 'one ' + oneOfName : ''), with: replacementName, qty: qtyToUse, qty_known: qtyKnown || !!(opts && opts.qty) };
       } catch (e) {
         console.error('[confirm-substitute-tool] error:', e.message);
         return { success: false, error: e.message };
@@ -3036,7 +3054,10 @@ app.post('/chat', async (req, res) => {
             // "red, hard seltzer or vodka?" from "Prisoner RED Blend", "HARD SELTZER Variety", "Tito's VODKA").
             const own = message.split('\n').filter(l => !/^\s*\d+\s*(?:x|×)?\s+\S/i.test(l)).join('\n');
             const said = k => { const mm = own.match(MIX_SYN[k]); return mm ? mm[0].toLowerCase() : (k === 'spirits' ? 'liquor' : k); };
-            const labels = cats.map(k => k === 'spirits' ? (/\bcocktails?\b/i.test(message) ? 'cocktails' : /\bmixed drinks?\b/i.test(message) ? 'mixed drinks' : said('spirits')) : said(k));
+            // Several spirits named ("bourbon, vodka, gin, tequila, rum"): the label is "spirits", never the first one (Nov 10,
+            // DC on Claude Code: "what will your guests drink most: wine, beer or bourbon?").
+            let nSpW = 0; try { const spW = require('./event-prefs.js').spiritTypesIn(own); nSpW = ((spW && spW.types) || []).length; } catch (e) {}
+            const labels = cats.map(k => k === 'spirits' ? (/\bcocktails?\b/i.test(message) ? 'cocktails' : /\bmixed drinks?\b/i.test(message) ? 'mixed drinks' : nSpW >= 2 ? 'spirits' : said('spirits')) : said(k));
             state.pendingMenu = { message, cats, labels }; saveFlowState();
             console.log('[menu] mixed event (' + cats.join(' + ') + ') with no serving preference — asking what they\'ll drink most');
             const ask = 'Happy to put that together! To get the mix right — what will your guests drink most: ' + labels.slice(0, -1).join(', ') + ' or ' + labels[labels.length - 1] + '? (e.g. "mostly ' + labels[0] + '", "' + labels[0] + ' and ' + labels[1] + '", or "about even")'
@@ -4178,24 +4199,11 @@ app.post('/chat', async (req, res) => {
       if (inBasketAlready) console.log('[add-confirm] offer for ' + off.name + ' dropped — already in the basket (added on the search turn)');
       else if (qm || yes) {
         let q = qm ? (NW[qm[1]] || parseInt(qm[1])) : off.qty;
-        // The offer was a SWAP ("Shall I swap that in for the Bread & Butter Pinot Grigio?"): the yes replaces that basket
-        // line at its quantity. Nov 10 (DC on Claude Code): the yes ADDED Kendall-Jackson next to the Bread & Butter and asked
-        // "How many bottles?"; the next proposal carried both. The line is read from Rachel's own question (whole words).
-        let swapFrom = null;
-        try {
-          const lastQ = String((lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '');
-          const mSw = lastQ.match(/\b(?:swap|switch|replace|exchange|trade)\b[^?\n]{0,140}?\b(?:for|with|instead of|in place of|replacing)\s+(?:the\s+|your\s+)?([^?\n]{3,120}?)\s*(?:\?|$|\.(?:\s|$)|,\s)/i)
-            || lastQ.match(/\b(?:replace|swap out|switch out)\s+(?:the\s+|your\s+)?([^?\n]{3,120}?)\s+(?:with|for)\b/i);
-          if (mSw) {
-            const itS = JSON.parse(state.lastLineItems || '[]');
-            const nzS = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-            const iS = basketLineFor(itS, mSw[1]);
-            if (iS >= 0 && nzS(itS[iS].name) !== nzS(off.name)) swapFrom = itS[iS];
-            console.log('[add-confirm] the offer was a swap for ' + JSON.stringify(mSw[1]) + ' -> ' + (swapFrom ? 'basket line ' + swapFrom.name : 'no basket line (added)'));
-          }
-        } catch (e) {}
-        if (swapFrom && !qm) q = swapFrom.qty || swapFrom.quantity || 1;
-        const rrOff = await applyBasketSubstitute(sessionKey, email, swapFrom ? swapFrom.name : '', off.name, off.price, off.size);
+        // An offer phrased as a swap ("Shall I swap that in for the Bread & Butter?"): applyBasketSubstitute reads the line
+        // from Rachel's question (swap-target.js) and keeps its quantity.
+        const rrOff = await applyBasketSubstitute(sessionKey, email, '', off.name, off.price, off.size);
+        const swapFrom = rrOff && rrOff.success !== false && rrOff.replaced ? { name: rrOff.replaced } : null;
+        if (swapFrom && !qm) q = rrOff.qty || 1;
         const nzA = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
         const labelA = off.name + (off.size && nzA(off.name).indexOf(nzA(off.size)) < 0 ? ' — ' + off.size : '') + ' — ' + usd(off.price);
         // Never say "Added" for a line that isn't in the basket. Real (Oct 13, F-0036): the lookup failed,
@@ -4211,9 +4219,7 @@ app.post('/chat', async (req, res) => {
         if (swapFrom) {
           try { const it = JSON.parse(state.lastLineItems || '[]'); const row = it.find(x => nzA(x.name) === nzA(off.name)); if (row) { row.qty = q; row.quantity = q; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); } } catch (e) {}
           saveFlowState(); events.action('updated_basket');
-          let itD = []; try { itD = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
-          const listD = itD.map(li => { const qq = li.qty || li.quantity || 1, pp = parseFloat(li.price) || 0; return qq + 'x ' + String(li.name || li.label || '') + ' \u2014 ' + usd(pp) + ' ea = ' + usd(qq * pp); }).join('\n');
-          const rS = 'Done \u2014 ' + q + 'x ' + labelA + ' replaces the ' + swapFrom.name + '. Here\'s your updated basket:\n\n' + listD;
+          const rS = 'Got it \u2014 ' + q + 'x ' + labelA + ' in place of ' + swapFrom.name + '.' + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
           return res.json({ text: rS, response: rS });
         }
         if (q > 0) {
@@ -6057,6 +6063,11 @@ app.post('/chat', async (req, res) => {
           return res.json({ text: rX, response: rX });
         }
             retirePendingFor(state, off.name);
+        if (rrOffY && rrOffY.replaced && rrOffY.qty_known) {   // a swap Rachel offered (swap-target.js): quantity known
+          console.log('[add-offer] yes replaces ' + JSON.stringify(rrOffY.replaced) + ' — quantity ' + rrOffY.qty + ' known, not asked');
+          const rYs = 'Got it — ' + (rrOffY.qty || 1) + 'x ' + off.name + (off.size ? ' — ' + off.size : '') + ' — $' + off.price.toFixed(2) + ' in place of ' + rrOffY.replaced + '.' + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+          return res.json({ text: rYs, response: rYs });
+        }
         state.pendingQtyFor = off.name; saveFlowState();
         const rY = 'Added ' + off.name + (off.size ? ' — ' + off.size : '') + ' — $' + off.price.toFixed(2) + '. How many bottles would you like?';
         return res.json({ text: rY, response: rY });
@@ -6280,6 +6291,13 @@ app.post('/chat', async (req, res) => {
               return res.json({ text: rR, response: rR });
             }
             const added = picked.name + (picked.size ? ' — ' + picked.size : '') + ' — $' + picked.price.toFixed(2);
+            // The pick replaced the line Rachel's question offered it for (swap-target.js in applyBasketSubstitute): its
+            // quantity is known — said, never asked (Nov 10: "Robert Mondavi ... this one" -> "How many bottles?").
+            if (!replTarget && r && r.success !== false && r.replaced && r.qty_known) {
+              console.log('[pick-list] pick replaces ' + JSON.stringify(r.replaced) + ' — quantity ' + r.qty + ' known, not asked');
+              const rRp = 'Got it — ' + (r.qty || 1) + 'x ' + added + ' in place of ' + r.replaced + '.' + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+              return res.json({ text: rRp, response: rRp });
+            }
             // Ask quantity ONCE, at pick time — never silently default to 1 (real
             // complaint: a red wine was added at 1x with no question, while the white
             // got asked at order time). If the customer stated a number, use it.
