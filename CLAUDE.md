@@ -510,6 +510,18 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   "Client: X" line in the message or the original request is the proposal client (email-subject.js clientLabeledIn; before
   the subject; every proposal path); "menu" is a generic subject word ("Menu request" named client "Menu"); a labeled answer
   ("Event Date: TBD") is read without its label and TBD/TBA = no date. Scenario 117.
+- Fresh start said + the address answer's own request (Nov 10, DC on Claude Code: 8h after a Foodie For All proposal the
+  chat reconnected -> new conversation with no word why; the held "send the delivery charge as 0" was replayed and the event
+  brief sent WITH the address dropped -> "Done — delivery $0.00 on the proposal", no menu; then "send the new proposal" ->
+  "How many bottles?"). Now, every channel: a conversation restarted after 1h+ of silence (connector new chat /
+  /internal/new-conversation, the 4h idle expiry in /chat, /internal/age-verified's idle reset) opens its next reply with
+  server.js freshStartNote ("It's been about N hours since we last talked ... please send your request again"; state.freshNote,
+  [session] fresh-start note shown) and that turn's message is NOT held through age/address; an address answer that carries
+  its own request (REQ_AT_ADDR, maps-link leftovers cleaned) runs that request even when an earlier message is held — a held
+  fee/tax change is applied in code and said ("Delivery $0.00 will be on your proposal"), another held request runs after it;
+  a fee change with no cart/proposal says the cart is empty (setting kept); a bare proposal ask on an empty cart builds this
+  conversation's event brief (state.originalRequest) first, else says there's nothing to put on a proposal (no bottle count).
+  prompt.md: "mixed drinks" / open bar is not a cocktail menu (the model asked "which cocktails?"). Scenario 125.
 - A file that never arrived (Oct 29, DC on claude.ai, F-0110): a Claude app passes an attachment as a path on its own machine
   ("@/mnt/user-data/attachments/...pdf"); /chat answers in code "Your file (<name>) didn't come through ... paste the drinks"
   ([order-file] a file path with no file); the Claude-app instructions (rachel-mcp.js CHAT_INSTRUCTIONS) tell the client to

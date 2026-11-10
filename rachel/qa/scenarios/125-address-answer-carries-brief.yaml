@@ -1,0 +1,41 @@
+name: address-answer-carries-brief
+# Nov 10 (DC on Claude Code, connector rachel_chat): 8h after a Foodie For All proposal the chat reconnected, so Rachel
+# started fresh with no word why. The held "can you send the delivery charge as 0" was then replayed instead of the event
+# brief DC sent with the address ("Done — delivery $0.00 on the proposal", no menu), and "send the new proposal" on the
+# empty cart asked "How many bottles would you like on the proposal?". Now: the brief that comes with the address is
+# built and the held fee change applied in code; after a long silence the reply says the conversation started fresh and
+# asks for the request again; an empty cart's fee change / proposal ask says the cart is empty.
+format: plain
+tags: [events]
+turns:
+  - send: reset
+  - send: "can you send the delivery charge as 0"
+    expect: {contains: ["21"]}
+  - send: "yes"
+    expect: {matches: "(?i)delivery address"}
+  - send: "Can you create a menu using bevvi?\nAddress: [132 West 32nd Street New York, NY 10001](https://www.google.com/maps/search/132+West+32nd+Street+New+York,+NY+10001?entry=gmail&source=g)\nEvent Date: Thursday, 11/12\nDelivery Time: Before 12pm\nMenu: Open bar to include mixed drinks, beer, & wine\nHeadcount: 15 people\nbudget: 27 a person\nDuration: 2 hours"
+    expect:
+      contains: ["132 W 32nd St", "Delivery $0.00 will be on your proposal", "drink most"]
+      not_contains: ["Done — delivery"]
+      log_contains: ["[addr] address + request in one message, held fee change applied in code"]
+  - send: "equal"
+    expect:
+      contains: ["Product total"]
+  - send: "make the delivery charge 0"
+    idle: 5
+    expect:
+      contains: ["since we last talked", "cart isn't carried over", "send your request again", "21"]
+      not_contains: ["I have your request"]
+      log_contains: ["[session] fresh-start note shown"]
+  - send: "yes"
+    expect: {matches: "(?i)delivery address"}
+  - send: "132 West 32nd Street, New York, NY 10001"
+    expect: {contains: ["132 W 32nd St"]}
+  - send: "make the delivery charge 0"
+    expect:
+      contains: ["Your cart is empty", "Noted — delivery $0.00 will be used on your proposal"]
+      not_contains: ["Done — delivery"]
+  - send: "send the new proposal"
+    expect:
+      contains: ["nothing to put on a proposal"]
+      not_contains: ["How many bottles"]

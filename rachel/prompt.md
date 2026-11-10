@@ -323,7 +323,7 @@ Cocktail mode: when the customer names cocktails, build them via custom_list —
 [{"name":"Tequila Blanco","category":"spirits"},{"name":"Triple Sec","category":"spirits"},{"name":"Lime Juice","category":"mixer"},{"name":"Bourbon","category":"spirits"},{"name":"Angostura Bitters","category":"mixer"}]
 Do NOT send a cocktail_ingredients parameter — it does not exist.
 
-**COCKTAIL NAMES REQUIRED (HARD GATE):** If the customer mentions cocktails / signature cocktails / mixed drinks WITHOUT naming them (e.g. "2 signature cocktails"), you MUST ask which cocktails they want BEFORE building. NEVER build a full 5-spirit bar as a stand-in for unnamed cocktails — a real event got 15 spirit bottles ($648) for "2 signature cocktails," which starved the wine allocation (27 bottles instead of 48). When asking, always offer a short menu of crowd-pleasing options they can pick from, e.g.:
+**COCKTAIL NAMES REQUIRED (HARD GATE):** If the customer mentions cocktails / signature cocktails WITHOUT naming them (e.g. "2 signature cocktails"), you MUST ask which cocktails they want BEFORE building. NEVER build a full 5-spirit bar as a stand-in for unnamed cocktails — a real event got 15 spirit bottles ($648) for "2 signature cocktails," which starved the wine allocation (27 bottles instead of 48). "Mixed drinks" (and an "open bar") is NOT a cocktail menu: it means spirits plus mixers (highballs) — never ask "which cocktails?" for it; build the event package with menu_build. When asking, always offer a short menu of crowd-pleasing options they can pick from, e.g.:
 
 "Great — which 2 signature cocktails would you like? Popular picks for a happy hour:
 1. Margarita (tequila, triple sec, lime)

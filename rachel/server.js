@@ -476,6 +476,19 @@ function resetState(sessionKey, email) {
   if (email) Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; });
 }
 
+// A conversation started fresh after a long silence says so (DC, Nov 10: a Claude Code reconnect 8h later asked the age
+// and address again and the old proposal was gone, with no word why). Only when the old conversation had something in it
+// and was quiet for an hour or more; shown once, at the top of the next reply (state.freshNote, /chat).
+function freshStartNote(old, hours) {
+  if (!old || (!old.lastActive && !hours)) return '';
+  const h = hours || (Date.now() - old.lastActive) / 3600000;
+  let had = !!(old.address || old.lastProposalUrl || old.packageShown || old.orderStep);
+  try { if (!had) had = JSON.parse(old.lastLineItems || '[]').length > 0; } catch (e) {}
+  if (h < 1 || !had) return '';
+  const ago = h >= 48 ? 'about ' + Math.round(h / 24) + ' days' : h >= 24 ? 'about a day' : h < 1.5 ? 'over an hour' : 'about ' + Math.round(h) + ' hours';
+  return "It's been " + ago + " since we last talked, so I've started a fresh conversation — your earlier " + (old.lastProposalUrl ? "cart and proposal aren't" : "cart isn't") + " carried over. Please send your request again (the drinks, or the event details) and I'll pick it up from there.";
+}
+
 // Empty the cart and everything of the old order (DC, Oct 5 / Oct 28): basket, not-carried lines, shown options, the
 // original list / on-hand stock, the proposal's client, date, tax and address choices, an unfinished checkout, and the
 // saved last basket (baskets.json) — else checkout reloads it (Oct 27: a $1,175 basket from an earlier conversation came
@@ -1824,6 +1837,7 @@ app.post('/chat', async (req, res) => {
   // As a const this threw "Assignment to constant variable" at runtime — a TypeError
   // that node --check cannot catch — on exactly the path where both were remembered.
   let { message, context, gbrain_context, session_id, format = 'markdown', skip_gbrain = false, images = null } = req.body;
+  let freshTurn = false;   // the fresh-start note is on this reply (freshStartNote): the message is not held
   // A caller that sends no context object (Oct 5, F-0017: a hand-run curl) crashed the turn at context.saved_zip = ...
   // and the customer got "I hit a snag". Every channel sends one; a missing one is now an empty one.
   if (!context || typeof context !== 'object') { if (context !== undefined) console.log('[chat] context was not an object — treated as empty'); context = {}; }
@@ -2047,7 +2061,9 @@ app.post('/chat', async (req, res) => {
     const forced = isQA && req.body.simulate_idle && st0;   // QA: test the expiry without waiting
     if (st0 && message !== '__greeting__' && !/^email-/.test(sessionKey) && (idleH > IDLE_HOURS || forced)) {
       console.log(`[session] idle ${forced ? '(simulated)' : idleH.toFixed(1) + 'h'} > ${IDLE_HOURS}h — fresh conversation for ${sessionKey} (was step=${st0.step}${st0.orderStep ? ' orderStep=' + st0.orderStep : ''}${st0.proposalStep ? ' proposalStep=' + st0.proposalStep : ''})`);
+      const fnI = freshStartNote(st0, idleH);
       resetState(sessionKey, email);
+      if (fnI) flowState[sessionKey].freshNote = fnI;
       try { if (email) clearBasket(email, format || 'slack'); } catch (e) {}   // the saved last basket too, else checkout reloads it
     } else if (st0 && message !== '__greeting__' && !/^email-/.test(sessionKey) && idleH > BASKET_IDLE_HOURS && !st0.newOrderAddrAsk) {
       // DC (Oct 28): "if it's idle for 1 hour you clear the basket" — the conversation (age, address) goes on.
@@ -2066,6 +2082,17 @@ app.post('/chat', async (req, res) => {
       }
     }
     getState(sessionKey).lastActive = Date.now();
+    // The fresh-start note (freshStartNote): this turn's message is not held through the age / address questions — it
+    // usually refers to the old conversation ("send the delivery charge as 0"); the customer is asked to send it again.
+    if (flowState[sessionKey].freshNote) {
+      const fnote = flowState[sessionKey].freshNote; flowState[sessionKey].freshNote = null; freshTurn = true; saveFlowState();
+      console.log('[session] fresh-start note shown — this message is not held: ' + JSON.stringify(String(message).slice(0, 60)));
+      const _jF = res.json.bind(res);
+      res.json = (payload) => {
+        try { if (payload && typeof payload.text === 'string' && payload.text.trim()) { payload.text = fnote + '\n\n' + payload.text; if (typeof payload.response === 'string') payload.response = payload.text; } } catch (e) {}
+        return _jF(payload);
+      };
+    }
     saveFlowState();
   }
   // ── FEEDBACK + CUSTOMER PREFERENCES (feedback.js, customer-prefs.js; DC, Oct 3: learn from every correction) ──────
@@ -2545,7 +2572,7 @@ app.post('/chat', async (req, res) => {
         // message usually IS the order. Only the FIRST one: a later off-script reply at the
         // gate must not overwrite the customer's actual request.
         const greetingOnly = msgLower.length < 12 || /^(hi|hello|hey|yo|hola|good (morning|afternoon|evening)|reset)[\s!.,]*$/i.test(msgLower);
-        if (!greetingOnly && !state.pendingIntent) {
+        if (!greetingOnly && !state.pendingIntent && !freshTurn) {
           state.pendingIntent = message; saveFlowState();
           const ack = 'Thanks — I have your request and will pick it up right after one quick check. Are you 21 or older?';
           return res.json({ text: ack, response: ack });
@@ -2556,6 +2583,10 @@ app.post('/chat', async (req, res) => {
     // Pre-gate message stashed above: if it contains a delivery address, run that through
     // the address step now and replay the rest once the address is accepted; if the flow is
     // already ready (saved address), replay it whole.
+    // The address answer may carry its own request ("Can you create a menu ... Address: 132 W 32nd St ... Headcount: 15");
+    // request-shaped = REQ_AT_ADDR. A pasted maps link leaves "Address: [](https://...)" behind — cleaned (cleanAddrRest).
+    const REQ_AT_ADDR = /\b(add|want|need|order|looking|send|get|do you|have|show|price|how much|bottles?|cases?|wine|beer|vodka|tequila|whiskey|bourbon|rum|gin|champagne|prosecco|spirits|party|event|recommend|guests?|menu|bar|headcount|people|budget|proposal)\b/i;
+    const cleanAddrRest = (t) => String(t || '').replace(/\[\s*\]\([^)]*\)/g, '').replace(/^\s*(?:delivery\s+)?address\s*:?\s*$/gim, '').replace(/\n{2,}/g, '\n').trim();
     if (state.pendingIntent && state.step === 'addr_new') {
       // address-extract.js: line breaks and unit lines inside the address (Sep 29: "Floor 6\r\nBoston" became "6, Boston").
       const sp = require('./address-extract.js').splitAddress(state.pendingIntent);
@@ -2563,6 +2594,36 @@ app.post('/chat', async (req, res) => {
         message = sp.address; msgLower = message.toLowerCase();
         state.pendingIntent = sp.rest; saveFlowState();
         console.log('[age] pre-gate message: address', JSON.stringify(message), '| replaying rest:', JSON.stringify((state.pendingIntent || '').slice(0, 80)));
+      } else {
+        // The held message had no address, and THIS message is the address plus a request of its own: that request is
+        // run (Nov 10, DC on Claude Code: the held "send the delivery charge as 0" was replayed and the event brief that
+        // came with the address was dropped — no menu built). A held fee / tax change is applied in code and said; any
+        // other held request is run after the new one.
+        const sp2 = require('./address-extract.js').splitAddress(message);
+        const rest2 = sp2 ? cleanAddrRest(sp2.rest) : '';
+        if (sp2 && rest2.split(/\s+/).length >= 2 && REQ_AT_ADDR.test(rest2)) {
+          const held = state.pendingIntent;
+          const fcH = TAXCMD.fees(held), tcH = TAXCMD.read(held);
+          if (fcH || tcH) {
+            const poH = Object.assign({}, state.proposalOpts || {});
+            if (tcH) { state.taxExempt = tcH === 'zero'; poH.tax_exempt = state.taxExempt; }
+            if (fcH) {
+              if (fcH.tip_amount != null) delete poH.tip_rate; if (fcH.tip_rate != null) delete poH.tip_amount;
+              if (fcH.tax_rate != null) { poH.tax_exempt = fcH.tax_rate === 0; state.taxExempt = fcH.tax_rate === 0; }
+              Object.assign(poH, fcH);
+            }
+            state.proposalOpts = poH;
+            state.eventParams = Object.assign({}, state.eventParams || {}, { proposalOpts: poH });
+            state.heldFeeSaid = [tcH ? (tcH === 'zero' ? 'tax $0' : 'the estimated 10% tax') : '', fcH ? TAXCMD.feesText(fcH) : ''].filter(Boolean).join(' and ');
+            state.pendingIntent = rest2;
+            console.log('[addr] address + request in one message, held fee change applied in code (' + state.heldFeeSaid + ') — replaying the new request:', JSON.stringify(rest2.slice(0, 80)));
+          } else {
+            state.pendingIntent = rest2 + '\n' + held;
+            console.log('[addr] address + request in one message — replaying the new request, then the held one:', JSON.stringify(rest2.slice(0, 60)), '+', JSON.stringify(String(held).slice(0, 40)));
+          }
+          saveFlowState();
+          message = sp2.address; msgLower = message.toLowerCase();
+        }
       }
     } else if (state.step === 'addr_new') {
       // The address AND a request in one message at the address step: "1 Rockefeller Plaza, New York, NY 10019. Add 3
@@ -2571,10 +2632,10 @@ app.post('/chat', async (req, res) => {
       // The address goes through the step below; the request is replayed after it (as the pre-gate message is). Only a
       // request-shaped rest — "ring the bell, 3rd floor" / "Apt 4B" stay with the address.
       const sp = require('./address-extract.js').splitAddress(message);
-      if (sp && sp.rest && sp.rest.split(/\s+/).length >= 2
-          && /\b(add|want|need|order|looking|send|get|do you|have|show|price|how much|bottles?|cases?|wine|beer|vodka|tequila|whiskey|bourbon|rum|gin|champagne|prosecco|spirits|party|event|recommend|guests?)\b/i.test(sp.rest)) {
-        console.log('[addr] address + request in one message — address', JSON.stringify(sp.address), '| replaying:', JSON.stringify(sp.rest.slice(0, 80)));
-        state.pendingIntent = state.pendingIntent ? state.pendingIntent + '\n' + sp.rest : sp.rest; saveFlowState();
+      const spRest = sp ? cleanAddrRest(sp.rest) : '';
+      if (sp && spRest && spRest.split(/\s+/).length >= 2 && REQ_AT_ADDR.test(spRest)) {
+        console.log('[addr] address + request in one message — address', JSON.stringify(sp.address), '| replaying:', JSON.stringify(spRest.slice(0, 80)));
+        state.pendingIntent = state.pendingIntent ? state.pendingIntent + '\n' + spRest : spRest; saveFlowState();
         message = sp.address; msgLower = message.toLowerCase();
       }
     } else if (state.pendingIntent && state.step === 'ready' && state.ageVerified) {
@@ -2642,7 +2703,8 @@ app.post('/chat', async (req, res) => {
         // generic greeting with no address shown). If the customer had typed a request
         // before giving the address, replay it with the confirmation on top.
         saveFlowState();
-        const addrOk = 'Got it — delivering to ' + state.address + '.';
+        let addrOk = 'Got it — delivering to ' + state.address + '.';
+        if (state.heldFeeSaid) { addrOk += ' ' + state.heldFeeSaid.charAt(0).toUpperCase() + state.heldFeeSaid.slice(1) + ' will be on your proposal.'; state.heldFeeSaid = null; }
         if (state.pendingIntent) {
           const pend = state.pendingIntent; state.pendingIntent = null; saveFlowState();
           message = pend;
@@ -2656,7 +2718,7 @@ app.post('/chat', async (req, res) => {
         // address, as at the age gate; anything else gets a concrete example, not the same line.
         // Digits are fine when the message isn't address-like ("revise the package ... 150 guests, $1,500"; Oct 7).
         const looksLikeRequest = (!/\d/.test(message) || !addrLike) && message.split(/\s+/).length >= 2 && /\b(want|need|order|looking|do you|have|show|price|how much|bottles?|wine|beer|vodka|tequila|whiskey|bourbon|champagne|spirits|party|event|recommend|package|guests?|budget|revise|add|change)\b/i.test(message);
-        if (looksLikeRequest && !state.pendingIntent) {
+        if (looksLikeRequest && !state.pendingIntent && !freshTurn) {
           state.pendingIntent = message; saveFlowState();
           console.log('[addr] request at the address step — held for after the address: ' + JSON.stringify(message).slice(0, 70));
           const askR = 'Happy to help with that — first, what\'s your delivery address? (street, city, state and zip, e.g. "425 W 53rd St, New York, NY 10019")';
@@ -5258,7 +5320,17 @@ app.post('/chat', async (req, res) => {
     // DC: the flow went straight to "client name?" and made the PDF from an earlier chat's saved basket).
     if (isProposalTrigger && !state.proposalStep && !state.lastProposalUrl) {
       let linesNow = 0; try { linesNow = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
-      const briefCats = eventDrinkCats(message), briefGuests = /\b\d+\s*(?:people|guests|ppl|persons|attendees|pax|heads?)\b|\bheadcount\s*[:\-]?\s*\d+/i.test(message);
+      const BRIEF_GUESTS = /\b\d+\s*(?:people|guests|ppl|persons|attendees|pax|heads?)\b|\bheadcount\s*[:\-]?\s*\d+/i;
+      let briefCats = eventDrinkCats(message), briefGuests = BRIEF_GUESTS.test(message);
+      // "send the new proposal" with an empty cart and the event brief given earlier in THIS conversation
+      // (state.originalRequest): that brief is built first, then the proposal (Nov 10, DC: "How many bottles would you
+      // like on the proposal?" right after the brief).
+      if (!linesNow && !(briefCats && briefGuests) && state.originalRequest && !state.pendingAddOffer
+          && eventDrinkCats(state.originalRequest) && BRIEF_GUESTS.test(state.originalRequest)) {
+        console.log('[proposal] empty cart — building the event brief from earlier in this conversation first: ' + JSON.stringify(state.originalRequest.slice(0, 80)));
+        message = state.originalRequest.replace(/\[([^\]]*)\]\([^)]*\)/g, '$1'); msgLower = message.toLowerCase();
+        briefCats = eventDrinkCats(message); briefGuests = true;
+      }
       if (!linesNow && briefCats && briefGuests) {
         isProposalTrigger = false;
         const dB = (require('./event-date.js').proposalRequestFields(message) || {}).date || require('./event-date.js').findEventDateIn(message) || '';
@@ -5331,6 +5403,12 @@ app.post('/chat', async (req, res) => {
         state.proposalStep = 'date';
         message = state.savedEventDate || 'skip';
         pfHandled = true;
+      } else if (!tl.length) {
+        // Nothing to apply it to yet (Nov 10, DC: "Done — delivery $0.00 on the proposal" on a fresh conversation with no
+        // cart and no proposal). The setting is kept for this conversation's proposal; the reply says so plainly.
+        console.log('[tax/address] no cart and no proposal in this conversation — setting kept for the next proposal (' + said + ')');
+        const rNo = 'Noted — ' + said.replace(/ on the proposal/g, '') + ' will be used on your proposal. Your cart is empty right now, so there\'s no proposal to update yet. What would you like — the drinks, or the event details?';
+        return res.json({ text: rNo, response: rNo });
       } else {
         const rTx = 'Done — ' + said + '.' + (tl.length ? '\n\n' + basketTotalsText(state, tl, format) : '') + '\n\nWould you like to place the order, or get a PDF proposal?';
         return res.json({ text: rTx, response: rTx });
@@ -5427,6 +5505,16 @@ app.post('/chat', async (req, res) => {
           saveFlowState();
           const ask = 'What is the client or company name?';
           return res.json({ text: ask, response: ask });
+        }
+        // An empty cart and a bare proposal ask ("send the new proposal") names no product to count: say there's nothing
+        // to put on it (Nov 10, DC: "How many bottles would you like on the proposal?" on an empty cart).
+        const BARE_PROPOSAL_ASK = /^\W*(?:(?:can|could|would) you\s+|please\s+|ok(?:ay)?[,\s]+)?(?:send|generate|create|make|build|get|give|share|email|do|prepare|draft|redo)?\s*(?:me|us)?\s*(?:the|a|an|my|our)?\s*(?:new|updated|revised|another|fresh)?\s*(?:pdf\s+)?(?:proposal|pdf|quote)(?:\s+(?:again|now|please|pdf))?\W*$/i;
+        let shownBP = []; try { shownBP = JSON.parse(state.lastShownProducts || '[]'); } catch (e) {}
+        if (!existingItemCount && !state.pendingAddOffer && !shownBP.length && BARE_PROPOSAL_ASK.test(String(message).trim())) {
+          console.log('[proposal] empty cart, bare proposal ask — nothing to put on a proposal: ' + JSON.stringify(String(message).slice(0, 60)));
+          state.proposalStep = null; state.proposalData = null; saveFlowState();
+          const rE = "Your cart is empty right now, so there's nothing to put on a proposal yet. Tell me what you'd like — the drinks, or the event details (guests, hours, budget) — and I'll build it and make the PDF.";
+          return res.json({ text: rE, response: rE });
         }
         console.log('[proposal] ' + existingItemCount + '-line basket — asking the bottle count');
         state.proposalStep = 'qty';
@@ -6704,9 +6792,11 @@ app.post('/internal/new-conversation', (req, res) => {
   // The caller's saved last basket (baskets.json) goes too — else the next proposal / checkout reloads the previous chat's
   // cart (Nov 9, DC: a new Claude Code chat's proposal came out as the earlier chat's basket, 375 mL Chandon and all).
   const emNC = (String(session_id).match(/^mcp-(.+?@[^-\s]+?\.[a-z]{2,})(?:-|$)/i) || [])[1] || '';
+  const fnNC = freshStartNote(old);
   resetState(session_id, emNC);
   if (emNC) { try { clearBasket(emNC, 'plain'); } catch (e) {} }
   if (po) getState(session_id).placedOrder = po;
+  if (fnNC) { getState(session_id).freshNote = fnNC; console.log('[session] ' + session_id + ' was quiet ' + ((Date.now() - old.lastActive) / 3600000).toFixed(1) + 'h — the next reply says the conversation started fresh'); }
   saveFlowState();
   res.json({ ok: true });
 });
@@ -6723,7 +6813,9 @@ app.post('/internal/age-verified', (req, res) => {
   const stI = flowState[session_id];
   if (stI && !/^email-/.test(session_id) && stI.lastActive && (Date.now() - stI.lastActive) / 3600000 > IDLE_HOURS) {
     console.log('[session] idle ' + ((Date.now() - stI.lastActive) / 3600000).toFixed(1) + 'h > ' + IDLE_HOURS + 'h — fresh conversation for ' + session_id + ' (before the connector age check)');
+    const fnA = freshStartNote(stI);
     resetState(session_id, '');
+    if (fnA) flowState[session_id].freshNote = fnA;
   }
   const st = getState(session_id);
   st.lastActive = Date.now();
