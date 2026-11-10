@@ -1016,6 +1016,49 @@ const TAXCMD = require('./tax-command.js');
 // generate_proposal arguments. Every proposal path passes them (in-code, email quote PDF, LLM, the guard).
 const FEE_KEYS = ['tax_rate', 'service_rate', 'tip_rate', 'tip_amount', 'delivery_fee'];
 const feeArgs = po => Object.fromEntries(FEE_KEYS.filter(k => po && typeof po[k] === 'number').map(k => [k, po[k]]));
+// Fee / tax changes in a message that another step consumes (the serving-mix answer, an address answer with a held fee
+// message): applied to the session like the [fees] block in the ready turn. Returns what was set ("delivery $0.00"), or ''.
+// Nov 10 (DC): "even.. and also the delivery charge should be 0 and service charge should be 8%" built the package and
+// dropped both fees.
+function applyFeeCommands(state, text) {
+  const fc = TAXCMD.fees(text), tc = TAXCMD.read(text);
+  if (!fc && !tc) return '';
+  const po = Object.assign({}, state.proposalOpts || {});
+  if (tc) { state.taxExempt = tc === 'zero'; po.tax_exempt = state.taxExempt; }
+  if (fc) {
+    if (fc.tip_amount != null) delete po.tip_rate; if (fc.tip_rate != null) delete po.tip_amount;
+    if (fc.tax_rate != null) { po.tax_exempt = fc.tax_rate === 0; state.taxExempt = fc.tax_rate === 0; }
+    Object.assign(po, fc);
+  }
+  state.proposalOpts = po;
+  state.eventParams = Object.assign({}, state.eventParams || {}, { proposalOpts: po });
+  const said = [tc ? (tc === 'zero' ? 'tax $0' : 'the estimated 10% tax') : '', fc ? TAXCMD.feesText(fc) : ''].filter(Boolean).join(', ');
+  console.log('[fees] set from a message another step handled: ' + said + ' -> ' + JSON.stringify(feeArgs(po)) + ' (' + JSON.stringify(String(text).slice(0, 60)) + ')');
+  return said;
+}
+// A package / basket reply's estimate lines rewritten from this session's fees (estimateFor = the PDF's math). The builder
+// and the model use Bevvi's defaults (10% tax, 10% service, 5% tip, $25 delivery); once the customer set their own, every
+// estimate shows those (Nov 10, DC: "$25.00 delivery, 10% service" right after "delivery 0, service 8%").
+function rewriteEstimateLines(output, state) {
+  const fa = feeArgs(state && state.proposalOpts);
+  if (!Object.keys(fa).length) return output;
+  // Checkout and a placed order keep Bevvi's real fees (the order summary / confirmation): never rewritten.
+  if ((state && state.orderStep) || /payment link|direct-checkout|order (?:#|number)|order (?:is |has been )?placed|approved_totals/i.test(output)) { console.log('[fees] estimate rewrite skipped — checkout / order reply'); return output; }
+  const pm = output.match(/Product total:?\**\s*\$([\d,]+\.\d{2})/i);
+  if (!pm) return output;
+  const E = estimateFor(state, parseFloat(pm[1].replace(/,/g, '')));
+  const money = n => '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const cap = t => t.charAt(0).toUpperCase() + t.slice(1);
+  let out = output, n = 0;
+  const line = (re, text) => { out = out.replace(re, (m0, pre, post) => { n++; return pre + text + (post || ''); }); };
+  line(/^([*_]*)Estimated tax[^\n$]*\$[\d,]+\.\d{2}([*_]*)[ \t]*$/im, cap(E.taxL) + ': ' + money(E.tax));
+  line(/^([*_]*)(?:Estimated )?Delivery(?: charge| fee)?[^\n$]*\$[\d,]+\.\d{2}([*_]*)[ \t]*$/im, 'Estimated delivery: ' + money(E.del));
+  line(/^([*_]*)Service charge[^\n$]*\$[\d,]+\.\d{2}([*_]*)[ \t]*$/im, cap(E.svcL) + ': ' + money(E.svc));
+  line(/^([*_]*)Tip\b[^\n$]*\$[\d,]+\.\d{2}([*_]*)[ \t]*$/im, cap(E.tipL) + ': ' + money(E.tip));
+  out = out.replace(/((?:Estimated )?grand total:?\**\s*)\$[\d,]+\.\d{2}/i, (m0, a) => { n++; return a + money(E.grand); });
+  if (n) console.log('[fees] estimate lines rewritten from the session fees ' + JSON.stringify(fa) + ': grand total ' + money(E.grand));
+  return out;
+}
 // One estimate for a product total: the PDF's math (generate-proposal.js proposalTotals) with this session's fees; the
 // tip is the proposal tip if one was set, else the order's tip choice. Every in-chat estimate uses it.
 function estimateFor(state, base) {
@@ -2603,18 +2646,9 @@ app.post('/chat', async (req, res) => {
         const rest2 = sp2 ? cleanAddrRest(sp2.rest) : '';
         if (sp2 && rest2.split(/\s+/).length >= 2 && REQ_AT_ADDR.test(rest2)) {
           const held = state.pendingIntent;
-          const fcH = TAXCMD.fees(held), tcH = TAXCMD.read(held);
-          if (fcH || tcH) {
-            const poH = Object.assign({}, state.proposalOpts || {});
-            if (tcH) { state.taxExempt = tcH === 'zero'; poH.tax_exempt = state.taxExempt; }
-            if (fcH) {
-              if (fcH.tip_amount != null) delete poH.tip_rate; if (fcH.tip_rate != null) delete poH.tip_amount;
-              if (fcH.tax_rate != null) { poH.tax_exempt = fcH.tax_rate === 0; state.taxExempt = fcH.tax_rate === 0; }
-              Object.assign(poH, fcH);
-            }
-            state.proposalOpts = poH;
-            state.eventParams = Object.assign({}, state.eventParams || {}, { proposalOpts: poH });
-            state.heldFeeSaid = [tcH ? (tcH === 'zero' ? 'tax $0' : 'the estimated 10% tax') : '', fcH ? TAXCMD.feesText(fcH) : ''].filter(Boolean).join(' and ');
+          const saidH = applyFeeCommands(state, held);
+          if (saidH) {
+            state.heldFeeSaid = saidH;
             state.pendingIntent = rest2;
             console.log('[addr] address + request in one message, held fee change applied in code (' + state.heldFeeSaid + ') — replaying the new request:', JSON.stringify(rest2.slice(0, 80)));
           } else {
@@ -2908,6 +2942,16 @@ app.post('/chat', async (req, res) => {
           state.eventParams = Object.assign({}, state.eventParams || {}, { serving_mix: JSON.stringify(got.mix), serving_mix_text: String(message).slice(0, 500) });   // the words too: mixers named in the answer (mixers.js, Oct 7)
           state.pendingMenu = null; saveFlowState();
           console.log('[menu] serving mix (' + got.why + '): ' + mixText(got.mix) + ' — building the held request: ' + JSON.stringify(pm.message).slice(0, 80));
+          // Fees in the same answer ("even.. and the delivery charge should be 0 and service 8%") are kept, and said.
+          const feeSaidMix = applyFeeCommands(state, message);
+          if (feeSaidMix) {
+            saveFlowState();
+            const _jM = res.json.bind(res);
+            res.json = (payload) => {
+              try { if (payload && typeof payload.text === 'string' && payload.text.trim()) { payload.text = 'Done — ' + feeSaidMix + ' on the proposal.\n\n' + payload.text; if (typeof payload.response === 'string') payload.response = payload.text; } } catch (e) {}
+              return _jM(payload);
+            };
+          }
           // Cocktails asked for but never named: ask which, in code, before any build (prompt COCKTAIL NAMES gate; the LLM
           // sometimes built a full bar, and the names given next replaced the package with their ingredients — Oct 7).
           if ((got.mix.spirits || 0) > 0 && cocktailsUnnamed(pm.message + '\n' + message)) {
@@ -2920,7 +2964,8 @@ app.post('/chat', async (req, res) => {
           // keep the quantities. Real case (Sep 30, DC): "take the same ones listed but change the quantities".
           listScaleFor(state, pm.message, message, got);
           { const dur = durationIn(message); const answerMsg = message;
-            message = (dur && !durationIn(pm.message)) ? pm.message.trimEnd() + ' The event is ' + dur + ' long.' : pm.message;   // inline: a new line made instructions.js read it as a second request (the LLM then built a cocktail list) msgLower = message.toLowerCase().trim();
+            message = (dur && !durationIn(pm.message)) ? pm.message.trimEnd() + ' The event is ' + dur + ' long.' : pm.message;   // inline: a new line made instructions.js read it as a second request (the LLM then built a cocktail list)
+            msgLower = message.toLowerCase().trim();
             if (dur && !durationIn(pm.message)) console.log('[menu] event length in the serving-mix answer: ' + JSON.stringify(dur) + ' (' + JSON.stringify(answerMsg).slice(0, 60) + ')'); }
           // No percentages in this note: given numbers, the LLM put them in category_splits and
           // switched the builder into SPLIT mode (spirits dropped, reviewer blocked the build).
@@ -6578,6 +6623,7 @@ app.post('/chat', async (req, res) => {
         console.log('[tax] the reply showed tax $' + oldTax.toFixed(2) + ' — set to $0 in code (tax-exempt this session)');
       }
     }
+    try { output = rewriteEstimateLines(output, getState(sessionKey)); } catch (e) { console.error('[fees] estimate rewrite failed:', e.message); }
     // Category subtotals ("Wine total: $X") on every package reply — computed from the build, not left to
     // the LLM (it wrote them in about half the Sep 27-28 QA runs). See package-subtotals.js.
     try {

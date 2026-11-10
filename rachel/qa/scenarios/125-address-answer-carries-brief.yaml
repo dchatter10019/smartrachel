@@ -4,7 +4,9 @@ name: address-answer-carries-brief
 # brief DC sent with the address ("Done — delivery $0.00 on the proposal", no menu), and "send the new proposal" on the
 # empty cart asked "How many bottles would you like on the proposal?". Now: the brief that comes with the address is
 # built and the held fee change applied in code; after a long silence the reply says the conversation started fresh and
-# asks for the request again; an empty cart's fee change / proposal ask says the cart is empty.
+# asks for the request again; an empty cart's fee change / proposal ask says the cart is empty. Same day: fees in the
+# serving-mix answer ("even.. and also the delivery charge should be 0 and service charge should be 8%") were dropped and
+# the package showed $25 delivery / 10% service — now kept, said, and every estimate line follows the session's fees.
 format: plain
 tags: [events]
 turns:
@@ -18,9 +20,11 @@ turns:
       contains: ["132 W 32nd St", "Delivery $0.00 will be on your proposal", "drink most"]
       not_contains: ["Done — delivery"]
       log_contains: ["[addr] address + request in one message, held fee change applied in code"]
-  - send: "equal"
+  - send: "even.. and also the service charge should be 8%"
     expect:
-      contains: ["Product total"]
+      contains: ["Done — service charge 8% on the proposal", "Product total", "Service charge (8%)", "Estimated delivery: $0.00"]
+      not_matches: "(?i)service charge \\(10%\\)|delivery[^\\n]*\\$25\\.00"
+      log_contains: ["[fees] set from a message another step handled", "[fees] estimate lines rewritten from the session fees"]
   - send: "make the delivery charge 0"
     idle: 5
     expect:

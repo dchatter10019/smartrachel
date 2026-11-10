@@ -522,6 +522,12 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   a fee change with no cart/proposal says the cart is empty (setting kept); a bare proposal ask on an empty cart builds this
   conversation's event brief (state.originalRequest) first, else says there's nothing to put on a proposal (no bottle count).
   prompt.md: "mixed drinks" / open bar is not a cocktail menu (the model asked "which cocktails?"). Scenario 125.
+  Same day: fees in the serving-mix answer ("even.. and also the delivery charge should be 0 and service charge should be 8%")
+  were dropped (the answer is replaced by the held request) and the package showed $25 / 10%. Now server.js applyFeeCommands
+  (serving-mix answer + held fee message) keeps + says them ("Done — ... on the proposal."), and rewriteEstimateLines
+  rewrites every reply's estimate lines (tax / delivery / service / tip / grand total) from estimateFor when the session set
+  fees ([fees] estimate lines rewritten) — never at checkout or on an order reply (Bevvi's real fees). The serving-mix
+  handler's msgLower update had been inside a comment since Nov 9 (fixed).
 - A file that never arrived (Oct 29, DC on claude.ai, F-0110): a Claude app passes an attachment as a path on its own machine
   ("@/mnt/user-data/attachments/...pdf"); /chat answers in code "Your file (<name>) didn't come through ... paste the drinks"
   ([order-file] a file path with no file); the Claude-app instructions (rachel-mcp.js CHAT_INSTRUCTIONS) tell the client to
