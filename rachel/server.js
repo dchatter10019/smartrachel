@@ -1089,7 +1089,7 @@ function renderOrderSummary(state, email, format, res) {
     const tax = Math.round(productTotal * taxRateFor(state) * 100) / 100;
     const service = Math.round(productTotal * 0.10 * 100) / 100;
     const { tip, label: tipLabel } = tipFor(state, productTotal);
-    const delivery = 25.00; // Quoted as an ESTIMATE only; not sent on the order (Bevvi backend to apply delivery)
+    const delivery = 25.00; // the same $25 is sent on the order as createCorpOrder deliveryCharge (shopping-agent place_order; DC, Nov 10)
     const grandTotal = Math.round((productTotal + tax + service + tip + delivery) * 100) / 100;
     state.orderData.grandTotal = grandTotal;
     state.orderData.productName = productName;
@@ -5601,7 +5601,7 @@ app.post('/chat', async (req, res) => {
         const tax = Math.round(productTotal * 0.10 * 100) / 100;
         const service = Math.round(productTotal * 0.10 * 100) / 100;
         const tip = Math.round(productTotal * 0.05 * 100) / 100;
-        const delivery = 25.00; // Quoted as an ESTIMATE only; not sent on the order (Bevvi backend to apply delivery)
+        const delivery = 25.00; // the same $25 is sent on the order as createCorpOrder deliveryCharge (shopping-agent place_order; DC, Nov 10)
         const grandTotal = Math.round((productTotal + tax + service + tip + delivery) * 100) / 100;
 
         summary = format === 'slack'

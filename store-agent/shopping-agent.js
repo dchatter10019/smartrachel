@@ -1364,7 +1364,7 @@ async function executeTool(name, input) {
     // fallback silently routed to the WRONG endpoint (createOrder). The basket already
     // carries everything createCorpOrder needs per product — productId, upc, name,
     // quantity, establishmentId (mixed establishments are accepted; verified).
-    // No delivery fee is sent — Bevvi determines delivery at checkout.
+    // deliveryCharge is sent on every order ($25 unless passed; DC, Nov 10).
     // Hard backstop: never send Bevvi a product with no identifiers. A line item that
     // reached placement as a bare name (no productId AND no upc) cannot be ordered and
     // Bevvi returns an opaque error. Refuse up front and name the item so Rachel can
@@ -1384,6 +1384,10 @@ async function executeTool(name, input) {
       // tip_amount 0 is the customer's "no tip", not a missing value (|| turned it into 5%).
       const tipAmt = (typeof input.tip_amount === 'number' && input.tip_amount >= 0) ? input.tip_amount : Math.round(productTotal * 0.05 * 100) / 100;
       const tipPct = productTotal > 0 ? Math.round((tipAmt / productTotal) * 100) : 5;
+      // Delivery charge (DC, Nov 10): sent on every order; $25 unless the caller passes one (0 = free delivery).
+      const dcIn = [input.delivery_charge, input.delivery_fee].map(v => (typeof v === 'string' && v.trim() !== '') ? Number(v.replace(/[$,\s]/g, '')) : v).find(v => typeof v === 'number' && isFinite(v) && v >= 0);
+      const deliveryCharge = dcIn !== undefined ? Math.round(dcIn * 100) / 100 : 25;
+      console.log('[place_order] deliveryCharge ' + deliveryCharge + (dcIn !== undefined ? ' (passed)' : ' (default $25 — none passed)'));
       const parseAddr = (addr) => {
         const a = String(addr || '').replace(/\s+/g, ' ').trim();
         let m = a.match(/^(.*?),\s*([A-Za-z .'-]+?)[,\s]+([A-Z]{2})[,\s]+(\d{5})(?:-\d{4})?\s*$/);
@@ -1425,7 +1429,7 @@ async function executeTool(name, input) {
           zipcode:       c.zipcode || pa.zip || zip || '',
           phoneNumber:   (c.phone || c.phoneNumber || '').replace(/\D/g, '')
         },
-        tipAmt, tipPct, serviceChargeAmt, serviceChargePct,
+        tipAmt, tipPct, serviceChargeAmt, serviceChargePct, deliveryCharge,
         deliveryDateTime:     input.delivery_datetime || '',
         deliveryInstructions: diClean.text
       };
@@ -1479,7 +1483,7 @@ async function executeTool(name, input) {
       }
       // Order history (summary + itemized) for order_history queries.
       try {
-        const orderLog = JSON.stringify({ ts: new Date().toISOString(), order_id: orderId, store: loc.kitchen, amount: Math.round((productTotal + serviceChargeAmt + tipAmt) * 100) / 100, email: input.email || c.email || '', account: ORDER_ACCOUNT_EMAIL, requested_by: input.account_email || input.email || '', customer_email: c.email || '', zip });
+        const orderLog = JSON.stringify({ ts: new Date().toISOString(), order_id: orderId, store: loc.kitchen, amount: Math.round((productTotal + serviceChargeAmt + tipAmt + deliveryCharge) * 100) / 100, delivery_charge: deliveryCharge, email: input.email || c.email || '', account: ORDER_ACCOUNT_EMAIL, requested_by: input.account_email || input.email || '', customer_email: c.email || '', zip });
         require('fs').appendFileSync('/home/ubuntu/logs/orders.jsonl', orderLog + '\n');
         const items = products.map(p => ({ name: p.name || '', upc: p.upc || '', qty: p.qty || p.quantity || 1, unit_price: parseFloat(p.price) || 0, line_total: Math.round((parseFloat(p.price) || 0) * (p.qty || p.quantity || 1) * 100) / 100 }));
         require('fs').appendFileSync('/home/ubuntu/logs/order-items.jsonl', JSON.stringify({ ts: new Date().toISOString(), order_id: orderId, email: input.email || c.email || '', items }) + '\n');

@@ -708,6 +708,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   store-agent/shopping-agent.js, env RACHEL_ORDER_ACCOUNT_EMAIL); customerData.email = the customer; who asked is kept
   in our order log (requested_by) and [place_order] account | customer email | requested by. Until Oct 3 the top-level
   email was the requester (email sender / Slack user).
+  createCorpOrder also gets deliveryCharge (DC, Nov 10): place_order input delivery_charge / delivery_fee (USD, 0 = free),
+  else $25 ([place_order] deliveryCharge ...; was never sent — Bevvi added delivery at checkout). The order summaries already
+  quoted $25; orders.jsonl amount now includes it.
 - A placed order (API success only) leaves the cart → state.placedOrder (+ order_data: contact, delivery, driver note, tip;
   email: email_order). There is no order-update API. Since Oct 28 (DC: "fetch the last order and apply the change, seamlessly")
   a CHANGE to a placed order (items, recipient, contact, time, driver note — paid or not) is APPLIED: Slack / WhatsApp /
