@@ -469,8 +469,10 @@ function resetState(sessionKey, email) {
   // COMPLIANCE: a stated under-21 refusal survives "reset" (and idle expiry) for 24h — a minor
   // could otherwise type reset and answer "yes".
   const prevRefused = flowState[sessionKey] && flowState[sessionKey].ageRefusedAt;
+  const keptP = KEPTP.keepFrom(flowState[sessionKey]);   // a proposal never ordered can be picked up again (kept-proposal.js)
   flowState[sessionKey] = { step: 'age', ageVerified: false, addrConfirmed: false, zip: '', address: '', pendingIntent: null, lastFingerprint: '', lastZip: '', mixerAsked: false, mixerAnswered: false, packageShown: false, proposalStep: null, proposalData: null, orderStep: null, orderData: null };
   if (prevRefused && Date.now() - prevRefused < 24 * 3600 * 1000) flowState[sessionKey].ageRefusedAt = prevRefused;
+  if (keptP) flowState[sessionKey].keptProposal = keptP;
   sessions[sessionKey] = [];
   // Clear L1 cache for this user
   if (email) Object.keys(packageCache).forEach(k => { if (k.startsWith(email + ':')) delete packageCache[k]; });
@@ -496,6 +498,7 @@ function freshStartNote(old, hours) {
 function clearCart(state, email, format, why) {
   let n = 0; try { n = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
   const was = String(state.lastLineItems || '').slice(0, 120);
+  { const kpC = KEPTP.keepFrom(state); if (kpC) state.keptProposal = kpC; }   // the proposal can be picked up again by name
   state.lastLineItems = '[]'; state.pendingSubstitutes = []; state.unavailableQty = {}; state.pendingAddOffer = null; state.pendingQtyFor = null; state.mixersSettled = false; state.eventFacts = null;
   state.shownOptions = null; state.proposalWithOptions = false; state.originalRequest = ''; state.onHand = []; state.onHandReleased = [];
   state.lastProposalUrl = ''; state.savedClientName = ''; state.savedEventDate = ''; state.eventDateNone = false;
@@ -1009,7 +1012,7 @@ function parseTip(raw) {
 // Keys are the package builder's categories: wine, beer (seltzer/cider count as beer),
 // spirits (liquor, cocktails, mixed drinks).
 // The parser lives in serving-mix.js, shared with the Rachel connector (rachel-mcp.js rachel_build_package).
-const { MIX_SYN, eventDrinkCats, parseServingMix, mixText, cocktailsUnnamed, COCKTAIL_ASK, durationIn } = require('./serving-mix.js');
+const { MIX_SYN, eventDrinkCats, isCountedList, countedLines, parseServingMix, mixText, cocktailsUnnamed, COCKTAIL_ASK, durationIn } = require('./serving-mix.js');
 // A product list + a guest count, with the serving mix known: the listed products are sized for the event
 // (rachel.js [list-scale]) — unless the customer says to keep the quantities. Sets eventParams.list_scale.
 function listScaleFor(state, reqMsg, answerMsg, got) {
@@ -1138,17 +1141,21 @@ function renderOrderSummary(state, email, format, res) {
   saveFlowState();
     // Build order summary
     let productName = 'Product';
-    let unitPrice = 0;
+    let unitPrice = 0, lineQty = 0;
     if (state.lastLineItems) {
       try {
         const items = typeof state.lastLineItems === 'string' ? JSON.parse(state.lastLineItems) : state.lastLineItems;
         if (items && items.length > 0) {
           productName = items[0].name || 'Product';
           unitPrice = parseFloat(items[0].price || items[0].unit_price || 0);
+          lineQty = Number(items[0].qty || items[0].quantity) || 0;
         }
       } catch(e) {}
     }
-    const qty = state.orderData.qty;
+    // A one-line cart that re-enters checkout (after a question or change at confirm) has no orderData.qty: the cart line's
+    // qty, never "xnull — $0.00" (Nov 11, scenario 132).
+    if (!state.orderData.qty && lineQty) { state.orderData.qty = lineQty; console.log('[order] summary qty from the cart line: ' + lineQty); }
+    const qty = state.orderData.qty || 1;
     // Multi-item basket: sum all lines and build an itemized summary
     let multiLines = null;
     let multiTotal = 0;
@@ -1363,6 +1370,7 @@ const cta = require('./cta.js');
 const QE = require('./quote-edits.js');   // edits to a quote the customer already has, applied in code
 const EO = require('./email-order.js');
 const POM = require('./placed-order-msg.js');
+const KEPTP = require('./kept-proposal.js');
 // Cancelling a placed order: nothing to replace it with and no cancel API, so it still goes to bevvi-support (DC, Oct 28).
 const ORDER_CANCEL = /\bcancel\b[^.?!\n]{0,25}\b(?:order|it|everything|delivery|the whole)\b|^\W*cancel\W*$/i;   // a payment report / detail change on a placed order
 const LR = require('./line-resolve.js');   // unlinked basket lines (a hand-built quote) -> catalog products, exact matches only   // "create the order" / "payment link" from an email, placed in code
@@ -1921,6 +1929,7 @@ app.post('/chat', async (req, res) => {
   // As a const this threw "Assignment to constant variable" at runtime — a TypeError
   // that node --check cannot catch — on exactly the path where both were remembered.
   let { message, context, gbrain_context, session_id, format = 'markdown', skip_gbrain = false, images = null } = req.body;
+  let askAtConfirmTurn = false;   // this turn is a question asked at the order confirm step (no replacement summary added under it)
   let freshTurn = false;   // the fresh-start note is on this reply (freshStartNote): the message is not held
   // The fresh-start note's text: added to the reply INSIDE the events / transcript wrappers, so transcripts.jsonl and the
   // nightly review see what the customer saw (Nov 10: the note reached DC at 18:06 but the transcript row lacked it).
@@ -2181,9 +2190,23 @@ app.post('/chat', async (req, res) => {
         const fieldLines = String(message).split('\n').filter(l => /^\s*(?:[-•*]\s*)?[A-Za-z][A-Za-z /&]{1,30}:\s*\S/.test(l) || /^\s*[-•*]\s+\S/.test(l)).length;
         selfContained = fieldLines >= 3 || !!require('./address-extract.js').splitAddress(message);
       } catch (e) {}
+      // The message names the proposal this conversation kept (its client, "the proposal"): it is held, the proposal comes
+      // back at the ready step ([kept-proposal]) and its delivery address is used (Nov 11, DC: "add the following to
+      // iCapital" got "your earlier cart and proposal aren't carried over").
+      let fnoteR = fnote;
+      try {
+        const stF = flowState[sessionKey], kpF = stF.keptProposal && KEPTP.load(stF.keptProposal.pdf), why = kpF && KEPTP.refersTo(message, kpF);
+        if (why) {
+          selfContained = true; stF.resumeProposal = stF.keptProposal.pdf;
+          const adF = KEPTP.addressOf(kpF);
+          if (adF && !require('./address-extract.js').splitAddress(message)) { message = message + '\nDelivery address: ' + adF; }   // msgLower is declared further down (TDZ)
+          fnoteR = 'Welcome back — I still have your ' + KEPTP.label(kpF) + ' and will pick it up from there.';
+          console.log('[kept-proposal] fresh start, message ' + why + ' — holding it and resuming ' + stF.keptProposal.pdf + (adF ? ' (its address: ' + adF + ')' : ''));
+        }
+      } catch (e) { console.log('[kept-proposal] resume check failed: ' + e.message); }
       freshTurn = !selfContained;
       console.log('[session] fresh-start note shown — ' + (selfContained ? 'a self-contained request, held as usual: ' : 'this message is not held: ') + JSON.stringify(String(message).slice(0, 60)));
-      freshPrefix = fnote;   // put on the reply by the wrapper installed right after the events wrapper (below)
+      freshPrefix = fnoteR;   // put on the reply by the wrapper installed right after the events wrapper (below)
     }
     saveFlowState();
   }
@@ -2978,6 +3001,29 @@ app.post('/chat', async (req, res) => {
       return res.json({ text: addrQ, response: addrQ });
     }
 
+    // ── A KEPT PROPOSAL comes back (kept-proposal.js; DC, Nov 11) ──────────────
+    // Empty cart, no proposal in this conversation, and the message names the proposal kept from the last one (its client,
+    // "the proposal"): its lines, client, date and fees are the cart again, so "add the following to iCapital" adds to it.
+    if (state.step === 'ready' && state.keptProposal && !state.lastProposalUrl && !state.orderStep && !state.proposalStep && !/^__/.test(message)) {
+      let nowN = 0; try { nowN = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
+      const kpR = KEPTP.load(state.keptProposal.pdf);
+      const whyR = kpR && (state.resumeProposal === state.keptProposal.pdf ? 'held from the fresh start' : KEPTP.refersTo(message, kpR));
+      state.resumeProposal = null;
+      if (!kpR) { console.log('[kept-proposal] ' + state.keptProposal.pdf + ' has no saved lines — dropped'); state.keptProposal = null; saveFlowState(); }
+      else if (whyR && nowN) console.log('[kept-proposal] NOT resumed — the cart already has ' + nowN + ' line(s) (' + state.keptProposal.pdf + ')');
+      else if (whyR) {
+        const zipP = (KEPTP.addressOf(kpR).match(/\b(\d{5})\b/) || [])[1] || '';
+        if (zipP && state.zip && zipP !== state.zip) console.log('[kept-proposal] NOT resumed — it delivers to ' + zipP + ', this conversation to ' + state.zip + ' (' + state.keptProposal.pdf + ')');
+        else {
+          loadProposalInto(state, kpR, KEPTP.lines(kpR), sessionKey);
+          if (state.placedOrder && !state.placedOrder.resolved) { state.placedOrder.resolved = true; console.log('[kept-proposal] placed order ' + state.placedOrder.order_id + ' left as placed — this message is about the proposal'); }
+          state.keptProposal = null; saveFlowState();
+          console.log('[kept-proposal] resumed ' + kpR.pdf + ' (' + whyR + '): ' + KEPTP.lineCount(kpR) + ' line(s), client ' + JSON.stringify(kpR.client_name || '') + ', date ' + JSON.stringify(kpR.event_date || ''));
+          context.order_change_note = 'The customer\'s earlier proposal (' + KEPTP.label(kpR) + ') is back in the basket. This message changes THAT proposal: add / change what they ask on top of its lines (never replace them, never drop them), then list the whole basket and offer an updated proposal or the order.';
+        }
+      }
+    }
+
     // ── Event menu: ask what the guests will drink most ─────────────────────
     // (not isInternalMsg: that const is declared further down — referencing it here threw a TDZ ReferenceError on every turn)
     if (state.eventParams && state.eventParams.list_scale) { delete state.eventParams.list_scale; saveFlowState(); }   // one turn only (rachel.js [list-scale])
@@ -3039,7 +3085,10 @@ app.post('/chat', async (req, res) => {
           message = pm.message; msgLower = message.toLowerCase().trim();
         }
       } else {
-        const cats = eventDrinkCats(message);
+        let cats = eventDrinkCats(message);
+        // Drinks already counted (3+ "2 btls of X" / "Sancerre 5 btls" / "Stella 1 case" lines): a list to price, never the
+        // mix question (Nov 11, DC: the iCapital brief was asked "prosecco, beer or spirits?" twice). serving-mix.js.
+        if (cats && isCountedList(message)) { console.log('[menu] serving-mix question NOT asked — the drinks are already counted (' + countedLines(message).length + ' line(s)): ' + JSON.stringify(countedLines(message).slice(0, 3))); state.eventParams = Object.assign({}, state.eventParams || {}, { serving_mix: null, serving_mix_text: null }); cats = null; }
         if (cats) {
           const stated = parseServingMix(message, cats, true);
           state.eventParams = Object.assign({}, state.eventParams || {}, { serving_mix: stated ? JSON.stringify(stated.mix) : null, serving_mix_text: null });   // a new event never inherits an old mix (or its words)
@@ -4022,11 +4071,13 @@ app.post('/chat', async (req, res) => {
       res.json = (payload) => {
         try {
           const stR = flowState[sessionKey] || state, replacing = stR.replacingOrder, snap = stR.replaceSnap;
+          const askTurnR = !!askAtConfirmTurn;   // a question at confirm is answered on its own (Nov 11) — the summary waits for "place the order"
           const t0 = payload && (payload.text || payload.response);
           const head = 'Here\'s your updated order — it replaces order #' + replacing + '. Say yes and I\'ll place it with a new payment link.';
           if (replacing && typeof t0 === 'string' && /Order Summary/.test(t0)) {
             if (!t0.includes('it replaces order #')) { payload.text = head + '\n\n' + t0; if (typeof payload.response === 'string') payload.response = payload.text; }
           } else if (replacing && typeof t0 === 'string' && !stR.orderStep && !stR.proposalStep && snap && snap.name && snap.delivery_datetime_iso
+              && !askTurnR
               && !stR.pendingQtyFor && !stR.pendingAddOffer && !/^\s*\d{1,2}[.)]\s+\S/m.test(t0)) {   // a pick still open ("which size?", "how many?") waits
             let n = 0; try { n = JSON.parse(stR.lastLineItems || '[]').length; } catch (e) {}
             if (n) {
@@ -4057,8 +4108,22 @@ app.post('/chat', async (req, res) => {
         po.resolved = true; saveFlowState();
         console.log('[order] customer asked for a new order; ' + po.order_id + ' left as placed: ' + JSON.stringify(message).slice(0, 80));
       }
-      let pom = cartN === 0 && !po.resolved ? POM.classify(message) : null;
-      if (!pom && cartN === 0 && !po.resolved && !wantsNewOrder && POM.changeRequest(message)) pom = po.paid_reported ? 'paid_items' : 'items';
+      // Reopened only when the message is about THAT order (Nov 11, DC on Claude Code: in a new chat, the iCapital brief —
+      // "Client: iCapital", its own address, contact and an 11-line menu — had an "add" in it, so the 10001 order placed
+      // the day before came back into checkout and the iCapital lines were merged into it; every later message, even "no",
+      // re-showed that order). After a new chat, or for a message that is a new request (a brief of 3+ "Field: value" lines,
+      // a "Client:" line, a counted list, a proposal / quote), the order has to be named ("my order", "the last order", #id).
+      const namesOrder = POM.namesOrder(message, po.order_id);
+      let newReq = '';
+      if (!namesOrder) {
+        const fieldN = String(message).split('\n').filter(l => /^\s*(?:[-•*]\s*)?[A-Za-z][A-Za-z /&]{1,30}:\s*\S/.test(l)).length;
+        newReq = po.carriedOver ? 'a new chat since it was placed' : fieldN >= 3 ? 'a brief (' + fieldN + ' field lines)' : /^\s*client\s*(?:name)?\s*:/im.test(message) ? 'a "Client:" line'
+          : isCountedList(message) ? 'a counted list' : /\b(?:proposal|quote)\b/i.test(message) ? 'about a proposal / quote' : '';
+      }
+      const mayReopen = !newReq;
+      if (!mayReopen && cartN === 0 && !po.resolved && (POM.classify(message) || POM.changeRequest(message))) console.log('[order-change] placed order ' + po.order_id + ' NOT reopened — the message does not name it and is ' + newReq + ': ' + JSON.stringify(message).slice(0, 80));
+      let pom = mayReopen && cartN === 0 && !po.resolved ? POM.classify(message) : null;
+      if (!pom && mayReopen && cartN === 0 && !po.resolved && !wantsNewOrder && POM.changeRequest(message)) pom = po.paid_reported ? 'paid_items' : 'items';
       if (pom) {
         if (/^paid/.test(pom) && !po.paid_reported) { po.paid_reported = true; po.paid_reported_at = Date.now(); po.paid_reported_by = email || ''; }
         po.awaitingReopen = false;
@@ -5274,7 +5339,20 @@ app.post('/chat', async (req, res) => {
       // said "service charge 8% on the proposal").
       let feeAtConfirm = false; try { feeAtConfirm = !!(TAXCMD.fees(message) || TAXCMD.read(message)); } catch (e) {}
       if (feeAtConfirm) console.log('[order] fee change at confirm — checkout kept, the summary is shown again with it');
-      const isChange = !feeAtConfirm && /\b(add|also|remove|drop|take out|swap|replace|change|instead|different|another|more|less|fewer|update|edit)\b/i.test(message) && !yesWords.some(w => msgLower === w);
+      const isChange0 = !feeAtConfirm && /\b(add|also|remove|drop|take out|swap|replace|change|instead|different|another|more|less|fewer|update|edit)\b/i.test(message) && !yesWords.some(w => msgLower === w);
+      // Yes / no as WHOLE words (Nov 11, DC on Claude Code: "Can you find a cheaper la crema Pinot" contained "no" — pi-NO-t
+      // — and was taken as a no; with a placed order being replaced, the summary was put straight back, so the question was
+      // never answered. A substring "sure" in "I'm not sure" would have been a YES that places the order.)
+      const wordIn = (list) => list.some(w => new RegExp('(?:^|[^a-z\']){1}' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![a-z])', 'i').test(msgLower));
+      const saysNoC = wordIn(noWords) || /\b(?:don'?t|do not|cancel|hold off|stop)\b/i.test(msgLower) || cls === 'confirm_no';
+      const saysYesC = !saysNoC && !/\bnot\s+(?:sure|ok|okay|yet)\b/i.test(msgLower) && (wordIn(yesWords) || /\b(?:place it|place the order|do it|yes please)\b/i.test(msgLower));
+      // A question or a search at confirm ("can you find a cheaper X?", "what other pinots do you have", "any cheaper
+      // options?") leaves checkout like a change, so it gets answered (details kept for re-entry).
+      const isAskC = !feeAtConfirm && !isChange0 && !saysYesC && !saysNoC
+        && (/\?\s*$/.test(message) || /^\s*(?:can|could|would|will|do|does|is|are|what|which|how|why|show|find|any|search|look)\b/i.test(message)
+          || /\b(?:cheaper|less expensive|pricier|alternatives?|options?|recommend|suggest|instead)\b/i.test(message) || cls === 'recommend' || cls === 'product_query');
+      if (isAskC) { askAtConfirmTurn = true; console.log('[order] question at confirm — leaving checkout so it is answered: ' + JSON.stringify(message).slice(0, 80)); }
+      const isChange = isChange0 || isAskC;
       if (feeAtConfirm) {
         // handled by the fee block below (orderStep stays 'confirm'; it re-renders the summary) — never a yes / no / reconfirm
       } else if (isChange) {
@@ -5292,11 +5370,13 @@ app.post('/chat', async (req, res) => {
         console.log('[order] change request at confirm — exiting order flow, details saved for re-entry');
         // Fall through: the message is handled as a normal request below (add/swap/etc.),
         // and the LLM is told to prompt for 'place the order' once done.
-        context.order_change_note = state.replacingOrder
+        context.order_change_note = isAskC
+          ? 'The customer was at the order-confirmation step and asked a question instead of yes / no. Answer it now (search the catalog if it is about products or prices). Do not change the basket unless they ask. End with: "Say \'place the order\' when you\'re ready and I\'ll show the summary again."'
+          : state.replacingOrder
           ? 'The customer asked to change their placed order #' + state.replacingOrder + ' (its items are back in the basket). Make exactly that change and list the basket. The updated order summary is added after your reply in code — do not ask them to say "place the order", and do not write a summary or totals of your own.'
           : 'The customer was at the order-confirmation step and asked for a change. Make the change, then say: "Done — say \'place the order\' when you\'re ready and I\'ll show the updated summary."';
       } else
-      if (yesWords.some(w => msgLower.includes(w))) {
+      if (saysYesC) {
         state.orderStep = 'placing';
         saveFlowState();
         // Build place_order message for Rachel with all details
@@ -5435,11 +5515,16 @@ app.post('/chat', async (req, res) => {
           return res.json({ text: orderOutput + note, response: orderOutput + note });
         }
         return res.json({ text: orderOutput, response: orderOutput });
-      } else if (noWords.some(w => msgLower.includes(w))) {
+      } else if (saysNoC) {
         state.orderStep = null;
         state.orderData = null;
+        // A "no" to a replacement order: nothing is placed and the placed order stays as it was — the replace summary is
+        // never put back on this or a later reply (Nov 11: DC's "No" re-showed the same summary).
+        const wasReplacing = state.replacingOrder;
+        if (wasReplacing) { state.replacingOrder = null; state.replaceSnap = null; console.log('[order-change] replacement of ' + wasReplacing + ' declined — nothing placed, the order stays as it was'); }
         saveFlowState();
-        const cancel = 'No problem! Would you like to make any changes, or is there anything else I can help with?';
+        const cancel = wasReplacing ? 'No problem — I won\'t place it, and order #' + wasReplacing + ' stays as it was. Your cart is still here: tell me what to change, or ask for a proposal.'
+          : 'No problem! Would you like to make any changes, or is there anything else I can help with?';
         return res.json({ text: cancel, response: cancel });
       } else {
         // Re-show confirmation
@@ -5520,6 +5605,9 @@ app.post('/chat', async (req, res) => {
     if (state.lastProposalUrl && !state.proposalStep && !state.orderStep) {
       let pfLines = []; try { pfLines = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
       let pf = pfLines.length >= 1 ? require('./event-date.js').parseProposalFieldEdit(message, state.savedEventDate) : null;
+      // A message carrying its own drinks list (a new brief: "Client: Acme / Event Date: ... / Menu: - 2 btls of ...") is a
+      // new request, never a client / date edit of the sent PDF (Nov 11: the old proposal came back renamed, menu ignored).
+      if (pf && (isCountedList(message) || String(message).split('\n').filter(l => /^\s*(?:[-•*·]|\d+\s*(?:x|×)\s+\S)/i.test(l)).length >= 2)) { console.log('[proposal] field edit NOT applied — the message carries its own drinks list (a new request): ' + JSON.stringify(pf)); pf = null; }
       if (!pf && pfLines.length >= 1 && (asksOptions || dropOptions)) pf = {};   // same client + date, options added/removed
       if (pf) {
         console.log('[proposal] field edit on the sent proposal: ' + JSON.stringify(pf) + ' (was client ' + JSON.stringify(state.savedClientName || '') + ', date ' + JSON.stringify(state.savedEventDate || '') + ') — regenerating in code');
@@ -7016,7 +7104,7 @@ app.post('/internal/new-conversation', (req, res) => {
   const fnNC = freshStartNote(old);
   resetState(session_id, emNC);
   if (emNC) { try { clearBasket(emNC, 'plain'); } catch (e) {} }
-  if (po) getState(session_id).placedOrder = po;
+  if (po) { po.carriedOver = true; getState(session_id).placedOrder = po; }   // a change must name it from now on ([order-change] NOT reopened)
   if (fnNC) { getState(session_id).freshNote = fnNC; console.log('[session] ' + session_id + ' was quiet ' + ((Date.now() - old.lastActive) / 3600000).toFixed(1) + 'h — the next reply says the conversation started fresh'); }
   saveFlowState();
   res.json({ ok: true });

@@ -104,4 +104,16 @@ function cocktailsUnnamed(text) {
 const DURATION_RE = /\b\d+(?:\.\d+)?\s*(?:-|to)?\s*(?:\d+(?:\.\d+)?\s*)?(?:hours?|hrs?|hr)\b|\b(?:an?|one|two|three|four|five|six|seven|eight|half)[\s-]+(?:an?\s+)?(?:hours?|hrs?|day)\b|\ball[- ](?:day|night|evening)\b|\b\d{1,2}(?::\d\d)?\s*(?:am|pm)?\s*(?:-|to|until|till|–)\s*\d{1,2}(?::\d\d)?\s*(?:am|pm)\b|\bdrinks?\s+(?:per|a|each)\s+(?:person|head|guest)/i;
 function durationIn(text) { const m = String(text || '').match(DURATION_RE); return m ? m[0] : ''; }
 
-module.exports = { MIX_SYN, eventDrinkCats, parseServingMix, mixText, cocktailsUnnamed, knownCocktails, COCKTAIL_ASK, DURATION_RE, durationIn };
+// A request whose drinks are already COUNTED ("2 btls of Woodford", "Sancerre 5 btls", "Stella 1 case", "Athletic 12pack",
+// "3 x Tito's") is a list to price, not an event to size: never "what will your guests drink most?" (Nov 11, DC on
+// Claude Code: the iCapital brief — head count + an 11-line counted menu — was asked the mix twice; "I am giving the
+// quantities.. she should not be asking this question"). 3+ counted drink lines = a counted list.
+const COUNT_UNIT = '(?:btls?|bottles?|bts?|cases?|cans?|packs?|\\d+\\s*-?\\s*(?:packs?|pk)|kegs?|magnums?)';
+const LEAD_COUNT = new RegExp('^\\s*(?:[-•*·]\\s*)?(?:\\d{1,4}|a|an|one|two|three|four|five|six)\\s*(?:[x×]\\s*)?(?:' + COUNT_UNIT + '\\s+(?:of\\s+)?)?[a-z]', 'i');
+const TRAIL_COUNT = new RegExp('[a-z].*?(?:\\s(?:\\d{1,4})\\s*' + COUNT_UNIT + '|\\s[x×]\\s*\\d{1,4}|\\s\\d{1,2}\\s*-?\\s*(?:packs?|pk))\\.?\\s*$', 'i');
+const NOT_DRINK_LINE = /\b(?:people|guests|persons|ppl|attendees|pax|hours?|hrs?|minutes|budget|delivery|deliver|contact|cell|phone|address|date|time|floor|street|ave|pm|am)\b|\$|:\s*\S/i;
+function countedLines(msg) {
+  return String(msg || '').split(/\n/).map(l => l.trim()).filter(l => l && !NOT_DRINK_LINE.test(l) && (LEAD_COUNT.test(l) || TRAIL_COUNT.test(l)));
+}
+function isCountedList(msg) { return countedLines(msg).length >= 3; }
+module.exports = { MIX_SYN, eventDrinkCats, countedLines, isCountedList, parseServingMix, mixText, cocktailsUnnamed, knownCocktails, COCKTAIL_ASK, DURATION_RE, durationIn };

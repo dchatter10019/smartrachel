@@ -1,0 +1,36 @@
+name: kept-proposal-resumed
+# Nov 11 (DC on Claude Code, iCapital, 10165): "I am trying to add more products to an existing order that I have not
+# placed yet." A proposal made in the evening; 6h later "Per client, let's please add the following to iCapital: Wine /
+# Sancerre 5 btls / ... Beer / Stella 1 case ..." started a fresh conversation that said the proposal was gone, and the
+# full brief resent after it was asked "what will your guests drink most?" twice although every drink was counted.
+# Now: the conversation keeps a pointer to its last proposal (kept-proposal.js); a message naming its client brings it
+# back (lines, client, date, its delivery address) and the new lines are added to it; a counted list is never asked the mix.
+format: plain
+tags: [proposals]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "2 x Tito's Handmade Vodka 750ml\n3 x Kim Crawford Sauvignon Blanc 750ml"
+    expect: {contains: ["Tito"]}
+  - send: "create the proposal"
+    expect: {matches: "(?i)client|company"}
+  - send: "Northwind"
+  - send: "December 5"
+    expect: {contains: ["bevvi-proposal-northwind"]}
+  - send: "Per client, let's please add the following to Northwind:\n\nBeer\nStella 1 case\nCorona 1 case"
+    idle: 5
+    expect:
+      contains: ["Welcome back", "Northwind proposal", "21"]
+      not_contains: ["aren't carried over"]
+      log_contains: ["[kept-proposal] fresh start, message client"]
+  - send: "yes"
+    expect:
+      contains: ["425 W 53rd St", "Tito", "Kim Crawford", "Stella"]
+      not_matches: "(?i)drink most|what is your delivery address"
+      log_contains: ["[kept-proposal] resumed"]
+  - send: "Client: Acme\nEvent Date: December 9th | 5-7pm\nHead Count: 45-50 people\n\nMenu:\n- 2 btls of Woodford Reserve Bourbon\n- 3 btls of Prosecco\nWine\nSancerre 5 btls\nBeer\nStella 1 case\nBrooklyn lager 1 case"
+    expect:
+      contains: ["Woodford", "Sancerre"]
+      not_matches: "(?i)drink most|your proposal is ready"
+      log_contains: ["[menu] serving-mix question NOT asked — the drinks are already counted", "[proposal] field edit NOT applied"]

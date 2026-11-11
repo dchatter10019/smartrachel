@@ -43,4 +43,8 @@ function requestSentences(text) {
     .filter(s => s && !PAID.test(s) && !/^(?:hi|hello|hey|thanks?|thank you|best|regards|cheers)\b[\w ,!.]*$/i.test(s) && (DETAILS.test(s) || ITEM_NOUN.test(s) || ITEM_VERB.test(s) || /\b(?:update|change|could you|can you|please)\b/i.test(s)));
 }
 
-module.exports = { changeRequest, paidClaim, detailsChange, itemChange, classify, requestSentences };
+// The message names the placed order itself: "my order", "the last order", "that order", "order #...", its id.
+const NAMES_ORDER = /\b(?:my|the|our|that|this|last|previous|placed|existing|earlier|yesterday'?s)\s+(?:last\s+|previous\s+|earlier\s+|placed\s+)?order\b|\border\s*(?:#|number\b|no\.)|\bBEVVI-[A-Z0-9]/i;
+function namesOrder(text, orderId) { const t = String(text || ''); return NAMES_ORDER.test(t) || (!!orderId && t.includes(orderId)); }
+
+module.exports = { namesOrder, changeRequest, paidClaim, detailsChange, itemChange, classify, requestSentences };

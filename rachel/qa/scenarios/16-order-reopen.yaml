@@ -29,6 +29,25 @@ turns:
       not_contains: ["support team has been made aware", "should I reopen", "direct-checkout"]
       matches: "(?i)Kim Crawford Prosecco - 750 ML x4 — \\$17\\.59 ea = \\$70\\.36"
       log_contains: ["[order-change] order", "[order-change] updated summary added"]
+  # Nov 11 (DC): a question while the replacement waits ("cheaper la crema Pinot") was read as "no" (pi-NO-t) and the
+  # summary was re-shown every turn, a real "No" too. Now the question is answered, and "no" places nothing.
+  - send: "Can you find a cheaper prosecco"
+    expect:
+      not_contains: ["replaces order #", "Shall I go ahead"]
+      log_contains: ["[order] question at confirm — leaving checkout"]
+  - send: "place the order"
+    expect: {matches: "(?i)Order Summary|tip"}
+  - send: "no tip"
+    expect: {contains: ["Order Summary", "x4"]}
+  - send: "no"
+    expect:
+      contains: ["won't place it", "stays as it was"]
+      not_contains: ["Order Summary"]
+      log_contains: ["replacement of", "declined — nothing placed"]
+  - send: "place the order"
+    expect: {matches: "(?i)Order Summary|tip"}
+  - send: "no tip"
+    expect: {contains: ["Order Summary"]}
   - send: "yes"
     expect:
       matches: "placed|confirmed|submitted"

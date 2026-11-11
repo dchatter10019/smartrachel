@@ -240,6 +240,8 @@ function namedFromListLine(line0) {
   if ((m = line.match(/^(\d{1,4}|a|an|one)\s+(cases?)\s+(?:of\s+)?(.+)$/i))) line = (/^\d/.test(m[1]) ? m[1] : 1) + ' x ' + m[3] + ' case';
   else if ((m = line.match(/^(\d{1,4})\s*(?:[x×]\s*)?(?!\d|ml\b|l\b|oz\b|pk\b|pack)(.+)$/i)) && !/^\s*(?:ml|l|oz|liters?|litres?)\b/i.test(m[2])) line = m[1] + ' x ' + m[2].replace(/^\s*(?:bottles?|btls?|bts?|cans?)\.?\s+of\s+/i, '');
   else if ((m = line.match(/^(.+?)\s*[x×]\s*(\d{1,4})\s*$/i))) line = m[2] + ' x ' + m[1];
+  // a trailing count (Nov 11, DC's iCapital brief): "Sancerre 5 btls" = 5 x Sancerre, "Stella 1 case" = 1 x Stella case
+  else if ((m = line.match(/^(.*[a-z].*?)\s+(\d{1,4})\s*(btls?|bottles?|bts?|cans?|cases?)\.?\s*$/i))) line = m[2] + ' x ' + m[1] + (/^case/i.test(m[3]) ? ' case' : '');
   const row = parseRequest('- ' + line)[0];
   const np = row && namedFromRow(row);
   if (!np) return null;

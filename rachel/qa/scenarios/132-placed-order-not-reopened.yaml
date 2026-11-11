@@ -1,0 +1,45 @@
+name: placed-order-not-reopened
+# Nov 11 (DC on Claude Code): a new brief ("Client: iCapital", its own address, contact, a counted menu, "add the
+# following") reopened the order placed the day before (another address, other wines) and merged the lines into it; at the
+# confirm step "Can you find a cheaper la crema Pinot" was read as a NO ("pi-NO-t" — yes/no were substring matches) and
+# the replacement summary was put straight back, as it was after a real "No". Now: yes / no are whole words; a question at
+# confirm leaves checkout and is answered; a "no" ends checkout; a placed order is reopened only by a message that names it
+# when the message is a new request (brief, "Client:" line, counted list, proposal).
+format: plain
+tags: [orders]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+  - send: "place the order"
+    expect: {contains: ["full name"]}
+  - send: "QA Tester"
+  - send: "same"
+  - send: "9175550100"
+  - send: "tomorrow at 5 pm ET"
+  - send: "none"
+  - send: "no tip"
+    expect: {contains: ["Order Summary", "Shall I go ahead"]}
+  - send: "Can you find a cheaper prosecco"
+    expect:
+      not_contains: ["Shall I go ahead", "No problem"]
+      log_contains: ["[order] question at confirm — leaving checkout"]
+  - send: "place the order"
+    expect: {contains: ["Order Summary", "750 ML x2"], not_contains: ["xnull", "Product total: $0.00"]}
+  - send: "no"
+    expect:
+      contains: ["No problem"]
+      not_contains: ["Order Summary"]
+  - send: "place the order"
+    expect: {contains: ["Order Summary"]}
+  - send: "yes"
+    expect: {matches: "placed|confirmed|submitted"}
+  - send: "Client: Acme\nEvent Date: December 9th\nHead Count: 40 people\nDelivery Point of Contact: Mara Q | Cell: 917-555-0100\n\nPlease add the following:\n- 2 btls of Woodford Reserve Bourbon\n- 3 btls of Prosecco\n- 1 case of Stella"
+    expect:
+      contains: ["Woodford", "Stella"]
+      not_contains: ["it replaces order", "Sauvignon"]
+      not_matches: "(?i)drink most"
+      log_contains: ["NOT reopened — the message does not name it"]

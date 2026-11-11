@@ -568,6 +568,24 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   brands: Frangelico, Kahlua, Baileys, St-Germain, Cointreau...) so a liqueur's stand-in is a liqueur or nothing. The
   fresh-start note is now added inside the events wrapper (server.js freshPrefix) — customers saw it, but transcripts.jsonl
   and the nightly review did not. Scenario 130, qa/unit/list-reconcile.test.js.
+- Unplaced proposal resumed + old placed order left alone (Nov 11, DC on Claude Code, iCapital 10165: "I am trying to add more
+  products to an existing order that I have not placed yet"). 6h after the iCapital proposal, "add the following to iCapital:
+  Sancerre 5 btls ..." got "your earlier cart and proposal aren't carried over"; the brief resent was asked the serving mix twice
+  (every drink counted); its "add" reopened the 10001 order placed the day before (#...181030) and merged the lines into it; at
+  confirm "cheaper la crema Pinot" was a NO (yes/no were SUBSTRING matches: pi-NO-t; "not sure" would have been a YES) and the
+  replacement summary was re-added after every reply, a real "No" too. Now, every /chat channel: resetState and clearCart keep
+  state.keptProposal (kept-proposal.js: the last proposal's pdf, 14 days); a message naming its client or "the proposal/quote"
+  is held through the fresh start (reply "Welcome back — I still have your <client> proposal ..."), uses the PDF's delivery
+  address, and at ready the proposal's lines / client / date / fees are the cart again ([kept-proposal] resumed; not when the
+  cart has lines or the zip differs). A placed order is reopened only when the message names it (placed-order-msg.js
+  namesOrder: "my/the/last order", order #, id) if it is a new chat since (po.carriedOver, /internal/new-conversation) or a new
+  request (3+ field lines, "Client:", counted list, proposal/quote) ([order-change] ... NOT reopened). Counted lists (3+ lines,
+  serving-mix.js isCountedList) never get the mix question ([menu] serving-mix question NOT asked) nor a proposal client/date
+  field edit ([proposal] field edit NOT applied). Confirm step: whole-word yes/no; a question / search leaves checkout and is
+  answered ([order] question at confirm), no replacement summary under it; "no" to a replacement says the old order stays
+  ([order-change] replacement of X declined). original-compare namedFromListLine reads trailing counts ("Sancerre 5 btls").
+  A one-line cart re-entering checkout takes the line's qty (was "xnull — $0.00"). Scenarios 131, 132, 16;
+  qa/unit/icapital-nov11.test.js. Email threads keep their own placed-order path (unchanged).
 - A file that never arrived (Oct 29, DC on claude.ai, F-0110): a Claude app passes an attachment as a path on its own machine
   ("@/mnt/user-data/attachments/...pdf"); /chat answers in code "Your file (<name>) didn't come through ... paste the drinks"
   ([order-file] a file path with no file); the Claude-app instructions (rachel-mcp.js CHAT_INSTRUCTIONS) tell the client to
