@@ -1,0 +1,27 @@
+name: specific-bottles-no-guests
+# Nov 11 (DC on Claude Code, 10001): "Can you swap this menu with the following items * Bacardi Rum * Angel's Envy Bourbon
+# ..." in a new chat (empty cart) got "How many guests? How long? Budget?" twice; picks copied from the search results
+# ("Bacardi Gold Rum 750 mL — $19.79 ...") got "how many of each? Is this for an event?". DC: "When I am asking for just
+# specific bottles don't ask for how many guests etc". Now a named list with no counts is built in code at 1 each, and the
+# reply says so. Then "create a porposal with a 8% service charge" printed 10% three times: "8% service charge" (number
+# first) is read in code, the typo is a proposal ask, and a fee given with the date answer is kept.
+format: plain
+tags: [lists, proposal]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "132 W 32nd St, New York, NY 10001"
+    expect: {contains: ["132 W 32nd St"]}
+  - send: "Can you swap this menu with the following items\n\n* Bacardi Rum\n* Grey Goose Vodka\n* Bombay Sapphire Gin\n* Kim Crawford Sav Blanc\n* Robert Mondavi Cab Sav is good to go"
+    expect:
+      contains: ["Bacardi", "Grey Goose", "Bombay Sapphire", "Kim Crawford", "Mondavi", "1 of each"]
+      not_matches: "(?i)no sav in stock|good to go|how many guests|how long is the event|budget|is this for an event|how many (?:bottles|of each)|haven't done"
+      log_contains: ["[list-build]"]
+  - send: "create a porposal with a 8% service charge"
+    expect: {matches: "(?i)client|company"}
+  - send: "QA Bottles Co"
+  - send: "12th Nov 2026, The delivery fee is $0"
+    expect:
+      contains: ["service charge 8%", "delivery $0.00", "November 12, 2026"]
+      pdf_contains: ["Service charge (8%)", "QA Bottles Co"]
+      pdf_not_contains: ["Service charge (10%)"]

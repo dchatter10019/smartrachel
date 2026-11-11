@@ -743,6 +743,17 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
             }
           } catch (e) { console.log('[confirm-substitute] cross-type check failed: ' + e.message); }
         }
+        // The customer said the pick is EXTRA ("Modelo Especial 24 x 12 OZ (This is in addition to the beers already there)"):
+        // it is added, never a replacement for a line they kept (Nov 11, DC on Claude Code: the model swapped the Stella out).
+        if (originalItem) try {
+          const nrmA = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+          const keyW = nrmA(replacementName).split(/[^a-z0-9]+/).filter(w => w.length >= 4 && !/^(?:bottles?|cans?|pack)$/.test(w)).slice(0, 2);
+          const lineA = String(state.currentUserMessage || '').split(/\n+/).map(nrmA).find(l => keyW.length && keyW.every(w => l.includes(w)));
+          if (lineA && /\b(?:in addition|additionally|as well|on top of|plus|also add|add(?:ed)? to|keep (?:the|both|all)|not (?:instead|replacing)|extra)\b/.test(lineA)) {
+            console.log('[confirm-substitute] ' + replacementName + ' is in addition (the customer: ' + JSON.stringify(lineA.slice(0, 90)) + ') — added, ' + JSON.stringify(originalItem) + ' kept');
+            originalItem = '';
+          }
+        } catch (e) { console.log('[confirm-substitute] in-addition check failed: ' + e.message); }
         // The line being replaced (basketLineFor: whole words — "La" never matches "Blanc").
         let qtyToUse = 1;
         let qtyKnown = oneOfIdx >= 0;   // the quantity came from the line replaced / the request, not the default 1 (one of N: 1)
@@ -1037,6 +1048,10 @@ const taxRateFor = state => (state && state.taxExempt ? 0 : 0.10);
 const taxLabelFor = state => (state && state.taxExempt ? 'Estimated tax (exempt)' : 'Estimated tax (10%)');
 const TAXCMD = require('./tax-command.js');
 // The fees the customer set for this session's proposals (tax-command.js fees -> state.proposalOpts), as
+// Nothing in this conversation's cart (lastLineItems is a JSON string of the basket lines).
+function cartEmpty(st) {
+  try { const a = JSON.parse((st && st.lastLineItems) || '[]'); return !Array.isArray(a) || !a.length; } catch (e) { return true; }
+}
 // generate_proposal arguments. Every proposal path passes them (in-code, email quote PDF, LLM, the guard).
 const FEE_KEYS = ['tax_rate', 'service_rate', 'tip_rate', 'tip_amount', 'delivery_fee'];
 const feeArgs = po => Object.fromEntries(FEE_KEYS.filter(k => po && typeof po[k] === 'number').map(k => [k, po[k]]));
@@ -1462,10 +1477,18 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
   try {
     const stS = getState(sessionKey);
     const named = !onProposalGenerated && !alreadyConfirmed && !/^email-/.test(String(sessionKey || '')) && !(context && context.email_subject)
-      && stS.step === 'ready' && stS.zip && !stS.orderStep && !stS.proposalStep && !(stS.eventParams && stS.eventParams.guests) ? OW.listItems(message) : null;
+      && stS.step === 'ready' && stS.zip && !stS.orderStep && !stS.proposalStep && !(stS.eventParams && stS.eventParams.guests) ? OW.listItems(message, { emptyBasket: cartEmpty(stS) }) : null;
     if (named) {
-      scriptedToolCall = { name: 'ShoppingAgent', input: { intent: 'custom_list', zip: stS.zip, email: email || '', named_products: named } };
-      console.log('[list-build] ' + named.length + ' list line(s) built in code (no model decision): ' + named.map(n => n.qty + ' x ' + n.name).join('; '));
+      const uncounted = named.uncounted || 0;
+      scriptedToolCall = { name: 'ShoppingAgent', input: { intent: 'custom_list', zip: stS.zip, email: email || '', named_products: named.slice() } };
+      console.log('[list-build] ' + named.length + ' list line(s) built in code (no model decision): ' + named.map(n => n.qty + ' x ' + n.name).join('; ') + (uncounted ? ' — ' + uncounted + ' without a count, 1 each' : ''));
+      // Specific bottles with no counts are priced at 1 each — never "how many guests / hours / budget?" nor "how many of
+      // each?" (Nov 11, DC: "When I am asking for just specific bottles don't ask for how many guests etc").
+      if (uncounted) {
+        const noteU = uncounted === named.length ? 'You didn\'t give quantities, so I put 1 of each — tell me any you\'d like more of.'
+          : 'Where you didn\'t give a quantity I put 1 — tell me any you\'d like more of.';
+        stS.replyNote = ((stS.replyNote ? String(stS.replyNote).trim() + ' ' : '') + noteU).trim();
+      }
     }
   } catch (e) { console.log('[list-build] not used (' + e.message + ') — the LLM handles the list'); }
   // "Reduce it to 4 drinks a person" on an event package = the same package rebuilt at that rate, decided in code (Nov 9:
@@ -4417,7 +4440,7 @@ app.post('/chat', async (req, res) => {
     // A message that is only a product list is built from that list (order-wording.js listItems -> callRachel's in-code
     // build), whatever the classifier said. Oct 28 staging: "Rebuild it with only: A x2, B x1. ... Show me the basket and
     // total first." was routed show_basket (0.72) and the old basket was shown, unchanged.
-    if (clsIntent && OW.listItems(message)) { console.log('[classify] ' + clsIntent + ' NOT routed — the message is a product list (built from the list)'); clsIntent = null; clsRef = ''; }
+    if (clsIntent && OW.listItems(message, { emptyBasket: cartEmpty(state) })) { console.log('[classify] ' + clsIntent + ' NOT routed — the message is a product list (built from the list)'); clsIntent = null; clsRef = ''; }
     // Not a checkout (order-wording.js, Oct 27 connector): a negated order phrase, or a message carrying its own item list.
     const orderNegated = OW.orderNegated(message);
     const ownListN = OW.ownListCount(message);
@@ -5550,7 +5573,9 @@ app.post('/chat', async (req, res) => {
     // Also any "<verb> ... proposal/pdf" within a few words ("no.. send ME the proposal first", "can you prepare a
     // proposal", "email me the pdf"), unless negated. Real bug (Sep 30, DC): "send me the proposal" matched no
     // phrase; the LLM generated it with an invented client name and replied "<url|Download proposal>" (no link).
-    const PROPOSAL_ASK = /\b(?:generate|create|make|send|build|get|want|need|prepare|draft|give|share|email|do)\b[^.?!\n]{0,24}?\b(?:proposal|pdf)\b|^\W*(?:the\s+|a\s+)?(?:proposal|pdf)(?:\s+please)?\W*$/i;
+    // "porposal" / "propsal" / "proposl" are the same word (Nov 11, DC: "create a porposal with a 8% service charge" missed
+    // the in-code flow; the model made a PDF with no client and the default fees).
+    const PROPOSAL_ASK = /\b(?:generate|create|make|send|build|get|want|need|prepare|draft|give|share|email|do)\b[^.?!\n]{0,24}?\b(?:proposal|porposal|propsal|proposl|propasal|prposal|pdf)\b|^\W*(?:the\s+|a\s+)?(?:proposal|pdf)(?:\s+please)?\W*$/i;
     const PROPOSAL_NOT = /\b(?:don'?t|do not|no need|not yet|without|skip)\b[^.?!\n]{0,20}\b(?:proposal|pdf)\b/i;
     let isProposalTrigger = proposalTriggers.some(t => msgLower.includes(t)) || (PROPOSAL_ASK.test(message) && !PROPOSAL_NOT.test(message) && !/\?\s*$/.test(message.replace(/\b(?:can|could|would) you\b.*$/i, '')));
     // An EMAIL that carries its own item list ("send a revised proposal with what you can cover" under 10+ lines) is a
@@ -5679,6 +5704,11 @@ app.post('/chat', async (req, res) => {
         state.proposalStep = 'date';
         message = state.savedEventDate || 'skip';
         pfHandled = true;
+      } else if (isProposalTrigger) {
+        // A fee in the proposal ask itself ("create a proposal with a 8% service charge"): kept, and the proposal flow
+        // goes on — the PDF reply opens with what was set (Nov 11, DC on Claude Code: three PDFs at 10% for one request).
+        state.proposalPrefix = 'Done — ' + said + '.';
+        console.log('[fees] set with a proposal request — the proposal flow continues (' + said + ')');
       } else if (!tl.length) {
         // Nothing to apply it to yet (Nov 10, DC: "Done — delivery $0.00 on the proposal" on a fresh conversation with no
         // cart and no proposal). The setting is kept for this conversation's proposal; the reply says so plainly.
@@ -5817,6 +5847,14 @@ app.post('/chat', async (req, res) => {
     // An answer typed with its label ("Event Date: TBD", "Client: Premier 360") is the value after the label; TBD is
     // no date. Real (Oct 30, Sean): the PDF printed "Event date: Event Date: TBD".
     if (state.proposalStep === 'client' || state.proposalStep === 'date') {
+      // A fee given with the answer ("12th Nov 2026, The Service charge is 8%" — Nov 11, DC: the PDF printed 10%) is kept
+      // for this proposal and every later one; the answer itself (the date / the client) is still read from the message.
+      const saidPF = applyFeeCommands(state, message);
+      if (saidPF) {
+        state.proposalPrefix = (state.proposalPrefix ? state.proposalPrefix + ' ' : '') + 'Done — ' + saidPF + ' on the proposal.';
+        message = String(message).replace(/[,;.]?\s*(?:and\s+)?(?:with\s+)?(?:a\s+)?\d+(?:\.\d+)?\s*%\s*(?:service(?:\s+(?:charge|fee))?|tax|tip)\b[^,;\n]*$/i, '').replace(/[,;.]?\s*(?:and\s+)?(?:the\s+|a\s+|with\s+(?:a\s+)?)?(?:service(?:\s+(?:charge|fee))?|sales\s+tax|tax|tip|gratuity|delivery(?:\s+(?:fee|charge|cost))?)\b[^,;\n]*$/i, '').trim() || message;
+        console.log('[proposal] fee in the ' + state.proposalStep + ' answer (' + saidPF + ') — the answer read as ' + JSON.stringify(message));
+      }
       const unl = String(message || '').replace(/^\s*(?:(?:the\s+)?(?:event\s+)?date|client(?:\s+name)?|company(?:\s+name)?)\s*(?:is\s*:?|:|-|–)\s*/i, '');
       if (unl !== message && unl.trim()) { console.log('[proposal] answer label removed: ' + JSON.stringify(message.trim()) + ' -> ' + JSON.stringify(unl.trim())); message = unl; }
     }

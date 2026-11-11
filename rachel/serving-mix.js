@@ -112,8 +112,11 @@ const COUNT_UNIT = '(?:btls?|bottles?|bts?|cases?|cans?|packs?|\\d+\\s*-?\\s*(?:
 const LEAD_COUNT = new RegExp('^\\s*(?:[-•*·]\\s*)?(?:\\d{1,4}|a|an|one|two|three|four|five|six)\\s*(?:[x×]\\s*)?(?:' + COUNT_UNIT + '\\s+(?:of\\s+)?)?[a-z]', 'i');
 const TRAIL_COUNT = new RegExp('[a-z].*?(?:\\s(?:\\d{1,4})\\s*' + COUNT_UNIT + '|\\s[x×]\\s*\\d{1,4}|\\s\\d{1,2}\\s*-?\\s*(?:packs?|pk))\\.?\\s*$', 'i');
 const NOT_DRINK_LINE = /\b(?:people|guests|persons|ppl|attendees|pax|hours?|hrs?|minutes|budget|delivery|deliver|contact|cell|phone|address|date|time|floor|street|ave|pm|am)\b|\$|:\s*\S/i;
+// A line pasted from Rachel's own list ("2x Woodford Reserve ... - 750 ML — $48.94 ea = $97.88") counts too: its prices
+// are cut first (Nov 11, DC: "I meant with these" + the pasted proposal lines was asked the mix + "how long is the event?").
 function countedLines(msg) {
-  return String(msg || '').split(/\n/).map(l => l.trim()).filter(l => l && !NOT_DRINK_LINE.test(l) && (LEAD_COUNT.test(l) || TRAIL_COUNT.test(l)));
+  const clean = l => require('./original-compare.js').cleanPastedLine(l);
+  return String(msg || '').split(/\n/).map(l => l.trim()).filter(l => { const c = l && clean(l); return c && !NOT_DRINK_LINE.test(c) && (LEAD_COUNT.test(c) || TRAIL_COUNT.test(c)); });
 }
 function isCountedList(msg) { return countedLines(msg).length >= 3; }
 module.exports = { MIX_SYN, eventDrinkCats, countedLines, isCountedList, parseServingMix, mixText, cocktailsUnnamed, knownCocktails, COCKTAIL_ASK, DURATION_RE, durationIn };

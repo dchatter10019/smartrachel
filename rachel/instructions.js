@@ -35,11 +35,18 @@ function splitInstructions(message) {
   // An email hard wrap ("send back and\nupdated PDF?") joins back into one line: no sentence end, next line lower-case.
   // Only a long line (>= 60 chars; Gmail wraps near 76) — short list lines ("remove the modelo") stay separate.
   const text = String(message || '').replace(/^([^\n]{59,}[a-z,])[ \t]*\r?\n(?=[ \t]*[a-z])/gm, '$1 ');
+  // The line that introduces a list ("actually swap with these brands", "I need the following", "Can you swap this menu
+  // with the following items") is the list's heading, not one more task (Nov 11, DC on Claude Code: "I haven't done these
+  // yet: • I need the following • Bacardi Rum ..."). The list's own lines are still checked.
+  const rawL = text.split(/\n+/);
+  const firstB = rawL.findIndex(l => BULLET.test(l) || /^\s*\*\s+/.test(l));
+  const heading = firstB > 0 ? rawL.slice(0, firstB).filter(l => l.trim()).slice(-1)[0] : null;
+  const isHeading = l => heading != null && l === heading.replace(/\*/g, '').trim() && /\b(?:the following|following items?|these|below|this list|as follows|with these)\b/i.test(l);
   const lines = text.split(/\n+/).map(l => l.replace(/^\s*(?:[-•*·–]|\d+[.)])\s*/, '').replace(/\*/g, '').trim()).filter(l => l.length >= 4 && !PLEASANTRY.test(l));
   // A heading ("Couple of changes / questions:") or a reason ("we have some leftover titos on hand so it may make sense
   // ...") is not an instruction — both came back as "I haven't done these yet" (Oct 2, DC).
   const REQ = /\b(?:add|remove|take out|drop|delete|swap|switch|replace|change|need|want|send|include|increase|reduce|bump|order|update|should be|instead)\b|\b\d+\s*(?:x|bottles?|cases?|packs?|cans?)\b|\?\s*$|^\s*\d/i;
-  const kept = lines.filter(l => !/:\s*$/.test(l) && !(/^(?:we|i|it|this|that|because|since|as|so|they|there)\b/i.test(l) && !REQ.test(l.replace(/^(?:we|i)\s+(?:have|had)\b/i, ''))));
+  const kept = lines.filter(l => !/:\s*$/.test(l) && !isHeading(l) && !(/^(?:we|i|it|this|that|because|since|as|so|they|there)\b/i.test(l) && !REQ.test(l.replace(/^(?:we|i)\s+(?:have|had)\b/i, ''))));
   return kept.length >= 2 && kept.length <= 12 ? kept : [];
 }
 

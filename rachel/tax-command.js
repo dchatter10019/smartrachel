@@ -35,11 +35,18 @@ function fees(msg) {
   const SET = '(?:[^.?!\\n$%\\d]{0,30}?)(?:\\bto|\\bbe|\\bat|\\bof|\\bis|=|:|\\bas)?\\s*:?\\s*';
   const NUM = '(\\d+(?:\\.\\d+)?)';
   let m;
-  if ((m = t.match(new RegExp('\\b(?:sales\\s+)?tax(?:\\s+rate)?\\b' + SET + NUM + '\\s*(?:%|percent\\b|pct\\b)', 'i')))) out.tax_rate = parseFloat(m[1]) / 100;
-  if ((m = t.match(new RegExp('\\bservice(?:\\s+(?:charge|fee))?\\b' + SET + NUM + '\\s*(?:%|percent\\b|pct\\b)', 'i')))) out.service_rate = parseFloat(m[1]) / 100;
+  // The number may come first too (Nov 11, DC on Claude Code: "create a porposal with a 8% service charge", "its 8% service
+  // charge", "apply a 8% service charge" — none was read, and the PDF kept 10% three times).
+  const PCT = '[ \\t]*(?:%|percent\\b|pct\\b)[ \\t]*';
+  if ((m = t.match(new RegExp('\\b(?:sales\\s+)?tax(?:\\s+rate)?\\b' + SET + NUM + '\\s*(?:%|percent\\b|pct\\b)', 'i')))
+    || (m = t.match(new RegExp('\\b' + NUM + PCT + '(?:sales\\s+)?tax\\b', 'i')))) out.tax_rate = parseFloat(m[1]) / 100;
+  if ((m = t.match(new RegExp('\\bservice(?:\\s+(?:charge|fee))?\\b' + SET + NUM + '\\s*(?:%|percent\\b|pct\\b)', 'i')))
+    || (m = t.match(new RegExp('\\b' + NUM + PCT + 'service(?:\\s+(?:charge|fee))?\\b', 'i')))) out.service_rate = parseFloat(m[1]) / 100;
   else if (/\b(?:no|remove|drop|waive|take\s+(?:out|off))\s+(?:the\s+)?service\s+(?:charge|fee)\b/i.test(t)) out.service_rate = 0;
   if ((m = t.match(new RegExp('\\b(?:tip|gratuity)\\b' + SET + '\\$\\s*(\\d[\\d,]*(?:\\.\\d+)?)', 'i')))) out.tip_amount = parseFloat(m[1].replace(/,/g, ''));
-  else if ((m = t.match(new RegExp('\\b(?:tip|gratuity)\\b' + SET + NUM + '\\s*(?:%|percent\\b|pct\\b)', 'i')))) out.tip_rate = parseFloat(m[1]) / 100;
+  else if ((m = t.match(new RegExp('\\$[ \\t]*(\\d[\\d,]*(?:\\.\\d+)?)[ \\t]*(?:flat[ \\t]+)?(?:tip|gratuity)\\b', 'i')))) out.tip_amount = parseFloat(m[1].replace(/,/g, ''));
+  else if ((m = t.match(new RegExp('\\b(?:tip|gratuity)\\b' + SET + NUM + '\\s*(?:%|percent\\b|pct\\b)', 'i')))
+    || (m = t.match(new RegExp('\\b' + NUM + PCT + '(?:tip|gratuity)\\b', 'i')))) out.tip_rate = parseFloat(m[1]) / 100;
   else if (/\b(?:no|remove|drop|waive|take\s+(?:out|off))\s+(?:the\s+)?(?:tip|gratuity)\b/i.test(t)) out.tip_rate = 0;
   if ((m = t.match(new RegExp('\\bdelivery(?:\\s+(?:fee|charge|cost))?\\b' + SET + '\\$\\s*(\\d[\\d,]*(?:\\.\\d+)?)', 'i')))) out.delivery_fee = parseFloat(m[1].replace(/,/g, ''));
   else if ((m = t.match(new RegExp('\\bdelivery\\s+(?:fee|charge|cost)\\b' + SET + NUM + '\\b(?!\\s*%)', 'i')))) out.delivery_fee = parseFloat(m[1]);

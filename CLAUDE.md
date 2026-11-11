@@ -586,6 +586,26 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   ([order-change] replacement of X declined). original-compare namedFromListLine reads trailing counts ("Sancerre 5 btls").
   A one-line cart re-entering checkout takes the line's qty (was "xnull — $0.00"). Scenarios 131, 132, 16;
   qa/unit/icapital-nov11.test.js. Email threads keep their own placed-order path (unchanged).
+- Specific bottles = no event questions (Nov 11, DC on Claude Code: "When I am asking for just specific bottles don't ask for
+  how many guests etc"). A new chat's "Can you swap this menu with the following items * Bacardi Rum * Angel's Envy ..." got
+  "how many guests / hours / budget?" twice; picks copied from the search ("Bacardi Gold Rum 750 mL — $19.79") got "how many of
+  each? is this for an event?". Now order-wording.js listItems(msg, {emptyBasket}) builds a named list with NO counts in code at
+  1 each (list.uncounted -> replyNote "You didn't give quantities, so I put 1 of each"); on an EMPTY cart swap words and priced
+  lines count too (with a cart a swap / a pick stays with the LLM, never replacing the cart); "X is good to go" / "A or B" (first)
+  read; rachel.js [named-list] note for the LLM path. original-compare.js cleanPastedLine: Rachel's own pasted lines ("2x X - 750
+  ML — $48.94 ea = $97.88", "24 x 12 OZ — $62.99/case", "(This is in addition ...)") lose prices / notes, "24 x 12 OZ" = a pack;
+  beer brands / packs = beer, Cab Sav / Sav Blanc = wine (also product-match SYN), "White Rum" / a wine-cask bourbon = spirits,
+  an uncounted 750 mL wine/spirit line = that bottle (not an amount). serving-mix countedLines cuts prices first (a pasted
+  proposal was asked the mix + duration). buildPackage: no size asked = a half bottle (187-500 mL) never beats a full one
+  ("Casamigos Tequila" -> the 375). Fees: tax-command fees reads the number first ("a 8% service charge", "15% tip", "$50 tip",
+  "8.875% tax"); a fee in the proposal client/date answer is kept ("12th Nov 2026, The Service charge is 8%"; [proposal] fee in
+  the date answer); a fee in the proposal ask keeps the flow going ([fees] set with a proposal request); "porposal"/"propsal" = a
+  proposal ask; the LLM's generate_proposal gets service_rate / tip_rate / tip_amount / delivery_fee in its schema, its invented
+  names (service_charge_rate, 8 for 8%) are mapped and kept for the session, and session facts list the customer's fees (it
+  had said "the template uses a fixed service charge"). confirm_substitute: a pick the customer called "in addition / as well"
+  is added, never a replacement. A turn that hits 10 tool iterations with no text shows the last basket ([rachel] hit 10
+  iterations). instructions.js: a list's heading line ("I need the following") is not a task. Scenario 133,
+  qa/unit/connector-nov11-bottles.test.js.
 - A file that never arrived (Oct 29, DC on claude.ai, F-0110): a Claude app passes an attachment as a path on its own machine
   ("@/mnt/user-data/attachments/...pdf"); /chat answers in code "Your file (<name>) didn't come through ... paste the drinks"
   ([order-file] a file path with no file); the Claude-app instructions (rachel-mcp.js CHAT_INSTRUCTIONS) tell the client to

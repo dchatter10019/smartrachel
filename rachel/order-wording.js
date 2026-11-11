@@ -26,16 +26,29 @@ function notACheckout(message) {
 // DC (Oct 28): "make this behaviour deterministic" — the list is built by code, not by the model choosing a tool call.
 // Anything that needs judgment stays with the LLM: a question, an event (guests / hours / budget), a proposal, stock on
 // hand, a swap / removal / alternative, or a line that isn't a product line.
-const ITEM_LINE = /^\s*(?:[-•*·]\s*\S|\d{1,4}\s*(?:x|×)\s+\S|\d{1,4}\s+cases?\s+(?:of\s+)?\S)|\S.*\s[x×]\s?\d{1,4}\s*$/i;
-const NEEDS_JUDGMENT = /\?|\b(?:guests?|people|persons?|attendees|hours?|budget|event|party|wedding|reception|proposal|pdf|quote|estimate|we have|on hand|already (?:have|got)|in stock at|swap|switch|instead|replace|substitute|remove|without|except|cheaper|recommend|suggest|similar|alternatives?|options?|pair(?:ing)? with|cocktails?)\b/i;
+const ITEM_LINE = /^\s*(?:[-•*·]\s*\S|\d{1,4}\s*(?:x|×)\s+\S)|\S.*\s[x×]\s?\d{1,4}\s*$/i;
+// A line copied from Rachel's own search results / list: "Bacardi Gold Rum 750 mL — $19.79" (Nov 11).
+const PRICED_LINE = /^\s*[A-Za-z].*\s[—–]\s*\$\s*\d[\d,]*(?:\.\d{2})?\b/;
+const SWAP_WORDS = /\b(?:swap|switch|instead|replace|substitute)\b/i;
+const NEEDS_JUDGMENT = /\?|\b(?:guests?|people|persons?|attendees|hours?|budget|event|party|wedding|reception|proposal|pdf|quote|estimate|we have|on hand|already (?:have|got)|in stock at|remove|without|except|cheaper|recommend|suggest|similar|alternatives?|options?|pair(?:ing)? with|cocktails?)\b/i;
 
-function listItems(message) {
+// opts.emptyBasket: nothing in the cart yet, so "swap this menu with the following items" / picks copied from the
+// search results can only mean "these" (Nov 11, DC on Claude Code, a new chat: "Can you swap this menu with the following
+// items * Bacardi Rum * Angel's Envy Bourbon ..." got "How many guests? How long? Budget?" twice, then "how many of each?
+// Is this for an event?" for the products picked from the search). With a cart, a swap and a pick stay with the LLM.
+// The result's .uncounted = how many lines gave no count (built at 1 each; the reply says so).
+function listItems(message, opts) {
+  const o = opts || {};
   const m = String(message || '').replace(/-&gt;|->/g, ' -> ');
-  if (/->/.test(m) || NEEDS_JUDGMENT.test(m)) return null;
+  if (/->/.test(m) || NEEDS_JUDGMENT.test(m) || (!o.emptyBasket && SWAP_WORDS.test(m))) return null;
   const OC = require('./original-compare.js');
+  // "Robert Mondavi Cab Sav is good to go" = that product; "Ruffino Prosecco or Champagne" = the first one named.
+  const tidy = l => l.replace(/\s+(?:is|are|'s)\s+(?:good|fine|ok(?:ay)?|great|perfect)(?:\s+to\s+go)?\s*[.!]*\s*$/i, '')
+    .replace(/^(\s*(?:[-•*·]\s*)?[^—–$]*?\S)\s+or\s+[^—–$]+$/i, '$1');
   const lines = m.split(/\n/).map(l => l.trim()).filter(Boolean);
-  let itemLines = lines.filter(l => ITEM_LINE.test(l));
-  let other = lines.filter(l => !ITEM_LINE.test(l));
+  const isItem = l => ITEM_LINE.test(l) || (o.emptyBasket && PRICED_LINE.test(l));
+  let itemLines = lines.filter(isItem);
+  let other = lines.filter(l => !isItem(l));
   if (itemLines.length < 2) {
     // Inline: "... with only: Tito's 750ml x3, Stella Artois 12 pack x1. Do not place the order yet."
     const im = m.match(/:\s*([^:\n]*?[x×]\s?\d[^:\n]*?)(?:\.(?=\s+[A-Z])|\.?\s*$|\n)/);
@@ -48,17 +61,23 @@ function listItems(message) {
   // The rest is an intro / instruction, not more products: short, no digits that could be a quantity.
   if (other.join(' ').length > 400 || other.some(l => /\b\d+\s*(?:x|bottles?|cases?|cans?|packs?)\b/i.test(l))) return null;
   const named = [];
-  for (const l of itemLines) {
+  let uncounted = 0;
+  for (const l0 of itemLines) {
+    const l = tidy(l0);
     const np = OC.namedFromListLine(l);
     if (!np || !np.name || np.name.length < 3) return null;
     // Unsure lines stay with the LLM: "a case" (beer 24 vs wine 12) and a product the reader filed as a mixer only because
     // it didn't know the brand ("2 cases of Stella" -> mixer "Stella case").
-    if (/\bcases?\b/i.test(l)) return null;
+    if (/\bcases?\b/i.test(OC.cleanPastedLine(l))) return null;
     if (np.category === 'mixer' && !require('./mixers.js').MIXERS.some(x => x.re.test(np.name)) && !/\b(?:ice|water|juice|soda|syrup|bitters|limes?|lemons?|oranges?|tonic|mixers?|garnish|olives?|cherries|cups?|napkins?|puree|purée|grenadine|agave|sour)\b/i.test(np.name)) return null;
+    // no count of its own: no leading "2 x" / "2 btls", no trailing "x2" / "5 btls" / "1 case"
+    if (!/^\s*(?:[-•*·]\s*)?\d{1,4}\s*(?:x|×|btls?|bottles?|cans?|cases?)?\s+\S|[x×]\s?\d{1,4}\s*$|\s\d{1,4}\s*(?:btls?|bottles?|cans?)\.?\s*$/i.test(OC.cleanPastedLine(l))) uncounted++;
     delete np.case_bottles;
     named.push(np);
   }
-  return named.length >= 2 ? named : null;
+  if (named.length < 2) return null;
+  named.uncounted = uncounted;
+  return named;
 }
 
 module.exports = { orderNegated, ownListCount, notACheckout, listItems };

@@ -76,7 +76,7 @@ const ALL_TOOLS = [
         budget_per_bottle: { type: "number", description: "For recommendation" },
         line_items:{ type: "string", description: "For place_order: JSON string from previous result" },
         customer:  { type: "object", description: "For place_order: {firstName, lastName, email, address, city, state, zipcode, phone}" },
-        tip_amount:{ type: "number", description: "For place_order" },
+        tip_amount:{ type: "number", description: "For place_order; for generate_proposal: a flat tip in USD when the customer sets one ($50)" },
         delivery_datetime: { type: "string", description: "For place_order: ISO datetime" },
         delivery_instructions: { type: "string" },
         client_name: { type: "string", description: "For generate_proposal: client/company name" },
@@ -84,6 +84,9 @@ const ALL_TOOLS = [
         notes:       { type: "string", description: "For generate_proposal: additional notes" },
         tax_exempt:  { type: "boolean", description: "For generate_proposal: set true if the customer states the order/location is tax-exempt (e.g. no state tax on alcohol) — this sets tax to $0 on the actual PDF, not just in your reply text" },
         tax_rate:    { type: "number", description: "For generate_proposal: override the tax rate as a decimal (e.g. 0.0625 for 6.25%). Only use if the customer specifies an exact rate; use tax_exempt instead for a flat $0." },
+        service_rate: { type: "number", description: "For generate_proposal: the service charge as a decimal (0.08 for 8%) when the customer sets one. The PDF prints exactly this — never say the service charge can't be changed." },
+        tip_rate:    { type: "number", description: "For generate_proposal: the tip as a decimal (0.15 for 15%) when the customer sets a tip percent." },
+        delivery_fee: { type: "number", description: "For generate_proposal: the delivery fee in USD when the customer sets one (0 = free delivery)." },
         hide_subtotals: { type: "boolean", description: "For generate_proposal: set true when the customer does not want the per-category subtotal rows (Wine Total / Spirits Total / Beer Total) — 'without the subtotals', 'no subtotals', 'no category totals', 'drop the section totals'. Line items and the fee breakdown still appear. Real bug: the customer said 'without the subtotals' and the PDF still had them because this was never passed." },
         totals_only: { type: "boolean", description: "For generate_proposal: set true when the customer wants a proposal showing ONLY the grand total — no breakdown of product total, tax, service charge, tip, or delivery (e.g. 'just the total', 'no breakdown', 'don't show the fees', 'totals only', 'hide the tax/tip'). Line items and category subtotals still appear; only the fee breakdown is hidden." },
         min_price: { type: "number" },
@@ -166,6 +169,20 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
 
       case 'ShoppingAgent': {
         if (eventParams && eventParams.qa) toolInput.dry_run = true;   // QA: no real placement
+        // Fee names the model invents for generate_proposal are the builder's own (Nov 11: it sent service_charge_rate 0.08;
+        // the builder reads service_rate, so the PDF printed 10%). A percent given as 8 is 0.08.
+        if (toolInput.intent === 'generate_proposal') {
+          const ALIAS = { service_charge_rate: 'service_rate', service_charge: 'service_rate', service_charge_pct: 'service_rate', service_percent: 'service_rate', service_pct: 'service_rate',
+            tax_percent: 'tax_rate', tax_pct: 'tax_rate', tip_percent: 'tip_rate', tip_pct: 'tip_rate', delivery_charge: 'delivery_fee', delivery: 'delivery_fee' };
+          for (const [a, k] of Object.entries(ALIAS)) if (toolInput[a] != null && toolInput[k] == null) { const v = parseFloat(toolInput[a]); if (isFinite(v)) { toolInput[k] = v; console.log('[proposal] generate_proposal ' + a + ' ' + toolInput[a] + ' read as ' + k); } delete toolInput[a]; }
+          for (const k of ['tax_rate', 'service_rate', 'tip_rate']) if (typeof toolInput[k] === 'string') toolInput[k] = parseFloat(toolInput[k]);
+          for (const k of ['tax_rate', 'service_rate', 'tip_rate']) if (typeof toolInput[k] === 'number' && toolInput[k] > 1 && toolInput[k] <= 100) toolInput[k] = Math.round(toolInput[k] * 10000) / 1000000;
+          // A fee the model set (the customer's words weren't read in code) is kept for the session's later proposals and estimates.
+          if (sessionState) for (const k of ['service_rate', 'tip_rate', 'tip_amount', 'delivery_fee']) if (typeof toolInput[k] === 'number' && isFinite(toolInput[k]) && !(sessionState.proposalOpts && typeof sessionState.proposalOpts[k] === 'number')) {
+            sessionState.proposalOpts = Object.assign({}, sessionState.proposalOpts || {}, { [k]: toolInput[k] });
+            console.log('[proposal] ' + k + ' ' + toolInput[k] + ' from the model kept for the session');
+          }
+        }
         if (toolInput.intent === 'generate_proposal' && eventParams && eventParams.proposalOpts) {
           for (const k of ['hide_subtotals', 'totals_only', 'tax_exempt']) if (eventParams.proposalOpts[k] && toolInput[k] === undefined) toolInput[k] = true;
           // Fees the customer set win over the LLM's (Oct 13: it passed tip_amount, the PDF ignored it and printed 5%).
@@ -963,6 +980,12 @@ RULES:
   const statedQty = listNote ? null : require('./qty-order.js').statedQuantity(customerMessage);
   const qtyNote = statedQty ? '## THIS TURN — QUANTITY GIVEN\nThe customer said how many to buy ("' + statedQty.text.trim() + '…"). This is a product order, not an event: do NOT ask whether it is for an event, or for guests or hours. Call ShoppingAgent intent="custom_list" now with that qty (qty_from_customer: true), plus budget if they gave one.' : '';
   if (qtyNote) console.log('[qty-order] stated quantity ' + statedQty.qty + ' ("' + statedQty.text.trim() + '") — no event questions, custom_list');
+  // Specific products named with no counts (bullets / lines copied from a search) are bottles to price, not an event to size
+  // (Nov 11, DC: "When I am asking for just specific bottles don't ask for how many guests etc").
+  const namedLines = (listNote || qtyNote) ? [] : String(customerMessage || '').split(/\r?\n/).filter(l => /^\s*[-•*·]\s*[A-Za-z]/.test(l) || /^\s*[A-Za-z].*\s[—–]\s*\$\s*\d/.test(l));
+  const namedNote = namedLines.length >= 2 && !/\b(?:guests?|people|attendees|hours?|budget|event|party)\b/i.test(customerMessage)
+    ? '## THIS TURN — SPECIFIC PRODUCTS\nThe customer named ' + namedLines.length + ' specific products. Never ask how many guests, how long, the budget, or whether it is an event. Where no quantity is given use 1 each and say so in one line ("1 of each — tell me any you\'d like more of"). A swap / replace request still uses confirm_substitute.' : '';
+  if (namedNote) console.log('[named-list] ' + namedLines.length + ' named product lines without counts — no event questions, 1 each');
   const systemBlocks = [
     { type: 'text', text: systemPrompt + channelNote, cache_control: { type: 'ephemeral' } }
   ];
@@ -971,6 +994,8 @@ RULES:
   // could never be reused on the next turn. They are sent with this turn's request only — never stored in the history.
   const sessionFacts = '## SESSION FACTS\n' + ['kitchen_location', 'user_email', 'client_id', 'account_id'].map(k => k + ': ' + ((context && context[k]) || '(none)')).join('\n')
     + '\nage_verified: ' + (context && context.age_verified ? 'true' : 'false')
+    + (sessionState && sessionState.proposalOpts && ['tax_rate', 'service_rate', 'tip_rate', 'tip_amount', 'delivery_fee'].some(k => typeof sessionState.proposalOpts[k] === 'number')
+      ? '\nfees set by the customer (every PDF and estimate uses them automatically — never say they cannot be changed): ' + require('./tax-command.js').feesText(sessionState.proposalOpts) : '')
     + (sessionState && sessionState.taxExempt ? '\ntax: the customer set the tax to $0 — every estimate shows "Estimated tax: $0.00" and generate_proposal gets tax_exempt=true' : '')
     + (sessionState && sessionState.address ? '\ndelivery_address: ' + sessionState.address + ' (the address change is done in code; never say you cannot change it)' : '')
     // The event the customer already gave (Nov 10, DC on Claude Code: "more expensive wines, we have more budget" got
@@ -983,7 +1008,7 @@ RULES:
         .filter(Boolean).join(', ') + ' — the customer already gave these: never ask for them again; to use more of the budget, upgrade toward it (compare the estimated grand total, all-inclusive)';
     })();
   const turnNotes = '<rachel_system_notes>\nSession notes from Rachel\'s system for this turn (NOT written by the customer):\n\n'
-    + [sessionFacts, address_rule, gbrain_context ? '## CUSTOMER CONTEXT FROM MEMORY\n' + gbrain_context : '', orderNote, listNote, qtyNote].filter(x => String(x || '').trim()).map(x => String(x).trim()).join('\n\n')
+    + [sessionFacts, address_rule, gbrain_context ? '## CUSTOMER CONTEXT FROM MEMORY\n' + gbrain_context : '', orderNote, listNote, qtyNote, namedNote].filter(x => String(x || '').trim()).map(x => String(x).trim()).join('\n\n')
     + '\n</rachel_system_notes>';
   const turnMsgIdx = (() => { for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === 'user') return i; return -1; })();
   const toBlocks = content => typeof content === 'string' ? [{ type: 'text', text: content }] : (Array.isArray(content) ? content.map(b => Object.assign({}, b)) : null);
@@ -1107,6 +1132,18 @@ RULES:
       finalResponse = textBlock ? textBlock.text : '';
       break;
     }
+  }
+
+  // The model ran out of turns mid-work (10 tool calls, no text): the reply was empty (Nov 11, DC on Claude Code — 9 swaps
+  // and a show_basket, then only "I haven't done this one yet"). The basket is shown from the last basket result instead.
+  if (!String(finalResponse || '').trim() && iterations >= MAX_ITERATIONS) {
+    let disp = '';
+    for (let i = claudeMessages.length - 1; i >= 0 && !disp; i--) {
+      const c = claudeMessages[i]; if (c.role !== 'user' || !Array.isArray(c.content)) continue;
+      for (const b of c.content) { if (b && b.type === 'tool_result') { try { const r = JSON.parse(typeof b.content === 'string' ? b.content : ''); if (r && r.line_items_display) { disp = String(r.line_items_display); break; } } catch (e) {} } }
+    }
+    finalResponse = disp ? "Done — here's your basket now:\n\n" + disp : "Done — those changes are in your basket. Say \"show my basket\" to see it.";
+    console.log('[rachel] hit ' + MAX_ITERATIONS + ' iterations with no reply text — ' + (disp ? 'the last basket result is shown' : 'a plain done line is sent'));
   }
 
   // A proposal generated this turn is always linked with its REAL URL. Real bug (Sep 30, DC, Slack): the reply said

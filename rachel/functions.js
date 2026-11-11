@@ -1387,6 +1387,9 @@ async function buildPackage(iv) {
       var reqSizeSort=(String(np.name||'').match(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/i)||[''])[0].toLowerCase().replace(/\s+/g,'');
       found.sort(function(a,b) {
         if(reqSizeSort){ var sa=String(a.sizeStr||'').toLowerCase().replace(/\s+/g,'')===reqSizeSort?0:1, sb=String(b.sizeStr||'').toLowerCase().replace(/\s+/g,'')===reqSizeSort?0:1; if(sa!==sb) return sa-sb; }
+        // No size asked: a half bottle (187-500 mL) never beats a full one, even when its catalog name fits the request's
+        // words best (Nov 11, DC on Claude Code: "Casamigos Tequila" -> "Casamigos Tequila - 375 ML" over the Añejo 750 mL).
+        if(prefer750){ var hb=function(x){ return /\b(?:187|200|375|500)\s*ml\b/i.test(String(x.sizeStr||'')+' '+String(x.name||''))?1:0; }; var ha=hb(a), hbb=hb(b); if(ha!==hbb) return ha-hbb; }
         // Fit to the request (product-match.js): brand + style words present, no type-changing words, pack size.
         var fa=PM.fit(reqForFit,a).score, fb=PM.fit(reqForFit,b).score; if(fa!==fb) return fb-fa;
         var ea=nameKey(a)===reqKey?1:0, eb=nameKey(b)===reqKey?1:0; if(ea!==eb) return eb-ea;

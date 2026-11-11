@@ -38,6 +38,8 @@ function parseRequest(text, onHand) {
       const alt = (part.match(/\((?:or\s+)?([^)]*)\)/i) || [])[1] || '';
       const orAlt = /^\s*or\b/i.test(((part.match(/\(([^)]*)\)/) || [])[1]) || '') ? alt.replace(/^\s*\d+\s*[x×]\s*/i, '') : '';
       part = part.replace(/\([^)]*\)/g, m0 => /^\(\s*or\b/i.test(m0) ? '' : ' ' + m0.slice(1, -1) + ' ').trim();
+      // "Robert Mondavi Cab Sav is good to go" = that product (Nov 11: the approval words kept it from matching its line).
+      part = part.replace(/\s+(?:is|are|'s)\s+(?:good|fine|ok(?:ay)?|great|perfect)(?:\s+to\s+go)?\s*[.!]*\s*$/i, '').trim();
       // "2 btls of Woodford Reserve" / "3 bottles of Prosecco" / "6 cans of ..." are counts too (Nov 10, DC's iCapital menu
       // on Claude Code: read as 1 of "1 btl of Frangelico", which no longer matched the LLM's "Frangelico" line, so it was
       // re-added as a mixer -> Bloody Mary Mix, and "3 btls of Prosecco" added a 2nd prosecco).
@@ -222,10 +224,19 @@ function namedFromRow(r) {
   const sizeM = isVol ? null : base.match(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/i);
   let name = sizeM ? (base.replace(sizeM[0], '').replace(/\s+/g, ' ').trim() + ' ' + sizeM[0].replace(/\s+/g, '')) : base;
   if (packM) name += ' ' + packM[1] + '-pack';
-  const t = DT.typeOf({ name: base });
-  const category = /\b(?:water|juice|syrup|pur[eé]e|soda|tonic|ginger beer|ginger ale|club soda|seltzer water|bitters|mixer|n\/?a|non[- ]?alc\w*)\b/i.test(base) ? 'mixer'
+  let t = DT.typeOf({ name: base });
+  // A spirit word beats a colour / wine-cask word ("Bacardi Superior White Rum" read as a white wine, "Angel's Envy Bourbon
+  // (Port Wine Barrel Finish)" as a port) — unless a grape is named (1000 Stories Zinfandel Bourbon barrel-aged is a wine).
+  if (['red', 'white', 'rose', 'fortified'].includes(t) && /\b(?:bourbon|whiske?y|scotch|rye|vodka|tequila|mezcal|rum|gin|cognac|brandy)\b/i.test(base)
+    && !/\b(?:cabernet|merlot|zinfandel|pinot|syrah|shiraz|malbec|chardonnay|sauvignon|riesling|red blend|grenache|tempranillo)\b/i.test(base)) t = 'spirit';
+  // A known beer brand, or a pack of 12 oz bottles/cans that is no soda, is beer (Nov 11, DC on Claude Code: "Modelo Beer"
+  // was fine but "Modelo Especial 24 x 12 OZ" / "Stella Artois 24 x 12 OZ Bottles" pasted from Rachel's own list read as
+  // mixers, so the list was left to the model). Athletic / Buckler etc. are NA beers: still the beer category.
+  const BEER_BRAND = /\b(?:modelo|stella|corona|heineken|pacifico|peroni|guinness|michelob|coors|miller|budweiser|bud light|blue moon|brooklyn|sam adams|samuel adams|lagunitas|sierra nevada|dos equis|tecate|asahi|sapporo|kirin|amstel|athletic|buckler|white claw|truly|high noon|allagash|goose island|yuengling|pbr|narragansett|founders|kona|kronenbourg|estrella|tsingtao)\b/i;
+  const category = /\b(?:water|juice|syrup|pur[eé]e|soda|tonic|ginger beer|ginger ale|club soda|seltzer water|bitters|mixer|cola|coke|sprite)\b/i.test(base) ? 'mixer'
+    : /\b(?:n\/?a|non[- ]?alc\w*)\b/i.test(base) && !BEER_BRAND.test(base) && !/\b(?:beer|lager|ipa|ale)\b/i.test(base) ? 'mixer'
     : /\b(?:liqueur|triple sec|vermouth|cointreau|amaretto|schnapps)\b/i.test(base) ? 'spirits'
-    : /\b(?:beer|lager|ipa|ale|stout|seltzer|cider)\b/i.test(base) ? 'beer'
+    : /\b(?:beer|lager|ipa|ale|stout|seltzer|cider)\b/i.test(base) || BEER_BRAND.test(base) || (packM && /\b\d+(?:\.\d+)?\s*oz\b/i.test(base)) ? 'beer'
     : ['red', 'white', 'rose', 'sparkling', 'fortified', 'aperitif'].indexOf(t) >= 0 ? 'wine' : t ? 'spirits' : 'mixer';
   const np = { name, category, qty: r.counted ? r.qty : 1, qty_from_customer: true };
   if (isVol) np.volume_ml = Math.round(r.ml);
@@ -235,8 +246,21 @@ function namedFromRow(r) {
 // One entry of a product list the caller typed ("3 x Tito's 750ml", "2 cases of Stella", "Whispering Angel x 6", "4 Casamigos
 // Blanco") -> a named_products item (connector rachel_proposal_from_list). No count = 1. A case of wine / spirits = 12
 // bottles (case_bottles set); buildPackage's "case" rule (24 units) is for beer / water / mixers.
+// A line copied from Rachel's own list / search results (Nov 11, DC on Claude Code): "2x Woodford Reserve ... - 750 ML —
+// $48.94 ea = $97.88", "Bacardi Gold Rum 750 mL — $19.79", "Modelo Especial 24 x 12 OZ — $62.99/case". The prices, the
+// " - " before the size and the "24 x 12 OZ" pack are read as a pack, never as words of the name or a count of 24.
+function cleanPastedLine(line0) {
+  return String(line0 || '')
+    .replace(/\s*[—–]\s*\$\s*[\d,]+(?:\.\d+)?(?:\s*\/\s*(?:case|pack|btl|bottle|ea|each|can))?(?:\s*(?:ea|each)\b)?(?:\s*=\s*\$\s*[\d,]+(?:\.\d+)?)?/gi, ' ')
+    .replace(/\s+-\s+(?=\d+(?:\.\d+)?\s*(?:ml|l|oz|liters?)\b)/i, ' ')
+    .replace(/\b(\d{1,2})\s*[x×]\s*(\d+(?:\.\d+)?)\s*(oz|ml)\b/i, '$1-pack $2 $3')
+    // a note in brackets is not part of the name: "(This is in addition to the beers already there)"
+    .replace(/\s*\((?=[^)]*\b(?:this|is|are|in addition|already|also|please|instead|keep|same|as well|for)\b)[^)]*\)/gi, ' ')
+    .replace(/\s+/g, ' ').trim();
+}
+
 function namedFromListLine(line0) {
-  let line = String(line0 || '').trim().replace(/^\s*[-•*·]\s*/, ''), m;
+  let line = cleanPastedLine(String(line0 || '').trim().replace(/^\s*[-•*·]\s*/, '')), m;
   if ((m = line.match(/^(\d{1,4}|a|an|one)\s+(cases?)\s+(?:of\s+)?(.+)$/i))) line = (/^\d/.test(m[1]) ? m[1] : 1) + ' x ' + m[3] + ' case';
   else if ((m = line.match(/^(\d{1,4})\s*(?:[x×]\s*)?(?!\d|ml\b|l\b|oz\b|pk\b|pack)(.+)$/i)) && !/^\s*(?:ml|l|oz|liters?|litres?)\b/i.test(m[2])) line = m[1] + ' x ' + m[2].replace(/^\s*(?:bottles?|btls?|bts?|cans?)\.?\s+of\s+/i, '');
   else if ((m = line.match(/^(.+?)\s*[x×]\s*(\d{1,4})\s*$/i))) line = m[2] + ' x ' + m[1];
@@ -245,6 +269,12 @@ function namedFromListLine(line0) {
   const row = parseRequest('- ' + line)[0];
   const np = row && namedFromRow(row);
   if (!np) return null;
+  // An uncounted wine / spirit line with a bottle size ("Bacardi Gold Rum 750 mL") is that bottle, not an amount to cover
+  // (the amount reading is for "3L mango purée" / "1L lemon juice").
+  if (np.volume_ml && (np.category === 'wine' || np.category === 'spirits') && [187, 200, 375, 500, 700, 750, 1000, 1500, 1750, 3000].includes(np.volume_ml)) {
+    np.name = np.name + ' ' + (np.volume_ml >= 1000 ? (np.volume_ml / 1000) + 'L' : np.volume_ml + 'ml');
+    delete np.volume_ml;
+  }
   if (/\bcases?\b/i.test(np.name) && (np.category === 'wine' || np.category === 'spirits' || DT.typeOf({ name: np.name }))) {
     np.name = np.name.replace(/\s*\bcases?\b/ig, '').trim(); np.qty = (np.qty || 1) * 12; np.case_bottles = true;
   }
@@ -291,4 +321,4 @@ function reconcileNamed(namedProducts, text) {
   return log;
 }
 
-module.exports = { reconcileNamed, namedFromRow, namedFromListLine, parseRequest, compare, render, reply, isCompareAsk, isApplyAsk, requestNotes, applyNotBoth };
+module.exports = { cleanPastedLine, reconcileNamed, namedFromRow, namedFromListLine, parseRequest, compare, render, reply, isCompareAsk, isApplyAsk, requestNotes, applyNotBoth };
