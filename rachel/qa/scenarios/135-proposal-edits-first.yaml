@@ -1,0 +1,35 @@
+name: proposal-edits-first
+# Nov 13 (DC on Claude Code, KPMG): "Change Corona Light to 1 case ... Replace the champagne ... with options around $30 per
+# bottle ... then regenerate the KPMG proposal" came back as the SAME PDF (twice) with "I haven't shown you any options yet";
+# "take out the alternatives" got "Not in the quote, so nothing to change: alternatives"; "Make it 3 x 12 blue moon" at the
+# client question became the client; "This Sunday" was printed as the event date.
+format: plain
+tags: [proposal, connector]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+    expect: {contains: ["425 W 53rd St"]}
+  - send: "2 x Veuve Clicquot Yellow Label Brut 750ml\n2 x Joseph Phelps Cabernet Sauvignon 750ml\n1 x Corona Light 24 pack"
+    expect: {matches: "(?i)veuve", not_matches: "(?i)how many guests|is this for an event"}
+  - send: "create a proposal"
+    expect: {matches: "(?i)client|company"}
+  - send: "Make it 3 x Corona Light"
+    expect:
+      not_matches: "(?i)client:\\s*make it"
+      log_contains: ["[proposal] client answer NOT taken"]
+  - send: "create a proposal"
+    expect: {matches: "(?i)client|company"}
+  - send: "QA Proposal Co"
+  - send: "This Sunday"
+    expect:
+      matches: "(?i)(?:january|february|march|april|may|june|july|august|september|october|november|december) \\d{1,2}, 20\\d\\d"
+      not_contains: ["This Sunday"]
+  - send: "Change Corona Light to 1 and replace the Veuve with a prosecco around $30 per bottle, 2 bottles, then regenerate the proposal."
+    expect:
+      not_contains: ["I haven't shown you any options"]
+      log_contains: ["[proposal] in-code PDF NOT made"]
+      log_not_contains: ["[options] the proposal will list the options shown"]
+  - send: "take out the alternatives"
+    expect:
+      not_contains: ["Not in the quote, so nothing to change: alternatives"]

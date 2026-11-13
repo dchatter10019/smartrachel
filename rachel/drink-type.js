@@ -42,4 +42,16 @@ const isNA = p => / (zero proof|non alcoholic|nonalcoholic|alcohol free|alcohol 
 const TERMS = { aperitif: 'aperitif', fortified: 'port', sparkling: 'champagne', rose: 'rose', red: 'red wine', white: 'white wine' };
 function searchTerm(type) { return TERMS[type] || (String(type).startsWith('spirit:') ? type.slice(7) : ''); }
 
-module.exports = { typeOf, searchTerm, isNA };
+// The appellation / grape / style word of a wine request that decided its type ("Nicolas Idiart Sancerre" -> "sancerre",
+// "Chateau Lamour Saint Emillion Grand Cru Bordeaux" -> "bordeaux") — the first stand-in search for a wine not carried,
+// before the bare type ("white wine"). Generic words (red, white, wine) are not one.
+function styleWordOf(p) {
+  const t = norm(p && p.name);
+  for (const [, re] of RULES) {
+    const m = t.match(re);
+    if (m && !/^(red|white|red wine|white wine|brut|sparkling|rose)$/.test(m[1])) return m[1];
+  }
+  return '';
+}
+
+module.exports = { typeOf, searchTerm, isNA, styleWordOf };

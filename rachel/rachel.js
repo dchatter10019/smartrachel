@@ -324,6 +324,22 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             delete saInput.queries;
           }
         }
+        // The customer's per-bottle price (bottle-price.js, server.js state.bottlePrice): every build picks generic lines
+        // inside it and every wine search stays under it (Nov 13, DC's Eterra emails: "$15 a bottle" got $37 and $71 wines).
+        if (sessionState && sessionState.bottlePrice && sessionState.bottlePrice.max) {
+          const bp = sessionState.bottlePrice, k = bp.category === 'spirits' ? 'spirit' : 'wine';
+          if ((saInput.intent === 'custom_list' || saInput.intent === 'menu_build') && !saInput[k + '_max_price']) {
+            saInput[k + '_max_price'] = bp.max; if (bp.min) saInput[k + '_min_price'] = bp.min;
+            console.log('[bottle-price] ' + saInput.intent + ' gets ' + k + ' $' + (bp.min || 0) + '-$' + bp.max + ' a bottle (customer: ' + JSON.stringify(bp.said) + ')');
+          }
+          if (saInput.intent === 'product_query' && Array.isArray(saInput.queries)) {
+            const isK = q => k === 'wine' ? !/\b(?:beer|lager|ipa|ale|seltzer|cider|vodka|tequila|whiske?y|bourbon|rum|gin|mixer|soda|water|juice)\b/i.test(String(q.name || q.term || q.label || '') + ' ' + String(q.category || ''))
+              : /\b(?:spirits?|liquor|vodka|tequila|whiske?y|bourbon|rum|gin|scotch|mezcal)\b/i.test(String(q.name || q.term || q.label || '') + ' ' + String(q.category || ''));
+            let n = 0;
+            for (const q of saInput.queries) if (isK(q) && !(q.max_price && q.max_price <= bp.max) && !(saInput.max_price && saInput.max_price <= bp.max)) { q.max_price = bp.max; n++; }
+            if (n) console.log('[bottle-price] product_query: ' + n + ' ' + k + ' search(es) capped at $' + bp.max + ' a bottle');
+          }
+        }
         // PARAM-CHANGE OVERRIDE: when the customer's message only changes ONE parameter
         // (budget / guests / hours), rebuild from the persisted eventParams VERBATIM and
         // apply just that change. The LLM only relays the new value. Real bug: on

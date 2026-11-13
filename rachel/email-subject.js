@@ -47,4 +47,26 @@ function clientLabeledIn(text) {
   return c;
 }
 
-module.exports = { clientFromSubject, clientLabeledIn };
+// The client a FORWARDED customer email names: the forwarded sender's company, from their signature — a line whose words
+// spell the sender's email domain ("Eterra Kitchen <https://www.eterrakitchen.com/>" for esthefany@eterrakitchen.com).
+// Real (Nov 13, DC forwarding Eterra Kitchen's "New Beverage Order – November 17"): the subject names no client and the
+// PDF was billed to "Dipanjan Chatterjee" — the Bevvi forwarder. Free mail and getbevvi.com senders name no company.
+function clientFromForward(text) {
+  const t = String(text || '').replace(/\r/g, '');
+  const fm = t.match(/^\s*\*?From:\*?\s*[^<\n]*<[^@>\s]+@([a-z0-9.-]+\.[a-z]{2,})>/im);
+  if (!fm) return '';
+  const dom = fm[1].toLowerCase();
+  if (/(?:^|\.)getbevvi\.com$/.test(dom)) return '';
+  try { if (require('./proposal-email.js').isFreeMail && require('./proposal-email.js').isFreeMail(dom)) return ''; } catch (e) {}
+  if (/^(?:gmail|googlemail|yahoo|ymail|outlook|hotmail|live|icloud|me|aol|msn|comcast|proton(?:mail)?)\./.test(dom)) return '';
+  const label = dom.split('.').slice(-2, -1)[0];
+  for (const raw of t.split('\n')) {
+    const l = raw.replace(/<[^>]*>/g, ' ').replace(/[*_]/g, ' ').replace(/\s+/g, ' ').trim();
+    if (!l || l.length > 60 || /@|:/.test(l)) continue;
+    const compact = l.toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (compact === label || (compact.length >= 5 && (label.startsWith(compact) || compact === label.replace(/(?:inc|llc|co|corp|group|hq)$/, '')))) return l.replace(/[.,;]+$/, '');
+  }
+  return '';
+}
+
+module.exports = { clientFromSubject, clientLabeledIn, clientFromForward };

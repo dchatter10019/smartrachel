@@ -43,6 +43,23 @@ function normalizeEventDate(raw, now = new Date()) {
     m = s.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
     r = m && build(+m[2] - 1, +m[3], +m[1], now);
   }
+  if (!r) {
+    // "this Sunday", "next Friday", "coming Saturday", "tomorrow", a bare "Sunday" (Nov 13, connector: "This Sunday" was
+    // printed on the PDF as the event date). "this <day>" = the next one from today (today itself if it is that day);
+    // "next <day>" = the one after this week's when today is earlier in the week than it, as people mean it.
+    const WD = ['sunday', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday'];
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const rel = s.match(/^\W*(?:(this|next|coming|this coming|on)\s+)?(sun|mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri|sat(?:ur)?)(?:day)?\b\W*$/i);
+    const tm = /^\W*(today|tonight|tomorrow)\W*$/i.exec(s);
+    let d = null;
+    if (rel) {
+      const wi = WD.findIndex(w => w.startsWith(rel[2].toLowerCase().slice(0, 3)));
+      let add = (wi - today.getDay() + 7) % 7;
+      if (rel[1] && /^next$/i.test(rel[1]) && (add === 0 || today.getDay() < wi)) add += 7;
+      d = new Date(today.getTime() + add * 864e5);
+    } else if (tm) d = new Date(today.getTime() + (/tomorrow/i.test(tm[1]) ? 1 : 0) * 864e5);
+    if (d) r = { text: MONTHS[d.getMonth()][0].toUpperCase() + MONTHS[d.getMonth()].slice(1) + ' ' + d.getDate() + ', ' + d.getFullYear(), moved: false };
+  }
   if (r) return { text: r.text, date: true, changed: r.text !== s, moved: r.moved, why: r.moved ? 'stated year already past — next occurrence' : (r.text !== s ? 'date read from ' + JSON.stringify(s) : '') };
   const t = s.replace(SIGNOFF, '').replace(/[\s,;]+$/, '').trim();
   return { text: t || s, date: false, changed: !!t && t !== s, moved: false, why: t !== s ? 'sign-off removed' : '' };
@@ -94,10 +111,19 @@ function parseProposalFieldEdit(msg, savedDate, now = new Date()) {
 // "2 x Sun Cruiser Ice tea Variety pack" and every PDF of that quote said "Event Date(s): Sun". Item lines (a
 // quantity first) are skipped; a weekday counts only as a full name after on/this/next/for ("on Saturday").
 function findEventDateIn(text, now = new Date()) {
-  const lines = String(text || '').split(/\r?\n/).filter(l => !/^\s*(?:[-•*·]\s*)?\d+\s*(?:x\b|×|\s+[A-Za-z])/i.test(l));
-  for (const l of lines) {
-    if (!/\d/.test(l)) continue;
-    const d = normalizeEventDate(l, now);
+  // A forwarded email's header ("Date: Sat, Nov 14, 2026 at 2:09 AM", "On Sat, Nov 14 ... wrote:") is when it was SENT,
+  // never the event. Real (Nov 13, DC forwarding Eterra Kitchen): both quotes were dated November 14 (the forward), not
+  // "delivery on Tuesday, November 17" / "the requested delivery date is Thursday, November 19th".
+  const lines = String(text || '').split(/\r?\n/).filter(l => !/^\s*(?:[-•*·]\s*)?\d+\s*(?:x\b|×|\s+[A-Za-z])/i.test(l)
+    && !/^\s*\*?(?:date|sent|from|to|cc|bcc):\*?\s/i.test(l) && !/^\s*On\s.{6,80}\bwrote:\s*$/i.test(l));
+  // A line that says what the date is for (delivery / event / party / needed) first; a wrapped "on *Tuesday,\nNovember 17*"
+  // is read with the line before it.
+  const CUE_D = /\b(?:deliver(?:y|ed)?|event|party|reception|dinner|lunch|needed|need(?:s)? (?:it|them)|date)\b/i;
+  const tries = [];
+  lines.forEach((l, i) => { const two = l + ' ' + (lines[i + 1] || ''); if (CUE_D.test(l)) tries.push(two); });
+  for (const t of tries.concat(lines)) {
+    if (!/\d/.test(t)) continue;
+    const d = normalizeEventDate(t, now);
     if (d.date) return d.text;
   }
   const wd = lines.join('\n').match(/\b(?:on|this|next|for)\s+((?:mon|tues|wednes|thurs|fri|satur|sun)day)\b/i);

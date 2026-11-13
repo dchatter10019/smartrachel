@@ -42,7 +42,11 @@ function splitInstructions(message) {
   const firstB = rawL.findIndex(l => BULLET.test(l) || /^\s*\*\s+/.test(l));
   const heading = firstB > 0 ? rawL.slice(0, firstB).filter(l => l.trim()).slice(-1)[0] : null;
   const isHeading = l => heading != null && l === heading.replace(/\*/g, '').trim() && /\b(?:the following|following items?|these|below|this list|as follows|with these)\b/i.test(l);
-  const lines = text.split(/\n+/).map(l => l.replace(/^\s*(?:[-•*·–]|\d+[.)])\s*/, '').replace(/\*/g, '').trim()).filter(l => l.length >= 4 && !PLEASANTRY.test(l));
+  // Rachel's own "I haven't done these yet: • ... Want me to go ahead?" pasted back under the answer is her text, not new
+  // tasks; a bare yes ("Yes Do these") is an answer (Nov 13, DC's email: "I haven't done these yet: • Yes Do these").
+  const ownAt = text.search(/^\s*I haven'?t done (?:this one|these) yet\b/im);
+  const text2 = ownAt > 0 ? text.slice(0, ownAt) : text;
+  const lines = text2.split(/\n+/).filter(l => !/^\W*(?:yes|yeah|yep|ok(?:ay)?|sure|please do|go ahead|do (?:it|that|these|those|both))\b[\w ]{0,20}[.!]*\s*$/i.test(l)).map(l => l.replace(/^\s*(?:[-•*·–]|\d+[.)])\s*/, '').replace(/\*/g, '').trim()).filter(l => l.length >= 4 && !PLEASANTRY.test(l));
   // A heading ("Couple of changes / questions:") or a reason ("we have some leftover titos on hand so it may make sense
   // ...") is not an instruction — both came back as "I haven't done these yet" (Oct 2, DC).
   const REQ = /\b(?:add|remove|take out|drop|delete|swap|switch|replace|change|need|want|send|include|increase|reduce|bump|order|update|should be|instead)\b|\b\d+\s*(?:x|bottles?|cases?|packs?|cans?)\b|\?\s*$|^\s*\d/i;
@@ -68,10 +72,13 @@ function unaddressed(instrs, reply, before, after) {
   const APPROVAL = /(?:->|→|:|=|-|—|\bis\b|\bare\b)\s*(?:good|ok(?:ay)?|fine|great|perfect|keep(?: it)?|approved|looks good|that'?s (?:good|fine)|yes|👍)\s*[.!]*\s*$/i;
   // A field of an event brief ("Headcount: 15 people", "Budget: $27 per person", "Duration: 2 hours") is a fact the build
   // used, not a task (Nov 9, DC: "I haven't done this one yet: • Headcount: 15 people" under the package).
-  const FIELD = /^\s*(?:[-•*]\s*)?(?:head ?count|guests?|guest count|number of (?:guests|people)|people|attendees|budget|duration|length|event (?:date|time|length)|date|delivery (?:time|date|address|window)|address|time|location|venue|occasion|event type|client|company)\s*:/i;
+  // Contact fields too ("*Delivery Contact:* Stephani Alvarez", "*Phone:* 929-278-4626" — Nov 13, DC's email), and a
+  // per-bottle price, which is applied in code (bottle-price.js: "Average price of $15").
+  const FIELD = /^\s*(?:[-•*]\s*)?(?:head ?count|guests?|guest count|number of (?:guests|people)|people|attendees|budget|duration|length|event (?:date|time|length)|date|delivery (?:time|date|address|window|contact)|address|time|location|venue|occasion|event type|client|company|(?:on-?site |delivery )?contact|phone(?: number)?|cell|mobile|tel|e-?mail|name|po(?: number)?|window)\s*:/i;
   return instrs.filter(instr => {
     if (APPROVAL.test(String(instr))) return false;
-    if (FIELD.test(String(instr))) return false;
+    if (FIELD.test(String(instr).replace(/\*/g, ''))) return false;
+    try { if (require('./bottle-price.js').read(instr)) return false; } catch (e) {}
     const kw = keywords(instr);
     if (!kw.length) return false;
     const num = (norm(instr).match(/\bto\s+(\d{1,3})\b|\b(\d{1,3})\s*(?:bottles?|x\b)/) || []).slice(1).find(Boolean);

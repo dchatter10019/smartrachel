@@ -1,0 +1,13 @@
+name: email-standin-same-type
+fresh: true
+tags: [email, lists]
+# Nov 13 (Sean's email, 10028): "15 bottles of Nicolas Idiart Sancerre / 12 Bottles of Chateau Lamour Saint Emillion Grand Cru
+# Bordeaux" -> Nicolas Feuillatte Champagne and Chateau Ste. Michelle Riesling (the brand-word fallback matched the first word).
+# A stand-in is the same type — a white for the Sancerre (a Sancerre first), a red for the Bordeaux.
+format: plain
+context: {email_subject: "Order for Sunday", user_name: "QA Tester"}
+turns:
+  - send: "Hi Rachel,\r\n\r\nI am 21. I have an order to be delivered to 1076 Madison Ave, New York, NY\r\n10028 on Sunday, November 15th.\r\n\r\nI need:\r\n\r\n   - 15 bottles of Nicolas Idiart Sancerre\r\n\r\n\r\n   - 12 Bottles of Chateau Lamour Saint Emillion Grand Cru Bordeaux\r\n\r\nThanks!"
+    expect:
+      not_matches: "(?i)feuillatte|riesling|champagne"
+      log_contains: ["[buildPackage] type: \"Nicolas Idiart Sancerre\" is white"]

@@ -98,6 +98,9 @@ function parseEdits(text) {
   // Questions and requests on lines that no edit above covers ("can we ...?") — never answered as if all done.
   out.questions = t.split('\n').map(l => l.replace(BULLET, '$1').trim()).filter(l => /\?\s*$/.test(l) || /^(?:can|could|would|will) (?:we|you)\b/i.test(l));
   out.wantsQuote = /\b(?:updated|revised|new|corrected)\s+(?:quote|proposal|pdf|invoice|estimate)\b|\bre-?send\b|\bsend\b[^.]{0,20}\b(?:updated|revised)\b/i.test(flat);
+  // "take out the alternatives" / "remove the options" = the options listed in the proposal (proposal-options.js), never a
+  // line called "alternatives" (Nov 13, connector: "Not in the quote, so nothing to change: alternatives.").
+  out.removes = out.removes.filter(n => !/^(?:the\s+|all\s+|any\s+)?(?:(?:wine|beer|other|extra|listed)\s+)?(?:options?|alternatives?|choices)\b/i.test(n));
   out.count = out.removes.length + out.setQty.length + out.attrs.length;
   return out;
 }

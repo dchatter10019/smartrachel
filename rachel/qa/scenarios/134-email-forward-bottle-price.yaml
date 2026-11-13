@@ -1,0 +1,23 @@
+name: email-forward-bottle-price
+fresh: true
+tags: [email, proposal]
+# Nov 13 (DC forwarding Eterra Kitchen's "New Beverage Order – November 17"): the address block ("*Delivery Address:*",
+# a Google Maps link, "Kitchen 3") became "3 New York, NY 10029"; "the average price of the wine bottles is $15" was ignored
+# (Cloudy Bay $37, Joseph Phelps $71); the PDF was dated November 14 (the forward's Date: header) and billed to the Bevvi
+# forwarder. Then DC forwarded Rachel's own reply back with "Do not show any options ever in a proposal" — her quoted
+# "Client: / Options listed in the PDF" text regenerated the same PDF WITH options, three times.
+format: plain
+context: {email_subject: "Fwd: New Beverage Order", user_name: "QA Tester"}
+turns:
+  - send: "Hi.. can you create a proposal. I am over 21 years. Also the average price\r\nof the wine bottles is $15\r\n\r\n---------- Forwarded message ---------\r\nFrom: Esthefany Fernandez <esthefany@eterrakitchen.com>\r\nDate: Sat, Nov 14, 2026 at 2:09 AM\r\nSubject: New Beverage Order\r\nTo: QA Tester <rachel_qa@getbevvi.com>\r\n\r\nHi,\r\n\r\nWe would like to submit a new beverage order for delivery on *Tuesday,\r\nNovember 17.*\r\n\r\n*Delivery Address:*\r\n1580 Park Avenue\r\n<https://www.google.com/maps/search/1580+Park+Avenue?entry=gmail&source=g>\r\nKitchen 3\r\nNew York, NY 10029\r\n\r\n*Order Details:*\r\n\r\nProsecco – 24 bottles\r\n\r\nPinot Grigio – 10 bottles\r\n\r\nSauvignon Blanc – 4 bottles\r\n\r\nPinot Noir – 15 bottles\r\n\r\nThank you so much!\r\n\r\nBest Regards,\r\n*Esthefany Fernandez*\r\n*Eterra Kitchen <https://www.eterrakitchen.com/>*\r\n"
+    expect:
+      contains: ["1580 Park Avenue"]
+      not_contains: ["3 New York", "November 14"]
+      not_matches: "(?i)(?:prosecco|grigio|sauvignon|pinot noir)[^\\n]*\\$(?:1[6-9]|[2-9]\\d|\\d{3})\\.\\d\\d ea"
+      log_contains: ["[bottle-price] custom_list gets wine"]
+      pdf_contains: ["Eterra Kitchen", "November 17"]
+  - send: "Do not show any options ever in a proposal. Send me the proposal again.\r\n\r\n---------- Forwarded message ---------\r\nFrom: Rachel AI <rachelai@getbevvi.com>\r\nDate: Sat, Nov 14, 2026 at 4:44 AM\r\nSubject: Re: Fwd: New Beverage Order\r\nTo: <rachel_qa@getbevvi.com>\r\n\r\nYour proposal is ready!\r\n\r\nClient: Somebody Else\r\nEvent date: November 14, 2026\r\n\r\nOptions listed in the PDF: Prosecco (1), Pinot Noir (3). The total is for the items above; each option shows how it changes it.\r\n\r\nWhen you're ready, say the word and I'll place it.\r\n"
+    expect:
+      not_contains: ["Options listed in the PDF", "Somebody Else"]
+      log_contains: ["a forwarded copy of Rachel's own email cut"]
+      log_not_contains: ["[options] the proposal will list the options shown"]

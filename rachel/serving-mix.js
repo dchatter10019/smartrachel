@@ -116,7 +116,15 @@ const NOT_DRINK_LINE = /\b(?:people|guests|persons|ppl|attendees|pax|hours?|hrs?
 // are cut first (Nov 11, DC: "I meant with these" + the pasted proposal lines was asked the mix + "how long is the event?").
 function countedLines(msg) {
   const clean = l => require('./original-compare.js').cleanPastedLine(l);
-  return String(msg || '').split(/\n/).map(l => l.trim()).filter(l => { const c = l && clean(l); return c && !NOT_DRINK_LINE.test(c) && (LEAD_COUNT.test(c) || TRAIL_COUNT.test(c)); });
+  // An inline list ("exactly these items: 2 x Veuve Clicquot 750 ML; 2 x Joseph Phelps ...; and 1 case of Blue Moon") counts
+  // like lines (Nov 13, connector KPMG: the exact list got "what will your guests drink most?").
+  const parts = [];
+  for (const l of String(msg || '').split(/\n/)) {
+    const semi = l.split(/;\s*/);
+    if (semi.length >= 3) semi.forEach((p, i) => parts.push((i === 0 ? p.replace(/^.*:\s*(?=\d)/, '') : p).replace(/^\s*(?:and|&|plus)\s+/i, '')));
+    else parts.push(l);
+  }
+  return parts.map(l => l.trim()).filter(l => { const c = l && clean(l); return c && !NOT_DRINK_LINE.test(c) && (LEAD_COUNT.test(c) || TRAIL_COUNT.test(c)); });
 }
 function isCountedList(msg) { return countedLines(msg).length >= 3; }
 module.exports = { MIX_SYN, eventDrinkCats, countedLines, isCountedList, parseServingMix, mixText, cocktailsUnnamed, knownCocktails, COCKTAIL_ASK, DURATION_RE, durationIn };

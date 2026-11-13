@@ -662,6 +662,8 @@ async function executeTool(name, input) {
       wine_price_target: input.wine_price_target || 0,
       beer_max_price: input.beer_max_price || input.max_price || 0,
       seltzer_max_price: input.seltzer_max_price || 0,
+      wine_max_price: input.wine_max_price || 0, wine_min_price: input.wine_min_price || 0,
+      spirit_max_price: input.spirit_max_price || 0, spirit_min_price: input.spirit_min_price || 0,
       beer_pack_size: input.beer_pack_size || 0,
       min_bottle_ml: input.min_bottle_ml || 0,     // rachel/bottle-size.js: "only 750 mL or larger" (Nov 9)
       spirit_types: input.spirit_types || null,   // rachel/event-prefs.js: the spirits the customer asked for (Oct 9)
@@ -927,7 +929,10 @@ async function executeTool(name, input) {
       kitchen_location: loc.kitchen,
       zip: input.zip || '',
       client_name: loc.client,
-      named_products: JSON.stringify(input.named_products || [])
+      named_products: JSON.stringify(input.named_products || []),
+      // a per-bottle price the customer gave (rachel/bottle-price.js, Nov 13): generic lines are picked inside it
+      wine_max_price: input.wine_max_price || 0, wine_min_price: input.wine_min_price || 0,
+      spirit_max_price: input.spirit_max_price || 0, spirit_min_price: input.spirit_min_price || 0
     });
     { const outage = catalogOutage(failBefore, result); if (outage) return outage; }
     if (result.success !== 'true') return { success: false, error: result.error };

@@ -15,7 +15,7 @@ const CUE = /\b(?:delivery address|address|deliver(?:ed|y)?\s+(?:to|at)|ship(?:p
 // with a space, not ", ". Real bug (Oct 1, nightly QA email): Gmail wrapped the line after "100", the address
 // became "100, Federal Street, ..." and wasn't found — Rachel asked for an address the email already gave.
 // A unit number at a line end ("Floor 6\nBoston", "#6\nBoston") is a real break and stays ", ".
-const UNIT_WORD = /\b(?:floor|fl|suite|ste|apartment|apt|unit|room|rm|building|bldg|no)\.?\s*$/i;
+const UNIT_WORD = /\b(?:floor|fl|suite|ste|apartment|apt|unit|room|rm|building|bldg|no|kitchen|level|lvl|space|tower|wing|hall|dock|door|gate|bay|studio|office|penthouse|ph)\.?\s*$/i;
 const STREET_SUFFIX = /^(?:street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|place|pl|court|ct|way|square|sq|parkway|pkwy|terrace|highway|hwy)\b/i;
 function unwrap(t) {
   const lines = t.split('\n');
@@ -29,9 +29,29 @@ function unwrap(t) {
   return out;
 }
 
+// An email's address block as Gmail / Outlook send it (Nov 13, DC forwarding Eterra Kitchen):
+//   "*Delivery Address:*\nHI USA NYC Hostel – Penthouse\n891 Amsterdam Ave\n<https://www.google.com/maps/...>\nNew York, NY"
+//   -> stored as "*Delivery Address:891 Amsterdam Ave, New York, NY 10025";
+//   "1580 Park Avenue\n<https://www.google.com/maps/...>\nKitchen 3\nNew York, NY 10029" -> "3 New York, NY 10029" (the link
+//   broke the street off). Links, bold markers and a "Delivery Address:" label are removed first; at the address step the
+//   lines before the street line (a venue name) are dropped too (cleanTyped(text, {fromStreet: true})).
+function cleanTyped(text, opts) {
+  let t = String(text || '').replace(/\r/g, '')
+    .replace(/^[ \t]*<\s*(?:https?:\/\/|mailto:)[^>]*>[ \t]*(?:\n|$)/gim, '')   // a link alone on its line goes with its line
+    .replace(/<\s*(?:https?:\/\/|mailto:)[^>]*>/gi, '').replace(/\[([^\]]*)\]\((?:https?:\/\/|mailto:)[^)]*\)/gi, '$1')
+    .replace(/[*_]{1,2}([^*_\n]*?)[*_]{1,2}/g, '$1').replace(/^[ \t]*[*_]+[ \t]*$/gm, '').replace(/[*]/g, '')
+    .replace(/^[ \t]*(?:delivery|shipping|venue|event)?\s*address\s*:[ \t]*/gim, '')
+    .replace(/^[ \t]+|[ \t]+$/gm, '').replace(/\n{3,}/g, '\n\n').trim();
+  if (opts && opts.fromStreet) {
+    const lines = t.split('\n'), i = lines.findIndex(l => /^\d{1,6}[a-z]?\s+[A-Za-z]/.test(l.trim()));
+    if (i > 0 && lines.slice(0, i).every(l => !/\d{5}/.test(l))) t = lines.slice(i).join('\n');
+  }
+  return t;
+}
+
 function findAddress(text) {
   // Lines joined with ", " — but a blank line (paragraph break) stays a hard stop.
-  const t = unwrap(String(text || '').replace(/\r/g, '')).replace(/\n\s*\n/g, ' ¶ ').replace(/\s*\n\s*/g, ', ').replace(/,\s*,/g, ',');
+  const t = unwrap(cleanTyped(text)).replace(/\n\s*\n/g, ' ¶ ').replace(/\s*\n\s*/g, ', ').replace(/,\s*,/g, ',');
   const RE = /\b(\d{1,6}\s+[A-Za-z0-9'#\- ]{2,60}?(?:\.(?=[A-Za-z,\s])(?![\s][A-Z][a-z]+\s+[a-z]))?(?:,\s*[A-Za-z0-9.'#\- ]{1,40}?){1,4},?\s+\d{5}(?:-\d{4})?)\b/g;
   const found = [];
   let m;
@@ -60,7 +80,7 @@ function findAddress(text) {
 // (street, city, 2-letter state). The caller geocodes it for the zip. Real (Oct 13, Sean's email quote): findAddress
 // needs a zip, so the session kept its Boston address and the NYC quote's PDF said "Delivery: 100 Federal Street, Boston".
 function findAddressNoZip(text) {
-  const t = unwrap(String(text || '').replace(/\r/g, '')).replace(/\n\s*\n/g, ' ¶ ').replace(/\s*\n\s*/g, ', ');
+  const t = unwrap(cleanTyped(text)).replace(/\n\s*\n/g, ' ¶ ').replace(/\s*\n\s*/g, ', ');
   const CUE_NZ = /\b(?:delivery address|address|deliver(?:ed|y)?\s+(?:to|at)|ship(?:ped)?\s+to|send (?:it )?to)\b(?:\s+is)?\s*:?\s*/gi;
   let m;
   while ((m = CUE_NZ.exec(t))) {
@@ -118,4 +138,4 @@ function stripLeadingName(addr) {
   return { address: parts.slice(i).join(', '), dropped: parts.slice(0, i).join(', ') };
 }
 
-module.exports = { splitAddress, findAddress, findAddressNoZip, formatGeocoded, stripLeadingName };
+module.exports = { splitAddress, findAddress, findAddressNoZip, formatGeocoded, stripLeadingName, cleanTyped };

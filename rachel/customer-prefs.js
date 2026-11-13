@@ -11,7 +11,7 @@ const QA_RE = /^(qa-[^@]*|rachel_qa)@getbevvi\.com$/i;
 const MAX = 15;
 
 // A sentence that states a lasting habit, not a one-off ("always", "from now on", "we prefer", "we never", ...).
-const LASTING = /\b(?:always|every time|from now on|going forward|in (?:the )?future|for future (?:orders|events)|next time(?:s)?|as a rule|by default)\b|\b(?:we|i|our (?:team|office|company|guests))\s+(?:usually|typically|generally|normally|always|never|prefer|only (?:drink|order|want|serve))\b|\b(?:we|i)\s+(?:do ?n[o']t|do not)\s+(?:drink|serve|want|like|order)\b|\bplease (?:never|always|don'?t ever)\b/i;
+const LASTING = /\b(?:always|every time|from now on|going forward|in (?:the )?future|for future (?:orders|events)|next time(?:s)?|as a rule|by default)\b|\b(?:we|i|our (?:team|office|company|guests))\s+(?:usually|typically|generally|normally|always|never|prefer|only (?:drink|order|want|serve))\b|\b(?:we|i)\s+(?:do ?n[o']t|do not)\s+(?:drink|serve|want|like|order)\b|\bplease (?:never|always|don'?t ever)\b|\b(?:do not|don'?t|never)\b[^.!?]{0,40}\bever\b|\bnever\s+(?:show|include|add|put|send|list)\b/i;
 const NOT_A_PREF = /\?\s*$|\b(?:this time|for this (?:order|event)|today|tomorrow|tonight)\b|^\s*(?:always happy|thanks? as always)\b/i;
 
 function sentences(text) {
@@ -89,4 +89,12 @@ function render({ email, client }) {
   return lines.length ? '## CUSTOMER PREFERENCES (stated by them in earlier messages — follow them unless they say otherwise now; mention one only when it changes what you do)\n' + lines.join('\n') : '';
 }
 
-module.exports = { extract, forgetAsk, learn, render, keysFor, FILE };
+// A stored preference "no options / alternatives in a proposal" (Nov 13, DC: "Do not show any options ever in a proposal").
+function saysNoOptions({ email, client }) {
+  const PO = require('./proposal-options.js');
+  const all = readAll();
+  return [email ? String(email).toLowerCase() : '', clientKey(client)].filter(Boolean)
+    .some(k => (all[k] || []).some(p => PO.dropsOptions(p.text) && /\b(?:options?|alternatives?|choices)\b/i.test(p.text)));
+}
+
+module.exports = { extract, forgetAsk, learn, render, keysFor, FILE, saysNoOptions };

@@ -500,7 +500,8 @@ function clearCart(state, email, format, why) {
   const was = String(state.lastLineItems || '').slice(0, 120);
   { const kpC = KEPTP.keepFrom(state); if (kpC) state.keptProposal = kpC; }   // the proposal can be picked up again by name
   state.lastLineItems = '[]'; state.pendingSubstitutes = []; state.unavailableQty = {}; state.pendingAddOffer = null; state.pendingQtyFor = null; state.mixersSettled = false; state.eventFacts = null;
-  state.shownOptions = null; state.proposalWithOptions = false; state.originalRequest = ''; state.onHand = []; state.onHandReleased = [];
+  state.shownOptions = null; state.proposalWithOptions = false; if (!(state.bottlePrice && Date.now() - (state.bottlePrice.at || 0) < 120000)) state.bottlePrice = null;   // one stated this turn stays
+  state.originalRequest = ''; state.onHand = []; state.onHandReleased = [];
   state.lastProposalUrl = ''; state.savedClientName = ''; state.savedEventDate = ''; state.eventDateNone = false;
   state.taxExempt = false; state.proposalHideAddress = false; state.proposalOpts = {}; state.eventParams = state.qa ? { qa: true } : {}; state.savedTipChoice = null;
   state.orderStep = null; state.orderData = null; state.proposalStep = null; state.lastCta = null; state.replacingOrder = null; state.emailReplace = null;
@@ -765,6 +766,16 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
         if (!originalItem && !(opts && opts.qty) && basketLineFor(items, replacementName) < 0) {
           const rq0 = ownListQtyFor(state.originalRequest, replacementName);
           if (rq0) { qtyToUse = rq0; qtyKnown = true; console.log('[confirm-substitute] no original — the customer\'s list asks ' + rq0 + ' x ' + JSON.stringify(rq0Line(state.originalRequest, replacementName).name) + ' -> ' + replacementName + ' x' + rq0); }
+          else {
+            // A generic counted line ("(1) Sancerre, ... need 15 bottles", "Pinot Noir – 15 bottles") in the original request
+            // or the customer's recent messages (Nov 13, DC on Claude Code: the picked Sancerre / Bordeaux went in at 1 each).
+            const RQ = require('./request-qty.js');
+            const texts = [state.originalRequest || ''].concat((sessions[sessionKey] || []).filter(m => m && m.role === 'user' && typeof m.content === 'string').slice(-10).reverse().map(m => m.content));
+            for (const t of texts) {
+              const g = t ? RQ.genericLineFor(t, replacementName) : null;
+              if (g) { qtyToUse = g.qty; qtyKnown = true; console.log('[confirm-substitute] no original — the customer asked ' + g.qty + ' for ' + JSON.stringify(g.line) + ' -> ' + replacementName + ' x' + g.qty); break; }
+            }
+          }
         }
         if (originalItem) {
           const removeIdx = basketLineFor(items, originalItem);
@@ -2010,7 +2021,7 @@ app.post('/chat', async (req, res) => {
   // Real case (Sep 29, Gen II Fund): a forwarded edit request also carried the customer's ORIGINAL order list.
   if (/^email-/.test(String(session_id || '')) || (context && context.email_subject)) {
     const eb = require('./email-body.js').latest(message);
-    if (eb.trimmed) { console.log('[email-body] ' + (eb.forwarded ? 'forwarded message kept, ' : '') + 'quoted history cut: ' + String(message).length + ' -> ' + eb.text.length + ' chars'); message = eb.text; }
+    if (eb.trimmed) { console.log('[email-body] ' + (eb.rachelForward ? 'a forwarded copy of Rachel\'s own email cut, ' : '') + (eb.forwarded ? 'forwarded message kept, ' : '') + 'quoted history cut: ' + String(message).length + ' -> ' + eb.text.length + ' chars'); message = eb.text; }
     const sig = require('./email-body.js').stripSignature(message, context && context.user_name);
     if (sig.cut) { console.log('[email-body] signature cut: ' + JSON.stringify(sig.cut.slice(0, 80))); message = sig.text; }
   }
@@ -2262,6 +2273,18 @@ app.post('/chat', async (req, res) => {
       }
     } catch (e) { console.log('[feedback] error (turn continues): ' + e.message); }
   }
+  // A per-bottle price for the wine / spirits ("average price of the wine bottles is $15", "should not exceed $15") —
+  // kept for the conversation and applied in rachel.js to every build and search (bottle-price.js; Nov 13, DC's Eterra
+  // emails: Cloudy Bay $37 and Joseph Phelps $71 on a "$15 a bottle" quote). The latest statement wins.
+  try {
+    const bp = require('./bottle-price.js').read(message);
+    if (bp && !/^__/.test(String(message || ''))) {
+      const stBP = getState(sessionKey);
+      stBP.bottlePrice = Object.assign(bp, { at: Date.now() });
+      saveFlowState();
+      console.log('[bottle-price] ' + bp.category + ' ' + (bp.min ? '$' + bp.min + '-' : 'up to ') + '$' + bp.max + ' a bottle, kept for the conversation: ' + JSON.stringify(bp.said));
+    }
+  } catch (e) { console.log('[bottle-price] read failed: ' + e.message); }
   // Stock the customer already has ("we have the below inventory from last time") is never ordered (on-hand.js).
   try {
     const oh = require('./on-hand.js').parseOnHand(message);
@@ -2806,6 +2829,9 @@ app.post('/chat', async (req, res) => {
       }
     }
     if (state.step === 'addr_new') {
+      // An email's address block: links, bold markers, the "Delivery Address:" label and a venue line above the street go
+      // (address-extract.js cleanTyped; Nov 13: "*Delivery Address:891 Amsterdam Ave, New York, NY 10025" was stored).
+      { const ct = require('./address-extract.js').cleanTyped(message, { fromStreet: true }); if (ct && ct !== message.trim() && /\d/.test(ct) && ct.split('\n').length <= 4) { console.log('[addr] address block cleaned: ' + JSON.stringify(message.slice(0, 80)) + ' -> ' + JSON.stringify(ct.slice(0, 80))); message = ct.replace(/\s*\n\s*/g, ', '); msgLower = message.toLowerCase(); } }
       // Strip a conversational prefix so "address is 425 W 53rd St" is stored as the
       // address, not the sentence (real bug: summary read "Delivery to: address is 425...").
       message = message.replace(/^\s*(?:my |the |our )?(?:new |delivery |shipping )?address(?: is|:)?\s*/i, '').replace(/^\s*(?:deliver(?: it)? to|ship(?: it)? to|send(?: it)? to)\s*:?\s*/i, '').trim();
@@ -3885,7 +3911,13 @@ app.post('/chat', async (req, res) => {
                 // "just send the proper proposal"). Real gap: Sean's quote request got a basket and no PDF.
                 const subj = String((context && context.email_subject) || '');
                 if ((/^email-/.test(sessionKey) || subj) && /\b(quote|proposal|pdf|estimate)\b/i.test(turnMsg + ' ' + subj) && !cL.blocks.length) {
-                  const client = st.savedClientName || require('./email-subject.js').clientLabeledIn(st.originalRequest || message) || require('./email-subject.js').clientFromSubject(st.emailSubject || subj) || String((context && context.user_name) || '').trim() || '';
+                  const ES = require('./email-subject.js');
+                  const fwdC = ES.clientFromForward(st.originalRequest || message) || ES.clientFromForward(message);
+                  // The sender's own name only for a customer writing for themselves — never a Bevvi forwarder (Nov 13: the
+                  // Eterra Kitchen quote was billed to "Dipanjan Chatterjee").
+                  const senderC = EO.isStaff(email) ? '' : String((context && context.user_name) || '').trim();
+                  const client = st.savedClientName || ES.clientLabeledIn(st.originalRequest || message) || ES.clientFromSubject(st.emailSubject || subj) || fwdC || senderC || '';
+                  if (!st.savedClientName && fwdC && client === fwdC) console.log('[quote-pdf] client from the forwarded email\'s company: ' + JSON.stringify(fwdC));
                   const eventDate = require('./event-date.js').findEventDateIn(turnMsg);   // not cta.DATE_RE: "Sun" Cruiser was a date
                   if (eventDate) console.log('[quote-pdf] event date read from the email: ' + JSON.stringify(eventDate));
                   const lt = listText;
@@ -4764,7 +4796,11 @@ app.post('/chat', async (req, res) => {
     // nor an event brief of "Field: value" lines. Real (Nov 10, DC on claude.ai): a brief with "Notes: If tequila is
     // included, use Mi Campo" (classifier: build_package 0.97) was saved whole as the delivery instructions, no menu.
     const briefFields = String(message).split('\n').filter(l => /^\s*(?:[-•*]\s*)?[A-Za-z][\w /&'()-]{1,30}:\s*\S/.test(l)).length;
-    const instrFallback = /\b(instruction|instructions|note|notes|tell the driver|for the driver)\b/i.test(message) && /\b(change|update|set|add|make it|use)\b/i.test(message);
+    // Nor a drinks list / basket edit that merely mentions a note (Nov 13, DC on Slack: "2 x Red wine around $30 ...\n1 x Corona
+    // ... Change Corona Light to 1 case ... Add the note '40 guests ...'" was saved whole as the driver's instructions, twice).
+    const instrListEdit = isCountedList(message) || require('./proposal-edits.js').editsIn(message.replace(/\badd (?:the |a )?notes?\b[^.\n]*/gi, '')).length > 0;
+    const instrFallback = /\b(instruction|instructions|note|notes|tell the driver|for the driver)\b/i.test(message) && /\b(change|update|set|add|make it|use)\b/i.test(message) && !instrListEdit;
+    if (instrListEdit && /\b(instruction|instructions|note|notes)\b/i.test(message) && clsIntent !== 'change_instructions') console.log('[order] instructions word fallback NOT applied — the message is a drinks list / basket change: ' + JSON.stringify(message.slice(0, 80)));
     if (instrFallback && clsIntent !== 'change_instructions' && ((clsSeen && clsSeen.intent !== 'change_instructions' && clsSeen.confidence >= 0.8) || briefFields >= 3)) {
       console.log('[order] instructions word fallback NOT applied — ' + (briefFields >= 3 ? 'an event brief (' + briefFields + ' field lines)' : 'classifier says ' + clsSeen.intent + ' ' + clsSeen.confidence.toFixed(2)) + ': ' + JSON.stringify(message.slice(0, 80)));
     }
@@ -5586,6 +5622,22 @@ app.post('/chat', async (req, res) => {
     const emailListAsk = (/^email-/.test(sessionKey) || !!(context && context.email_subject))
       && String(message).split(/\n/).filter(l => /^\s*(?:[-•*·]|\d+\s*(?:x|×)\s+\S)/i.test(l)).length >= 3;
     if (isProposalTrigger && emailListAsk && !state.proposalStep) { console.log('[proposal] email with its own item list — the quote path builds it (no step-by-step flow)'); isProposalTrigger = false; }
+    // A proposal ask that also changes the basket ("Change Corona Light to 1 case ... then regenerate the KPMG proposal") or
+    // that accepts changes Rachel just offered ("Yes sounds good with the choices and create a proposal" after "Shall I go
+    // with Kendall-Jackson ...?") goes to the model: it makes the changes, then the PDF from the live basket. The in-code
+    // path printed the unchanged basket (Nov 13, DC: connector KPMG x2, email Eterra quote) — proposal-edits.js.
+    let proposalEditsFirst = false;
+    if (!state.proposalStep && !state.orderStep && (isProposalTrigger || state.lastProposalUrl)) {
+      let lnPE = 0; try { lnPE = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
+      if (lnPE) {
+        const PE = require('./proposal-edits.js');
+        const edPE = PE.editsIn(message), accPE = PE.acceptsOffer(message, (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '');
+        if (edPE.length || accPE) {
+          proposalEditsFirst = true;
+          if (isProposalTrigger) { isProposalTrigger = false; console.log('[proposal] in-code PDF NOT made — ' + (edPE.length ? 'the request also changes the basket: ' + JSON.stringify(edPE) : 'it accepts the changes Rachel offered') + ' — the model makes them, then the PDF'); }
+        }
+      }
+    }
     // An EVENT BRIEF that also asks for the proposal ("I need an event proposal/menu ... 15 people, 2 hours, $27 a person"),
     // with no package in this conversation yet: the package is built FIRST, then the proposal flow asks the client (Nov 9,
     // DC: the flow went straight to "client name?" and made the PDF from an earlier chat's saved basket).
@@ -5622,12 +5674,20 @@ app.post('/chat', async (req, res) => {
     // Options in the PDF (proposal-options.js): a proposal request that asks for them sets the flag for this session;
     // "without the options" clears it. On a proposal already sent, "include the options in the pdf" regenerates it.
     const PO = require('./proposal-options.js');
-    const asksOptions = (isProposalTrigger || /\b(?:proposal|pdf|quote)\b/i.test(message)) && PO.wantsOptions(message);
-    const dropOptions = state.proposalWithOptions && /\b(?:proposal|pdf|quote)\b/i.test(message) && PO.dropsOptions(message);
+    // "take out the alternatives" right after a proposal counts without the word "proposal" (Nov 13, connector: it went to
+    // quote-edits as a product, "Not in the quote, so nothing to change: alternatives"). "Do not show any options EVER in a
+    // proposal" is also kept as the customer's preference (customer-prefs.js) and holds for every later proposal.
+    const optMsg = message.replace(/^Options listed in the PDF:.*$/gim, '');
+    const noOptPref = require('./customer-prefs.js').saysNoOptions({ email, client: state.savedClientName || '' });
+    let asksOptions = (isProposalTrigger || /\b(?:proposal|pdf|quote)\b/i.test(optMsg)) && PO.wantsOptions(optMsg);
+    if (asksOptions && noOptPref && !/\b(?:include|add|show|list)\b[^.?!\n]{0,20}\b(?:options|alternatives)\b/i.test(optMsg)) { console.log('[options] NOT added — the customer\'s preference is no options in a proposal'); asksOptions = false; }
+    const dropOptions = (state.proposalWithOptions || state.lastProposalUrl || noOptPref) && (/\b(?:proposal|pdf|quote)\b/i.test(optMsg) || state.lastProposalUrl) && PO.dropsOptions(optMsg)
+      && /\b(?:options?|alternatives?|choices)\b/i.test(optMsg);
+    if (noOptPref && state.proposalWithOptions && !asksOptions) { state.proposalWithOptions = false; console.log('[options] off — the customer\'s preference is no options in a proposal'); }
     if (asksOptions && !state.proposalWithOptions) { state.proposalWithOptions = true; console.log('[options] the proposal will list the options shown' + (state.shownOptions ? ': ' + state.shownOptions.groups.map(g => g.label).join(', ') : ' (none shown yet)')); }
-    if (dropOptions) { state.proposalWithOptions = false; console.log('[options] options left out of the proposal (customer asked)'); }
+    if (dropOptions) { const had = state.proposalWithOptions; state.proposalWithOptions = false; console.log('[options] options left out of the proposal (customer asked' + (had ? '' : '; none were on') + ')'); }
     let pfHandled = false;   // the request words ("send back an updated PDF") must not restart the flow below
-    if (state.lastProposalUrl && !state.proposalStep && !state.orderStep) {
+    if (state.lastProposalUrl && !state.proposalStep && !state.orderStep && !proposalEditsFirst) {
       let pfLines = []; try { pfLines = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
       let pf = pfLines.length >= 1 ? require('./event-date.js').parseProposalFieldEdit(message, state.savedEventDate) : null;
       // A message carrying its own drinks list (a new brief: "Client: Acme / Event Date: ... / Menu: - 2 btls of ...") is a
@@ -5782,6 +5842,10 @@ app.post('/chat', async (req, res) => {
           const subjC = require('./email-subject.js').clientFromSubject(state.emailSubject || (context && context.email_subject) || '');
           if (subjC) { state.savedClientName = subjC; console.log('[proposal] client from the email subject: ' + JSON.stringify(subjC)); }
         }
+        if (!state.savedClientName) {
+          const fwC = require('./email-subject.js').clientFromForward(state.originalRequest || '') || require('./email-subject.js').clientFromForward(message);
+          if (fwC) { state.savedClientName = fwC; console.log('[proposal] client from the forwarded email\'s company: ' + JSON.stringify(fwC)); }
+        }
         if (!state.savedEventDate && state.originalRequest) {
           const dO = require('./event-date.js').findEventDateIn(state.originalRequest);
           if (dO) { state.savedEventDate = dO; console.log('[proposal] event date from the original request: ' + JSON.stringify(dO)); }
@@ -5859,6 +5923,17 @@ app.post('/chat', async (req, res) => {
       if (unl !== message && unl.trim()) { console.log('[proposal] answer label removed: ' + JSON.stringify(message.trim()) + ' -> ' + JSON.stringify(unl.trim())); message = unl; }
     }
     const isNonAnswer = (m) => /^\s*(generate|create|make|build)\b.*(pdf|proposal|quote)|^\s*(proposal|pdf|quote|skip|none|n\/a|na|no|-|tbd|tba|to be (?:determined|decided|confirmed)|not (?:sure|decided|set) yet|unknown)\s*\.?\s*$/i.test(m || '');
+    // A basket change typed at the client question is not a client name. Real (Nov 13, DC on Claude Code): "Make it 3 x 12
+    // blue moon" became the client — the PDF was billed to "Make it 3 x 12 blue moon" and the Blue Moon stayed at 1. The
+    // flow steps aside; the change is made as usual, and the next proposal ask starts at the client again.
+    if (state.proposalStep === 'client' && !isNonAnswer(message) && !proposalTriggers.some(t => msgLower.includes(t))) {
+      const edC = require('./proposal-edits.js').editsIn(message);
+      if (edC.length || /^\W*(?:make (?:it|them|that)|change|add|remove|replace|swap|switch|update|increase|reduce|drop|take out)\b/i.test(message)
+          || /\b\d+\s*(?:x|×)\s*\d+\b|\b\d+\s*(?:x|×)\s+[a-z]|\b\d+\s+(?:cases?|bottles?|btls?|packs?)\b/i.test(message)) {
+        console.log('[proposal] client answer NOT taken — it changes the basket: ' + JSON.stringify(message.slice(0, 80)) + ' — the proposal flow steps aside');
+        state.proposalStep = null; state.proposalData = null; saveFlowState();
+      }
+    }
     if (state.proposalStep === 'client') {
       if (isNonAnswer(message)) {
         state.proposalData.client_name = '';

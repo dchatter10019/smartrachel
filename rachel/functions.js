@@ -1256,6 +1256,19 @@ async function buildPackage(iv) {
         if (naOk.length<found.length) console.log('[buildPackage] '+(wantNA?'non-alcoholic':'alcoholic')+' request '+JSON.stringify(np.name)+': dropped '+(found.length-naOk.length)+' '+(wantNA?'alcoholic':'non-alcoholic')+' match(es)'+(naOk.length?'':' — none left, looking for a stand-in'));
         found=naOk;
       }
+      // A wine request of a known type (drink-type.js) is never matched by a wine of another type — also when the search
+      // "found" it on a shared word. Real (Nov 13, Sean's email, 10028): the brand-word fallback matched "Nicolas Idiart
+      // Sancerre" -> Nicolas Feuillatte Champagne and "Chateau Lamour Saint Emillion Grand Cru Bordeaux" -> Chateau Ste.
+      // Michelle Riesling (first word only), both put on the quote as "closest". None of that type left: the stand-in
+      // search below (same type) runs, as for a product not carried.
+      if (found.length && catN==='wine') {
+        var DTt=require('./drink-type.js'), reqTy=DTt.typeOf({name:np.name});
+        if (reqTy && !/^spirit:/.test(reqTy)) {
+          var tyOk=found.filter(function(p){var t=DTt.typeOf(p); return !t || t===reqTy;});
+          if (tyOk.length<found.length) console.log('[buildPackage] type: '+JSON.stringify(np.name)+' is '+reqTy+' — dropped '+(found.length-tyOk.length)+' match(es) of another type ('+found.filter(function(p){return tyOk.indexOf(p)<0;}).slice(0,3).map(function(p){return p.name+' = '+DTt.typeOf(p);}).join(', ')+')'+(tyOk.length?'':' — none left, looking for a '+reqTy+' stand-in'));
+          found=tyOk;
+        }
+      }
       var altNote='', altRef0=0;
       if (found.length===0){
         // Not carried: recommend the closest style instead of dropping the line (DC, Sep 29: "if you can't
@@ -1280,6 +1293,12 @@ async function buildPackage(iv) {
         if (origT) {
           var origNA=DT.isNA({name:np.name});
           var sameT=alt0.filter(function(p){return DT.typeOf(p)===origT&&DT.isNA(p)===origNA;}), viaT='';
+          // The request's own appellation / grape first ("Sancerre", "Bordeaux"), then the bare type (Nov 13, Sean).
+          var styleW=catN==='wine'?DT.styleWordOf({name:np.name}):'';
+          if (!sameT.length && styleW) {
+            viaT=styleW;
+            sameT=(await doSearch(styleW, catN)).filter(function(p){return !isMini(p)&&DT.typeOf(p)===origT&&DT.isNA(p)===origNA&&new RegExp('\\b'+styleW.replace(/ /g,'\\W+')+'\\b','i').test(String(p.name||'').normalize('NFD').replace(/[\u0300-\u036f]/g,''));});
+          }
           if (!sameT.length && DT.searchTerm(origT)) {
             viaT=DT.searchTerm(origT);
             sameT=(await doSearch(viaT)).filter(function(p){return !isMini(p)&&DT.typeOf(p)===origT&&DT.isNA(p)===origNA;});   // no category check: an aperitif may be filed as Liquor

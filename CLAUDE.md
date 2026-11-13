@@ -606,6 +606,30 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   is added, never a replacement. A turn that hits 10 tool iterations with no text shows the last basket ([rachel] hit 10
   iterations). instructions.js: a list's heading line ("I need the following") is not a task. Scenario 133,
   qa/unit/connector-nov11-bottles.test.js.
+- Nov 13 email + connector review (DC forwarding Eterra Kitchen orders; DC on Claude Code, KPMG + Sancerre/Bordeaux; Sean's
+  email). Every /chat channel: a forwarded copy of RACHEL'S OWN email (From: rachelai@) is cut from the body (email-body.js
+  rachelForward; its "Client: / Options listed in the PDF / regenerate" text regenerated the same PDF 3x). Options in a PDF
+  only on an explicit ask (proposal-options.js: "do not show any options", "take out the alternatives" drop them, also with no
+  "proposal" word after one was sent; "options around $30" / "good with the choices" / Rachel's quoted text never ask; "...
+  ever" is a customer preference, customer-prefs.js saysNoOptions); quote-edits never removes a line called "alternatives". A
+  proposal ask that also changes the basket or says yes to changes Rachel offered ("Shall I go with X...?") goes to the model
+  first (proposal-edits.js, [proposal] in-code PDF NOT made; was: the unchanged PDF). A basket change at the client question
+  is not the client ([proposal] client answer NOT taken; "Make it 3 x 12 blue moon" was billed). A per-bottle price ("average
+  price of the wine bottles is $15", "should not exceed $15") -> state.bottlePrice (bottle-price.js, [bottle-price]) ->
+  custom_list / menu_build wine_max_price|spirit_max_price (shopping-agent passes them to buildPackage caps) and product_query
+  max_price. A pick with no original takes the count of a generic request line ("(1) Sancerre, ... need 15 bottles",
+  "Pinot Noir – 15 bottles"; request-qty.js; the PDF had 1x each). A wine request of a known type is never matched by another
+  type, also on a fuzzy brand-word hit (functions.js [buildPackage] type:; Sancerre -> Nicolas Feuillatte Champagne, Saint-
+  Emilion Bordeaux -> Ste. Michelle Riesling); the stand-in search tries the request's appellation first (drink-type.js
+  styleWordOf: "sancerre"). Addresses: maps links, bold, "Delivery Address:" labels and a venue line above the street are
+  removed (address-extract.js cleanTyped; "Kitchen 3" is a unit line; was "3 New York, NY 10029" / "*Delivery Address:891
+  Amsterdam Ave"). Event dates skip a forward's Date:/Sent: header and prefer a delivery/event line (was the forward's Nov 14);
+  "this Sunday" / "next Friday" / "tomorrow" are dates (event-date.js). The email quote client: the forwarded sender's company
+  from their signature (email-subject.js clientFromForward: "Eterra Kitchen <https://www.eterrakitchen.com/>"), never a Bevvi
+  sender's own name. An inline ";" list counts as counted lines (no serving-mix question). The instructions word fallback
+  never takes a drinks list / basket edit (Slack: the KPMG list was saved as driver notes). instructions.js: Rachel's pasted
+  "I haven't done these yet" block, a bare yes, contact/phone lines and a bottle price are not tasks. Scenarios 134-136,
+  qa/unit/email-connector-nov13.test.js.
 - A file that never arrived (Oct 29, DC on claude.ai, F-0110): a Claude app passes an attachment as a path on its own machine
   ("@/mnt/user-data/attachments/...pdf"); /chat answers in code "Your file (<name>) didn't come through ... paste the drinks"
   ([order-file] a file path with no file); the Claude-app instructions (rachel-mcp.js CHAT_INSTRUCTIONS) tell the client to

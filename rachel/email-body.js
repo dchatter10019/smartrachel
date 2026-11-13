@@ -35,6 +35,13 @@ function latest(body) {
   let j = i + 1;
   while (j < lines.length && (HEADER.test(lines[j]) || (!lines[j].trim() && j < i + 3))) fwd.push(lines[j++]);
   while (j < lines.length && !FWD.test(lines[j]) && !isQuote(lines, j)) fwd.push(lines[j++]);
+  // A forwarded copy of RACHEL'S OWN email is history, never the customer's words. Real (Nov 13, DC): he forwarded her
+  // reply back with "Price of wine cannot exceed $15"; its "Client: ... / Event date: ... / Options listed in the PDF /
+  // regenerate the proposal" text was read as a new request and the same PDF came back with options, three times.
+  if (fwd.some(l => /^\s*\*?From:\*?\s.*\brachelai@getbevvi\.com\b/i.test(l))) {
+    const own = top.join('\n').trim();
+    if (own) return { text: own, trimmed: true, forwarded: false, rachelForward: true };
+  }
   const text = (top.join('\n').trim() + '\n\n' + fwd.join('\n').trim()).trim();
   return { text, trimmed: j < lines.length, forwarded: true };
 }

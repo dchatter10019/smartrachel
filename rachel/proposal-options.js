@@ -10,14 +10,25 @@ const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ
 const wordsOf = s => norm(s).replace(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/g, ' ').split(/[^a-z0-9]+/).filter(w => w.length >= 2 && !/^(the|of|and|de|du|la|le|el|by|ml|oz)$/.test(w));
 
 // "include the ... options", "with the alternatives", "list the choices" — in a proposal request.
-function wantsOptions(msg) {
-  const s = String(msg || '');
-  if (/\b(?:without|no|don'?t include|do not include|skip|remove)\b[^.?!\n]{0,30}\b(?:options|alternatives|choices)\b/i.test(s)) return false;
-  return /\b(?:options|alternatives|choices)\b/i.test(s);
-}
-// "remove the options from the proposal" — a later proposal goes without them.
+// Not: "do not show any options" / "take out the alternatives" (dropsOptions), "sounds good with the choices" (an
+// acceptance), "options around $30 per bottle" (a request for cheaper replacements), Rachel's own "Options listed in the
+// PDF" quoted back. Real (Nov 13, DC — email + connector): each of those turned the options ON and the PDF came back with
+// them, unchanged, four times.
+const OPT = '(?:options?|alternatives?|choices)';
+const NEG = new RegExp("\\b(?:without|no|not|never|don'?t|do not|dont|skip|remove|drop|take out|take off|exclude|leave out|get rid of|delete|strip)\\b[^.?!\\n]{0,40}\\b" + OPT + "\\b|\\b" + OPT + "\\b[^.?!\\n]{0,20}\\b(?:removed|taken out|out of (?:it|the (?:proposal|pdf|quote)))\\b|\\bonly (?:the )?(?:\\d+ )?(?:items?|lines?|products?)\\b", 'i');
 function dropsOptions(msg) {
-  return /\b(?:without|no|remove|drop|take out|don'?t include|do not include)\b[^.?!\n]{0,30}\b(?:options|alternatives|choices)\b/i.test(String(msg || ''));
+  return NEG.test(String(msg || ''));
+}
+function wantsOptions(msg) {
+  const s = String(msg || '').replace(/^Options listed in the PDF:.*$/gim, '');
+  if (dropsOptions(s)) return false;
+  const ask = new RegExp('\\b(?:include|includ|list|show|add|put|give|with|plus|and)\\b[^.?!\\n]{0,30}\\b' + OPT + '\\b|\\b' + OPT + '\\s+(?:for|separately|in the (?:proposal|pdf|quote)|on the (?:proposal|pdf|quote))\\b', 'i');
+  if (!ask.test(s)) return false;
+  // "options around/under $30", "options at $30 a bottle" = cheaper/other picks to swap in, not options in the PDF
+  if (new RegExp('\\b' + OPT + '\\b[^.?!\\n]{0,25}(?:\\$\\s?\\d|\\b(?:around|under|below|less than|about|cheaper|within)\\b)', 'i').test(s)) return false;
+  // "sounds good / happy / fine / ok with the choices" = accepting picks
+  if (new RegExp("\\b(?:good|great|happy|fine|ok|okay|go|agree|perfect|done)\\s+with\\s+(?:the|your|those|these|my)?\\s*" + OPT, 'i').test(s)) return false;
+  return true;
 }
 // "two options for ..." -> 2
 function countAsked(msg) {
