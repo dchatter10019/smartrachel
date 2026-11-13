@@ -27,7 +27,7 @@ turns:
     expect:
       contains: ["Kim Crawford", "replaces order #", "Order Summary", "Shall I go ahead"]
       not_contains: ["support team has been made aware", "should I reopen", "direct-checkout"]
-      matches: "(?i)Kim Crawford Prosecco - 750 ML x4 — \\$17\\.59 ea = \\$70\\.36"
+      matches: "(?i)Kim Crawford [^\\n]*- 750 ML x4 — \\$\\d+\\.\\d\\d ea = \\$\\d+\\.\\d\\d"   # 4 = 2 ordered + 2 added; product/price by shape (Nov 13: the catalog now returns Sauvignon Blanc, not the Prosecco)
       log_contains: ["[order-change] order", "[order-change] updated summary added"]
   # Nov 11 (DC): a question while the replacement waits ("cheaper la crema Pinot") was read as "no" (pi-NO-t) and the
   # summary was re-shown every turn, a real "No" too. Now the question is answered, and "no" places nothing.
