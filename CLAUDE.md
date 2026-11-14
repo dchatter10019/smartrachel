@@ -1027,6 +1027,21 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   prompt said it is set_qty). Pre-deploy: 64 edit-related scenarios on staging; the 5 still failing failed in the Nov 14 nightly.
   Scenarios 145, 146; qa/unit/edit-reader.test.js.
 
+- Email order from a colleague's forward (Nov 14, DC, "Bevvi - Nov 14th Delivery" — Sean's forward: "*On-Site Contact:*\n\nDiana
+  Maranzano | 212-288-3500", "*Delivery Window:*\n\nSaturday 11/14 (1-3pm ET)", "*Delivery Instructions:*\n\nDeliver to the 3rd
+  floor"). "I want to place the order" asked name, email, phone, time AND zone; "11/14" on Nov 14 parsed as Nov 14, 2027 ("Sun,
+  Nov 14" — the order would have been a year late); "First and last Name: Diana Maranzano" was read by nothing, twice; the turn
+  went to the model, its place_order was refused, and it wrote "The system will create the order ... shortly" (nothing placed).
+  Now: rachel/chrono-today.js (email-order timing, deliveryWindowsOn, validateDeliveryTime) keeps a no-year date that is TODAY in
+  this year ([date] ... is today, not next year); email-order.js timing takes today when written as a date (never "earlier
+  today"); pocIn reads the value on the next line and a Bevvi colleague's forward; the instructions block stops at the next
+  "*Label:*" and reads a colleague's forward; name labels "First and last Name:", "First name and last name:", "Full name:";
+  thread-facts window on the line after its label (today / tomorrow / weekday too). EMAIL ORDER: the thread's window gives the
+  date, the START of a range ("1-3pm" -> 1pm, was 3pm) and the zone ("ET"); no contact read by the code while an email order
+  waits -> the fact reader's new `contact` {name, phone, email} ([fact-reader] reader_gap order_contact); after the model's
+  refused place_order the reply is the code's ask (sessionState.emailOrderRefused, [email-order] ... REPLACED with the code's
+  ask). Scenario 147, qa/unit/email-order-nov14.test.js.
+
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
   so PDFs sent before Oct 15 still open (ask DC first; nginx).

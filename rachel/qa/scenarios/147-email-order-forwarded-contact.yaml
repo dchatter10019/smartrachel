@@ -1,0 +1,24 @@
+name: email-order-forwarded-contact
+fresh: true
+tags: [email]
+# Nov 14 (DC forwarding Sean's "Bevvi - Nov 14th Delivery"): "I want to place the order" asked name, email, phone, time AND
+# time zone although the forward said "*On-Site Contact:*\n\nDiana Maranzano | 212-288-3500" and "*Delivery Window:*\n\n
+# Saturday 11/14 (1-3pm ET)" (both on the line after their label; the contact was in a Bevvi colleague's forward); "11/14"
+# on Nov 14 became Nov 14, 2027 ("Sun, Nov 14"); "First and last Name: Diana Maranzano" was read by nothing, twice; then the
+# model said "The system will create the order ... shortly" — nothing was placed. (Tomorrow here: the QA runs every day.)
+format: plain
+context: {email_subject: "Fwd: Bevvi - Delivery", user_name: "QA Tester"}
+turns:
+  - send: "Can you review the email below and generate a proposal? I am over 21\r\n\r\n---------- Forwarded message ---------\r\nFrom: Sean Fitzgibbons <sean@getbevvi.com>\r\nSubject: Fwd: Bevvi - Delivery\r\nTo: Kiran K <manager@manorhousecellar.com>\r\n\r\nKiran,\r\n\r\nPer my text, please see the approved items and delivery instructions below:\r\n\r\n*Item Request:*\r\n\r\n*12 Bottles - Cloudy Bay Sauvignon Blanc*\r\n\r\n*9 Bottles - Château Lamour Saint-Émilion Grand Cru Bordeaux*\r\n\r\n*Delivery Location:*\r\n\r\nFrank E. Campbell Funeral Chapel\r\n\r\n1076 Madison Ave, New York, NY 10028\r\n\r\n*Delivery Window:*\r\n\r\nTomorrow (1-3pm ET)\r\n\r\n*Delivery Instructions:*\r\n\r\nDeliver to the 3rd floor\r\n\r\n*On-Site Contact:*\r\n\r\nDiana Maranzano | 212-288-3500\r\n\r\nThanks!\r\nSean"
+    expect:
+      contains: ["PDF proposal is attached"]
+  - send: "I want to place the order."
+    expect:
+      contains: ["Diana Maranzano", "(212) 288-3500", "email"]
+      not_contains: ["full name", "phone number", "Which time zone", "The system will create"]
+      log_contains: ["[email-order] command"]
+  - send: "First and last Name: Diana Maranzano\r\nEmail: qa-diana@getbevvi.com"
+    expect:
+      contains: ["Here is your Payment Link", "Diana Maranzano", "QA dry run"]
+      not_contains: ["The system will create"]
+      log_contains: ["complete -> placing", "[QA] place_order dry run"]

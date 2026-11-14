@@ -23,6 +23,7 @@ Keys:
 "client": string — the client / company the order or proposal is FOR, only when the message names it as such ("the client is Acme", "this is for Goldman", "bill it to KPMG"). Never the sender's own name or signature.
 "delivery_address": string — a street address to deliver to, as written (street, city, state, zip if given).
 "fees": {"tax_percent":number,"tax_exempt":true,"service_percent":number,"tip_percent":number,"tip_amount":number,"delivery_fee":number} — ONLY fees the customer SETS or changes ("no tax", "service charge 8%", "tip $50", "free delivery" -> delivery_fee 0). Omit fees they only ask about.
+"contact": {"name":string,"phone":string,"email":string} — the person the ORDER is for / the on-site or delivery contact, ONLY as the message gives them as such ("First and last Name: Diana Maranzano", "Contact: Jo Lee 212-555-0100", "on-site contact is Mara (862) 252-5077", "the email is x@y.com"). Never the sender's own signature block.
 "unit_corrections": [{"product":string,"count":number,"unit":"bottles"|"cans"}] — ONLY a CORRECTION: the customer says a count means single bottles/cans and NOT cases/packs ("we need 48 bottles not 48 cases" -> [{"product":"beer","count":48,"unit":"bottles"}]). An ordinary order line ("Prosecco – 24 bottles") is never one.
 TODAY is ${today}. Answer by calling the facts tool once, with only the keys the message states (no keys when it states none).`;
 }
@@ -34,6 +35,7 @@ function wants(text) {
   if (t.replace(/\s+/g, ' ').trim().length < 12) return false;
   return /\$\s?\d/.test(t) || MONTHS.test(t) || /\b(?:bucks|dollars|usd|percent|pct)\b|\d\s*%/i.test(t) || /\b\d{1,2}\/\d{1,2}\b/.test(t)
     || /\b(?:client|company|bill (?:it )?to|address|deliver(?:y|ed)? to|tax|tip|gratuity|service (?:charge|fee)|delivery (?:fee|charge))\b/i.test(t)
+    || /\b(?:name|phone|contact|e-?mail|cell|mobile)\b/i.test(t) || /\d{3}\D{0,3}\d{3}\D?\d{4}/.test(t)
     || (/\b(?:bottles?|cans?)\b/i.test(t) && /\b(?:not|instead of|rather than)\b/i.test(t) && /\b(?:cases?|packs?)\b/i.test(t));
 }
 
@@ -42,6 +44,7 @@ const TOOL = { name: 'facts', description: 'The facts the customer message state
   bottle_price: { type: 'object', properties: { category: { type: 'string', enum: ['wine', 'spirits'] }, max: num, min: num }, required: ['category', 'max'] },
   event_date: { type: 'string', description: 'Month D, YYYY' }, client: { type: 'string' }, delivery_address: { type: 'string' },
   fees: { type: 'object', properties: { tax_percent: num, tax_exempt: { type: 'boolean' }, service_percent: num, tip_percent: num, tip_amount: num, delivery_fee: num } },
+  contact: { type: 'object', properties: { name: { type: 'string' }, phone: { type: 'string' }, email: { type: 'string' } } },
   unit_corrections: { type: 'array', items: { type: 'object', properties: { product: { type: 'string' }, count: num, unit: { type: 'string', enum: ['bottles', 'cans'] } }, required: ['product', 'count', 'unit'] } } } } };
 const memo = new Map();   // text -> { at, p }
 async function callModel(text, opts) {

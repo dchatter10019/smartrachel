@@ -41,7 +41,8 @@ function gather(emails, ctx = {}) {
       if (!own) { set('contactName', x.name, k); set('contactEmail', x.email && !EO.isStaff(x.email) ? x.email : '', k); set('phone', x.phone, k); }
       set('instructions', x.instructions, k);
     } catch (err) {}
-    const w = t.match(/\bdelivery\s+(?:window|time)\s*:?\s*\**\s*([0-9][^\n*]{3,40})/i);
+    // the window on the same line or the next ("*Delivery Window:*\n\nSaturday 11/14 (1-3pm ET)", Nov 14 — was missed)
+    const w = t.match(/\bdelivery\s+(?:window|time)\s*:?\s*\**\s*([0-9][^\n*]{3,40})/i) || t.match(/\bdelivery\s+(?:window|time)\s*:?\s*\**\s*\n\s*(?:\n\s*)?\**\s*((?:(?:mon|tue|wed|thu|fri|sat|sun)\w*,?\s+|today,?\s+|tomorrow,?\s+)?(?:\(\s*)?[0-9][^\n*]{3,40}|(?:mon|tue|wed|thu|fri|sat|sun)\w*,?\s+[a-z]{3,9}\.?\s+\d[^\n*]{2,40})/i);
     if (w) set('window', w[1].replace(/\s+/g, ' ').trim(), k);
     const bp = BP.read(t);
     if (bp) set('bottlePrice', JSON.stringify(bp), k);

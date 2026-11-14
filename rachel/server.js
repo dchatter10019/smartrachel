@@ -1260,7 +1260,7 @@ function renderOrderSummary(state, email, format, res) {
 // or null on success with the validated window stored on state.orderData.
 // The store's delivery windows on a date phrase ("Monday, October 5th"): { label, options, none }.
 async function deliveryWindowsOn(state, datePhrase, custZone) {
-  const r = chrono.parse(String(datePhrase || ''), new Date(), { forwardDate: true })[0];
+  const r = require('./chrono-today.js').parse(String(datePhrase || ''), new Date())[0];
   if (!r) return { label: '', options: [], none: false };
   const d = r.start.date();
   const dateStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -1288,7 +1288,7 @@ async function validateDeliveryTime(state, message, email, format, res) {
   const storeZone = zoneForAddress(state.address);
   const msgForParse = String(message).replace(/\b(PST|PDT|PT|MST|MDT|MT|CST|CDT|CT|EST|EDT|ET)\b/gi, '')
     .replace(/\b(pacific|mountain|central|eastern)(\s+(standard|daylight))?(\s+time)?\b|\b(west|east) coast( time)?\b/gi, '').replace(/\s+/g, ' ').trim();
-  const parsedResults = chrono.parse(msgForParse, new Date(), { forwardDate: true });
+  const parsedResults = require('./chrono-today.js').parse(msgForParse, new Date());
   const hasTime = !!(parsedResults.length && parsedResults[0].start.isCertain('hour'));
   // The answer to "which time zone?": the held time, read in that zone.
   if (!hasTime && statedZone && state.orderData.pendingWhen) {
@@ -4018,6 +4018,34 @@ app.post('/chat', async (req, res) => {
       // A bare "2pm" answers the time question; a bare "ET" / "Pacific" answers the time-zone question (DC, Oct 5).
       const eoQ = state.emailOrder || {};
       const zoneAnswer = !!((eoQ.pending_when || eoQ.awaiting_zone) && String(message).trim().length <= 120 && explicitZoneIn(message));
+      // Waiting on contact details and the code read none: the model's reading (fact-reader contact) fills what it states.
+      // Real (Nov 14, DC): "First and last Name: Diana Maranzano" was read by nothing; the turn went to the model, whose
+      // place_order was refused, and it told DC "The system will create the order ... shortly" — nothing was placed.
+      if (state.emailOrder && !(x.name || x.phone || x.email)) {
+        const cM = ((await FR.factsFor(message, { qa: isQA })) || {}).contact;
+        if (cM && (cM.name || cM.phone || cM.email)) {
+          if (cM.name && String(cM.name).trim().split(/\s+/).length >= 1 && !/@|\d/.test(cM.name)) x.name = String(cM.name).trim();
+          if (cM.phone && /\d{3}\D*\d{3}\D*\d{4}/.test(cM.phone)) x.phone = String(cM.phone).trim();
+          if (cM.email && /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(String(cM.email).trim())) x.email = EO.fixAddr(String(cM.email).trim());
+          FR.gap('order_contact', 'missed', null, cM, frCtx);
+        }
+      }
+      // The model's own place_order is refused in an email thread (rachel.js): its reply is never the answer — the code
+      // asks for exactly what is missing (it said the order "will be created shortly" when nothing was placed).
+      if (state.emailOrder || EO.isOrderCommand(message)) {
+        const _jO = res.json.bind(res);
+        res.json = (payload) => {
+          try {
+            const stO = flowState[sessionKey] || state;
+            if (stO.emailOrderRefused) {
+              stO.emailOrderRefused = false;
+              const odO = stO.emailOrder || {}, missO = EO.missing(odO);
+              if (missO.length) { const t = EO.askText(missO, odO, ''); payload.text = t; payload.response = t; console.log('[email-order] the model\'s reply after its refused place_order REPLACED with the code\'s ask: ' + JSON.stringify(missO)); }
+            }
+          } catch (e) {}
+          return _jO(payload);
+        };
+      }
       const provided = !!(x.name || x.phone || x.when || x.date || x.time || x.instructions || x.tip || zoneAnswer);
       // A NEW thread with its list (typed, attached, a Google Sheet) AND "place the order" (DC, Oct 22): the basket is
       // built from the list this turn, then the email agent sends the email's typed text back (`followup`) and this block
@@ -4095,12 +4123,23 @@ app.post('/chat', async (req, res) => {
           const evD = require('./event-date.js').normalizeEventDate((tD && tD.date) || state.savedEventDate || require('./event-date.js').findEventDateIn(String(state.emailSubject || '')) || '', new Date());
           if (evD && evD.date) { od.delivery_date = evD.text; console.log('[email-order] no delivery date in this email — ' + (tD ? 'the date the thread gives (' + tD.emailsBack + ' email(s) back)' : 'the event date') + ' is used: ' + JSON.stringify(evD.text)); }
         }
+        // The thread's delivery window ("Saturday 11/14 (1-3pm ET)", "Tomorrow (1-3pm ET)") gives the date, the START time and
+        // the zone when this email gives none (Nov 14, DC: all three were asked although Sean's forward said them).
+        const fWin = (EMAIL_THREAD_FACTS.get(String(sessionKey)) || {}).window;
+        const winV = fWin ? String(fWin.value || '') : '';
+        if (winV && !x.when && !x.date && !od.delivery_date && !od.delivery_ok) {
+          const wd = EO.timing([winV], new Date()).date || (/\btoday\b/i.test(winV) ? 'today' : /\btomorrow\b/i.test(winV) ? 'tomorrow' : '');
+          if (wd) { od.delivery_date = wd; console.log('[email-order] delivery date from the thread\'s window (' + fWin.from + '): ' + JSON.stringify(winV) + ' -> ' + JSON.stringify(wd)); }
+        }
+        if (winV && !od.cust_zone && !state.custZone) { const zW = zoneStatedIn(winV) || explicitZoneIn(winV); if (zW) { od.cust_zone = zW; state.custZone = zW; console.log('[email-order] time zone from the thread\'s window: ' + zW); } }
         let whenPhrase = x.when || (x.time && od.delivery_date ? od.delivery_date + ' at ' + x.time : '');
         // A delivery window an earlier email (or the history this one quotes) gives is the time — never asked again
         // (thread-facts.js; DC, Nov 14: ask only what the thread doesn't say).
         if (!whenPhrase && !od.delivery_ok && od.delivery_date) {
           const fW = (EMAIL_THREAD_FACTS.get(String(sessionKey)) || {}).window;
-          const tW = fW && (String(fW.value).match(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i) || [])[0];
+          // a range "1-3pm" starts at 1pm (the start, with the range's am/pm) — it was read as 3pm
+          const rgW = fW && String(fW.value).match(/\b(\d{1,2}(?::\d{2})?)\s*(am|pm)?\s*(?:-|–|—|to)\s*\d{1,2}(?::\d{2})?\s*(am|pm)\b/i);
+          const tW = rgW ? rgW[1] + (rgW[2] || rgW[3]) : fW && (String(fW.value).match(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i) || [])[0];
           if (tW) { whenPhrase = od.delivery_date + ' at ' + tW; console.log('[email-order] delivery time from the email thread (' + fW.from + '): ' + JSON.stringify(fW.value) + ' -> ' + JSON.stringify(whenPhrase)); }
         }
         // The zone: stated in this email ("times in PST please"), or — when Rachel asked for it — a short answer ("ET").

@@ -740,6 +740,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         // then asked "place the order, or send you a PDF proposal?" after the customer had already said place it.
         if (saInput.intent === 'place_order' && sessionState && (sessionState.emailSubject || sessionState.emailOrder)) {
           console.log('[order] REFUSED the LLM\'s place_order in an email thread — email orders are placed in code');
+          sessionState.emailOrderRefused = true;
           return { success: false, order_id: '', payment_url: '', error: 'EMAIL_ORDER_IN_CODE: in an email thread the order is placed by the system, not by this tool.', action_required: 'Do not call place_order. Do not ask whether to place the order or send a proposal. Tell the customer, in one short paragraph, which of these are still needed: the customer\'s full name, email, phone, and delivery date + time — and that you will create the order and send the payment link as soon as they reply with them.' };
         }
         if (saInput.intent === 'place_order' && !alreadyConfirmed) {

@@ -130,11 +130,14 @@ function timing(lines, now) {
   const n = now || new Date();
   const text = normalizeTimes((lines || []).filter(l => !HEADER.test(l) && !/^\s*On\s.+wrote:\s*$/.test(l)).join('\n'), n);
   const tomorrow = new Date(n.getFullYear(), n.getMonth(), n.getDate() + 1).getTime();
+  // today counts when it is WRITTEN as a date (a same-day delivery: "Saturday 11/14 (1-3pm ET)" on Nov 14) — never "earlier today"
+  const today0 = new Date(n.getFullYear(), n.getMonth(), n.getDate()).getTime();
+  const dated = r => /\d|\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|mon|tue|wed|thu|fri|sat|sun)/i.test(r.text) && r.start.date().getTime() >= today0;
   const out = { when: '', date: '', time: '' };
-  for (const r of chrono.parse(text, n, { forwardDate: true })) {
+  for (const r of require('./chrono-today.js').parse(text, n)) {
     const hasDay = r.start.isCertain('day') || r.start.isCertain('weekday'), hasHour = r.start.isCertain('hour');
     if (hasDay && hasHour) { if (!out.when) out.when = r.text; }
-    else if (hasDay && !out.date && r.start.date().getTime() >= tomorrow) out.date = r.text;
+    else if (hasDay && !out.date && (r.start.date().getTime() >= tomorrow || dated(r))) out.date = r.text;
     else if (hasHour && !hasDay && !out.time) out.time = r.text;
   }
   return out;
@@ -169,10 +172,14 @@ function cleanGmail(text) {
 // The on-site contact: "Main POC is Mara (862) 252-5077", "Point of contact: Mara Lee, 862-252-5077", "contact Mara at 862...".
 function pocIn(lines) {
   const KW = /\b(?:main\s+|primary\s+|on-?site\s+)?(?:poc|point\s+of\s+contact|contact(?:\s+person)?|on-?site\s+contact)\b\s*(?:is|will\s+be|:|-)?\s*/i;
-  for (const l of lines || []) {
+  const L = lines || [];
+  for (let i = 0; i < L.length; i++) {
+    const l = L[i];
     const k = l.match(KW);
     if (!k) continue;
-    const rest = l.slice(k.index + k[0].length);
+    let rest = l.slice(k.index + k[0].length).replace(/^[*\s:]+/, '');
+    // "*On-Site Contact:*" with "Diana Maranzano | 212-288-3500" on the next line (Nov 14, Sean's forward) — was never read
+    if (!rest.trim()) { const nx = L.slice(i + 1, i + 4).map(x => x.replace(/\*+/g, '').trim()).find(Boolean); if (nx && !/:\s*$/.test(nx)) rest = nx; }
     const m = rest.match(/^([A-Z][a-z'’-]+(?:\s+[A-Z][a-z'’-]+)?)\b/);
     if (!m || /^(?:Is|At|The|Our|Will|Please|Me|Us)$/.test(m[1])) continue;
     const ph = rest.slice(m[0].length, m[0].length + 30).match(PHONE);   // "Mara (862) 252-5077", "Mara Lee, 862-252-5077"
@@ -191,6 +198,7 @@ function instructionsBlock(lines) {
   const out = first ? [first] : [];
   for (const l of lines.slice(i + 1)) {
     if (/^\s*(?:thanks|thank you|best|regards|cheers|sincerely)\b/i.test(l) || /^\s*On\s.+wrote:\s*$/.test(l) || HEADER.test(l)) break;
+    if (/^\s*\*?\s*[A-Z][\w '\/-]{2,30}:\s*\*?\s*$/.test(l)) break;   // the next form label ("*On-Site Contact:*") ends the block
     if (l.trim()) out.push(l.trim());
   }
   return out.join(' ').replace(/\s{2,}/g, ' ').replace(/\s+([.,;])/g, '$1').trim().slice(0, 700);
@@ -208,13 +216,15 @@ function extract(text, sender, now) {
   // Bevvi staff sending for a customer, nothing forwarded: the on-site contact (name + phone) and the address the
   // payment link goes to are the customer (Oct 2, Sean: "Payment link should be sent to: inge@...", "Main POC is Mara (862) ...").
   if (!out.source) {
-    const poc = pocIn(top);
+    // a Bevvi colleague's forward (Sean -> DC): its on-site contact counts too (Nov 14: "On-Site Contact: Diana Maranzano")
+    const poc = pocIn(top) || (fwd && fh && isStaff(fh.email) ? pocIn(fwd) : null);
     if (poc) { out.name = poc.name; if (poc.phone) out.phone = poc.phone; out.source = 'contact in the email'; }
     const lt = linkRecipients(top.join('\n')).filter(a => !isStaff(a));
     if (lt.length) { out.email = lt[0]; out.source = out.source || 'payment-link recipient'; }
   }
   // Typed fields win (either part of the email).
-  const n = field(all, /^\s*\*?(?:name|contact(?: name)?|recipient|order (?:name|for))\*?\s*:\s*([^\n<]{3,60})$/i)
+  // "First and last Name: Diana Maranzano", "First name and last Name:", "Full name:" (Nov 14, DC: asked for the name twice)
+  const n = field(all, /^\s*\*?(?:(?:first(?:\s+name)?\s*(?:and|&|\/)\s*last\s+name|full\s+name|name)|contact(?: name)?|recipient|order (?:name|for))\*?\s*:\s*([^\n<]{3,60})$/i)
     || labelled(all, WHO + '(?:full\\s+)?name') || nameCorrection(top.join('\n'));
   if (n) { out.name = n.replace(PHONE, '').replace(EMAIL, '').replace(/[,;|]+\s*$/, '').trim(); out.source = out.source || 'typed'; }
   const em = field(all, /^\s*\*?(?:e-?mail|contact email|recipient email)\*?\s*:\s*(\S+@\S+)/i)
@@ -229,7 +239,8 @@ function extract(text, sender, now) {
   const tm = timing(all, now);
   out.when = tm.when; out.date = tm.date; out.time = tm.time;
   out.link_to = linkRecipients(top.join('\n'));
-  out.instructions = field(all, /^\s*\*?(?:delivery |driver )?(?:instructions?|notes? for (?:the )?driver)\*?\s*:\s*(.+)$/i) || instructionsBlock(top);
+  out.instructions = field(all, /^\s*\*?(?:delivery |driver )?(?:instructions?|notes? for (?:the )?driver)\*?\s*:\s*(.+)$/i) || instructionsBlock(top)
+    || (fwd && fh && isStaff(fh.email) ? instructionsBlock(fwd) : '');   // a colleague's forward: its "*Delivery Instructions:*" block
   return out;
 }
 
