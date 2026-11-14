@@ -1042,7 +1042,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   refused place_order the reply is the code's ask (sessionState.emailOrderRefused, [email-order] ... REPLACED with the code's
   ask). "Create the order now": chrono read "now" as the delivery time (19:00 UTC booked as 7-8 PM ET) — chrono-today drops
   now / asap / immediately; a reply that is only a name ("Diana Maranzano") is the name while the email order waits for it.
-  Scenario 147, qa/unit/email-order-nov14.test.js.
+  Driver note: Gmail's URL-encoded phone link ("<%28212%29%20288-3500>") is removed (cleanGmail + delivery-instructions.js clean,
+  which runs at placement — so a note saved before the fix is cleaned too) and a glued "On-Site Contact:" becomes its own sentence
+  ("Deliver to the 3rd floor. On-Site Contact: Diana Maranzano, 212-288-3500"); precheck restarts shopping-agent and rachel-mcp
+  for delivery-instructions.js (both load it). Scenario 147, qa/unit/email-order-nov14.test.js.
 
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days

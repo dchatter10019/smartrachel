@@ -27,3 +27,6 @@ eq('PO box left alone', S('PO Box 12, Smalltown, VT 05001').address, 'PO Box 12,
 
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('delivery-instructions: all passed');
+// Nov 14 (DC): Gmail's encoded phone link and a glued "On-Site Contact:" label
+{ const r = require('../../delivery-instructions.js').clean('Deliver to the 3rd floor On-Site Contact: Diana Maranzano | 212-288-3500 <%28212%29%20288-3500>');
+  if (r.text !== 'Deliver to the 3rd floor. On-Site Contact: Diana Maranzano, 212-288-3500') { console.log('  ✗ Gmail link clutter / glued label: ' + JSON.stringify(r.text)); process.exit(1); } else console.log('  ✓ Gmail link clutter / glued label'); }

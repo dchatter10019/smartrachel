@@ -9,7 +9,12 @@ const COMPANY = /(?:^|[.;\n]\s*)(?:company|company name|business|organi[sz]ation
 const BOOKKEEPING = /\bBEVVI-[A-Z0-9-]+|\b(?:replac\w*|supersed\w*|cancel\w*|duplicate|re-?placed|re-?order\w*)\b[^.;\n]{0,40}\border|\border\b[^.;\n]{0,30}\b(?:unpaid|not (?:yet )?paid)|\b(?:swapp?ed|switched|changed|updated|revised)\b[^.;\n]{0,40}\b(?:to|for|from)\b|\bprevious (?:order|version)\b|\bupdated order\b/i;
 
 function clean(text) {
-  let t = String(text || '').trim();
+  // Gmail's link clutter ("<%28212%29%20288-3500>", "<tel:...>", "<https://...>") never reaches the driver, and a form label
+  // glued onto the note becomes its own sentence (Nov 14, DC: "Deliver to the 3rd floor On-Site Contact: Diana Maranzano |
+  // 212-288-3500 <%28212%29%20288-3500>").
+  let t = String(text || '').replace(/<[^<>\s]*%[0-9A-F]{2}[^<>\s]*>|<(?:https?:\/\/|mailto:|tel:)[^>\s]*>/gi, ' ')
+    .replace(/([^.;!\n])\s+((?:on-?site\s+contact|point\s+of\s+contact|main\s+poc)\s*:)/gi, '$1. $2')
+    .replace(/\s*\|\s*(?=\(?\d{3}\)?[\s.-]?\d{3})/g, ', ').replace(/[ \t]{2,}/g, ' ').trim();
   const out = { text: '', company: '', removed: [] };
   if (!t) return out;
   const cm = t.match(COMPANY);

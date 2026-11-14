@@ -151,7 +151,7 @@ deploy() {
   # shopping-agent also loads rachel/functions.js, package-model.js and brand-lists.js — a change
   # to only those left it running the old code.
   # generate-proposal.js too: shopping-agent's generate_proposal requires it (Sep 29).
-  echo "$DIRTY" | grep -qE " store-agent/| rachel/(functions|package-model|brand-lists|generate-proposal|product-match|search-match|stock)\.js" && svcs+=(shopping-agent)
+  echo "$DIRTY" | grep -qE " store-agent/| rachel/(functions|package-model|brand-lists|generate-proposal|product-match|search-match|stock|delivery-instructions)\.js" && svcs+=(shopping-agent)
   # The email agent (rachel/email-agent.py) is its own service.
   echo "$DIRTY" | grep -q " rachel/email-agent\.py" && svcs+=(rachel-email)
   # The Slack bot (rachel/rachel_slack_bot.py) is its own service too.
@@ -160,7 +160,7 @@ deploy() {
   echo "$DIRTY" | grep -q " rachel/rachel_whatsapp_bot\.py" && svcs+=(rachel-whatsapp)
   # The MCP connector (rachel-mcp.js on :3600) and what it loads. Until Oct 3 it was restarted by hand, outside a
   # deploy -> no deploy log -> the monitor raised a false "restarted outside a deploy" crash (F-0014).
-  echo "$DIRTY" | grep -qE " rachel/(rachel-mcp|mcp-auth|mcp-oauth|gbrain|generate-proposal|serving-mix|cocktail-expand|proposal-email|email-utils)\.js" && svcs+=(rachel-mcp)
+  echo "$DIRTY" | grep -qE " rachel/(rachel-mcp|mcp-auth|mcp-oauth|gbrain|generate-proposal|serving-mix|cocktail-expand|proposal-email|email-utils|delivery-instructions)\.js" && svcs+=(rachel-mcp)
   [ ${#svcs[@]} -eq 0 ] && svcs=(rachel)
   echo "Deploy $STAMP: HEAD $(git rev-parse --short HEAD), services: ${svcs[*]}"
   if [ -n "$DIRTY" ]; then echo "Uncommitted changes being deployed:"; echo "$DIRTY"; else echo "Working tree clean under $SCOPE (deploying HEAD)."; fi

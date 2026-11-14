@@ -165,7 +165,7 @@ function tipIn(text) {
 // Gmail's plain-text decorations: "<(862)%20252-5077>", "<https://www.google.com/maps/...>", "<a@b.com>" after the same
 // address, "*bold*" markers. Real (Oct 2, Sean's Foodie For All payment-link email): none of it was read.
 function cleanGmail(text) {
-  return String(text || '').replace(/<(?:https?:\/\/|mailto:|tel:)[^>\s]*>/gi, ' ').replace(/<\(?\d{3}\)?%20[\d%-]+>/g, ' ').replace(/<\+?\d{7,15}>/g, ' ')
+  return String(text || '').replace(/<(?:https?:\/\/|mailto:|tel:)[^>\s]*>/gi, ' ').replace(/<\(?\d{3}\)?%20[\d%-]+>/g, ' ').replace(/<[^<>\s]*%[0-9A-F]{2}[^<>\s]*>/gi, ' ').replace(/<\+?\d{7,15}>/g, ' ')
     .replace(/([\w.+-]+@[\w-]+(?:\.[\w-]+)+)\s*<\1>/gi, '$1')
     .replace(/(^|\s)\*+(?=\S)|(?<=\S)\*+(?=\s|$)/gm, '$1').replace(/(^|\s)\*+(?=\s|$)/gm, '$1').replace(/\u00a0/g, ' ').replace(/[ \t]{2,}/g, ' ');
 }
