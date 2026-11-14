@@ -140,4 +140,23 @@ function threadNote(emails, { currentText = '' } = {}) {
   return { note, count: parts.length, chars: note.length, omitted };
 }
 
-module.exports = { latest, stripSignature, forContext, threadNote };
+// The customer side of the thread for facts read IN CODE (dates, contact, client): every email not from Rachel, NEWEST
+// first, as forContext gives it (the first email whole, later ones = new text + whole forwards), each with its own sent
+// time so "tomorrow" / "this Sunday" in an older email are read from the day it was written. emails: as threadNote.
+// DC, Nov 14: "all replies to the emails should remember the history" — the model saw the whole thread, but the replies
+// written in code (in-code proposal, quote PDF, email order) read only the newest email + saved values (HI USA: the
+// proposal said November 14, the thread said "the requested delivery date is Thursday, November 19th").
+function customerEmails(emails) {
+  const list = (emails || []).filter(e => e && String(e.body || '').trim());
+  const out = [];
+  list.forEach((e, k) => {
+    if (RACHEL_ADDR.test(String(e.from || ''))) return;
+    const text = forContext(e.body, { first: k === 0 });
+    if (!text) return;
+    const t = e.current ? new Date() : Number(e.ts) > 0 ? new Date(Number(e.ts)) : new Date(String(e.date || '').replace(/\s*\([A-Z]{2,5}\)\s*$/, ''));
+    out.push({ text, sent: isNaN(t) ? new Date() : t, current: !!e.current });
+  });
+  return out.reverse();
+}
+
+module.exports = { latest, stripSignature, forContext, threadNote, customerEmails };

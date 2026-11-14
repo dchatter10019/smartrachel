@@ -1483,6 +1483,31 @@ async function findSubstitute(name, zip, email) {
 // Email session -> this turn's whole-thread notes block (built in /chat from the email agent's thread_history; in memory
 // only — never saved with the session state; the next email rebuilds it).
 const EMAIL_THREAD_NOTES = new Map();
+// Email session -> the customer side of the thread (email-body.js customerEmails: newest first, {text, sent, current}), for
+// the facts replies written IN CODE read (dates, contact). Same lifetime as EMAIL_THREAD_NOTES (rebuilt on every email).
+const EMAIL_THREAD_EMAILS = new Map();
+function threadCustomerEmails(sessionKey) { return EMAIL_THREAD_EMAILS.get(String(sessionKey)) || []; }
+// The newest date a customer email of the thread states (delivery / event line first, event-date.js findEventDateIn, read
+// from the day that email was sent) -> { date, emailsBack } or null. emailsBack 0 = the email being answered.
+// The customer's EARLIER emails (newest first) for a field this email lacks: the whole thread (forwards and every Gmail thread
+// of the session), else this session's recorded customer turns (a session from before the thread was kept in memory).
+function threadPriorTexts(sessionKey) {
+  const th = threadCustomerEmails(sessionKey).filter(e => !e.current).map(e => e.text);
+  const turns = (sessions[sessionKey] || []).filter(m => m.role === 'user').map(m => typeof m.content === 'string' ? m.content : (Array.isArray(m.content) ? m.content.filter(c => c.type === 'text').map(c => c.text).join('\n') : '')).filter(Boolean).reverse();
+  return th.length ? th.concat(turns) : turns;
+}
+function threadEventDate(sessionKey) {
+  const ED = require('./event-date.js');
+  const list = threadCustomerEmails(sessionKey);
+  // all = every date any customer email states (the guard never "corrects" a printed date the customer wrote somewhere).
+  const all = [];
+  for (const e of list) for (const d of ED.datesIn(e.text, e.sent)) if (!all.includes(d)) all.push(d);
+  for (let k = 0; k < list.length; k++) {
+    const d = ED.findEventDateIn(list[k].text, list[k].sent);
+    if (d && /\d/.test(d)) return { date: d, emailsBack: k, all };
+  }
+  return null;
+}
 async function callRachel({ sessionKey, message, context, format, gbrainContext, addressRule, email, onProposalGenerated, alreadyConfirmed }) {
   // A message that is only a product list is built IN CODE (order-wording.js listItems -> custom_list; DC, Oct 28: "make
   // this behaviour deterministic"): the model never decides whether or how to build it, and the reply is composed in code
@@ -2039,8 +2064,9 @@ app.post('/chat', async (req, res) => {
     // last with what it quotes / forwards. A call without thread_history (the agent's follow-up call) keeps this email's.
     try {
       const hist = context && Array.isArray(context.thread_history) ? context.thread_history : null;
+      const cur = { from: (context && (context.user_name ? context.user_name + ' <' + (context.user_email || '') + '>' : context.user_email)) || 'customer', body: rawEmail, current: true };
+      if (hist || !EMAIL_THREAD_EMAILS.has(String(session_id))) EMAIL_THREAD_EMAILS.set(String(session_id), require('./email-body.js').customerEmails([].concat(hist || [], [cur])));
       if (hist || !EMAIL_THREAD_NOTES.has(String(session_id))) {
-        const cur = { from: (context && (context.user_name ? context.user_name + ' <' + (context.user_email || '') + '>' : context.user_email)) || 'customer', body: rawEmail, current: true };
         const tn = require('./email-body.js').threadNote([].concat(hist || [], [cur]), { currentText: message });
         if (tn.note) { EMAIL_THREAD_NOTES.set(String(session_id), tn.note); console.log('[email-thread] ' + tn.count + ' email(s) in the notes (' + tn.chars + ' chars' + (tn.omitted ? ', ' + tn.omitted + ' in between left out for length' : '') + ')'); }
         else EMAIL_THREAD_NOTES.delete(String(session_id));
@@ -2414,7 +2440,9 @@ app.post('/chat', async (req, res) => {
           const pAddr = PG.printedAddress(pi.notes), pZip = (pAddr.match(/(\d{5})(?:-\d{4})?$/) || [])[1];
           const covP = pZip ? await checkStoreCoverage(pZip).catch(() => null) : null;
           const covS = stated ? await checkStoreCoverage(stated.zip).catch(() => null) : null;
+          const thE = threadCustomerEmails(sessionKey);
           const issues = PG.check(pi, { message, subject: context && context.email_subject, threadFirst: context && context.thread_first_body, senderName: context && context.user_name,
+            threadText: thE.map(e => e.text).join('\n\n'), threadDate: /^email-/.test(String(sessionKey)) ? threadEventDate(sessionKey) : null,
             stated, printedStore: covP && covP.establishmentId, statedStore: covS && covS.establishmentId });
           // Totals the reply states must be the PDF's (checked after any regeneration below, on the final PDF).
           const totalsFix = (piT) => {
@@ -3818,7 +3846,7 @@ app.post('/chat', async (req, res) => {
         // Still missing a name / email / phone: the thread's earlier emails, newest first. Real (Oct 3, DC): "You have the
         // name from before" — Sean's form two emails up had the customer's name, email and phone.
         if (!(String(od.name || '').trim().split(/\s+/).length >= 2 && od.email && od.phone)) {
-          const prior = (sessions[sessionKey] || []).filter(m => m.role === 'user').map(m => typeof m.content === 'string' ? m.content : (Array.isArray(m.content) ? m.content.filter(c => c.type === 'text').map(c => c.text).join('\n') : '')).filter(Boolean).reverse();
+          const prior = threadPriorTexts(sessionKey);
           const got = [];
           for (const t of prior) {
             const px = EO.extract(t, { name: context && context.user_name, email }, new Date());
@@ -3831,7 +3859,7 @@ app.post('/chat', async (req, res) => {
         // Delivery instructions given in an earlier email ride on the order too (Oct 3, Foodie For All: the POC / COI /
         // loading-dock notes were two emails up; the order was placed from "place the order" and went out without them).
         if (!od.instructions) {
-          const prior = (sessions[sessionKey] || []).filter(m => m.role === 'user').map(m => typeof m.content === 'string' ? m.content : (Array.isArray(m.content) ? m.content.filter(c => c.type === 'text').map(c => c.text).join('\n') : '')).filter(Boolean).reverse();
+          const prior = threadPriorTexts(sessionKey);
           for (const t of prior) {
             const px = EO.extract(t, { name: context && context.user_name, email }, new Date());
             if (px.instructions) { od.instructions = px.instructions; console.log('[email-order] delivery instructions from an earlier email in the thread: ' + JSON.stringify(px.instructions).slice(0, 160)); break; }
@@ -3845,8 +3873,9 @@ app.post('/chat', async (req, res) => {
         // Sean, "Foodie For All Event - Oct 6th": "please let us know what time we should expect the delivery") — he was
         // asked for "the delivery date and time" instead of the Oct 6 windows.
         if (!x.when && !x.date && !od.delivery_date && !od.delivery_ok) {
-          const evD = require('./event-date.js').normalizeEventDate(state.savedEventDate || require('./event-date.js').findEventDateIn(String(state.emailSubject || '')) || '', new Date());
-          if (evD && evD.date) { od.delivery_date = evD.text; console.log('[email-order] no delivery date given — the event date is used: ' + JSON.stringify(evD.text)); }
+          const tD = threadEventDate(sessionKey);
+          const evD = require('./event-date.js').normalizeEventDate((tD && tD.date) || state.savedEventDate || require('./event-date.js').findEventDateIn(String(state.emailSubject || '')) || '', new Date());
+          if (evD && evD.date) { od.delivery_date = evD.text; console.log('[email-order] no delivery date in this email — ' + (tD ? 'the date the thread gives (' + tD.emailsBack + ' email(s) back)' : 'the event date') + ' is used: ' + JSON.stringify(evD.text)); }
         }
         let whenPhrase = x.when || (x.time && od.delivery_date ? od.delivery_date + ' at ' + x.time : '');
         // The zone: stated in this email ("times in PST please"), or — when Rachel asked for it — a short answer ("ET").
@@ -3996,8 +4025,9 @@ app.post('/chat', async (req, res) => {
                   const senderC = EO.isStaff(email) ? '' : String((context && context.user_name) || '').trim();
                   const client = st.savedClientName || ES.clientLabeledIn(st.originalRequest || message) || ES.clientFromSubject(st.emailSubject || subj) || fwdC || senderC || '';
                   if (!st.savedClientName && fwdC && client === fwdC) console.log('[quote-pdf] client from the forwarded email\'s company: ' + JSON.stringify(fwdC));
-                  const eventDate = require('./event-date.js').findEventDateIn(turnMsg);   // not cta.DATE_RE: "Sun" Cruiser was a date
+                  let eventDate = require('./event-date.js').findEventDateIn(turnMsg);   // not cta.DATE_RE: "Sun" Cruiser was a date
                   if (eventDate) console.log('[quote-pdf] event date read from the email: ' + JSON.stringify(eventDate));
+                  else { const tD = threadEventDate(sessionKey); if (tD) { eventDate = tD.date; console.log('[quote-pdf] event date from the email thread (' + tD.emailsBack + ' email(s) back): ' + JSON.stringify(eventDate)); } }
                   const lt = listText;
                   quotePdf(st, itL, client.trim(), eventDate, cL.inexact.length).then(url => {
                     payload.text = lt + (url ? '\n\nYour PDF proposal is attached' + (eventDate ? '' : ' — reply with the event date and I\'ll add it') + ': ' + url : '');
@@ -5923,6 +5953,10 @@ app.post('/chat', async (req, res) => {
         if (!state.savedClientName) {
           const fwC = require('./email-subject.js').clientFromForward(state.originalRequest || '') || require('./email-subject.js').clientFromForward(message);
           if (fwC) { state.savedClientName = fwC; console.log('[proposal] client from the forwarded email\'s company: ' + JSON.stringify(fwC)); }
+        }
+        if (!state.savedEventDate && /^email-/.test(String(sessionKey))) {   // the newest date the customer's emails give (whole thread)
+          const tD = threadEventDate(sessionKey);
+          if (tD) { state.savedEventDate = tD.date; state.eventDateNone = false; console.log('[proposal] event date from the email thread (' + (tD.emailsBack ? tD.emailsBack + ' email(s) back' : 'this email') + '): ' + JSON.stringify(tD.date)); }
         }
         if (!state.savedEventDate && state.originalRequest) {
           const dO = require('./event-date.js').findEventDateIn(state.originalRequest);

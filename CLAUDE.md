@@ -106,7 +106,15 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   earlier email of every Gmail thread mapped to the session (Rachel's too, max 40) -> context.thread_history -> email-body.js
   threadNote (first email whole incl. what it quotes/forwards; later emails = new text + whole forwards, never their quotes or
   a forward of Rachel's own email; Rachel's = her text; 40k chars, first + newest kept) -> server EMAIL_THREAD_NOTES (memory)
-  -> "## THE WHOLE EMAIL THREAD" in the turn notes ([email-thread] N email(s) in the notes). Scenario 137, qa/unit/email-thread.test.js. The sender's signature is
+  -> "## THE WHOLE EMAIL THREAD" in the turn notes ([email-thread] N email(s) in the notes). Scenario 137, qa/unit/email-thread.test.js.
+  Replies written IN CODE read the thread too (DC, Nov 14: "all replies to the emails should remember the history"; HI USA's
+  in-code PDF said November 14 — the forward's sent date — while the thread said "delivery date is Thursday, November 19th"):
+  server.js EMAIL_THREAD_EMAILS (email-body.js customerEmails: customer emails only, newest first, each read from its own sent
+  time) -> threadEventDate (the in-code proposal flow, the quote PDF and the email order's delivery date take the newest
+  date the thread gives when this email has none: [proposal] / [quote-pdf] / [email-order] ... from the email thread),
+  threadPriorTexts (email order name / email / phone / delivery instructions from every earlier email, forwards included),
+  and the proposal guard (a printed date the customer never wrote anywhere in the thread -> the thread's date, CORRECTED; a
+  client named anywhere in the thread is never "corrected" to the subject's). qa/unit/email-thread-facts.test.js. The sender's signature is
   cut too (stripSignature: "-- ", a line that is the From name, or a trailing contact block). The first real request
   (a list) is kept as state.originalRequest and shown to the LLM every turn, with state.onHand. On every
   continuation the agent sends the thread's first non-Rachel email (context.thread_first_body); a session with no

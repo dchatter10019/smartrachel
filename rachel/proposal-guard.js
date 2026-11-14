@@ -7,7 +7,7 @@
 //
 // check(pi, ctx) -> [{ field, printed, expected, why, fixable }]
 //   pi:  the proposal's saved items file (generate-proposal.js): { client_name, event_date, notes, line_items }
-//   ctx: { message, subject, threadFirst, senderName, stated: { address, zip } | null, printedStore, statedStore, now }
+//   ctx: { message, subject, threadFirst, threadText (every customer email), threadDate ({date, all} from the whole thread), senderName, stated: { address, zip } | null, printedStore, statedStore, now }
 // Checks (each only when the customer's own words give the expected value):
 //   address — an address in THIS message that isn't the printed one
 //   store   — the lines come from another store than the one serving the printed address (fixable only when the
@@ -60,13 +60,18 @@ function check(pi, ctx) {
   // billed to "Sean Fitzgibbons" with "Liquid Labs" in the subject).
   const senderIsClient = !!(ctx.senderName && pi.client_name && (names(ctx.senderName, pi.client_name) || names(pi.client_name, ctx.senderName)));
   if (sc && pi.client_name && !names(pi.client_name, sc) && !names(sc, pi.client_name)
-      && (senderIsClient || (!names(msg, pi.client_name) && !names(ctx.threadFirst || '', pi.client_name)))
+      && (senderIsClient || (!names(msg, pi.client_name) && !names(ctx.threadFirst || '', pi.client_name) && !names(ctx.threadText || '', pi.client_name)))
       && !(ED.parseProposalFieldEdit(msg, pi.event_date, now) || {}).client) {
     out.push({ field: 'client', printed: pi.client_name, expected: sc, why: 'the email subject names ' + sc + ' and the customer never named ' + pi.client_name + ' in this thread', fixable: true });
   }
   const said = ED.findEventDateIn(msg, now);
   if (said && /\d/.test(said) && pi.event_date && !sameDate(said, pi.event_date, now)) {
     out.push({ field: 'date', printed: pi.event_date, expected: ED.normalizeEventDate(said, now).text, why: 'the customer wrote this date in the message', fixable: true });
+  } else if (!said && ctx.threadDate && ctx.threadDate.date && pi.event_date && !sameDate(ctx.threadDate.date, pi.event_date, now)
+      && !(ctx.threadDate.all || []).some(d => sameDate(d, pi.event_date, now)) && !(ED.parseProposalFieldEdit(msg, pi.event_date, now) || {}).date) {
+    // Email: no date in this message — the newest date the customer's emails give (the whole thread) is the one to print.
+    // Real (Nov 14, HI USA): "the requested delivery date is Thursday, November 19th" two emails up; the PDF said November 14.
+    out.push({ field: 'date', printed: pi.event_date, expected: ED.normalizeEventDate(ctx.threadDate.date, now).text, why: 'the customer gave this date earlier in the email thread', fixable: true });
   }
   return out;
 }

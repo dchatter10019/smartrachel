@@ -130,6 +130,17 @@ function findEventDateIn(text, now = new Date()) {
   return wd ? wd[1][0].toUpperCase() + wd[1].slice(1).toLowerCase() : '';
 }
 
+// Every date a text states, one per line (same lines findEventDateIn reads: no item lines, no forward headers) -> [text].
+function datesIn(text, now = new Date()) {
+  const out = [];
+  String(text || '').split(/\r?\n/).forEach(l => {
+    if (!/\d/.test(l) || /^\s*(?:[-•*·]\s*)?\d+\s*(?:x\b|×|\s+[A-Za-z])/i.test(l) || /^\s*\*?(?:date|sent|from|to|cc|bcc):\*?\s/i.test(l) || /^\s*On\s.{6,80}\bwrote:\s*$/i.test(l)) return;
+    const d = normalizeEventDate(l, now);
+    if (d.date && !out.includes(d.text)) out.push(d.text);
+  });
+  return out;
+}
+
 // The client and event date given IN a proposal request ("please create a proposal for Liquid Labs, event date
 // December 5"). -> { client?, date? } or null. Real bug (F-0034, Oct 13 QA): both were in the request and Rachel
 // still asked "What is the client or company name?". A "for <X>" that is a pronoun, the items, a date, a number or
@@ -148,4 +159,4 @@ function proposalRequestFields(msg, now = new Date()) {
   return out.client || out.date ? out : null;
 }
 
-module.exports = { normalizeEventDate, parseProposalFieldEdit, findEventDateIn, proposalRequestFields };
+module.exports = { normalizeEventDate, parseProposalFieldEdit, findEventDateIn, proposalRequestFields, datesIn };
