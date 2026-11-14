@@ -84,7 +84,10 @@ function parseEdits(text) {
   const inRm2 = /\b(?:please\s+)?(?:remove|take out|drop|delete)\s+(?:the\s+)?([^.,;:!?\n"“”(]{3,60}?)\s*(?:[.!;(\n]|$)/gim;
   const perLine = t.split('\n').map(l => l.replace(BULLET, '$1').trim()).join('\n');
   while ((m = inRm2.exec(perLine))) {
-    const nm = m[1].trim();
+    // "Take out the cloudy bay and regenerate the proposal." — the name ends before "and <regenerate / send ...>".
+    // Real (Nov 14, DC email): the whole tail was the name, it held "proposal", the remove was skipped and the in-code
+    // proposal path printed the PDF again with Cloudy Bay still on it.
+    const nm = m[1].replace(/\s+(?:and|then|&)\s+(?:then\s+)?(?:re-?generate|re-?send|send|update|redo|re-?do|make|create|give|share|email)\b.*$/i, '').trim();
     if (/\b(?:from|all|any|following|items?|these|those|below|date|client|name|pdf|proposal|quote|link|order|it|that|this|them)\b/i.test(nm) || out.removes.includes(nm)) continue;
     out.removes.push(nm);
   }
@@ -97,7 +100,7 @@ function parseEdits(text) {
   out.swaps = /\b(?:swap|switch|replace|substitute|change)\b[^.\n]{0,60}\b(?:for|with|to)\b|\binstead of\b/i.test(flat);
   // Questions and requests on lines that no edit above covers ("can we ...?") — never answered as if all done.
   out.questions = t.split('\n').map(l => l.replace(BULLET, '$1').trim()).filter(l => /\?\s*$/.test(l) || /^(?:can|could|would|will) (?:we|you)\b/i.test(l));
-  out.wantsQuote = /\b(?:updated|revised|new|corrected)\s+(?:quote|proposal|pdf|invoice|estimate)\b|\bre-?send\b|\bsend\b[^.]{0,20}\b(?:updated|revised)\b/i.test(flat);
+  out.wantsQuote = /\b(?:updated|revised|new|corrected)\s+(?:quote|proposal|pdf|invoice|estimate)\b|\bre-?send\b|\b(?:re-?generate|redo|re-?do|update)\s+(?:the\s+|my\s+|our\s+)?(?:quote|proposal|pdf)\b|\bsend\b[^.]{0,20}\b(?:updated|revised)\b/i.test(flat);
   // "take out the alternatives" / "remove the options" = the options listed in the proposal (proposal-options.js), never a
   // line called "alternatives" (Nov 13, connector: "Not in the quote, so nothing to change: alternatives.").
   out.removes = out.removes.filter(n => !/^(?:the\s+|all\s+|any\s+)?(?:(?:wine|beer|other|extra|listed)\s+)?(?:options?|alternatives?|choices)\b/i.test(n));

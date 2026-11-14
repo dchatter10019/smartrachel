@@ -16,7 +16,7 @@ function editsIn(msg) {
   const clauses = String(msg || '').replace(/[“”"]/g, '').split(/\n+|(?<=[.!?;])\s+|,\s*(?:then|and then)\s+|\s+then\s+/i);
   for (const c0 of clauses) {
     const c = c0.trim();
-    if (!c || PROPOSAL_WORDS.test(c) && !/\b(?:change|replace|swap|remove|add|instead)\b/i.test(c.replace(PROPOSAL_WORDS, ''))) continue;
+    if (!c || PROPOSAL_WORDS.test(c) && !/\b(?:change|replace|swap|switch|remove|take out|take off|drop|delete|add|instead)\b/i.test(c.replace(PROPOSAL_WORDS, ''))) continue;
     const m = c.match(/\b(?:change|replace|swap|switch|substitute|remove|take out|drop|delete|add|increase|decrease|reduce|bump|make (?:it|them|the\b)|update (?:the )?(?!proposal|pdf|quote)\w+|instead of)\b/i);
     if (!m) continue;
     const rest = c.slice(m.index);

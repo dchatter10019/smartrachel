@@ -668,6 +668,21 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             const llmC = String(saInput.client_name || '').trim();
             const ownWords = llmC && String(sessionState.currentUserMessage || '').toLowerCase().includes(llmC.toLowerCase());
             if (subjC && llmC !== subjC && !ownWords) { console.log('[proposal] client from the email subject, not the LLM\'s ' + JSON.stringify(llmC) + ': ' + JSON.stringify(subjC)); saInput.client_name = subjC; }
+            // No client anywhere (an email whose subject names none): the model's client must come from the customer's own
+            // words, and never be the Bevvi forwarder. Real (Nov 14, "Bevvi - Nov 14th Delivery"): the model billed
+            // "Sean Fitzgibbons / Air Culinaire" — Sean forwarded it, "Air Culinaire" is in no email of the thread.
+            else if (!subjC && llmC && sessionState.emailSubject) {
+              const fold = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ');
+              // the body's words only: a forward's From / To / Subject / Date lines name no client ("Bevvi - Nov 14th Delivery")
+              const said = fold((String(sessionState.currentUserMessage || '') + '\n' + String(sessionState.originalRequest || ''))
+                .split('\n').filter(l => !/^\W*(?:from|to|cc|bcc|subject|date|sent)\s*:/i.test(l)).join('\n'));
+              const staff = (String(sessionState.currentUserMessage || '') + '\n' + String(sessionState.originalRequest || ''))
+                .split('\n').map(l => (l.match(/^\s*(?:from|to|cc)\s*:\s*([^<\n]+?)\s*<[^>@]+@getbevvi\.com>/i) || [])[1]).filter(Boolean).map(fold);
+              const parts = llmC.split(/\s*(?:\/|\||&|,|\s[-–—]\s|\bfor\b)\s*/i).map(x => x.trim()).filter(Boolean);
+              const keep = parts.filter(pt => !/^bevvi$/i.test(pt) && said.includes(fold(pt)) && !staff.some(n => n === fold(pt) || n.split(' ')[0] === fold(pt).split(' ')[0] && fold(pt).split(' ').length <= 2));
+              const out = keep.join(' / ');
+              if (out !== llmC) { console.log('[proposal] client ' + JSON.stringify(llmC) + ' NOT taken as written — ' + (out ? 'kept only the customer\'s words: ' + JSON.stringify(out) : 'no email of the thread names it (or it is the Bevvi forwarder) — left blank')); saInput.client_name = out; }
+            }
           }
         }
         if ((saInput.intent === 'place_order' || saInput.intent === 'generate_proposal') && currentLineItems) {

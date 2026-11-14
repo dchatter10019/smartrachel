@@ -4585,6 +4585,25 @@ app.post('/chat', async (req, res) => {
         const rrOff = await applyBasketSubstitute(sessionKey, email, '', off.name, off.price, off.size);
         const swapFrom = rrOff && rrOff.success !== false && rrOff.replaced ? { name: rrOff.replaced } : null;
         if (swapFrom && !qm) q = rrOff.qty || 1;
+        // A count the pick already knows (the customer's own "12 Bottles - Nicolas Idiart Sancerre" line) is never asked
+        // again (Nov 14, DC email: "[confirm-substitute] ... x12" then "How many bottles would you like?").
+        if (!q && !qm && rrOff && rrOff.success !== false && rrOff.qty_known && rrOff.qty > 0) q = rrOff.qty;
+        // Fees said with the yes ("Yes do that.. and also provide a free delivery") are kept and said — they were dropped.
+        const feeSaidA = rrOff && rrOff.success !== false ? applyFeeCommands(state, message) : '';
+        const feeLineA = feeSaidA ? '\n\nDone \u2014 ' + feeSaidA + ' on the proposal.' : '';
+        // Rachel's offer said she would regenerate the proposal ("Want me to swap X out for Y and regenerate the proposal?"),
+        // or the customer asks for it now: the PDF is made from the changed basket in this reply.
+        const lastRA = String((lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '');
+        const regenA = !!state.lastProposalUrl && (/\b(?:re-?generate|update|re-?send|send)\b[^?\n]{0,30}\b(?:proposal|pdf|quote)\b[^\n]*\?/i.test(lastRA) || /\b(?:proposal|pdf|quote)\b/i.test(message));
+        async function pdfLineA() {
+          if (!regenA) return '';
+          try {
+            const itP = JSON.parse(state.lastLineItems || '[]');
+            const url = await quotePdf(state, itP, String(state.savedClientName || '').trim(), state.savedEventDate || '', 0);
+            console.log('[add-confirm] proposal regenerated after the change (' + itP.length + ' lines): ' + url);
+            return '\n\nYour updated PDF proposal: ' + url;
+          } catch (e) { console.log('[add-confirm] proposal regeneration FAILED (change kept, customer told): ' + e.message); return '\n\nI couldn\'t regenerate the PDF just now \u2014 reply "send the proposal" and I\'ll try again.'; }
+        }
         const nzA = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
         const labelA = off.name + (off.size && nzA(off.name).indexOf(nzA(off.size)) < 0 ? ' — ' + off.size : '') + ' — ' + usd(off.price);
         // Never say "Added" for a line that isn't in the basket. Real (Oct 13, F-0036): the lookup failed,
@@ -4600,17 +4619,19 @@ app.post('/chat', async (req, res) => {
         if (swapFrom) {
           try { const it = JSON.parse(state.lastLineItems || '[]'); const row = it.find(x => nzA(x.name) === nzA(off.name)); if (row) { row.qty = q; row.quantity = q; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); } } catch (e) {}
           saveFlowState(); events.action('updated_basket');
-          const rS = 'Got it \u2014 ' + q + 'x ' + labelA + ' in place of ' + swapFrom.name + '.' + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+          const pdfS = await pdfLineA(); saveFlowState();
+          const rS = 'Got it \u2014 ' + q + 'x ' + labelA + ' in place of ' + swapFrom.name + '.' + basketAfterChange(state) + feeLineA + pdfS + '\n\n' + (pdfS ? 'Reply with any other changes, or say "place the order" when you\'re ready.' : 'Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?');
           return res.json({ text: rS, response: rS });
         }
         if (q > 0) {
           try { const it = JSON.parse(state.lastLineItems || '[]'); const row = it.find(x => nzA(x.name) === nzA(off.name)); if (row) { row.qty = q; row.quantity = q; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); } } catch (e) {}
           saveFlowState();
-          const rQ = 'Added ' + q + 'x ' + labelA + (q > 1 ? ' (' + usd(off.price * q) + ')' : '') + '. Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+          const pdfQ = await pdfLineA(); saveFlowState();
+          const rQ = 'Added ' + q + 'x ' + labelA + (q > 1 ? ' (' + usd(off.price * q) + ')' : '') + '.' + feeLineA + pdfQ + ' ' + (pdfQ ? '\n\nReply with any other changes, or say "place the order" when you\'re ready.' : 'Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?');
           return res.json({ text: rQ, response: rQ });
         }
         state.pendingQtyFor = off.name; saveFlowState();
-        const rY = 'Added ' + labelA + '. How many bottles would you like?';
+        const rY = 'Added ' + labelA + '. How many bottles would you like?' + feeLineA;
         return res.json({ text: rY, response: rY });
       }
       if (!inBasketAlready) console.log('[add-confirm] offer for ' + off.name + ' lapsed — reply is not a yes or a quantity: ' + JSON.stringify(message.slice(0, 60)));

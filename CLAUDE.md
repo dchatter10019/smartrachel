@@ -988,6 +988,21 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   is Voiceflow-only. Connector: rachel_build_package result carries drinks_statement / why_drinks_statement / wine_heading.
   Live builder check: SA_URL=http://127.0.0.1:8301/mcp node ops/tests/voiceflow_sync_live.js (staging --with-shopping-agent).
 
+- Swap offers + "take out X and regenerate" (Nov 14, DC email "Bevvi - Nov 14th Delivery", 1076 Madison Ave). "Yes do that" to
+  "Want me to swap the Cloudy Bay out for the Nicolas Idiart Sancerre and regenerate the proposal?" ADDED the Sancerre and asked
+  "How many bottles?": swap-target.js read the NEW wine as the line. Now "swap/switch X (out) for Y" = line X (a pronoun / "swap
+  in for X" keeps the old reading; the name stops at "and regenerate ..."); the add-confirm yes keeps a known count (qty_known),
+  applies fees said with it (applyFeeCommands: "and also provide a free delivery" was dropped) and regenerates the PDF when the
+  offer said so or the yes asks for it ([add-confirm] proposal regenerated). "Take out the cloudy bay and regenerate the proposal."
+  re-sent the PDF with Cloudy Bay: quote-edits.js read "cloudy bay and regenerate the proposal" as the name (skipped for "proposal");
+  the tail is cut, "regenerate the proposal" = wantsQuote; proposal-edits.js counts take out / drop / delete. The client:
+  clientFromSubject skips a leading date + "delivery"/"pickup" and "Bevvi" ("Nov 14th Delivery" was billed); with no saved/subject
+  client the model's client keeps only parts the email BODY names, never a Bevvi forwarder (rachel.js; it invented "Sean
+  Fitzgibbons / Air Culinaire") — else blank. Scenario 145, qa/unit/email-swap-nov14.test.js.
+  Same day (smoke reprice-multipick, live stock): a Rachel pick short of stock with no similar product in the 0.5-1.6x price
+  band now takes one with enough at any price, closest first ([stock] ... widened to any price; was "2 bottles rosé" -> 1x
+  Domaines Ott). precheck restarts shopping-agent when rachel/stock.js changes (it loads it; it never did).
+
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
   so PDFs sent before Oct 15 still open (ask DC first; nginx).

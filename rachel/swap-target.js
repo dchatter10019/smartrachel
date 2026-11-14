@@ -15,9 +15,16 @@ function swapPhrase(text) {
   const qs = t.split(/\n+/).filter(l => /\?/.test(l));
   const q = qs.length ? qs[qs.length - 1] : '';
   if (!q) return null;
+  // The named thing ends at the question mark, a comma, or "and regenerate / send ... the proposal".
+  const END = '(?:\\s+bottles?)?\\s*(?:\\)|\\?|,|\\s+and\\s+(?:then\\s+)?(?:re-?generate|re-?send|send|update|redo|make|create|re-?do)\\b|$)';
   const pats = [
-    /\b(?:replacing|in place of|instead of)\s+(one of\s+)?(?:the\s+|your\s+)?(.{3,100}?)(?:\s+bottles?)?\s*(?:\)|\?|,|$)/i,
-    /\b(?:swap|switch|exchange|trade)\b.{0,80}?\b(?:in\s+)?for\s+(one of\s+)?(?:the\s+|your\s+)?(.{3,100}?)(?:\s+bottles?)?\s*(?:\)|\?|,|$)/i,
+    new RegExp('\\b(?:replacing|in place of|instead of)\\s+(one of\\s+)?(?:the\\s+|your\\s+)?(.{3,100}?)' + END, 'i'),
+    // "swap the Cloudy Bay out for the Nicolas Idiart Sancerre", "switch out the X for Y", "swap X for Y": the line is X.
+    // Real (Nov 14, DC email, 1076 Madison Ave): the "for" pattern below read the NEW wine as the line, so "Yes do that"
+    // added the Sancerre beside the Cloudy Bay and asked "How many bottles?". A pronoun ("swap that in for X") or
+    // "swap in" keeps the "for X" reading.
+    new RegExp('\\b(?:swap|switch|exchange|trade)\\s+(?:out\\s+)?(one of\\s+)?(?!(?:that|it|this|them|those|these|in|one)\\b)(?:the\\s+|your\\s+)?(.{3,80}?)(?:\\s+bottles?)?\\s+(?:out\\s+)?(?:for|with)\\s+\\S', 'i'),
+    new RegExp('\\b(?:swap|switch|exchange|trade)\\b.{0,80}?\\b(?:in\\s+)?for\\s+(one of\\s+)?(?:the\\s+|your\\s+)?(.{3,100}?)' + END, 'i'),
     /\breplace\s+(one of\s+)?(?:the\s+|your\s+)?(.{3,100}?)(?:\s+bottles?)?\s+(?:with|by)\b/i,
   ];
   for (const re of pats) { const m = q.match(re); if (m) return { oneOf: !!m[1], what: m[2].trim() }; }

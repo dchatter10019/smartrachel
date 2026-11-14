@@ -88,7 +88,7 @@ function similar(line, rows, need, opts = {}) {
     // A grape the line names must be on the stand-in's label too (a Pinot Noir is never "similar" to a Cabernet or a Rioja).
     if (SM.grapesOf(String(line.name || '')).length && (!SM.grapesOf(String(r.name || '')).length || !SM.carriesGrapes(String(line.name || ''), String(r.name || '')))) return false;   // plain Tito's -> never a pineapple vodka
     const rp = Number(r.price) || 0;
-    if (!(rp > 0) || (price > 0 && (rp < price * 0.5 || rp > price * 1.6))) return false;
+    if (!(rp > 0) || (!opts.anyPrice && price > 0 && (rp < price * 0.5 || rp > price * 1.6))) return false;
     if (opts.knownOnly && inv(r) === null) return false;
     return enough(r, need);
   }).sort((a, b) => ((inv(a) === null) - (inv(b) === null)) || Math.abs((+a.price || 0) - price) - Math.abs((+b.price || 0) - price));
@@ -121,7 +121,14 @@ async function enforce(lines, { rowFor, search }) {
       continue;
     }
     // Rachel's pick: one product that covers the whole quantity, else split across similar products.
-    const whole = /mi campo/i.test(li.name) ? [] : similar(Object.assign({}, row, li), rows, qty);
+    let whole = /mi campo/i.test(li.name) ? [] : similar(Object.assign({}, row, li), rows, qty);
+    // Nothing in the price band has enough: any price, closest first, before a short line (DC, Nov 14: a request with no
+    // product named "should only offer products that meet the quantity requirements"). Real (Nov 14 smoke, 10019): "2
+    // bottles rosé" -> Domaines Ott $60 had 1, no still rosé at $30-$96, and the basket kept 1 while Whispering Angel had plenty.
+    if (!whole.length && !/mi campo/i.test(li.name)) {
+      whole = similar(Object.assign({}, row, li), rows, qty, { anyPrice: true, knownOnly: true });
+      if (whole.length) console.log('[stock] ' + li.name + ': no similar product with ' + qty + ' in the price band — widened to any price: ' + whole[0].name + ' $' + whole[0].price);
+    }
     if (whole.length) {
       const r = whole[0];
       console.log('[stock] SWAPPED: ' + li.name + ' has ' + have + ' (needed ' + qty + ') -> ' + r.name + ' (' + (inv(r) === null ? 'count unknown' : inv(r) + ' in stock') + ')');

@@ -1,0 +1,22 @@
+name: email-swap-and-remove
+# Nov 14 (DC forwarding Sean's "Bevvi - Nov 14th Delivery", 1076 Madison Ave): the PDF was billed to "Nov 14th Delivery"
+# (the subject's date + "Delivery"); "Yes do that" to "Want me to swap the Cloudy Bay out for the Nicolas Idiart Sancerre
+# and regenerate the proposal?" ADDED the Sancerre and asked "How many bottles?" (swap-target.js read the new wine as the
+# line); "Take out the cloudy bay and regenerate the proposal." regenerated the PDF with the Cloudy Bay still on it
+# (quote-edits.js took "cloudy bay and regenerate the proposal" as the name). The swap path is in qa/unit/email-swap-nov14.test.js.
+fresh: true
+tags: [email]
+format: plain
+context: {email_subject: "Fwd: Bevvi - Nov 14th Delivery", user_name: "QA Tester"}
+turns:
+  - send: "Can you review the email below and generate a proposal? I am over 21\r\n\r\n---------- Forwarded message ---------\r\nFrom: Sean Fitzgibbons <sean@getbevvi.com>\r\nSubject: Fwd: Bevvi - Nov 14th Delivery\r\n\r\nPlease see the approved items below:\r\n\r\n*Item Request:*\r\n\r\n*12 Bottles - Cloudy Bay Sauvignon Blanc*\r\n\r\n*9 Bottles - Château Lamour Saint-Émilion Grand Cru Bordeaux*\r\n\r\n*12 Bottles - Nicolas Idiart Sancerre*\r\n\r\n*Delivery Location:*\r\n\r\n1076 Madison Ave, New York, NY 10028\r\n\r\nSaturday 11/14 (1-3pm ET)\r\n\r\nThanks!\r\nSean"
+    expect:
+      matches: "(?i)Cloudy Bay"
+      not_contains: ["Nov 14th Delivery", "Air Culinaire"]
+      pdf_not_contains: ["Nov 14th Delivery", "Sean Fitzgibbons"]
+  - send: "Take out the cloudy bay and regenerate the proposal."
+    expect:
+      contains: ["updated PDF proposal"]
+      matches: "(?i)Removed:\\s*\\n\\W*Cloudy Bay"
+      log_contains: ["[quote-edits]"]
+      pdf_not_contains: ["Cloudy Bay"]
