@@ -162,4 +162,26 @@ function answer(reply, choices) {
   return null;
 }
 
-module.exports = { pick, clientFromSubject, mentions, datesIn, label, question, answer };
+
+// A FRESH FORWARD inside a thread Rachel already answered = a new request, never the old conversation (DC, Nov 14: "rachel
+// needs to distinguish requests from different emails ... it is overwriting the responses"). Real (Nov 14, 03:09): DC
+// forwarded Esthefany's ORIGINAL HI USA order again ("can you show me a proposal for wines around $15? Create a proposal");
+// Gmail filed it in the old thread (same subject), so it continued yesterday's conversation with its half-done email order:
+// Rachel asked for a time zone to PLACE the order, then made the proposal dated Nov 14 (not Nov 19). DC: "this is different
+// request than what I send before". Fresh = subject "Fwd:" + a forwarded message from someone other than Rachel + the
+// sender's own words don't ask to change the earlier quote (isEdit: a forwarded edit list still continues it).
+// freshForward({subject, body}) -> { fresh: bool, reason }
+function freshForward({ subject, body }) {
+  const subj = String(subject || ''), b = String(body || '').replace(/\r/g, '');
+  if (!/^\s*(?:fwd?|fw)\s*:/i.test(subj)) return { fresh: false, reason: 'not a forward (subject ' + JSON.stringify(subj.slice(0, 40)) + ')' };
+  const m = b.match(/^\s*(?:-{2,}\s*Forwarded message\s*-{2,}|Begin forwarded message:)\s*$/im);
+  if (!m) return { fresh: false, reason: 'no forwarded message in the body' };
+  const head = b.slice(m.index, m.index + 600);
+  if (/^\s*\*?From:\*?\s.*\brachelai@getbevvi\.com\b/im.test(head)) return { fresh: false, reason: "a forward of Rachel's own email (about this conversation)" };
+  const own = b.slice(0, m.index);
+  if (isEdit(own)) return { fresh: false, reason: 'the sender asks to change the earlier quote' };
+  if (PRIOR.test(own)) return { fresh: false, reason: 'the sender points at the earlier quote' };
+  return { fresh: true, reason: 'a fresh forward of a request from someone else — a new request' };
+}
+
+module.exports = { freshForward, isEdit, pick, clientFromSubject, mentions, datesIn, label, question, answer };

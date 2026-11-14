@@ -141,6 +141,7 @@ app.use((req, res, next) => {
 // The last line each turn logged (any channel), so a [stuck-turn] says WHERE it stopped. Oct 20: three QA turns ("3" in
 // session-basics, each just after a production restart) logged "[turn]" and then nothing — no way to tell what they waited on.
 const TURN_ALS = new (require('async_hooks').AsyncLocalStorage)();
+require('./gbrain.js').setBasketScope(() => { const t = TURN_ALS.getStore(); return t && t.session; });   // an email thread's basket is its own (gbrain.js basketKey)
 for (const lvl of ['log', 'warn', 'error']) {
   const o = console[lvl];
   console[lvl] = (...a) => { const t = TURN_ALS.getStore(); if (t) { t.last = String(a[0] === undefined ? '' : a[0]).slice(0, 60) + (a.length > 1 ? ' ' + String(a[1]).slice(0, 60) : ''); t.lastAt = Date.now(); } return o(...a); };
@@ -1528,6 +1529,8 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
   const messages = sessions[sessionKey] || [];
   let channelNote = getChannelNote(format);
   const stateForEmail = getState(sessionKey);
+  // The shopping-agent's basket key for this conversation: an email thread's own (gbrain.js basketKey; DC, Nov 14).
+  stateForEmail.basketChannel = /^email-/.test(String(sessionKey || '')) ? (format || 'plain') + '@' + sessionKey : undefined;
   // Several instructions in one message: tell the LLM the checklist, then check the reply (below).
   stateForEmail.currentUserMessage = message;   // read by applyBasketSubstitute's cross-type check (same-turn instructions)
   // Lines code already handled this turn (quote-edit removes) are not the LLM's to do — or to be flagged as undone.
@@ -1596,6 +1599,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
     // can reopen the order (see PLACED ORDER below) — they may not have paid yet.
     onOrderPlaced: (result, lineItems) => recordPlacedOrder(sessionKey, email, format, result, lineItems),
     onPackageBuilt: (em, lineItems, fmt, saInput, saResult) => {
+      fmt = String(fmt || '').split('@')[0] || fmt;   // an email thread's basket key ("plain@email-...") -> the channel
       // Full-bar note (DC: keep one bottle of each spirit type, but tell the customer when that's
       // more than they need). Appended to this turn's reply in code — not left to the LLM.
       // + the beer-style note (event-prefs.js; "This store has no Oktoberfest beers right now, so I picked German beers instead.")
@@ -1736,6 +1740,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
       }
     },
     onProductDiscussed: (em, lineItems, fmt, groups) => {
+      fmt = String(fmt || '').split('@')[0] || fmt;   // an email thread's basket key ("plain@email-...") -> the channel
       // Options shown next to a basket ("two options for the prosecco, sauv blanc and rose"), kept for a proposal that
       // asks to include them (proposal-options.js). The reply that showed them is added when it is sent.
       try {
@@ -2520,6 +2525,7 @@ app.post('/chat', async (req, res) => {
         address_rule: '',
         channel_format: format,
         onPackageBuilt: (em, lineItems, fmt, saInput) => {
+          fmt = String(fmt || '').split('@')[0] || fmt;   // an email thread's basket key ("plain@email-...") -> the channel
       // A successful build supersedes any prior "unavailable" state. Real bug: two
       // beers were falsely flagged unavailable on one rebuild (stale pendingSubstitutes
       // entries), then restored fine on the NEXT rebuild — but the pending list was
@@ -7197,6 +7203,14 @@ app.get('/health', (req, res) => res.json({ status: 'ok', port: PORT }));
 // it. Used when a person answered for Rachel (Sep 29: Sean's quote was sent by hand after Rachel's wrong list).
 // Which earlier email session a NEW thread continues (email-agent.py asks before starting a fresh session).
 // Localhost only, like session-basket. Decided in email-link.js; the decision and reason are logged.
+// A continuation email that is a fresh forward of a new request -> the email agent starts a new session for it (email-link.js
+// freshForward; DC, Nov 14). Logged either way.
+app.post('/internal/email-fresh', (req, res) => {
+  const { subject, body, session_id } = req.body || {};
+  const r = require('./email-link.js').freshForward({ subject, body });
+  console.log('[email-fresh] ' + JSON.stringify(String(subject || '').slice(0, 60)) + ' in ' + (session_id || '?') + ' -> ' + (r.fresh ? 'NEW conversation' : 'continues') + ' — ' + r.reason);
+  res.json(r);
+});
 app.post('/internal/email-link', (req, res) => {
   const { sender_email, subject, body } = req.body || {};
   if (!sender_email) return res.status(400).json({ session_id: null, reason: 'sender_email required' });

@@ -191,7 +191,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           if (typeof eventParams.proposalOpts.tip_rate === 'number') delete toolInput.tip_amount;
           console.log('[proposal] options injected into generate_proposal:', JSON.stringify(eventParams.proposalOpts));
         }
-        const saInput = Object.assign({}, toolInput, { channel: channelFormat || toolInput.channel || 'slack' });
+        const saInput = Object.assign({}, toolInput, { channel: (sessionState && sessionState.basketChannel) || channelFormat || toolInput.channel || 'slack' });   // an email thread's own basket key (gbrain.js basketKey)
         if (requesterEmail) {
           if (saInput.email && saInput.email !== requesterEmail) {
             console.log('[ShoppingAgent] overriding LLM-supplied email', saInput.email, '->', requesterEmail);

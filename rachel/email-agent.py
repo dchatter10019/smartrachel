@@ -40,6 +40,21 @@ try:
     THREAD_SESSIONS = _json.load(open(THREAD_FILE))
 except Exception:
     THREAD_SESSIONS = {}
+# A session that started mid-thread (a fresh forward, below) -> the Gmail time it started: its context never includes the
+# thread's emails from before it (they belong to the earlier request).
+STARTS_FILE = '/home/ubuntu/logs/email-session-starts.json'
+try:
+    import json as _json
+    SESSION_STARTS = _json.load(open(STARTS_FILE))
+except Exception:
+    SESSION_STARTS = {}
+def _persist_starts():
+    try:
+        import json as _json
+        _json.dump(SESSION_STARTS, open(STARTS_FILE, 'w'))
+    except Exception as e:
+        log.error(f'session-starts persist failed: {e}')
+
 def _persist_threads():
     try:
         import json as _json
@@ -218,10 +233,12 @@ def recipients(email, sender_email):
 
 # The thread's first email not from Rachel = the customer's original request. Sent with every continuation so a
 # long thread never loses it (Oct 2, Goody: "take my original request" — Rachel no longer had it and asked to paste it).
-def thread_first_body(service, thread_id):
+def thread_first_body(service, thread_id, session_id=''):
     try:
         t = service.users().threads().get(userId='me', id=thread_id, format='minimal').execute()
         for m in t.get('messages', []):
+            if int(m.get('internalDate') or 0) < int(SESSION_STARTS.get(session_id, 0)):
+                continue   # an earlier request in the same Gmail thread (a fresh forward started this conversation)
             e = get_email(service, m['id'])
             if RACHEL_EMAIL.lower() not in e['from'].lower() and e['body']:
                 return e['body'][:20000]
@@ -242,6 +259,8 @@ def thread_history(service, session_id, email):
             for m in t.get('messages', []):
                 if m['id'] == email['id'] or int(m.get('internalDate') or 0) > (email.get('internal_date') or 0):
                     continue
+                if int(m.get('internalDate') or 0) < int(SESSION_STARTS.get(session_id, 0)):
+                    continue   # before this conversation started (an earlier request in the same Gmail thread)
                 e = get_email(service, m['id'])
                 if e['body']:
                     out.append({'from': e['from'], 'date': e.get('date', ''), 'body': e['body'][:20000], 'ts': e.get('internal_date', 0)})
@@ -418,7 +437,21 @@ def process(service, email):
     # Check if this is a continuation of an existing thread
     if thread_id in THREAD_SESSIONS:
         session_id = THREAD_SESSIONS[thread_id]
-        email['first_body'] = thread_first_body(service, thread_id)
+        # A FRESH FORWARD of a new request in this thread (Gmail groups by subject) = a new conversation, never the old one's
+        # state (DC, Nov 14: Rachel "is overwriting the responses" — the re-forwarded HI USA order continued yesterday's
+        # half-done email order). The server decides (/internal/email-fresh, email-link.js freshForward) and logs why.
+        try:
+            fr = requests.post('http://127.0.0.1:3500/internal/email-fresh', json={'subject': email['subject'], 'body': email['body'], 'session_id': session_id}, timeout=10).json()
+        except Exception as e:
+            fr = {}
+            log.error(f'[email-fresh] check failed ({e}) — continuing {session_id}')
+        if fr.get('fresh'):
+            new_sid = f'email-{thread_id[:16]}-{sender_email.split("@")[0]}-{email["id"][-6:]}'
+            log.info(f"[email-fresh] thread {thread_id[:8]}... {session_id} -> NEW conversation {new_sid} — {fr.get('reason')}")
+            session_id = new_sid
+            THREAD_SESSIONS[thread_id] = session_id; _persist_threads()
+            SESSION_STARTS[session_id] = email.get('internal_date') or 0; _persist_starts()
+        email['first_body'] = thread_first_body(service, thread_id, session_id)
         email['history'] = thread_history(service, session_id, email)
         rachel_response, linked = chat_following_relink(email, session_id, sender_email, sender_name)
         if not rachel_response:

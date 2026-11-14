@@ -170,6 +170,19 @@ ${lastBasket ? `\n## Last Basket\n${lastBasket.map(i => `- ${i.qty || i.quantity
 }
 
 // Save basket to GBrain (called after product selection)
+// The saved last basket is per SENDER + channel ("dipanjan@getbevvi.com:plain") — but one sender runs several EMAIL THREADS,
+// each its own quote (DC, Nov 14: "rachel needs to distinguish requests from different emails ... it is overwriting the
+// responses"). Nov 13 DC ran the HI USA Hostel and Eterra "November 17" quotes side by side: every save from either thread
+// overwrote the one key, an email thread reloads it with no age limit when its own cart is empty, and menu_build preloads it
+// as the prior picks. An email session's basket is keyed by its session: server.js sets the scope per /chat turn
+// (setBasketScope), the shopping-agent gets it in the channel ("plain@email-..."). Slack / WhatsApp / the connector unchanged.
+let BASKET_SCOPE = null;
+function setBasketScope(fn) { BASKET_SCOPE = typeof fn === 'function' ? fn : null; }
+function basketKey(userEmail, channel) {
+  let ch = String(channel || 'slack');
+  if (!ch.includes('@')) { let s = ''; try { s = BASKET_SCOPE ? String(BASKET_SCOPE() || '') : ''; } catch (e) {} if (/^email-/.test(s)) ch += '@' + s; }
+  return userEmail + ':' + ch;
+}
 async function saveBasket(userEmail, basket, total, channel) {
   // QA identities never train the learned price profile (real bug: dry-run baskets drifted
   // the spirits floor upward until a named Tito's was reported 'unavailable').
@@ -180,7 +193,7 @@ async function saveBasket(userEmail, basket, total, channel) {
     const basketFile = require('./data-dir.js').file('baskets.json');
     let baskets = {};
     try { baskets = JSON.parse(fs.readFileSync(basketFile, 'utf8')); } catch(e) {}
-    const key = userEmail + ':' + (channel || 'slack');
+    const key = basketKey(userEmail, channel);
     baskets[key] = { basket: typeof basket === 'string' ? basket : JSON.stringify(basket), total: total || '', updated: new Date().toISOString() };
     fs.writeFileSync(basketFile, JSON.stringify(baskets));
     console.log('[gbrain] basket saved for:', userEmail, 'channel:', channel || 'slack');
@@ -199,7 +212,7 @@ async function clearBasket(userEmail, channel) {
     const basketFile = require('./data-dir.js').file('baskets.json');
     let baskets = {};
     try { baskets = JSON.parse(fs.readFileSync(basketFile, 'utf8')); } catch(e) { return; }
-    const key = userEmail + ':' + (channel || 'slack');
+    const key = basketKey(userEmail, channel);
     if (!baskets[key]) return;
     delete baskets[key];
     fs.writeFileSync(basketFile, JSON.stringify(baskets));
@@ -214,7 +227,7 @@ async function getPackage(userEmail, channel, maxAgeHours) {
   try {
     const fs = require('fs');
     const basketFile = require('./data-dir.js').file('baskets.json');
-    const key = userEmail + ':' + (channel || 'slack');
+    const key = basketKey(userEmail, channel);
     let baskets = {};
     try { baskets = JSON.parse(fs.readFileSync(basketFile, 'utf8')); } catch(e) {}
     const entry = baskets[key];
@@ -230,5 +243,7 @@ module.exports = {
   saveD2CSession,
   saveBasket,
   getPackage,
-  clearBasket
+  clearBasket,
+  setBasketScope,
+  basketKey
 };

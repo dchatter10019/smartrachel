@@ -112,6 +112,16 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   continuation the agent sends the thread's first non-Rachel email (context.thread_first_body); a session with no
   originalRequest takes it from there (threads older than the feature), and a later email never becomes the original.
   Replies are reply-all (To + Cc of the incoming email, minus rachelai@ and the sender).
+  ONE THREAD = ONE REQUEST (DC, Nov 14: "rachel needs to distinguish requests from different emails ... overwriting the
+  responses"): (1) a FRESH FORWARD in a thread Rachel already answered (subject Fwd:, a forwarded message not from rachelai@,
+  the sender's own words not an edit / not "the/that quote") starts a NEW session email-<thread>-<sender>-<msgid6>
+  (/internal/email-fresh, email-link.js freshForward, [email-fresh]); its context and original request skip the thread's
+  earlier emails (logs/email-session-starts.json). Nov 14 03:09: DC re-forwarded the HI USA order; it continued yesterday's
+  half-done email order (time-zone question, PDF dated Nov 14). (2) The saved basket (baskets.json) of an EMAIL session is
+  keyed by its session (gbrain.js basketKey: server.js sets the scope per /chat turn; the shopping-agent gets channel
+  "plain@<session>") — it was sender+channel, so one sender's threads overwrote each other's saved cart, an empty thread
+  reloaded the other's (no age limit for email) and menu_build preloaded it as prior picks. Slack/WhatsApp/connector keys
+  unchanged. qa/unit/email-fresh.test.js, qa/unit/email-basket-scope.test.js.
   Automated mail is skipped and marked read, never run through Rachel (email-agent automated_reason, "Skipping automated
   email ... (<reason>)"): Bevvi's own notifications from info@getbevvi.com ("Your Order is Updated / On its Way", "Corporate
   Order Fulfilled: BEVVI-...", password resets — they reach rachelai@ because it is every order's account email), and
