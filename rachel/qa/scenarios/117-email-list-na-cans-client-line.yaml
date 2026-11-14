@@ -27,7 +27,8 @@ turns:
   - send: "Thanks, Rachel.\r\n\r\nCan you please draft this a pdf proposal?"
     expect:
       not_contains: ["What is the client or company name?"]
-      log_contains: ["[proposal] client from a \"Client:\" line: \"Premier 360\""]
+      # Nov 14: the client is gathered from the thread on the first email (thread-facts.js) — known before the ask.
+      log_contains: ["[thread-facts] ", "client ["]
   - send: "Event Date: TBD"
     expect:
       contains: ["Premier 360"]

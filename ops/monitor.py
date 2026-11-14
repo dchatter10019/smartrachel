@@ -231,6 +231,13 @@ class Monitor:
         if e.get('qa'): return
         sess = e.get('session', '')
         fields = ', '.join(sorted(set(i.get('field', '?') for i in e.get('issues') or []))) or '?'
+        if e.get('kind') == 'asked_known':
+            # server.js THREAD FACTS (DC, Nov 14): Rachel asked an email customer for something the thread already gives.
+            ev = 'email asked for %s though the thread gives: %s | Rachel asked: %s | customer said: %s' % (fields,
+                ' ; '.join('%s = %r (%s)' % (i.get('field'), i.get('expected'), i.get('why')) for i in e.get('issues') or [])[:600],
+                str(e.get('reply', ''))[:300].replace('\n', ' / '), str(e.get('customer_said', ''))[:300].replace('\n', ' / '))
+            self.store.record('self_correction', self.d.get('self_correction', {}).get('severity', 'high'), 'asked for %s the email thread already gives (%s)' % (fields, sess), [ev], [sess], t or self.now())
+            return
         ev = '%s | corrected: %s | issues: %s | customer said: %s | pdf %s -> %s' % (
             e.get('channel', '?'), ','.join(e.get('corrected') or []) or 'NOTHING (needs a person)',
             ' ; '.join('%s printed %r, expected %r (%s)' % (i.get('field'), i.get('printed'), i.get('expected'), i.get('why')) for i in e.get('issues') or [])[:700],

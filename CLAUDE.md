@@ -123,7 +123,22 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   geocoded when no zip; [addr] from the email thread) and appends "Address: ..." to the held request; a NEW conversation
   (empty cart) whose order list exists only in the history the email quotes appends those lines as the request ([email-body]
   new conversation, empty cart — the order list in the quoted email is the request) — never with a cart (Sep 29 Gen II: a
-  re-quoted old list must not re-add lines). Scenario 143, qa/unit/address-thread.test.js. The sender's signature is
+  re-quoted old list must not re-add lines). Scenario 143, qa/unit/address-thread.test.js.
+  THREAD FACTS — ask only what the thread doesn't say (DC, Nov 14: "always checks the entire email thread and gathers all
+  the information and only if it can't find a required piece of information, it asks"). rachel/thread-facts.js gather() runs
+  on EVERY email turn over the customer side of the whole thread (EMAIL_THREAD_EMAILS: every Gmail thread of the session,
+  forwards, the history the email quotes; Rachel's own emails never count; a turn with no thread_history puts its email on
+  top of the copy): address, event/delivery date, client ("Client:" line > subject > forwarded sender's company), contact
+  name / email / phone (never a Bevvi forwarder), delivery window, driver instructions, per-bottle price, the original
+  request's item lines — newest statement wins, items = the oldest email with a list ([thread-facts] <fields> [where]).
+  Then: (1) pre-filled into state when empty (savedEventDate, savedClientName, bottlePrice; state.threadPrefill remembers
+  what WE filled, so only that is replaced by a newer email — never an answer the conversation set); the address step
+  (threadAddressFor), email order contact (threadPriorTexts) and time (the thread's delivery window) read it too;
+  (2) the model gets "## KNOWN FROM THE EMAIL THREAD ... Never ask for anything listed here" in its notes; (3) every email
+  reply is checked (askedKnown: delivery address / event date / client / phone / contact email / bottle count asked while
+  the thread gives it) -> "[thread-facts] ASKED for ..." + RACHEL_DATA_DIR/self-corrections.jsonl kind asked_known ->
+  monitor self_correction ("asked for X the email thread already gives") -> nightly fixer closes the gap.
+  qa/unit/thread-facts.test.js; scenario 117 now expects the client known before the proposal ask. The sender's signature is
   cut too (stripSignature: "-- ", a line that is the From name, or a trailing contact block). The first real request
   (a list) is kept as state.originalRequest and shown to the LLM every turn, with state.onHand. On every
   continuation the agent sends the thread's first non-Rachel email (context.thread_first_body); a session with no

@@ -1489,6 +1489,10 @@ const EMAIL_THREAD_NOTES = new Map();
 // Email session -> the customer side of the thread (email-body.js customerEmails: newest first, {text, sent, current}), for
 // the facts replies written IN CODE read (dates, contact). Same lifetime as EMAIL_THREAD_NOTES (rebuilt on every email).
 const EMAIL_THREAD_EMAILS = new Map();
+// Email session -> thread-facts.js gather(): every fact the whole thread gives (address, date, client, contact, window,
+// price limit, items), rebuilt on every email turn. Pre-fills what the conversation hasn't set, rides on the model's notes,
+// and every outgoing email reply is checked for a question it answers (DC, Nov 14: ask only what the thread doesn't say).
+const EMAIL_THREAD_FACTS = new Map();
 function threadCustomerEmails(sessionKey) { return EMAIL_THREAD_EMAILS.get(String(sessionKey)) || []; }
 // The newest date a customer email of the thread states (delivery / event line first, event-date.js findEventDateIn, read
 // from the day that email was sent) -> { date, emailsBack } or null. emailsBack 0 = the email being answered.
@@ -2087,6 +2091,41 @@ app.post('/chat', async (req, res) => {
       const hist = context && Array.isArray(context.thread_history) ? context.thread_history : null;
       const cur = { from: (context && (context.user_name ? context.user_name + ' <' + (context.user_email || '') + '>' : context.user_email)) || 'customer', body: rawEmail, current: true };
       if (hist || !EMAIL_THREAD_EMAILS.has(String(session_id))) EMAIL_THREAD_EMAILS.set(String(session_id), require('./email-body.js').customerEmails([].concat(hist || [], [cur])));
+      else {   // no history sent (the agent's follow-up call, QA): this email goes on top of the copy we have
+        const prevE = EMAIL_THREAD_EMAILS.get(String(session_id)).map(e => Object.assign({}, e, { current: false }));
+        const curE = require('./email-body.js').customerEmails([{ from: cur.from, body: rawEmail, current: true }]);
+        EMAIL_THREAD_EMAILS.set(String(session_id), curE.concat(prevE.filter(e => !curE.some(c => c.text === e.text))));
+      }
+      // THREAD FACTS (thread-facts.js; DC, Nov 14): gathered from the whole thread, then (1) pre-filled into whatever this
+      // conversation hasn't set yet — never over a value set in the conversation; (2) shown to the model (threadNote below);
+      // (3) every reply checked: a question the thread already answers is logged + recorded for the nightly fixer.
+      try {
+        const TF = require('./thread-facts.js');
+        const facts = TF.gather(EMAIL_THREAD_EMAILS.get(String(session_id)), { subject: context && context.email_subject, senderName: context && context.user_name, senderEmail: context && context.user_email });
+        EMAIL_THREAD_FACTS.set(String(session_id), facts);
+        const ks = Object.keys(facts);
+        if (ks.length) console.log('[thread-facts] ' + ks.map(k => k + (k === 'items' ? ' (' + facts.items.count + ')' : '') + ' [' + facts[k].from + ']').join(', '));
+        const stF = getState(String(session_id)), filled = [];
+        // Filled when empty — or when it still holds the value WE filled and a newer email says otherwise ("Client is: X"
+        // after a subject guess). A value the conversation set (an answer, an edit) is never overwritten.
+        const tp = stF.threadPrefill || (stF.threadPrefill = {});
+        if (facts.eventDate && !stF.eventDateNone && (!stF.savedEventDate || (stF.savedEventDate === tp.date && tp.date !== facts.eventDate.value))) { stF.savedEventDate = tp.date = facts.eventDate.value; filled.push('event date ' + JSON.stringify(facts.eventDate.value)); }
+        if (facts.client && (!stF.savedClientName || (stF.savedClientName === tp.client && tp.client !== facts.client.value))) { stF.savedClientName = tp.client = facts.client.value; filled.push('client ' + JSON.stringify(facts.client.value)); }
+        if (facts.bottlePrice && !stF.bottlePrice) { try { stF.bottlePrice = Object.assign(JSON.parse(facts.bottlePrice.value), { at: Date.now() }); filled.push('bottle price ' + facts.bottlePrice.value); } catch (e) {} }
+        if (filled.length) { console.log('[thread-facts] pre-filled from the thread: ' + filled.join('; ')); saveFlowState(); }
+        const _jTF = res.json.bind(res);
+        res.json = (payload) => {
+          try {
+            const txt = payload && (payload.text || payload.response);
+            const known = typeof txt === 'string' ? TF.askedKnown(txt, EMAIL_THREAD_FACTS.get(String(session_id)) || {}) : [];
+            if (known.length) {
+              console.log('[thread-facts] ASKED for ' + known.map(k => k.field + ' (the thread gives ' + JSON.stringify(k.value) + ', ' + k.from + ')').join('; ') + ' — a gap in the code, recorded');
+              try { fs.appendFileSync(dataDir.file('self-corrections.jsonl'), JSON.stringify({ ts: new Date().toISOString(), kind: 'asked_known', session: String(session_id), channel: 'email', customer: (context && context.user_email) || '', qa: !!isQA, customer_said: String(rawEmail).slice(0, 600), reply: String(txt).slice(0, 400), issues: known.map(k => ({ field: k.field, expected: k.value, why: 'the email thread gives it (' + k.from + ')' })), corrected: [] }) + '\n'); } catch (e) {}
+            }
+          } catch (e) {}
+          return _jTF(payload);
+        };
+      } catch (e) { console.log('[thread-facts] not gathered: ' + e.message); }
       // A NEW email conversation (empty cart) whose only order list is in the history the forwarded email QUOTES: those lines
       // are the request. Real (Nov 14, HI USA NYC Hostel): DC forwarded Esthefany's "I forgot to mention ... delivery date is
       // Thursday, November 19th" reply; her order (Sauvignon Blanc 10 / Pinot Noir 6 / Prosecco 5) and address were quoted
@@ -2106,6 +2145,7 @@ app.post('/chat', async (req, res) => {
       } catch (e) { console.log('[email-body] quoted order not checked: ' + e.message); }
       if (hist || !EMAIL_THREAD_NOTES.has(String(session_id))) {
         const tn = require('./email-body.js').threadNote([].concat(hist || [], [cur]), { currentText: message });
+        { const fn = require('./thread-facts.js').note(EMAIL_THREAD_FACTS.get(String(session_id)) || {}); if (fn) tn.note = (tn.note ? tn.note + '\n\n' : '') + fn; }
         if (tn.note) { EMAIL_THREAD_NOTES.set(String(session_id), tn.note); console.log('[email-thread] ' + tn.count + ' email(s) in the notes (' + tn.chars + ' chars' + (tn.omitted ? ', ' + tn.omitted + ' in between left out for length' : '') + ')'); }
         else EMAIL_THREAD_NOTES.delete(String(session_id));
       }
@@ -3919,6 +3959,13 @@ app.post('/chat', async (req, res) => {
           if (evD && evD.date) { od.delivery_date = evD.text; console.log('[email-order] no delivery date in this email — ' + (tD ? 'the date the thread gives (' + tD.emailsBack + ' email(s) back)' : 'the event date') + ' is used: ' + JSON.stringify(evD.text)); }
         }
         let whenPhrase = x.when || (x.time && od.delivery_date ? od.delivery_date + ' at ' + x.time : '');
+        // A delivery window an earlier email (or the history this one quotes) gives is the time — never asked again
+        // (thread-facts.js; DC, Nov 14: ask only what the thread doesn't say).
+        if (!whenPhrase && !od.delivery_ok && od.delivery_date) {
+          const fW = (EMAIL_THREAD_FACTS.get(String(sessionKey)) || {}).window;
+          const tW = fW && (String(fW.value).match(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i) || [])[0];
+          if (tW) { whenPhrase = od.delivery_date + ' at ' + tW; console.log('[email-order] delivery time from the email thread (' + fW.from + '): ' + JSON.stringify(fW.value) + ' -> ' + JSON.stringify(whenPhrase)); }
+        }
         // The zone: stated in this email ("times in PST please"), or — when Rachel asked for it — a short answer ("ET").
         { const zE = zoneStatedIn(message) || ((od.pending_when || od.awaiting_zone) && String(message).trim().length <= 120 ? explicitZoneIn(message) : '');
           if (zE) { od.cust_zone = zE; state.custZone = zE; od.awaiting_zone = false; } else if (!od.cust_zone && state.custZone) od.cust_zone = state.custZone; }
