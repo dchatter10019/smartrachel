@@ -623,7 +623,14 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   is not the client ([proposal] client answer NOT taken; "Make it 3 x 12 blue moon" was billed). A per-bottle price ("average
   price of the wine bottles is $15", "should not exceed $15") -> state.bottlePrice (bottle-price.js, [bottle-price]) ->
   custom_list / menu_build wine_max_price|spirit_max_price (shopping-agent passes them to buildPackage caps) and product_query
-  max_price. A pick with no original takes the count of a generic request line ("(1) Sancerre, ... need 15 bottles",
+  max_price. Stated against a basket that already has dearer bottles = SWAPS in code, never options (DC, Nov 14: "if a
+  customer is asking for the swaps, don't add as options but make the swap"; Nov 13 the model offered cheaper bottles, the
+  PDF printed them as options, Cloudy Bay $37 / Joseph Phelps $71 stayed): server.js PRICE SWAPS + price-swap.js — each
+  over-limit line of that category -> product_query (its label / grape, max/min price) -> the dearest same-type, same-size
+  bottle within the limit at the line's qty ([price-swap] X -> Y / KEPT ... no ...); shownOptions cleared; a sent proposal is
+  regenerated; the reply is code unless the message has other changes (then "Done — ..." + the model). "find alternatives
+  around $20" / "what do you have under $15?" still lists options ([price-swap] NOT swapped). Scenarios 138, 139,
+  qa/unit/price-swap.test.js. A pick with no original takes the count of a generic request line ("(1) Sancerre, ... need 15 bottles",
   "Pinot Noir – 15 bottles"; request-qty.js; the PDF had 1x each). A wine request of a known type is never matched by another
   type, also on a fuzzy brand-word hit (functions.js [buildPackage] type:; Sancerre -> Nicolas Feuillatte Champagne, Saint-
   Emilion Bordeaux -> Ste. Michelle Riesling); the stand-in search tries the request's appellation first (drink-type.js

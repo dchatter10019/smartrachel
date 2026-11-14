@@ -1,0 +1,17 @@
+name: price-limit-swaps-not-options
+fresh: true
+tags: [email, proposal]
+# Nov 13 (DC, Eterra Kitchen email quotes): "The bottles should not exceed $15 for wine" / "Price of wine cannot exceed $15"
+# after the quote was sent — the model listed cheaper bottles and asked "Shall I go with ...?", the PDF printed them as
+# OPTIONS and the basket kept Cloudy Bay $37.39 and Joseph Phelps $71.49. DC (Nov 14): "if a customer is asking for the
+# swaps, don't add as options but make the swap" -> price-swap.js, in code, every channel.
+format: plain
+context: {email_subject: "Wine quote - Eterra QA", user_name: "QA Tester"}
+turns:
+  - send: "I am over 21. Please send a quote for delivery to 1580 Park Avenue, New York, NY 10029:\r\n\r\n4 x Cloudy Bay Sauvignon Blanc 750ml\r\n15 x Joseph Phelps Freestone Vineyards Pinot Noir 750ml\r\n24 x Ruffino Prosecco 750ml\r\n"
+  - send: "Price of wine cannot exceed $15"
+    expect:
+      contains: ["Swapped", "Your updated PDF proposal"]
+      not_matches: "(?i)(?:cloudy bay|joseph phelps)[^\\n]*\\$\\d+\\.\\d\\d ea|options listed"
+      log_contains: ["[price-swap] Cloudy Bay", "[price-swap] reply written in code", "[price-swap] proposal regenerated"]
+      pdf_not_contains: ["Cloudy Bay", "Joseph Phelps"]

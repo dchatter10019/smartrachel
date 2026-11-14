@@ -1,0 +1,18 @@
+name: price-limit-swaps-chat
+fresh: true
+tags: [proposal]
+# The Slack / WhatsApp / connector side of 138 (/chat, no email, no proposal yet): "keep the wine under $15 a bottle"
+# swaps in code; with another change in the same message the swaps are made and the model does the rest.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "1580 Park Avenue, New York, NY 10029"
+  - send: "4 x Cloudy Bay Sauvignon Blanc 750ml\n15 x Joseph Phelps Freestone Vineyards Pinot Noir 750ml\n24 x Ruffino Prosecco 750ml"
+  - send: "keep the wine under $15 a bottle"
+    expect:
+      contains: ["Swapped", "Product total"]
+      not_matches: "(?i)(?:cloudy bay|joseph phelps)[^\\n]*\\$\\d+\\.\\d\\d ea"
+      log_contains: ["[price-swap] reply written in code"]
+  - send: "make it 20 prosecco"
+    expect:
+      not_matches: "(?i)(?:cloudy bay|joseph phelps)[^\\n]*\\$\\d+\\.\\d\\d ea"

@@ -3627,6 +3627,61 @@ app.post('/chat', async (req, res) => {
         console.log('[order-change] email: order ' + poX.order_id + ' restored (' + itemsX.length + ' line(s)' + (poX.paid_reported ? ', customer said PAID' : '') + ') — applying the change, then placing the replacement: ' + JSON.stringify(message).slice(0, 80));
       }
     }
+    // ── PRICE SWAPS (price-swap.js; DC, Nov 14: "if a customer is asking for the swaps, don't add as options but make the
+    // swap") ── a per-bottle limit stated THIS message ("The bottles should not exceed $15 for wine", "the average price ...
+    // $15") against a basket with dearer bottles of that kind: each is swapped in code for a same-type, same-size bottle
+    // within the limit, at its qty. Nov 13 (two Eterra Kitchen email quotes): the model listed cheaper bottles, the PDF
+    // printed them as options and the basket kept Cloudy Bay $37 / Joseph Phelps $71 / Kim Crawford $17. Every channel.
+    if (state.step === 'ready' && !state.orderStep && !state.proposalStep && !state.replacingOrder) {
+      try {
+        const PS = require('./price-swap.js');
+        const bpS = require('./bottle-price.js').read(message);
+        let sItems = []; try { sItems = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+        const over = bpS && sItems.length ? PS.overLimit(sItems, bpS) : [];
+        if (over.length && PS.asksForOptions(message)) { console.log('[price-swap] NOT swapped — the customer asked to see alternatives/options (the model lists them)'); over.length = 0; }
+        if (over.length) {
+          const swaps = [], kept = [];
+          for (const i of over) {
+            const line = sItems[i], q = PS.queryFor(line);
+            let rows = [];
+            try {
+              const r = await callShoppingTool('product_query', { queries: [{ name: q, category: bpS.category === 'spirits' ? 'liquor' : 'wine', limit: 24, max_price: bpS.max, min_price: bpS.min || 0 }], zip: state.zip, email: 'line-resolve@getbevvi.com' });
+              rows = ((r && r.results) || []).flatMap(x => x.products || []);
+            } catch (e) { console.log('[price-swap] search for ' + JSON.stringify(q) + ' failed: ' + e.message); }
+            const row = PS.pick(rows, line, bpS);
+            if (row) { const nl = PS.swapLine(line, row); swaps.push({ from: line, to: nl, qty: line.qty || 1 }); sItems[i] = nl; console.log('[price-swap] ' + line.name + ' $' + PS.priceOf(line) + ' -> ' + row.name + ' $' + PS.priceOf(row) + ' x' + (line.qty || 1) + ' (searched ' + JSON.stringify(q) + ', limit $' + bpS.max + ')'); }
+            else { kept.push(line); console.log('[price-swap] KEPT ' + line.name + ' $' + PS.priceOf(line) + ' — no ' + JSON.stringify(q) + ' of the same type/size at $' + (bpS.min ? bpS.min + '-' : '') + bpS.max + ' here (' + rows.length + ' row(s) searched)'); }
+          }
+          const doneTxt = PS.describe(swaps, kept, bpS);
+          if (swaps.length) {
+            state.lastLineItems = JSON.stringify(sItems);
+            packageCache[makeCacheKey(email, state.zip, state.lastFingerprint)] = state.lastLineItems;
+            try { saveBasket(email, state.lastLineItems, '', format || 'slack').catch(() => {}); } catch (e) {}
+            state.shownOptions = null; state.proposalWithOptions = false;   // the swap IS the answer — never options on the PDF
+            state.pendingSubstitutes = []; state.pendingAddOffer = null; state.lastCta = null;
+          }
+          saveFlowState();
+          const asksProposal = /\b(?:proposal|porposal|propsal|pdf|quote)\b/i.test(message);
+          if (PS.onlyPriceAsk(message, bpS) && (state.lastProposalUrl || !asksProposal)) {
+            let txt = doneTxt + '\n\n' + PS.basketText(sItems);
+            if (state.lastProposalUrl && swaps.length) {
+              const subj = String(state.emailSubject || (context && context.email_subject) || '');
+              const client = state.savedClientName || require('./email-subject.js').clientLabeledIn(state.originalRequest || message) || require('./email-subject.js').clientFromSubject(subj) || String((context && context.user_name) || '').trim();
+              try { const url = await quotePdf(state, sItems, String(client || '').trim(), state.savedEventDate || '', 0); txt += '\n\nYour updated PDF proposal is attached: ' + url; console.log('[price-swap] proposal regenerated with the swaps (no options)'); }
+              catch (e) { console.log('[price-swap] PDF regeneration failed (swaps kept, customer told): ' + e.message); txt += "\n\nI couldn't regenerate the PDF just now — reply \"send the proposal\" and I'll try again."; }
+              txt += '\n\nReply with any other changes, or say "place the order" when you\'re ready.';
+            } else txt += '\n\nWould you like a PDF proposal, or shall I place the order?';
+            console.log('[price-swap] reply written in code (' + swaps.length + ' swapped, ' + kept.length + ' kept)');
+            return res.json({ text: txt, response: txt });
+          }
+          // More in the message (a proposal to start, other changes): the flow goes on with the swapped basket, told.
+          state.codeDoneThisTurn = (state.codeDoneThisTurn || []).concat(swaps.map(s => 'swapped ' + s.from.name + ' for ' + s.to.name + ' (' + s.qty + 'x, within the customer\'s $' + bpS.max + ' a bottle)'), kept.map(k => 'kept ' + k.name + ' — nothing of that kind within $' + bpS.max + ' here'));
+          console.log('[price-swap] swaps applied; the rest of the message goes on (' + (asksProposal ? 'proposal ask' : 'other instructions') + ')');
+          const _jS = res.json.bind(res);
+          res.json = (payload) => { try { const t0 = payload && (payload.text || payload.response); if (typeof t0 === 'string' && doneTxt) { const t = doneTxt + '\n\n' + t0; payload.text = t; payload.response = t; } } catch (e) {} return _jS(payload); };
+        }
+      } catch (e) { console.log('[price-swap] error (left to the flow): ' + e.message); }
+    }
     // ── QUOTE EDITS (quote-edits.js) ─────────────────────────────────────────────────────────────────
     // "Remove the following ... remove all beer in bottles ... I only need 1 case ... resend the updated
     // quote" against a quote the customer already has: parsed and applied in code, every change listed,
