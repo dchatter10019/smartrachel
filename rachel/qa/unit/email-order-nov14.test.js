@@ -16,4 +16,5 @@ ok('today written as a date is the delivery date', x.date === 'Saturday 11/14');
 ok('"First and last Name:" is the name', EO.extract('First and last Name: Diana Maranzano', { email: 'dipanjan@getbevvi.com' }, now).name === 'Diana Maranzano');
 ok('"First name and last Name:" is the name', EO.extract('First name and last Name: Diana Maranzano', { email: 'dipanjan@getbevvi.com' }, now).name === 'Diana Maranzano');
 ok('"earlier today" is still not a date', EO.timing(['the proposal curated earlier today?'], now).date === '');
+ok('"Create the order now": now is not a delivery time', !EO.timing(['Create the order now'], now).time && !EO.timing(['Create the order now'], now).when);
 if (failed) { console.log(failed + ' failed'); process.exit(1); }

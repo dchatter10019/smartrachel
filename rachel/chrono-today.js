@@ -5,7 +5,11 @@
 const chrono = require('chrono-node');
 function parse(text, ref, opts) {
   const now = ref || new Date();
-  const out = chrono.parse(text, now, Object.assign({ forwardDate: true }, opts || {}));
+  // "Create the order now" / "asap" is not a delivery time (Nov 14: "now" = 19:00 UTC was booked as 7-8 PM ET)
+  const out = chrono.parse(text, now, Object.assign({ forwardDate: true }, opts || {})).filter(r => {
+    if (/^(?:right\s+)?now$|^asap$|^immediately$/i.test(String(r.text).trim())) { console.log('[date] "' + r.text + '" is not a delivery time — ignored'); return false; }
+    return true;
+  });
   for (const r of out) {
     for (const c of [r.start, r.end]) {
       if (!c || c.isCertain('year') || !c.isCertain('day')) continue;

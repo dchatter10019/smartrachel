@@ -4021,6 +4021,11 @@ app.post('/chat', async (req, res) => {
       // Waiting on contact details and the code read none: the model's reading (fact-reader contact) fills what it states.
       // Real (Nov 14, DC): "First and last Name: Diana Maranzano" was read by nothing; the turn went to the model, whose
       // place_order was refused, and it told DC "The system will create the order ... shortly" — nothing was placed.
+      // A reply that is only a name ("Diana Maranzano") while the name is what is missing (Nov 14, DC: it went to the model).
+      if (state.emailOrder && !x.name) {
+        const bare = String(message).replace(/\r/g, '').split(/\n\s*\n|\n(?:On .+wrote:|-{3,}|Dipanjan|Thanks|Best)/)[0].trim();
+        if (/^[A-Z][a-zA-Z'’-]+(?:\s+[A-Z][a-zA-Z'’-]+){1,2}\.?$/.test(bare) && !/\b(?:Create|Place|Order|Thanks|Thank|Please|Yes|No)\b/.test(bare)) { x.name = bare.replace(/\.$/, ''); x.source = x.source || 'typed'; console.log('[email-order] a reply that is only a name: ' + JSON.stringify(x.name)); }
+      }
       if (state.emailOrder && !(x.name || x.phone || x.email)) {
         const cM = ((await FR.factsFor(message, { qa: isQA })) || {}).contact;
         if (cM && (cM.name || cM.phone || cM.email)) {

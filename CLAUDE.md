@@ -1040,7 +1040,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   date, the START of a range ("1-3pm" -> 1pm, was 3pm) and the zone ("ET"); no contact read by the code while an email order
   waits -> the fact reader's new `contact` {name, phone, email} ([fact-reader] reader_gap order_contact); after the model's
   refused place_order the reply is the code's ask (sessionState.emailOrderRefused, [email-order] ... REPLACED with the code's
-  ask). Scenario 147, qa/unit/email-order-nov14.test.js.
+  ask). "Create the order now": chrono read "now" as the delivery time (19:00 UTC booked as 7-8 PM ET) — chrono-today drops
+  now / asap / immediately; a reply that is only a name ("Diana Maranzano") is the name while the email order waits for it.
+  Scenario 147, qa/unit/email-order-nov14.test.js.
 
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
