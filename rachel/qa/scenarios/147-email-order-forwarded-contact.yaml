@@ -6,6 +6,7 @@ tags: [email]
 # Saturday 11/14 (1-3pm ET)" (both on the line after their label; the contact was in a Bevvi colleague's forward); "11/14"
 # on Nov 14 became Nov 14, 2027 ("Sun, Nov 14"); "First and last Name: Diana Maranzano" was read by nothing, twice; then the
 # model said "The system will create the order ... shortly" — nothing was placed. (Tomorrow here: the QA runs every day.)
+# Since the order reader (order-reader.js) the model fills the order form and the code checks and acts.
 format: plain
 context: {email_subject: "Fwd: Bevvi - Delivery", user_name: "QA Tester"}
 turns:
@@ -17,8 +18,16 @@ turns:
       contains: ["Diana Maranzano", "(212) 288-3500", "email"]
       not_contains: ["full name", "phone number", "Which time zone", "The system will create"]
       log_contains: ["[email-order] command"]
-  - send: "First and last Name: Diana Maranzano\r\nEmail: qa-diana@getbevvi.com"
+  # "now" is never a delivery time (it booked 7-8 PM ET); the model reads the form, the code checks it (order-reader.js)
+  - send: "Create the order now"
     expect:
-      contains: ["Here is your Payment Link", "Diana Maranzano", "QA dry run"]
+      contains: ["email"]
+      not_contains: ["The system will create", "Here is your Payment Link"]
+      not_matches: "(?i)[4-9]:00 PM"
+      log_contains: ["[order-reader] checked: intent place_order"]
+  - send: "Diana Maranzano\r\nEmail: qa-diana@getbevvi.com"
+    expect:
+      contains: ["Here is your Payment Link", "Diana Maranzano", "QA dry run", "1:00 PM", "Deliver to the 3rd floor"]
+      not_contains: ["%28", "On-Site Contact: Diana Maranzano |"]
       not_contains: ["The system will create"]
       log_contains: ["complete -> placing", "[QA] place_order dry run"]

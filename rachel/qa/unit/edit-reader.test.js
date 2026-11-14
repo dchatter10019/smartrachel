@@ -22,4 +22,10 @@ ok('no ops: valid, nothing to do', ER.validate({ ops: [], shown }, basket).ok);
 ok('shown products: those Rachel named first', ER.shownFor([{ name: 'Kim Crawford Sauvignon Blanc' }, { name: 'Nicolas Idiart Sancerre Blanc - 750 ML' }], offer)[0].name.startsWith('Nicolas'));
 const rv = ER.regexView('Take out the cloudy bay and regenerate the proposal.', basket, '');
 ok('regex view = removes Cloudy Bay too (no disagreement)', ER.disagreement([{ op: 'remove', item: basket[0] }], rv).length === 0);
+const beer = [{ name: 'Goose Island IPA 12 x 12 OZ Bottles', qty: 4, price: 31.99 }];
+ok('24 bottles on a 12-pack line is never 24 packs (rejected; the units reader converts)', !ER.validate({ ops: [{ op: 'set_qty', line: 1, qty: 24 }], shown: [] }, beer, 'we need 24 bottles not 4 cases').ok);
+ok('"make it 6 packs" on a pack line is fine', ER.validate({ ops: [{ op: 'set_qty', line: 1, qty: 6 }], shown: [] }, beer, 'make the IPA 6 packs').ok);
+{ const vu = ER.validate({ ops: [{ op: 'units', line: 1, qty: 24 }], shown: [] }, beer, 'we need 24 bottles not 4 cases');
+  ok('units: 24 bottles of a 12-pack line = 2 packs, converted in code', vu.ok && vu.ops[0].op === 'set_qty' && vu.ops[0].qty === 2); }
+ok('units on a line that is not a pack: rejected', !ER.validate({ ops: [{ op: 'units', line: 1, qty: 6 }], shown: [] }, [{ name: 'Tito\'s Handmade Vodka - 750 ML', qty: 2 }], '6 bottles').ok);
 if (failed) { console.log(failed + ' failed'); process.exit(1); }

@@ -8,7 +8,8 @@
 // ONE forced-tool Sonnet 4.6 call (like fact-reader.js; memoized per message + basket + Rachel's last reply; 8s timeout) sees the
 // customer's message, Rachel's last reply, the basket as numbered lines (L1..) and the products Rachel just showed (P1..), and
 // returns OPERATIONS that point at those numbers — never free product names:
-//   remove {line} · set_qty {line, qty} · replace {line, product, qty?} · add {product, qty}
+//   remove {line} · set_qty {line, qty} · units {line, qty: single bottles/cans of a pack line — the CODE converts} ·
+//   replace {line, product, qty?} · add {product, qty}
 // plus regenerate_proposal and `also` (what else the message asks: fees / order / proposal / question / search / other).
 // server.js EDIT READER validates every op (the line / product exists, qty 1..2000, one op per line, a replacement is not the
 // line itself) — one bad op = the whole reading is dropped and the code's own readers run as before — then applies them with
@@ -23,19 +24,20 @@ const MODEL = process.env.RACHEL_EDIT_MODEL || 'claude-sonnet-4-6';
 const SYSTEM = `You read ONE message a customer sent to a beverage-ordering assistant (Rachel) and report the changes it makes to the customer's basket. You do not reply to the customer.
 You get: Rachel's last message, the basket as numbered lines (L1, L2, ...), and products Rachel just showed or offered (P1, P2, ...). Report ONLY changes the customer asks for or agrees to, pointing at those numbers:
 - remove {line}: take a basket line out ("take out the cloudy bay", "drop the Stella", "we don't need the rosé").
-- set_qty {line, qty}: change how many of a line — also a line the customer lists under "remove" but with a new count ("remove the following: - Whitehaven (I only need 2 bottles)" -> set_qty Whitehaven 2, NOT remove) ("make the Tito's 6", "only 2 cases of Stella" when Stella is 1 case a line -> qty 2). qty is the number of basket units of that line (cases/packs for a pack line; bottles otherwise). If the customer counts single bottles/cans of a pack line, do NOT report it — put "other" in also.
+- set_qty {line, qty}: change how many of a line — also a line the customer lists under "remove" but with a new count ("remove the following: - Whitehaven (I only need 2 bottles)" -> set_qty Whitehaven 2, NOT remove) ("make the Tito's 6", "only 2 cases of Stella" when Stella is 1 case a line -> qty 2). qty is the number of basket units of that line (cases/packs for a pack line; bottles otherwise), as the customer states it.
+- units {line, qty}: the customer counts SINGLE bottles/cans of a PACK line ("we need 24 bottles not 4 cases" on "4x Goose Island IPA 12 x 12 OZ") -> units {line, qty: 24}. Copy their count; never convert it to packs yourself.
 - replace {line, product, qty?}: swap a basket line for a shown product. qty only when the customer states a new count; otherwise omit it (the line keeps its quantity).
 - add {product, qty}: add a shown product as a NEW line (qty = the count the customer states; 0 if they state none).
 A "yes" / "do that" / "sounds good" to a change Rachel offered in her last message = that change (e.g. Rachel: "Want me to swap the Cloudy Bay out for the Nicolas Idiart Sancerre?" + customer: "yes" -> replace {line: <Cloudy Bay's line>, product: <the Sancerre's P number>}). Rachel offering to swap X for Y means X is the basket line and Y is the new product.
 Never invent a line or product number. A product that is not in the P list cannot be added or swapped in: put "search" in also instead. A price limit per bottle ("wines under $15") is not an op: put "other" in also.
 regenerate_proposal = true when the customer asks for a new/updated/regenerated proposal, PDF or quote, or says yes to Rachel's offer that included regenerating it.
-also = everything else the message asks for, from: "fees" (tax, tip, service charge, delivery fee, free delivery), "order" (place / create the order, checkout, payment link), "proposal" (a proposal is asked but nothing else changes), "question" (asks something), "search" (wants a product that is not in the P list, or alternatives/options), "details" (address, date, time, client, contact, delivery instructions), "other" (anything else). Empty when the message asks nothing else.
+also = everything else the message asks for, from: "fees" (tax, tip, service charge, delivery fee, free delivery), "order" (place / create the order, checkout, payment link), "proposal" (a proposal is asked but nothing else changes), "question" (asks something), "search" (wants a product that is not in the P list, or alternatives/options), "details" (address, date, time, client, contact, delivery instructions), "other" (any other REQUEST). Statements, thanks and comments ("Everything looks good except for the beer", "thanks!", "perfect") are not requests — never "other". Empty when the message asks nothing else.
 If the message is not about the basket at all, return ops: [] .
 Answer by calling the edits tool once.`;
 
 const TOOL = { name: 'edits', description: 'The basket changes the customer message makes.', input_schema: { type: 'object', properties: {
   ops: { type: 'array', items: { type: 'object', properties: {
-    op: { type: 'string', enum: ['remove', 'set_qty', 'replace', 'add'] },
+    op: { type: 'string', enum: ['remove', 'set_qty', 'replace', 'add', 'units'] },
     line: { type: 'integer', description: 'basket line number (L#)' },
     product: { type: 'integer', description: 'shown product number (P#)' },
     qty: { type: 'integer' } }, required: ['op'] } },
@@ -118,13 +120,13 @@ function read(message, ctx = {}) {
 }
 
 // The model's ops checked against the basket and the shown products. -> { ok, ops: [{op, index, item, product, qty}], why }
-function validate(reading, basket) {
+function validate(reading, basket, message) {
   if (!reading) return { ok: false, why: 'no reading' };
   const ops = [], used = new Set(), shown = reading.shown || [];
   const nz = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
   for (const o of reading.ops || []) {
     const kind = o && o.op;
-    if (!['remove', 'set_qty', 'replace', 'add'].includes(kind)) return { ok: false, why: 'unknown op ' + JSON.stringify(o) };
+    if (!['remove', 'set_qty', 'replace', 'add', 'units'].includes(kind)) return { ok: false, why: 'unknown op ' + JSON.stringify(o) };
     let index = -1, product = null;
     if (kind !== 'add') {
       index = (parseInt(o.line, 10) || 0) - 1;
@@ -141,6 +143,22 @@ function validate(reading, basket) {
     let qty = o.qty == null ? null : parseInt(o.qty, 10);
     if (qty != null && (!(qty >= 0) || qty > 2000)) return { ok: false, why: kind + ': quantity ' + o.qty };
     if (kind === 'set_qty' && !(qty >= 1)) return { ok: false, why: 'set_qty without a quantity (use remove for 0)' };
+    if (kind === 'units') {
+      // the code converts single bottles / cans to packs: ceil(count / pack size), the pack size read from the line's name
+      const nm = String(basket[index].name || '') + ' ' + String(basket[index].size || '');
+      const pm = nm.match(/\b(\d{1,2})\s*(?:x|pk\b|pack\b|-pack\b)/i) || nm.match(/\((\d{1,2})pk/i);
+      const pack = pm ? parseInt(pm[1], 10) : 0;
+      if (!(qty >= 1)) return { ok: false, why: 'units without a count' };
+      if (!(pack > 1)) return { ok: false, why: 'units on L' + o.line + ', which is not a pack line' };
+      ops.push({ op: 'set_qty', index, item: basket[index], product: null, qty: Math.ceil(qty / pack), units: { count: qty, pack } });
+      continue;
+    }
+    // A pack line's quantity is PACKS. A count the customer gave in single bottles / cans ("we need 24 bottles not 4 cases") is
+    // never a pack count — the units reader (quote-edits.js) converts it (Nov 14: the model set 24 x 12-packs = 288 bottles).
+    if ((kind === 'set_qty' || (kind === 'replace' && qty)) && index >= 0 && /\b\d{1,2}\s*(?:x|pk|pack)\s*\d|\b\d{1,2}\s*-?\s*pack\b|\(\d+pk/i.test(String(basket[index].name || '') + ' ' + String(basket[index].size || ''))
+        && new RegExp('\\b' + qty + '\\s*(?:x\\s*)?(?:single\\s+)?(?:bottles?|cans?|btls?)\\b', 'i').test(String(message || ''))) {
+      return { ok: false, why: kind + ' L' + o.line + ' to ' + qty + ': the customer counted single bottles/cans of a pack line (the units reader converts it)' };
+    }
     if (kind === 'replace' && qty === 0) qty = null;
     ops.push({ op: kind, index, item: index >= 0 ? basket[index] : null, product, qty });
   }

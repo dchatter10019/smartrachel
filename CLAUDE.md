@@ -1020,6 +1020,11 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   (codeDoneThisTurn + "Done — ..." on top) and QUOTE EDITS, the add-confirm and the proposal-edits gate stand aside
   (editReaderDone). Where the regex readers would have read differently -> FR.gap basket_edits -> self-corrections reader_gap
   -> nightly fixer. A product not shown yet ("swap it for Kim Crawford") = also search -> the model searches as before.
+  Nov 14 later: op `units {line, qty}` — single bottles / cans of a PACK line as the customer counted them; validate() converts
+  to packs in code (ceil(count / pack size from the name), [edit-reader] units: ...); a set_qty on a pack line equal to a bottle
+  count in the message is rejected (the model once set "24 bottles not 4 cases" to 24 x 12-packs). A PDF the reader made rides
+  on the reply even when the rest of the message goes on (preText), and stops a second proposal flow (editReaderPdf). Comments
+  ("Everything looks good except ...") are not "other". Scenario 142 accepts either reader.
   Never read: a product list / "rebuild with only ..." / start over (the list builder), a change to a PLACED order
   (state.emailReplace / replacingOrder keep their replacement-order path), checkout / proposal steps, a pending stock pick.
   The reply lists the changes like quote-edits (Removed / Quantity changed / Replaced / Added). Scenario 61 now asserts the
@@ -1046,6 +1051,28 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   which runs at placement — so a note saved before the fix is cleaned too) and a glued "On-Site Contact:" becomes its own sentence
   ("Deliver to the 3rd floor. On-Site Contact: Diana Maranzano, 212-288-3500"); precheck restarts shopping-agent and rachel-mcp
   for delivery-instructions.js (both load it). Scenario 147, qa/unit/email-order-nov14.test.js.
+
+- ORDER READER — the model READS the email order, the code checks it and acts (DC, Nov 14: "we only use the llm for parsing ..
+  and then it calls appropriate tools to make it more deterministic"; BEVVI-AI-INFO-20261114-191806 went out for 7-8 PM ET with a
+  garbled driver note after a day of pattern misses). rachel/order-reader.js: ONE forced-tool Sonnet 4.6 call (RACHEL_ORDER_MODEL;
+  10s; memoized; ai-spend kind order-reader) on an email-thread turn with a cart / an email order waiting / a placed-order change and
+  order-ish wording. Input: the new email, the customer side of the thread (customerOnly: no "> " quotes, no "On ... wrote:" tail,
+  no forwarded copy of Rachel's email), Rachel's last email (context only), the sender (a Bevvi colleague is flagged), what the
+  order still needs. Output = a FORM, never a decision: intent (place_order / provide_details / confirm_yes / none), contact
+  {name, email, phone}, on_site {name, phone}, delivery {date, start_time, zone} copied as written, instructions, not_customer —
+  each value with from (new | earlier) and the exact quote. check(): a quote not in the email it names, or in Rachel's own recent
+  replies, is dropped; intent words must be in the NEW email; names 2+ words, never a Bevvi From name / the colleague sender;
+  phone 10 digits; email well-formed; the date read by chrono-today must be today or later; now / asap / today-as-urgency are never
+  a time; a time with no date takes the email's own today / tomorrow ([order-reader] checked ... | DROPPED [...]). server.js
+  EMAIL ORDER: the model's intent opens the block too (cmd); its new-email values replace the patterns' (disagreements -> FR.gap
+  email_order); a delivery the patterns read while the model read none is DROPPED; the colleague's on-site contact = the
+  customer; the thread's values fill what is still missing before the patterns' thread reading; then the existing tools decide
+  and act — validateDeliveryTime against the store's real windows, EO.missing / askText, place_order, the replacement path, the
+  reply in code. od.delivery_src records where the accepted delivery came from (model / thread / held / patterns); a delivery
+  with NO source (saved before the reader) is never booked silently — "Before I create the order, please confirm the delivery:
+  ..." and a yes (model confirm_yes or a plain yes) places it. No reading = the patterns, as before (the bare-name / fact-reader
+  contact fallbacks run only then). Scenario 147 (DC's sequence: place -> "Create the order now" -> bare name), qa/unit/
+  order-reader.test.js.
 
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days

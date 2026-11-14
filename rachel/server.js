@@ -1399,6 +1399,7 @@ async function validateDeliveryTime(state, message, email, format, res) {
 const cta = require('./cta.js');
 const QE = require('./quote-edits.js');   // edits to a quote the customer already has, applied in code
 const EO = require('./email-order.js');
+const OR = require('./order-reader.js');   // the model reads the email order, the code checks and acts (DC, Nov 14)
 const POM = require('./placed-order-msg.js');
 const KEPTP = require('./kept-proposal.js');
 // Cancelling a placed order: nothing to replace it with and no cancel API, so it still goes to bevvi-support (DC, Oct 28).
@@ -3844,7 +3845,7 @@ app.post('/chat', async (req, res) => {
     // The model reads the basket changes in this message (remove / quantity / swap for a product just shown / add a shown
     // product, a yes to Rachel's offered change, "regenerate the proposal"); the code checks every one against the basket and
     // the shown products and makes them here. An invalid or missing reading = the code's own readers below, as before.
-    let editReaderDone = false;
+    let editReaderDone = false, editReaderPdf = false;
     // (a change to a PLACED order keeps its own path: the corrected replacement order is placed there — state.emailReplace /
     //  state.replacingOrder)
     // (a message that IS a product list — "Rebuild it with only: A x2, B x1" — or starts over keeps the list builder)
@@ -3852,7 +3853,7 @@ app.post('/chat', async (req, res) => {
     if (!erList && !state.orderStep && !state.proposalStep && !state.emailReplace && !state.replacingOrder && !isInternalMsgEarly(message) && !(state.orderData && message === state.orderData.delivery_datetime) && !state.pendingStock) {
       const ctxR = erCtx();
       const rd = ctxR.basket.length ? await ER.read(message, ctxR).catch(() => null) : null;
-      const v = rd ? ER.validate(rd, ctxR.basket) : null;
+      const v = rd ? ER.validate(rd, ctxR.basket, message) : null;
       if (rd && !v.ok) console.log('[edit-reader] reading NOT used — ' + v.why + ' — the code\'s readers decide');
       if (rd && v.ok && v.ops.length) {
         const rv = ER.regexView(message, ctxR.basket, ctxR.lastReply);
@@ -3876,6 +3877,7 @@ app.post('/chat', async (req, res) => {
           const row = itR.find(x => nzR(x.name) === nzR(o.item.name));
           if (!row) { failed.push(o.item.name + ' (no longer in the basket)'); continue; }
           const from = row.qty || row.quantity || 1; row.qty = o.qty; row.quantity = o.qty; row.qty_confirmed = true;
+          if (o.units) console.log('[edit-reader] units: ' + o.units.count + ' single bottles/cans of ' + o.item.name + ' = ' + o.qty + ' x ' + o.units.pack + '-pack (ceil, in code)');
           done.push(o.item.name + ': ' + from + ' -> ' + o.qty);
         }
         for (const o of v.ops.filter(x => x.op === 'remove')) {
@@ -3930,7 +3932,8 @@ app.post('/chat', async (req, res) => {
         // handles it, told what was done — the code's edit readers below stand aside so nothing is done twice.
         if (done.length || failed.length) {
           state.codeDoneThisTurn = (state.codeDoneThisTurn || []).concat(done, failed.map(f => 'NOT done: ' + f));
-          preText = (doneLine + failLine).trim();
+          preText = (doneLine + failLine + pdfR).trim();
+          if (pdfR) editReaderPdf = true;
           const _jR = res.json.bind(res);
           res.json = (payload) => { try { const t0 = payload && (payload.text || payload.response); if (typeof t0 === 'string' && preText && t0.indexOf(preText) < 0 && !/^Done —/.test(t0)) { const t = preText + '\n\n' + t0; payload.text = t; payload.response = t; } } catch (e) {} return _jR(payload); };
           console.log('[edit-reader] the rest of the message (' + rest.join(', ') + ') goes on — the code\'s edit readers stand aside this turn');
@@ -4005,16 +4008,63 @@ app.post('/chat', async (req, res) => {
     // DC (Sep 29): "create the order" / "send a payment link" in an email creates the order and the reply
     // carries the payment link. Contact = the customer in the email; everything missing is asked for in ONE
     // reply and the answer places it; tip 5% unless stated. Placed here in code (no LLM), QA = dry run.
+    // ORDER READER (order-reader.js; DC, Nov 14: "only use the llm for parsing ... then it calls appropriate tools"): the model
+    // fills the order form (intent, contact, on-site contact, delivery date / start / zone, driver note) with the words each
+    // value came from; order-reader.js check() drops what the emails don't say; the code below decides and acts as before.
+    let orC = null, orStaff = false;
+    if ((/^email-/.test(sessionKey) || (context && context.email_subject)) && !state.orderStep && !state.proposalStep && !isInternalMsgEarly(message)
+        && (state.emailOrder || state.emailReplace || EO.isOrderCommand(message) || /\b(?:order|book|payment|link|go ahead|place it|confirm|deliver(?:y|ed)?|name|phone|email|time)\b/i.test(message))) {
+      let nItO = 0; try { nItO = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
+      if (nItO || state.emailOrder || state.emailReplace) {
+        const earlierO = threadPriorTexts(sessionKey);
+        orStaff = EO.isStaff(email);
+        const staffNames = [orStaff ? String((context && context.user_name) || '') : ''].concat(earlierO.concat(message).join('\n').split('\n')
+          .map(l => (l.match(/^\W*(?:from|to|cc)\s*:\s*([^<\n]+?)\s*<[^>@]+@getbevvi\.com>/i) || [])[1]).filter(Boolean));
+        const rdO = await OR.read(message, { earlier: earlierO, lastReply: String((lastRepliesBySession[sessionKey] || []).slice(-1)[0] || ''),
+          sender: String((context && context.user_name) || '') + ' <' + email + '>' + (orStaff ? ' (a Bevvi colleague — not the customer)' : ''), needs: state.emailOrder ? EO.missing(state.emailOrder) : [], qa: isQA });
+        if (rdO) {
+          orC = OR.check(rdO, { newText: message, earlierTexts: earlierO, staffNames, rachelTexts: (lastRepliesBySession[sessionKey] || []).slice(-6), zoneOf: z => explicitZoneIn(z) || zoneStatedIn(z) });
+          console.log('[order-reader] checked: intent ' + orC.intent + ' | this email ' + JSON.stringify(Object.fromEntries(Object.entries(orC.fields.new).map(([k, v]) => [k, v.value])))
+            + ' | earlier ' + JSON.stringify(Object.fromEntries(Object.entries(orC.fields.earlier).map(([k, v]) => [k, v.value]))) + (orC.rejected.length ? ' | DROPPED ' + JSON.stringify(orC.rejected) : ''));
+        }
+      }
+    }
+    const orPlace = !!(orC && orC.intent === 'place_order');
+    const orYes = !!(state.emailOrder && state.emailOrder.confirm_delivery && ((orC && orC.intent === 'confirm_yes') || /^\W*(?:yes|yep|yeah|correct|confirmed?|that'?s (?:right|correct)|looks good|go ahead)\b/i.test(message)));
     if ((/^email-/.test(sessionKey) || (context && context.email_subject)) && !state.orderStep && !state.proposalStep
-        && (EO.isOrderCommand(message) || state.emailOrder)) {
+        && (EO.isOrderCommand(message) || state.emailOrder || orPlace)) {
       let oItems = []; try { oItems = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
       // A change to a placed order (restored above): details are applied here and placed; an item change only when the quote
       // edits applied it in code this turn — else the LLM makes it and the customer says "place the order" (never blind).
       const replaceReady = !!state.emailReplace && (!POM.itemChange(message) || !!state.emailReplaceReady || (state.codeDoneThisTurn || []).some(d => !/^(?:not in the quote|several lines)/.test(d)));
       state.emailReplaceReady = null;
       if (state.emailReplace && !replaceReady && !state.replyNote) { state.replyNote = 'When this looks right, reply "place the order" and I\'ll create the updated order (it replaces order #' + state.emailReplace + ') with a new Payment Link.'; console.log('[order-change] email: item change left to the LLM — the replacement waits for "place the order"'); }
-      const cmd = EO.isOrderCommand(message) || replaceReady, poE = state.placedOrder;
+      const cmd = EO.isOrderCommand(message) || replaceReady || orPlace || orYes, poE = state.placedOrder;
       const x = EO.extract(message, { name: context && context.user_name, email }, new Date());
+      // The model's reading of THIS email first; the patterns' values only where the model read nothing (logged when they differ).
+      // A delivery time the patterns read while the model read none is dropped ("Create the order now" booked 7 PM ET, Nov 14).
+      if (orC) {
+        const N = orC.fields.new, fz = v => String(v || '').toLowerCase().replace(/[^a-z0-9@.]/g, '');
+        const diff = [];
+        const put = (k, v) => { if (!v) return; if (x[k] && fz(x[k]) !== fz(v)) diff.push(k + ': patterns ' + JSON.stringify(x[k]) + ' / model ' + JSON.stringify(v)); x[k] = v; };
+        put('name', N.name && N.name.value); put('email', N.email && N.email.value); put('phone', N.phone && N.phone.value); put('instructions', N.instructions && N.instructions.value);
+        if (N.name || N.email || N.phone) x.source = 'typed';
+        if (!x.name && orStaff && N.onsite_name) { x.name = N.onsite_name.value; x.source = 'contact in the email'; if (!x.phone && N.onsite_phone) x.phone = N.onsite_phone.value; }
+        if (N.date || N.time) {
+          const zw = N.zone ? ' ' + N.zone.value : '';
+          if (N.date && N.time) { x.when = N.date.value + ' at ' + N.time.value + zw; x.date = ''; x.time = ''; }
+          else if (N.date) { x.when = ''; x.date = N.date.value; x.time = ''; }
+          else { x.when = ''; x.date = ''; x.time = N.time.value + zw; }
+          x.whenSrc = 'model';
+        } else if (x.when || x.time || x.date) {
+          console.log('[order-reader] the patterns read a delivery ' + JSON.stringify(x.when || x.time || x.date) + ' the email does not state — dropped');
+          diff.push('delivery: patterns ' + JSON.stringify(x.when || x.time || x.date) + ' / model none');
+          x.when = ''; x.date = ''; x.time = '';
+        }
+        if (N.zone && !x.when && !x.time) x.zone = N.zone.value;
+        for (const nc of orC.notCustomer) if (!EO.notCustomer(message).includes(nc)) x.notCustomer = (x.notCustomer || []).concat(nc);
+        if (diff.length) FR.gap('email_order', 'disagree', null, diff, frCtx);
+      }
       // A bare "2pm" answers the time question; a bare "ET" / "Pacific" answers the time-zone question (DC, Oct 5).
       const eoQ = state.emailOrder || {};
       const zoneAnswer = !!((eoQ.pending_when || eoQ.awaiting_zone) && String(message).trim().length <= 120 && explicitZoneIn(message));
@@ -4022,11 +4072,11 @@ app.post('/chat', async (req, res) => {
       // Real (Nov 14, DC): "First and last Name: Diana Maranzano" was read by nothing; the turn went to the model, whose
       // place_order was refused, and it told DC "The system will create the order ... shortly" — nothing was placed.
       // A reply that is only a name ("Diana Maranzano") while the name is what is missing (Nov 14, DC: it went to the model).
-      if (state.emailOrder && !x.name) {
+      if (!orC && state.emailOrder && !x.name) {
         const bare = String(message).replace(/\r/g, '').split(/\n\s*\n|\n(?:On .+wrote:|-{3,}|Dipanjan|Thanks|Best)/)[0].trim();
         if (/^[A-Z][a-zA-Z'’-]+(?:\s+[A-Z][a-zA-Z'’-]+){1,2}\.?$/.test(bare) && !/\b(?:Create|Place|Order|Thanks|Thank|Please|Yes|No)\b/.test(bare)) { x.name = bare.replace(/\.$/, ''); x.source = x.source || 'typed'; console.log('[email-order] a reply that is only a name: ' + JSON.stringify(x.name)); }
       }
-      if (state.emailOrder && !(x.name || x.phone || x.email)) {
+      if (!orC && state.emailOrder && !(x.name || x.phone || x.email)) {
         const cM = ((await FR.factsFor(message, { qa: isQA })) || {}).contact;
         if (cM && (cM.name || cM.phone || cM.email)) {
           if (cM.name && String(cM.name).trim().split(/\s+/).length >= 1 && !/@|\d/.test(cM.name)) x.name = String(cM.name).trim();
@@ -4051,7 +4101,7 @@ app.post('/chat', async (req, res) => {
           return _jO(payload);
         };
       }
-      const provided = !!(x.name || x.phone || x.when || x.date || x.time || x.instructions || x.tip || zoneAnswer);
+      const provided = !!(x.name || x.phone || x.email || x.when || x.date || x.time || x.zone || x.instructions || x.tip || zoneAnswer || orYes);
       // A NEW thread with its list (typed, attached, a Google Sheet) AND "place the order" (DC, Oct 22): the basket is
       // built from the list this turn, then the email agent sends the email's typed text back (`followup`) and this block
       // places the order / asks for what's missing, in the same reply. Before: "There's no quote on this thread yet".
@@ -4082,7 +4132,7 @@ app.post('/chat', async (req, res) => {
         const od = Object.assign({}, state.emailOrder || {});
         // "Mara is not the customer" (DC, Oct 3) is remembered for the thread, and the on-site contact's first name never
         // replaces a full customer name already given.
-        for (const nm of EO.notCustomer(message)) if (!(od.not_customer || []).includes(nm)) { od.not_customer = (od.not_customer || []).concat(nm); console.log('[email-order] ' + JSON.stringify(nm) + ' is not the customer (said in the email)'); }
+        for (const nm of EO.notCustomer(message).concat(x.notCustomer || [])) if (!(od.not_customer || []).includes(nm)) { od.not_customer = (od.not_customer || []).concat(nm); console.log('[email-order] ' + JSON.stringify(nm) + ' is not the customer (said in the email)'); }
         const notC = n => (od.not_customer || []).some(b => String(n || '').toLowerCase().split(/\s+/)[0] === b.toLowerCase());
         if (notC(od.name)) { console.log('[email-order] dropped ' + JSON.stringify(od.name) + ' as the customer name (not the customer)'); od.name = ''; }
         if (x.name && (notC(x.name) || (x.source === 'contact in the email' && String(od.name || '').trim().split(/\s+/).length >= 2 && x.name.trim().split(/\s+/).length < 2))) {
@@ -4096,6 +4146,22 @@ app.post('/chat', async (req, res) => {
         if (od.email) od.email = EO.fixAddr(od.email);   // a saved "...comand" from before the fix is repaired too
         // Still missing a name / email / phone: the thread's earlier emails, newest first. Real (Oct 3, DC): "You have the
         // name from before" — Sean's form two emails up had the customer's name, email and phone.
+        // The thread, as the model read it (the patterns' thread reading below fills only what is still missing).
+        let orWhen = '';
+        if (orC) {
+          const E = orC.fields.earlier, got = [];
+          const full = n => String(n || '').trim().split(/\s+/).length >= 2;
+          if (!full(od.name)) { const nE = (E.name && E.name.value) || (orStaff && E.onsite_name && E.onsite_name.value) || (orStaff && orC.fields.new.onsite_name && orC.fields.new.onsite_name.value); if (nE && !notC(nE) && full(nE)) { od.name = nE; got.push('name ' + JSON.stringify(nE)); if (!od.phone && !E.phone && E.onsite_phone) { od.phone = E.onsite_phone.value; got.push('phone (on-site contact)'); } } }
+          if (!od.phone && E.phone) { od.phone = E.phone.value; got.push('phone'); }
+          if (!od.email && E.email && !EO.isStaff(E.email.value)) { od.email = E.email.value; got.push('email'); }
+          if (!od.instructions && E.instructions) { od.instructions = E.instructions.value; got.push('instructions'); }
+          if (!x.when && !x.date && !x.time && !od.delivery_ok && !od.delivery_date && E.date) {
+            od.delivery_date = E.date.value; got.push('delivery date ' + JSON.stringify(E.date.value));
+            if (E.time) { orWhen = E.date.value + ' at ' + E.time.value + (E.zone ? ' ' + E.zone.value : ''); got.push('time ' + JSON.stringify(E.time.value)); }
+          }
+          if (!od.cust_zone && !state.custZone && (x.zone || E.zone)) { const zM = explicitZoneIn((x.zone) || E.zone.value) || zoneStatedIn((x.zone) || E.zone.value); if (zM) { od.cust_zone = zM; state.custZone = zM; got.push('zone ' + zM); } }
+          if (got.length) console.log('[order-reader] from the thread (the model\'s reading, checked): ' + got.join(', '));
+        }
         if (!(String(od.name || '').trim().split(/\s+/).length >= 2 && od.email && od.phone)) {
           const prior = threadPriorTexts(sessionKey);
           const got = [];
@@ -4138,6 +4204,9 @@ app.post('/chat', async (req, res) => {
         }
         if (winV && !od.cust_zone && !state.custZone) { const zW = zoneStatedIn(winV) || explicitZoneIn(winV); if (zW) { od.cust_zone = zW; state.custZone = zW; console.log('[email-order] time zone from the thread\'s window: ' + zW); } }
         let whenPhrase = x.when || (x.time && od.delivery_date ? od.delivery_date + ' at ' + x.time : '');
+        let whenSrc = whenPhrase ? (x.whenSrc || (orC ? 'model' : 'patterns')) : '';
+        // (a time held for the zone question goes first, below)
+        if (!whenPhrase && orWhen && !od.delivery_ok && !(od.pending_when && od.cust_zone)) { whenPhrase = orWhen; whenSrc = 'thread'; console.log('[order-reader] delivery from the thread: ' + JSON.stringify(orWhen)); }
         // A delivery window an earlier email (or the history this one quotes) gives is the time — never asked again
         // (thread-facts.js; DC, Nov 14: ask only what the thread doesn't say).
         if (!whenPhrase && !od.delivery_ok && od.delivery_date) {
@@ -4145,13 +4214,13 @@ app.post('/chat', async (req, res) => {
           // a range "1-3pm" starts at 1pm (the start, with the range's am/pm) — it was read as 3pm
           const rgW = fW && String(fW.value).match(/\b(\d{1,2}(?::\d{2})?)\s*(am|pm)?\s*(?:-|–|—|to)\s*\d{1,2}(?::\d{2})?\s*(am|pm)\b/i);
           const tW = rgW ? rgW[1] + (rgW[2] || rgW[3]) : fW && (String(fW.value).match(/\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/i) || [])[0];
-          if (tW) { whenPhrase = od.delivery_date + ' at ' + tW; console.log('[email-order] delivery time from the email thread (' + fW.from + '): ' + JSON.stringify(fW.value) + ' -> ' + JSON.stringify(whenPhrase)); }
+          if (tW) { whenPhrase = od.delivery_date + ' at ' + tW; whenSrc = 'thread'; console.log('[email-order] delivery time from the email thread (' + fW.from + '): ' + JSON.stringify(fW.value) + ' -> ' + JSON.stringify(whenPhrase)); }
         }
         // The zone: stated in this email ("times in PST please"), or — when Rachel asked for it — a short answer ("ET").
         { const zE = zoneStatedIn(message) || ((od.pending_when || od.awaiting_zone) && String(message).trim().length <= 120 ? explicitZoneIn(message) : '');
           if (zE) { od.cust_zone = zE; state.custZone = zE; od.awaiting_zone = false; } else if (!od.cust_zone && state.custZone) od.cust_zone = state.custZone; }
         // A time Rachel held while asking the zone, now answered.
-        if (!whenPhrase && od.pending_when && od.cust_zone) { whenPhrase = od.pending_when; console.log('[email-order] zone answered (' + od.cust_zone + ') — the held time ' + JSON.stringify(od.pending_when) + ' is checked in it'); }
+        if (!whenPhrase && od.pending_when && od.cust_zone) { whenPhrase = od.pending_when; whenSrc = 'held'; console.log('[email-order] zone answered (' + od.cust_zone + ') — the held time ' + JSON.stringify(od.pending_when) + ' is checked in it'); }
         if (!whenPhrase && od.delivery_date && !od.delivery_ok && !od.cust_zone) {
           // Windows for a date alone are shown in the customer's zone — asked first (DC, Oct 5).
           od.awaiting_zone = true;
@@ -4177,7 +4246,7 @@ app.post('/chat', async (req, res) => {
           if (askedT && state.orderData.windowsDate && !x.date) od.delivery_date = state.orderData.windowsDate;
           if (askedT) { problem = askedT; od.delivery_ok = false; }
           else {
-            od.delivery_ok = true; od.delivery_iso = state.orderData.delivery_datetime_iso || ''; od.delivery_window = state.orderData.delivery_datetime || x.when;
+            od.delivery_ok = true; od.delivery_src = whenSrc || 'patterns'; od.confirm_delivery = false; od.delivery_iso = state.orderData.delivery_datetime_iso || ''; od.delivery_window = state.orderData.delivery_datetime || x.when;
             od.delivery_label = [state.orderData.delivery_date_label, state.orderData.delivery_window_display].filter(Boolean).join(', ') || whenPhrase;
           }
           state.orderData = null;
@@ -4191,6 +4260,15 @@ app.post('/chat', async (req, res) => {
           unlinked = rr.unresolved;
         }
         const miss = EO.missing(od);
+        // A delivery the customer never stated in words we can point to (saved before the order reader) is confirmed first —
+        // never booked silently (Nov 14: BEVVI-AI-INFO-20261114-191806 went out for 7-8 PM from "Create the order now").
+        if (od.delivery_ok && !od.delivery_src && orYes) { od.delivery_src = 'confirmed'; od.confirm_delivery = false; console.log('[order-reader] delivery ' + JSON.stringify(od.delivery_label) + ' confirmed by the customer'); }
+        if (!miss.length && od.delivery_ok && !od.delivery_src) {
+          od.confirm_delivery = true; state.emailOrder = od; saveFlowState();
+          console.log('[order-reader] delivery ' + JSON.stringify(od.delivery_label) + ' has no source in the customer\'s words — asked to confirm before placing');
+          const tC = (preText ? preText + '\n\n' : '') + 'Before I create the order, please confirm the delivery: ' + od.delivery_label + ' to ' + state.address + '.\n\nReply "yes" to place it, or send the delivery date and time you want.';
+          return res.json({ text: tC, response: tC, email_cc: [] });
+        }
         if (unlinked.length) {
           miss.push('which product you mean for ' + unlinked.length + ' item(s) I can\'t match exactly in this store\'s catalog');
           problem = (problem ? problem + '\n\n' : '') + unlinked.map(u => '• ' + u.name + ' — ' + u.reason + (u.options.length ? '. Closest: ' + u.options.join('; ') : '')).join('\n');
@@ -6069,6 +6147,7 @@ app.post('/chat', async (req, res) => {
     // QA never hit it: QA identities have no saved basket, so they always took the list path.
     const emailListAsk = (/^email-/.test(sessionKey) || !!(context && context.email_subject))
       && String(message).split(/\n/).filter(l => /^\s*(?:[-•*·]|\d+\s*(?:x|×)\s+\S)/i.test(l) || /\S.*\s[–—-]\s*\d{1,4}\s*(?:x\s*)?(?:bottles?|btls?|cans?|cases?|packs?)\b/i.test(l)).length >= 3;   // "Sauvignon Blanc – 10 bottles" too (Nov 14, Eterra)
+    if (isProposalTrigger && editReaderPdf) { console.log('[proposal] the edit reader already regenerated the PDF this turn — no second proposal flow'); isProposalTrigger = false; }
     if (isProposalTrigger && emailListAsk && !state.proposalStep) { console.log('[proposal] email with its own item list — the quote path builds it (no step-by-step flow)'); isProposalTrigger = false; }
     // A proposal ask that also changes the basket ("Change Corona Light to 1 case ... then regenerate the KPMG proposal") or
     // that accepts changes Rachel just offered ("Yes sounds good with the choices and create a proposal" after "Shall I go

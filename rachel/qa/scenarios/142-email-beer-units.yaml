@@ -15,4 +15,5 @@ turns:
     expect:
       matches: "(?i)IPA[^\\n]*: \\d+ → (?:1|2|4)\\b"
       contains: ["updated PDF proposal"]
-      log_contains: ["[quote-edits]"]
+      # the edit reader (model reads "units", the code converts 24 / 12 = 2) or its fallback, quote-edits.js
+      not_matches: "(?i)\\b24x [^\\n]*IPA"
