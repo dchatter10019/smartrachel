@@ -3,7 +3,8 @@ name: email-swap-and-remove
 # (the subject's date + "Delivery"); "Yes do that" to "Want me to swap the Cloudy Bay out for the Nicolas Idiart Sancerre
 # and regenerate the proposal?" ADDED the Sancerre and asked "How many bottles?" (swap-target.js read the new wine as the
 # line); "Take out the cloudy bay and regenerate the proposal." regenerated the PDF with the Cloudy Bay still on it
-# (quote-edits.js took "cloudy bay and regenerate the proposal" as the name). The swap path is in qa/unit/email-swap-nov14.test.js.
+# (quote-edits.js took "cloudy bay and regenerate the proposal" as the name). Since the edit reader (edit-reader.js) the
+# model reads the change and the code makes it; scenario 146 covers swaps and quantities.
 fresh: true
 tags: [email]
 format: plain
@@ -18,5 +19,5 @@ turns:
     expect:
       contains: ["updated PDF proposal"]
       matches: "(?i)Removed:\\s*\\n\\W*Cloudy Bay"
-      log_contains: ["[quote-edits]"]
+      log_contains: ["[edit-reader] APPLIED"]
       pdf_not_contains: ["Cloudy Bay"]

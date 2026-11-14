@@ -1,0 +1,24 @@
+name: edit-reader-chat
+fresh: true
+tags: [proposal]
+# The edit reader (edit-reader.js; DC, Nov 14: "use a llm to parse the intent and then call the appropriate code"): the model
+# reads the change against the numbered basket lines and the products just shown, the code checks and makes it.
+# Same day, email: "Yes do that" to "swap the Cloudy Bay out for the Nicolas Idiart Sancerre?" ADDED the Sancerre.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "1076 Madison Ave, New York, NY 10028"
+  - send: "12 x Cloudy Bay Sauvignon Blanc 750ml\n9 x Chateau Lamour Saint Emilion Grand Cru 750ml"
+  - send: "do you have Kim Crawford Sauvignon Blanc?"
+    expect:
+      matches: "(?i)Kim Crawford"
+  - send: "swap the cloudy bay for the kim crawford"
+    expect:
+      matches: "(?i)\\b12x Kim Crawford"
+      not_matches: "(?i)^12x Cloudy Bay"
+      not_contains: ["How many bottles"]
+      log_contains: ["[edit-reader] APPLIED"]
+  - send: "make the chateau lamour 6"
+    expect:
+      matches: "(?i)\\b6x Chateau Lamour"
+      log_contains: ["[edit-reader] APPLIED"]

@@ -2423,6 +2423,15 @@ app.post('/chat', async (req, res) => {
   const FR = require('./fact-reader.js');
   const frCtx = { session: sessionKey, channel: format === 'plain' ? 'email' : (format || 'slack'), qa: !!isQA, said: message };
   if (!/^__/.test(String(message || ''))) FR.factsFor(message, { qa: isQA }).catch(() => null);
+  // EDIT READER (edit-reader.js, DC Nov 14): the model reads basket changes; started here, used at the EDIT READER block.
+  const ER = require('./edit-reader.js');
+  const erCtx = () => {
+    const stR = getState(sessionKey);
+    let b = []; try { b = JSON.parse(stR.lastLineItems || '[]'); } catch (e) {}
+    let sh = []; try { if (stR.lastShownAt && Date.now() - stR.lastShownAt < 6 * 3600000) sh = JSON.parse(stR.lastShownProducts || '[]'); } catch (e) {}
+    return { basket: b, shown: sh, lastReply: String((lastRepliesBySession[sessionKey] || []).slice(-1)[0] || ''), offer: stR.pendingAddOffer || null, qa: !!isQA };
+  };
+  if (!/^__/.test(String(message || ''))) { try { ER.read(message, erCtx()).catch(() => null); } catch (e) {} }
   try {
     let bp = require('./bottle-price.js').read(message);
     if (!/^__/.test(String(message || '')) && /\$\s?\d|\b(?:bucks|dollars|usd)\b/i.test(String(message || ''))) {
@@ -3831,7 +3840,104 @@ app.post('/chat', async (req, res) => {
     // nothing re-sent the PDF. Scope: email sessions and sessions that already have a proposal; an edit
     // that also ADDS items goes to the LLM (adds need a catalog search). Removals/quantities only.
     let preText = '';   // quote edits applied this turn, shown above the order reply when the same email also orders
-    if (!state.orderStep && !state.proposalStep && (/^email-/.test(sessionKey) || (context && context.email_subject) || state.lastProposalUrl)) {
+    // ── EDIT READER (edit-reader.js; DC, Nov 14: "use a llm to parse the intent and then call the appropriate code") ────────
+    // The model reads the basket changes in this message (remove / quantity / swap for a product just shown / add a shown
+    // product, a yes to Rachel's offered change, "regenerate the proposal"); the code checks every one against the basket and
+    // the shown products and makes them here. An invalid or missing reading = the code's own readers below, as before.
+    let editReaderDone = false;
+    // (a change to a PLACED order keeps its own path: the corrected replacement order is placed there — state.emailReplace /
+    //  state.replacingOrder)
+    // (a message that IS a product list — "Rebuild it with only: A x2, B x1" — or starts over keeps the list builder)
+    const erList = !!OW.listItems(message, { emptyBasket: cartEmpty(state) }) || /\b(?:re-?build|start over|new (?:list|order|basket|cart)|from scratch)\b/i.test(message);
+    if (!erList && !state.orderStep && !state.proposalStep && !state.emailReplace && !state.replacingOrder && !isInternalMsgEarly(message) && !(state.orderData && message === state.orderData.delivery_datetime) && !state.pendingStock) {
+      const ctxR = erCtx();
+      const rd = ctxR.basket.length ? await ER.read(message, ctxR).catch(() => null) : null;
+      const v = rd ? ER.validate(rd, ctxR.basket) : null;
+      if (rd && !v.ok) console.log('[edit-reader] reading NOT used — ' + v.why + ' — the code\'s readers decide');
+      if (rd && v.ok && v.ops.length) {
+        const rv = ER.regexView(message, ctxR.basket, ctxR.lastReply);
+        const nzR = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const done = [], failed = [];
+        let askQtyR = '';
+        // swaps and adds first (applyBasketSubstitute reads the live basket each time), then quantities and removals by name
+        for (const o of v.ops.filter(x => x.op === 'replace' || x.op === 'add')) {
+          const r = await applyBasketSubstitute(sessionKey, email, o.op === 'replace' ? o.item.name : '', o.product.name, o.product.price, o.product.size,
+            // an add with no count: no opts, so the pick paths' own reading runs (a not-carried line it stands in for, the
+            // customer's list count) — and if nothing knows the count, the customer is asked
+            o.op === 'add' ? (o.qty ? { add: true, qty: o.qty } : undefined) : (o.qty ? { qty: o.qty } : (o.item ? { qty: Number(o.item.qty || o.item.quantity) || 1 } : {})));
+          if (!r || r.success === false) { failed.push(o.product.name + ' (' + ((r && r.error) || 'could not be added') + ')'); continue; }
+          retirePendingFor(state, o.product.name);
+          if (o.op === 'add' && !o.qty && !r.qty_known && !r.replaced) askQtyR = o.product.name;
+          done.push(o.op === 'replace' ? 'replaced ' + o.item.name + ' with ' + (r.qty || '') + 'x ' + o.product.name
+            : r.replaced ? 'put ' + (r.qty || 1) + 'x ' + o.product.name + ' in place of ' + r.replaced : 'added ' + (askQtyR === o.product.name ? '' : (r.qty || o.qty || 1) + 'x ') + o.product.name);
+        }
+        let itR = []; try { itR = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+        for (const o of v.ops.filter(x => x.op === 'set_qty')) {
+          const row = itR.find(x => nzR(x.name) === nzR(o.item.name));
+          if (!row) { failed.push(o.item.name + ' (no longer in the basket)'); continue; }
+          const from = row.qty || row.quantity || 1; row.qty = o.qty; row.quantity = o.qty; row.qty_confirmed = true;
+          done.push(o.item.name + ': ' + from + ' -> ' + o.qty);
+        }
+        for (const o of v.ops.filter(x => x.op === 'remove')) {
+          const i = itR.findIndex(x => nzR(x.name) === nzR(o.item.name));
+          if (i < 0) { failed.push(o.item.name + ' (no longer in the basket)'); continue; }
+          itR.splice(i, 1); done.push('removed ' + o.item.name);
+        }
+        state.lastLineItems = JSON.stringify(itR);
+        packageCache[makeCacheKey(email, state.zip, state.lastFingerprint)] = state.lastLineItems;
+        state.pendingAddOffer = null; state.lastCta = null;
+        if (done.length) { state.shownOptions = null; events.action('updated_basket'); }
+        saveFlowState();
+        try { saveBasket(email, state.lastLineItems, '', format || 'slack').catch(() => {}); } catch (e) {}
+        editReaderDone = done.length > 0;
+        console.log('[edit-reader] APPLIED in code: ' + JSON.stringify(done) + (failed.length ? ' | NOT done: ' + JSON.stringify(failed) : '') + ' | also: ' + JSON.stringify(rd.also));
+        const diffs = ER.disagreement(v.ops, rv);
+        if (diffs.length) FR.gap('basket_edits', 'disagree', rv, v.ops.map(o => o.op + ' ' + (o.item ? o.item.name : '') + (o.product ? ' -> ' + o.product.name : '') + (o.qty ? ' x' + o.qty : '')), Object.assign({}, frCtx, { said: message }));
+        // fees said with the change ("Yes do that.. and also provide a free delivery")
+        let feeSaidR = applyFeeCommands(state, message);
+        if (!feeSaidR && (rd.also || []).includes('fees')) {
+          const fm = FR.feesShape(((await FR.factsFor(message, { qa: isQA })) || {}).fees);
+          if (fm) { state.proposalOpts = Object.assign({}, state.proposalOpts || {}, fm); state.eventParams = Object.assign({}, state.eventParams || {}, { proposalOpts: state.proposalOpts }); feeSaidR = TAXCMD.feesText(fm); FR.gap('fees', 'missed', null, fm, frCtx); }
+        }
+        if (feeSaidR) { done.push(feeSaidR + ' on the proposal'); saveFlowState(); }
+        const rest = (rd.also || []).filter(a => a !== 'fees' && !(a === 'proposal' && (rd.regenerate_proposal || state.lastProposalUrl)));
+        const nItems = itR.length;
+        // The proposal: regenerated in code when one was sent (client / date / fees kept); a first proposal goes on to the flow.
+        let pdfR = '';
+        if (done.length && nItems && state.lastProposalUrl && (rd.regenerate_proposal || (rd.also || []).includes('proposal'))) {
+          try {
+            const url = await quotePdf(state, itR, String(state.savedClientName || '').trim(), state.savedEventDate || '', 0);
+            pdfR = '\n\nYour updated PDF proposal is attached: ' + url; console.log('[edit-reader] proposal regenerated (' + nItems + ' lines): ' + url);
+          } catch (e) { pdfR = '\n\nI couldn\'t regenerate the PDF just now — reply "send the proposal" and I\'ll try again.'; console.log('[edit-reader] proposal regeneration FAILED (changes kept, customer told): ' + e.message); }
+        } else if (done.length && (rd.regenerate_proposal || (rd.also || []).includes('proposal')) && !state.lastProposalUrl) rest.push('proposal');
+        // the reply lists the changes like the quote edits do (Removed / Quantity changed / Replaced / Added / fees)
+        const grpR = [['Removed', d => /^removed /.test(d), d => d.replace(/^removed /, '')], ['Quantity changed', d => / -> \d+$/.test(d) && !/^(?:replaced|added|put) /.test(d), d => d.replace(/ -> (\d+)$/, ' \u2192 $1')],
+          ['Replaced', d => /^(?:replaced|put) /.test(d), d => d.replace(/^replaced (.+) with (.+)$/, '$1 \u2192 $2').replace(/^put (.+) in place of (.+)$/, '$2 \u2192 $1')], ['Added', d => /^added /.test(d), d => d.replace(/^added /, '')]];
+        const partsR = grpR.map(([h, t, f]) => { const ds = done.filter(t); return ds.length ? h + ':\n' + ds.map(d => '\u2022 ' + f(d)).join('\n') : ''; }).filter(Boolean);
+        const feeDone = done.filter(d => / on the proposal$/.test(d));
+        if (feeDone.length) partsR.push(feeDone.map(d => d.charAt(0).toUpperCase() + d.slice(1) + '.').join(' '));
+        const doneLine = done.length ? 'Done \u2014 here are the changes:\n\n' + partsR.join('\n\n') : '';
+        const failLine = failed.length ? (doneLine ? '\n\n' : '') + 'I couldn\'t make this change: ' + failed.join('; ') + '.' : '';
+        if (!rest.length) {
+          const listR = nItems >= 2 ? basketAfterChange(state) : (nItems === 1 ? '\n\nYour order now: ' + (itR[0].qty || 1) + 'x ' + itR[0].name + ' — ' + usd(itR[0].price) + ' ea' : '\n\nYour cart is empty now.');
+          if (askQtyR) state.pendingQtyFor = askQtyR;
+          const close = askQtyR ? 'How many bottles of ' + askQtyR + ' would you like?' : nItems ? (pdfR ? 'Reply with any other changes, or say "place the order" when you\'re ready.' : 'Would you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?') : 'What would you like to order?';
+          const rE = doneLine + failLine + listR + pdfR + '\n\n' + close;
+          console.log('[edit-reader] answered in code (' + done.length + ' change(s)' + (pdfR ? ', PDF' : '') + ')');
+          return res.json({ text: rE, response: rE });
+        }
+        // Something else in the message (a question, a search, an order, a first proposal, details): the rest of the flow
+        // handles it, told what was done — the code's edit readers below stand aside so nothing is done twice.
+        if (done.length || failed.length) {
+          state.codeDoneThisTurn = (state.codeDoneThisTurn || []).concat(done, failed.map(f => 'NOT done: ' + f));
+          preText = (doneLine + failLine).trim();
+          const _jR = res.json.bind(res);
+          res.json = (payload) => { try { const t0 = payload && (payload.text || payload.response); if (typeof t0 === 'string' && preText && t0.indexOf(preText) < 0 && !/^Done —/.test(t0)) { const t = preText + '\n\n' + t0; payload.text = t; payload.response = t; } } catch (e) {} return _jR(payload); };
+          console.log('[edit-reader] the rest of the message (' + rest.join(', ') + ') goes on — the code\'s edit readers stand aside this turn');
+        }
+      }
+    }
+    if (!editReaderDone && !state.orderStep && !state.proposalStep && (/^email-/.test(sessionKey) || (context && context.email_subject) || state.lastProposalUrl)) {
       let qItems = []; try { qItems = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
       const qe = qItems.length ? QE.parseEdits(message) : null;
       // "N bottles/cans, not cases" in a wording quote-edits.js doesn't know: the model's reading (fact-reader.js).
@@ -4569,7 +4675,7 @@ app.post('/chat', async (req, res) => {
     // Answer to the add-item confirmation ("I found X — $1,099.99 a bottle. Want me to add it? If so,
     // how many bottles?"). A yes or a quantity adds it; anything else lets the offer lapse (logged)
     // and the message is handled normally.
-    if (state.pendingAddOffer && state.pendingAddOffer.confirm && !state.orderStep && !state.proposalStep && !isInternalMsg) {
+    if (!editReaderDone && state.pendingAddOffer && state.pendingAddOffer.confirm && !state.orderStep && !state.proposalStep && !isInternalMsg) {
       const off = state.pendingAddOffer; state.pendingAddOffer = null; saveFlowState();
       const NW = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, twelve: 12, 'a dozen': 12, dozen: 12 };
       const qm = msgLower.trim().replace(/[.!]+$/, '').match(/^(?:(?:yes|yeah|yep|sure|ok(?:ay)?|please)[,!\s]+)?(?:(?:add|get|give me|i'?ll take|make it|let'?s do|lets do)\s+)?(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|twelve|a dozen|dozen)(?:\s*x)?(?:\s+(?:bottles?|of (?:them|it|those)))?(?:\s+please)?$/);
@@ -5925,7 +6031,8 @@ app.post('/chat', async (req, res) => {
     // with Kendall-Jackson ...?") goes to the model: it makes the changes, then the PDF from the live basket. The in-code
     // path printed the unchanged basket (Nov 13, DC: connector KPMG x2, email Eterra quote) — proposal-edits.js.
     let proposalEditsFirst = false;
-    if (!state.proposalStep && !state.orderStep && (isProposalTrigger || state.lastProposalUrl)) {
+    // (the edit reader already made this message's basket changes: the proposal flow takes the live basket)
+    if (!editReaderDone && !state.proposalStep && !state.orderStep && (isProposalTrigger || state.lastProposalUrl)) {
       let lnPE = 0; try { lnPE = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
       if (lnPE) {
         const PE = require('./proposal-edits.js');

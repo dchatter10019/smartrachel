@@ -1,0 +1,171 @@
+// EDIT READER — the model reads a basket change, the code checks it and makes it (DC, Nov 14: "why aren't you using a llm to
+// parse the intent and then call the appropriate code ... yes build it"). Same day, two regex readers misread DC's email:
+//  - "Yes do that" to "Want me to swap the Cloudy Bay out for the Nicolas Idiart Sancerre and regenerate the proposal?" ADDED
+//    the Sancerre and asked "How many bottles?" (swap-target.js read the new wine as the line);
+//  - "Take out the cloudy bay and regenerate the proposal." re-sent the PDF with the Cloudy Bay (quote-edits.js took "cloudy bay
+//    and regenerate the proposal" as the name) — while the classifier HAD read remove_item 0.92, unused.
+//
+// ONE forced-tool Sonnet 4.6 call (like fact-reader.js; memoized per message + basket + Rachel's last reply; 8s timeout) sees the
+// customer's message, Rachel's last reply, the basket as numbered lines (L1..) and the products Rachel just showed (P1..), and
+// returns OPERATIONS that point at those numbers — never free product names:
+//   remove {line} · set_qty {line, qty} · replace {line, product, qty?} · add {product, qty}
+// plus regenerate_proposal and `also` (what else the message asks: fees / order / proposal / question / search / other).
+// server.js EDIT READER validates every op (the line / product exists, qty 1..2000, one op per line, a replacement is not the
+// line itself) — one bad op = the whole reading is dropped and the code's own readers run as before — then applies them with
+// the existing functions (applyBasketSubstitute, the basket lines, quotePdf) and logs [edit-reader]. The regex readers are the
+// fallback (no answer / timeout / invalid); where they would have read something else it is recorded (gap() -> self-corrections
+// kind reader_gap -> monitor -> nightly fixer).
+//
+// read(message, { basket, lastReply, shown, qa }) -> Promise<{ ops, regenerate_proposal, also } | null>
+
+const MODEL = process.env.RACHEL_EDIT_MODEL || 'claude-sonnet-4-6';
+
+const SYSTEM = `You read ONE message a customer sent to a beverage-ordering assistant (Rachel) and report the changes it makes to the customer's basket. You do not reply to the customer.
+You get: Rachel's last message, the basket as numbered lines (L1, L2, ...), and products Rachel just showed or offered (P1, P2, ...). Report ONLY changes the customer asks for or agrees to, pointing at those numbers:
+- remove {line}: take a basket line out ("take out the cloudy bay", "drop the Stella", "we don't need the rosé").
+- set_qty {line, qty}: change how many of a line — also a line the customer lists under "remove" but with a new count ("remove the following: - Whitehaven (I only need 2 bottles)" -> set_qty Whitehaven 2, NOT remove) ("make the Tito's 6", "only 2 cases of Stella" when Stella is 1 case a line -> qty 2). qty is the number of basket units of that line (cases/packs for a pack line; bottles otherwise). If the customer counts single bottles/cans of a pack line, do NOT report it — put "other" in also.
+- replace {line, product, qty?}: swap a basket line for a shown product. qty only when the customer states a new count; otherwise omit it (the line keeps its quantity).
+- add {product, qty}: add a shown product as a NEW line (qty = the count the customer states; 0 if they state none).
+A "yes" / "do that" / "sounds good" to a change Rachel offered in her last message = that change (e.g. Rachel: "Want me to swap the Cloudy Bay out for the Nicolas Idiart Sancerre?" + customer: "yes" -> replace {line: <Cloudy Bay's line>, product: <the Sancerre's P number>}). Rachel offering to swap X for Y means X is the basket line and Y is the new product.
+Never invent a line or product number. A product that is not in the P list cannot be added or swapped in: put "search" in also instead. A price limit per bottle ("wines under $15") is not an op: put "other" in also.
+regenerate_proposal = true when the customer asks for a new/updated/regenerated proposal, PDF or quote, or says yes to Rachel's offer that included regenerating it.
+also = everything else the message asks for, from: "fees" (tax, tip, service charge, delivery fee, free delivery), "order" (place / create the order, checkout, payment link), "proposal" (a proposal is asked but nothing else changes), "question" (asks something), "search" (wants a product that is not in the P list, or alternatives/options), "details" (address, date, time, client, contact, delivery instructions), "other" (anything else). Empty when the message asks nothing else.
+If the message is not about the basket at all, return ops: [] .
+Answer by calling the edits tool once.`;
+
+const TOOL = { name: 'edits', description: 'The basket changes the customer message makes.', input_schema: { type: 'object', properties: {
+  ops: { type: 'array', items: { type: 'object', properties: {
+    op: { type: 'string', enum: ['remove', 'set_qty', 'replace', 'add'] },
+    line: { type: 'integer', description: 'basket line number (L#)' },
+    product: { type: 'integer', description: 'shown product number (P#)' },
+    qty: { type: 'integer' } }, required: ['op'] } },
+  regenerate_proposal: { type: 'boolean' },
+  also: { type: 'array', items: { type: 'string', enum: ['fees', 'order', 'proposal', 'question', 'search', 'details', 'other'] } } },
+  required: ['ops'] } };
+
+// Worth a call? A basket, and wording that can change it or accept an offer. ("2" after a numbered list, product lists and
+// whole new requests keep their own deterministic paths.)
+const EDIT_WORDS = /\b(?:remove|take (?:out|off)|drop|delete|get rid of|without|no (?:more|need)|don'?t (?:need|want)|do not (?:need|want)|swap|switch|replace|substitute|instead|change|make (?:it|that|them|those|the|this)|only|just|increase|decrease|reduce|bump|lower|more|less|fewer|add|include|go with|keep|cut|exclude|leave out)\b/i;
+const YES = /^\W*(?:yes|yeah|yep|yup|sure|ok(?:ay)?|sounds good|looks good|perfect|great|go ahead|please do|do (?:it|that|those|these|so)|let'?s do (?:it|that)|approved?|confirmed?|that works|works for me)\b/i;
+const OFFER = /\b(?:swap|switch|replace|substitut|go with|use|change|instead|in place of|add)\w*\b[^?\n]*\?/i;
+function wants(message, ctx = {}) {
+  const m = String(message || '').trim();
+  if (!m || m.length > 1500 || !(ctx.basket || []).length) return false;
+  if (/^[\d\s,.#&+-]*(?:and)?[\d\s,.#&+-]*$/i.test(m)) return false;   // a bare pick ("2", "1, 4, 7") — the pick paths
+  return EDIT_WORDS.test(m) || (YES.test(m) && OFFER.test(String(ctx.lastReply || '')));
+}
+
+const money = n => '$' + (Number(n) || 0).toFixed(2);
+// The products to show the model: those Rachel's last reply names (or offered: pendingAddOffer), else the newest shown.
+function shownFor(shown, lastReply, offer) {
+  const nz = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9 ]/g, ' ');
+  const reply = nz(lastReply);
+  const key = p => nz(p.name).split(/\s+/).filter(w => w.length >= 3 && !/^(?:the|and|750|ml|bottle|bottles|pack)$/.test(w)).slice(0, 2);
+  let list = (shown || []).filter(p => p && p.name && key(p).length && key(p).every(w => reply.includes(w)));
+  if (!list.length) list = (shown || []).filter(p => p && p.name).slice(-15);
+  if (offer && offer.name && !list.some(p => nz(p.name) === nz(offer.name))) list.push({ name: offer.name, price: offer.price, size: offer.size });
+  const seen = new Set();
+  return list.filter(p => { const k = nz(p.name); if (seen.has(k)) return false; seen.add(k); return true; }).slice(0, 25);
+}
+
+function prompt(message, basket, lastReply, shown) {
+  return 'Rachel\'s last message:\n"""\n' + String(lastReply || '(none)').slice(-2500) + '\n"""\n\nBasket:\n'
+    + basket.map((li, i) => 'L' + (i + 1) + ': ' + (li.qty || li.quantity || 1) + 'x ' + String(li.name || li.label || '') + ' — ' + money(li.price) + ' ea').join('\n')
+    + '\n\nProducts Rachel just showed or offered:\n' + (shown.length ? shown.map((p, i) => 'P' + (i + 1) + ': ' + p.name + (p.price ? ' — ' + money(p.price) : '')).join('\n') : '(none)')
+    + '\n\nCustomer message:\n"""\n' + String(message).slice(0, 1500) + '\n"""';
+}
+
+const memo = new Map();
+async function callModel(user, opts) {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) return null;
+  const ctl = new AbortController(), timer = setTimeout(() => ctl.abort(), opts.timeoutMs || 8000);
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST', signal: ctl.signal,
+      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: MODEL, max_tokens: 400, temperature: 0, system: [{ type: 'text', text: SYSTEM, cache_control: { type: 'ephemeral' } }],
+        tools: [TOOL], tool_choice: { type: 'tool', name: 'edits' }, messages: [{ role: 'user', content: user }] }),
+    });
+    const j = await r.json();
+    if (!r.ok) { console.log('[edit-reader] model error ' + r.status + ': ' + JSON.stringify(j).slice(0, 160)); return null; }
+    try { require('./ai-spend.js').record('edit-reader', MODEL, j.usage, { qa: opts.qa }); } catch (e) {}
+    const use = (j.content || []).find(c => c.type === 'tool_use' && c.name === 'edits');
+    return use && use.input && typeof use.input === 'object' ? use.input : null;
+  } catch (e) {
+    console.log('[edit-reader] no answer (' + (e.name === 'AbortError' ? 'timeout' : e.message) + ') — the code\'s readers decide');
+    return null;
+  } finally { clearTimeout(timer); }
+}
+
+// -> { ops, regenerate_proposal, also, shown } | null. ctx.basket = the live basket lines; ctx.shown = products just shown.
+function read(message, ctx = {}) {
+  if (!wants(message, ctx)) return Promise.resolve(null);
+  const basket = ctx.basket || [], shown = shownFor(ctx.shown, ctx.lastReply, ctx.offer);
+  const user = prompt(message, basket, ctx.lastReply, shown);
+  const now = Date.now();
+  for (const [k, v] of memo) if (now - v.at > 10 * 60000) memo.delete(k);
+  if (!memo.has(user)) {
+    const p = callModel(user, ctx).then(r => {
+      if (!r) return null;
+      const out = { ops: Array.isArray(r.ops) ? r.ops : [], regenerate_proposal: !!r.regenerate_proposal, also: Array.isArray(r.also) ? r.also : [], shown };
+      console.log('[edit-reader] read: ' + JSON.stringify({ ops: out.ops, regenerate_proposal: out.regenerate_proposal, also: out.also }));
+      return out;
+    });
+    memo.set(user, { at: now, p });
+  }
+  return memo.get(user).p;
+}
+
+// The model's ops checked against the basket and the shown products. -> { ok, ops: [{op, index, item, product, qty}], why }
+function validate(reading, basket) {
+  if (!reading) return { ok: false, why: 'no reading' };
+  const ops = [], used = new Set(), shown = reading.shown || [];
+  const nz = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  for (const o of reading.ops || []) {
+    const kind = o && o.op;
+    if (!['remove', 'set_qty', 'replace', 'add'].includes(kind)) return { ok: false, why: 'unknown op ' + JSON.stringify(o) };
+    let index = -1, product = null;
+    if (kind !== 'add') {
+      index = (parseInt(o.line, 10) || 0) - 1;
+      if (index < 0 || index >= basket.length) return { ok: false, why: kind + ': no basket line L' + o.line };
+      if (used.has(index)) return { ok: false, why: 'two changes to L' + o.line };
+      used.add(index);
+    }
+    if (kind === 'replace' || kind === 'add') {
+      const pi = (parseInt(o.product, 10) || 0) - 1;
+      if (pi < 0 || pi >= shown.length) return { ok: false, why: kind + ': no shown product P' + o.product };
+      product = shown[pi];
+      if (kind === 'replace' && nz(product.name) === nz(basket[index].name)) return { ok: false, why: 'replace: P' + o.product + ' is already line L' + o.line };
+    }
+    let qty = o.qty == null ? null : parseInt(o.qty, 10);
+    if (qty != null && (!(qty >= 0) || qty > 2000)) return { ok: false, why: kind + ': quantity ' + o.qty };
+    if (kind === 'set_qty' && !(qty >= 1)) return { ok: false, why: 'set_qty without a quantity (use remove for 0)' };
+    if (kind === 'replace' && qty === 0) qty = null;
+    ops.push({ op: kind, index, item: index >= 0 ? basket[index] : null, product, qty });
+  }
+  return { ok: true, ops };
+}
+
+// What the code's own regex readers would have done, for the disagreement record (fallback stays the regexes).
+function regexView(message, basket, lastReply) {
+  const out = { removes: [], setQty: [], swapLine: null };
+  try {
+    const QE = require('./quote-edits.js'); const e = QE.parseEdits(message); const r = QE.applyEdits(basket, e);
+    for (const c of r.changes) if (c.kind === 'removed') out.removes.push(c.name); else if (c.to != null) out.setQty.push(c.name + '->' + c.to);
+  } catch (e) {}
+  try { const t = require('./swap-target.js').swapTarget(lastReply, basket, ''); if (t && t.index >= 0) out.swapLine = t.name; } catch (e) {}
+  return out;
+}
+function disagreement(ops, rv) {
+  const nz = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const mRem = ops.filter(o => o.op === 'remove').map(o => nz(o.item.name)).sort().join('|');
+  const rRem = rv.removes.map(nz).sort().join('|');
+  const diffs = [];
+  if (mRem !== rRem) diffs.push('removes: model ' + JSON.stringify(ops.filter(o => o.op === 'remove').map(o => o.item.name)) + ' vs code ' + JSON.stringify(rv.removes));
+  const rep = ops.find(o => o.op === 'replace');
+  if (rep && rv.swapLine && nz(rv.swapLine) !== nz(rep.item.name)) diffs.push('swap line: model ' + JSON.stringify(rep.item.name) + ' vs code ' + JSON.stringify(rv.swapLine));
+  return diffs;
+}
+
+module.exports = { read, wants, validate, regexView, disagreement, shownFor, prompt, SYSTEM };
