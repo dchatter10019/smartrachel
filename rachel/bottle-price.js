@@ -9,7 +9,9 @@
 
 const NUM = '\\$\\s?(\\d{1,4}(?:\\.\\d{1,2})?)';
 const PER = '(?:\\s*(?:a|per|each|\\/)\\s*(?:bottle|btl|bottles))?';
-const CAP = new RegExp('\\b(?:(?:do|does|did|should|must|can|will)? ?(?:not|n\'t|never) (?:to )?exceed|cannot exceed|can\'?t exceed|shouldn\'?t exceed|should not exceed|no more than|not more than|under|below|less than|max(?:imum)?(?: of)?|up to|at most|within|cap(?:ped)? at)\\s*' + NUM + PER, 'i');
+// "should not be more than", "shouldn't cost over", "not go above", "no higher than" too (Nov 14, DC: "The wines should not
+// be more than $15" was not read — the proposal had Cloudy Bay $37 and Belle Glos $51).
+const CAP = new RegExp('\\b(?:(?:(?:do|does|did|should|must|can|could|will|would)\\s*)?(?:not|n\'t|never)\\s+(?:be\\s+|cost\\s+|go\\s+|run\\s+|get\\s+)?(?:more|higher|pricier|over|above|beyond)(?:\\s+than)?|no (?:higher|pricier) than|(?:(?:do|does|did|should|must|can|will)? ?(?:not|n\'t|never) (?:to )?exceed|cannot exceed|can\'?t exceed|shouldn\'?t exceed|should not exceed|no more than|not more than|under|below|less than|max(?:imum)?(?: of)?|up to|at most|within|cap(?:ped)? at))\\s*' + NUM + PER, 'i');
 const AROUND = new RegExp('\\baverage\\b[^$.!?]{0,40}?' + NUM + PER + '|\\bprice\\b[^$.!?]{0,30}?\\b(?:is|of|should be|at|=)\\s*' + NUM + PER + '|\\b(?:around|about|approx(?:imately)?|roughly|average(?: price)?(?: of| is| should be| around)?|avg(?: of)?|~|close to|near)\\s*' + NUM + PER, 'i');
 const BOTTLE_CTX = /\b(?:prices?|priced|bottles?|btls?|wines?|prosecco|champagne|sparkling|pinot|cab(?:ernet)?|chard(?:onnay)?|sauv(?:ignon)?|merlot|rose|ros[eé]|spirits?|liquor|vodka|tequila|whiske?y|bourbon|rum|gin)\b/i;
 const SPIRIT = /\b(?:spirits?|liquor|vodka|tequila|whiske?y|bourbon|rum|gin|scotch|mezcal)\b/i;
