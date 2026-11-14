@@ -422,6 +422,11 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   extra words before price (core-first.js extraWords: Patrón Silver Tequila $47, not Roca Patrón $77); "<X> by <brand>" is another label, never the brand, and
   a 750 mL sorts before the word count — otherLabel; Oct 14: "Whispering Angel" got The Beach by Whispering Angel, then a 375). qa/run.py compares
   replies / PDFs / logs without accents. Some packs are now named "1 x 16 OZ Can" at a pack price (catalog data, open).
+  A wine's catalog region / appellation / grape / country (search rows keep region, appellation, varietal, country) counts
+  as on the product when the rest of the request is in its name, and a long word spelled near (doubled letters, or one letter
+  off at 7+) counts (product-match.js fit; Nov 13 Sean: "Chateau Lamour Saint Emillion Grand Cru Bordeaux" was "not exact" for
+  Chateau Lamour Saint Emilion Grand Cru, region Bordeaux — it was also only added to the catalog 3h after his email; Nicolas
+  Idiart Sancerre is not carried in NYC). qa/unit/wine-descriptors.test.js, scenario 140.
   A requested size matches the size field OR the size in the product's name
   (Sonoma Simple Syrup "24.5 OZ" has size field 25.4 OZ; functions.js productHasSize). (Oct 5, DC, SF: both were "not available".)
 - A customer-named product is never dropped for price caps; a stated size sorts first.

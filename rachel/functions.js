@@ -525,7 +525,7 @@ async function buildPackage(iv) {
       // Bevvi's category first" branch never ran because this mapping dropped the
       // field — the guard fell back to a name regex and rejected every RTD can
       // (Fresca, Topo Chico, Minute Maid, Simply Spiked) as "not a beer".
-      return {name:p.name||"",price:parseFloat(price)||0,sizeStr:sizeStr,url:purl,product_id:pid,upc:p.upc||p.origanlUpc||"",establishmentId:p.establishmentId||"",category:p.category||"",subCategory:p.subCategory||p.subcategory||""};
+      return {name:p.name||"",price:parseFloat(price)||0,sizeStr:sizeStr,url:purl,product_id:pid,upc:p.upc||p.origanlUpc||"",establishmentId:p.establishmentId||"",category:p.category||"",subCategory:p.subCategory||p.subcategory||"",region:p.region||"",appellation:p.appellation||"",varietal:p.varietal||"",country:p.country||""};
     }).filter(function(p){return p.price>0&&p.name;}) };
   }
 

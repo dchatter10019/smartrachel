@@ -61,7 +61,11 @@ function packCount(s) {
 function fit(request, product) {
   const req = words(request), pn = ' ' + words(product && product.name).join(' ') + ' ' + words(product && (product.sizeStr || product.size)).join(' ') + ' ';
   // A word counts when it starts a product word: "pumpkin" in "Pumpkinhead", "light" in "Light".
-  const has = w => pn.includes(' ' + w + ' ') || (w.length >= 4 && pn.includes(' ' + w));
+  // A near spelling of a long word counts too ("Emillion" = Emilion: doubled letters, or one letter off at 7+ letters).
+  const pWords = pn.trim().split(' ').filter(Boolean), dd = x => x.replace(/(.)\1+/g, '$1');
+  const lev1 = (a, b) => { if (Math.abs(a.length - b.length) > 1) return false; let i = 0, j = 0, e = 0; while (i < a.length && j < b.length) { if (a[i] === b[j]) { i++; j++; continue; } if (++e > 1) return false; if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++; } } return e + (a.length - i) + (b.length - j) <= 1; };
+  const near = w => w.length >= 5 && pWords.some(p => p.length >= 5 && (dd(p) === dd(w) || (w.length >= 7 && lev1(p, w))));
+  const has = w => pn.includes(' ' + w + ' ') || (w.length >= 4 && pn.includes(' ' + w)) || near(w);
   const distinct = [...new Set(req.filter(w => !FILLER.has(w) && !/^\d/.test(w) && w.length >= 2))];
   // A spirit-type word the brand already implies is not missing: "Grey Goose Vodka 750ml" is Grey Goose - 750 ML.
   // Real bug (Oct 1, Sean): it was "not an exact match" and Stolichnaya was offered as the vodka. Only when every
@@ -74,7 +78,13 @@ function fit(request, product) {
   // "Stella Artois 12pk 11.2 OZ Btl" for "Stella Artois Premium Lager Beer" (Oct 7: the note said "no lager in stock").
   const PLAIN_BEER = new Set(['lager', 'ale']), notPlain = distinct.filter(w => !PLAIN_BEER.has(w));
   const plainImplied = notPlain.length && notPlain.every(has) && !words(product && product.name).some(w => STYLE.includes(w));
-  const missing = distinct.filter(w => !has(w) && !(SPIRIT_TYPE.has(w) && typeImplied) && !(PLAIN_BEER.has(w) && plainImplied));
+  // A wine's region / appellation / grape from the catalog's own fields is not missing: "Chateau Lamour Saint Emillion Grand
+  // Cru Bordeaux" is Chateau Lamour Saint Emilion Grand Cru - 750 ML (region Bordeaux). Real (Nov 13-14, Sean): it was "not an
+  // exact match" and Château La Plaige Bordeaux was offered. Only when every other distinctive word is on the name.
+  const descr = ' ' + words([product && product.region, product && product.appellation, product && product.varietal, product && product.country].filter(Boolean).join(' ')).join(' ') + ' ';
+  const inDescr = w => descr.trim() && descr.includes(' ' + w + ' ');
+  const descrImplied = distinct.some(w => !has(w) && inDescr(w)) && distinct.some(w => has(w) && !SPIRIT_TYPE.has(w)) && distinct.every(w => has(w) || inDescr(w) || SPIRIT_TYPE.has(w));
+  const missing = distinct.filter(w => !has(w) && !(SPIRIT_TYPE.has(w) && typeImplied) && !(PLAIN_BEER.has(w) && plainImplied) && !(descrImplied && inDescr(w)));
   const reqSet = new Set(req);
   const extra = CHANGERS.filter(w => pn.includes(' ' + w + ' ') && !reqSet.has(w));
   const want = packCount(request), got = packCount((product && product.name) + ' ' + (product && (product.sizeStr || product.size) || ''));

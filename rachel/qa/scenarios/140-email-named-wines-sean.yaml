@@ -1,0 +1,15 @@
+name: email-named-wines-sean
+fresh: true
+tags: [email]
+# Nov 13 (Sean): "15 bottles of Nicolas Idiart Sancerre / 12 Bottles of Chateau Lamour Saint Emillion Grand Cru Bordeaux" to
+# 10028. Chateau Lamour was added to the catalog at 02:29 UTC Nov 14 (after his email); then it was "not an exact match"
+# ("Emillion" = Emilion, "Bordeaux" is its catalog region) with Château La Plaige Bordeaux offered. Nicolas Idiart is not
+# carried — a Sancerre stands in, said (never a Champagne: Nov 13 fix).
+format: plain
+context: {email_subject: "Order request", user_name: "QA Tester"}
+turns:
+  - send: "Hi Rachel,\r\n\r\nI am 21. I have an order to be delivered to 1076 Madison Ave, New York, NY 10028 on Sunday, November 15th.\r\n\r\nI need:\r\n\r\n   - 15 bottles of Nicolas Idiart Sancerre\r\n\r\n   - 12 Bottles of Chateau Lamour Saint Emillion Grand Cru Bordeaux\r\n\r\nThanks!"
+    expect:
+      matches: "12x Chateau Lamour Saint Emilion Grand Cru"
+      not_contains: ["La Plaige", "Champagne"]
+      not_matches: "(?i)Chateau Lamour[^\\n]*→"
