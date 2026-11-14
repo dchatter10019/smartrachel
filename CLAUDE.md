@@ -311,6 +311,21 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   staging events.jsonl, channel-transport scenarios skipped, runs in qa/runs-staging/). ops/tests/staging_test.sh =
   acceptance test (smoke passes on staging, nothing sent, production never restarted).
 
+- FACT READER — the model understands the wording, the code enforces (DC, Nov 14: "are the wording being checked by the LLM
+  and then interpreted? ... yes do that, but it should be more than just the bottle price"). rachel/fact-reader.js: on every
+  /chat message (Slack, WhatsApp, email, rachel_chat) that plausibly states a fact (wants(): $ / bucks / % / a month or weekday /
+  client / address / tax / tip / service / delivery fee / bottles-not-cases), ONE forced-tool Sonnet 4.6 call (memoized per
+  text, 8s timeout, ~$0.004, ai-spend kind fact-reader) reads: bottle_price, event_date, client, delivery_address, fees,
+  unit_corrections. The code's readers stay FIRST (bottle-price.js, tax-command.js, event-date.js proposalRequestFields,
+  address-extract.js, quote-edits.js); where they found nothing the model's value goes through the same code path (bottle
+  price -> state.bottlePrice; fees -> taxCmd/feeCmd, incl. fees the code missed in a partly-read message; client/date ->
+  the proposal request fields; units -> qe.units; address -> knownAddressFor before asking, geocoded). Every miss/disagreement
+  -> "[fact-reader] code MISSED / DISAGREE" + self-corrections.jsonl kind reader_gap -> monitor self_correction ("the code's
+  reader missed <field> wording") -> nightly fixer adds the wording to the code. RACHEL_FACT_MODEL overrides the model.
+  qa/unit/fact-reader.test.js, scenario 144. Also: thread facts never read a forwarded copy of Rachel's own email
+  (email-body.js withoutRachel: "Client: Somebody Else" from her quoted reply was pre-filled); fee lines ("Adjust the tax
+  to: 8.8875%") no longer count as an event brief's field lines (proposal-fee-adjustments, failing nightly since Nov 10).
+
 ## Secrets (never print them)
 - /etc/rachel.env: Slack tokens, ANTHROPIC_API_KEY, GOOGLE_MAPS_API_KEY, QA_SLACK_CHANNEL, SLACK_QA_USER_TOKEN
 - The `rachel` service does NOT read /etc/rachel.env — its secrets are Environment= lines in

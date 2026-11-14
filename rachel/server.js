@@ -1521,6 +1521,22 @@ async function threadAddressFor(sessionKey) {
   }
   return null;
 }
+// The address to use before asking for one: the email thread's (threadAddressFor), else the model's reading of the message
+// (fact-reader.js) when the code's patterns found none — geocoded, a gap recorded. null = ask.
+async function knownAddressFor(sessionKey, text, frOpts) {
+  const th = await threadAddressFor(sessionKey);
+  if (th) return th;
+  try {
+    const FR = require('./fact-reader.js');
+    const a = ((await FR.factsFor(text, frOpts || {})) || {}).delivery_address;
+    if (!a || !/\d/.test(String(a))) return null;
+    const g = await geocodeAddress(String(a)).catch(() => null);
+    if (!(g && g.zip)) { console.log('[fact-reader] the model read the address ' + JSON.stringify(a) + ' but it did not geocode — asking'); return null; }
+    const out = /\b\d{5}\b/.test(g.formatted || '') ? g.formatted : a + ' ' + g.zip;
+    FR.gap('delivery_address', 'missed', null, out, Object.assign({ session: sessionKey, said: text }, frOpts || {}));
+    return out;
+  } catch (e) { return null; }
+}
 function threadEventDate(sessionKey) {
   const ED = require('./event-date.js');
   const list = threadCustomerEmails(sessionKey);
@@ -2402,8 +2418,18 @@ app.post('/chat', async (req, res) => {
   // A per-bottle price for the wine / spirits ("average price of the wine bottles is $15", "should not exceed $15") —
   // kept for the conversation and applied in rachel.js to every build and search (bottle-price.js; Nov 13, DC's Eterra
   // emails: Cloudy Bay $37 and Joseph Phelps $71 on a "$15 a bottle" quote). The latest statement wins.
+  // FACT READER (fact-reader.js, DC Nov 14): the model reads the same message for the facts the code's patterns read —
+  // started here (no wait), awaited only where a fact is needed and the code found nothing.
+  const FR = require('./fact-reader.js');
+  const frCtx = { session: sessionKey, channel: format === 'plain' ? 'email' : (format || 'slack'), qa: !!isQA, said: message };
+  if (!/^__/.test(String(message || ''))) FR.factsFor(message, { qa: isQA }).catch(() => null);
   try {
-    const bp = require('./bottle-price.js').read(message);
+    let bp = require('./bottle-price.js').read(message);
+    if (!/^__/.test(String(message || '')) && /\$\s?\d|\b(?:bucks|dollars|usd)\b/i.test(String(message || ''))) {
+      const lfB = FR.bottleShape(((await FR.factsFor(message, { qa: isQA })) || {}).bottle_price, message);
+      if (!bp && lfB) { bp = lfB; FR.gap('bottle_price', 'missed', null, lfB, frCtx); }
+      else if (bp && lfB && (bp.max !== lfB.max || bp.category !== lfB.category)) FR.gap('bottle_price', 'disagree', { category: bp.category, max: bp.max }, { category: lfB.category, max: lfB.max }, frCtx);
+    }
     if (bp && !/^__/.test(String(message || ''))) {
       const stBP = getState(sessionKey);
       stBP.bottlePrice = Object.assign(bp, { at: Date.now() });
@@ -2837,7 +2863,7 @@ app.post('/chat', async (req, res) => {
         if (rest.replace(/[^a-z0-9]/gi, '').length > 8) {
           state.pendingIntent = [rest, state.pendingIntent].filter(Boolean).join('. ');
           console.log('[age] request carried with the yes, held for after the address: ' + JSON.stringify(rest).slice(0, 80));
-          const thA = state.step === 'addr_new' && !require('./address-extract.js').findAddress(state.pendingIntent) ? await threadAddressFor(sessionKey) : null;
+          const thA = state.step === 'addr_new' && !require('./address-extract.js').findAddress(state.pendingIntent) ? await knownAddressFor(sessionKey, state.pendingIntent, { qa: isQA }) : null;
           if (thA) state.pendingIntent = state.pendingIntent + '\nAddress: ' + thA;
           else if (state.step === 'addr_new' && !require('./address-extract.js').findAddress(state.pendingIntent)) {
             saveFlowState();
@@ -2845,7 +2871,7 @@ app.post('/chat', async (req, res) => {
             return res.json({ text: askA, response: askA });
           }
         } else if (state.step === 'addr_new' && !(state.pendingIntent && require('./address-extract.js').findAddress(state.pendingIntent))
-            && !(await threadAddressFor(sessionKey).then(a => { if (a) state.pendingIntent = (state.pendingIntent ? state.pendingIntent + '\n' : '') + 'Address: ' + a; return a; }))) {
+            && !(await knownAddressFor(sessionKey, state.pendingIntent || message, { qa: isQA }).then(a => { if (a) state.pendingIntent = (state.pendingIntent ? state.pendingIntent + '\n' : '') + 'Address: ' + a; return a; }))) {
           saveFlowState();
           const askA = 'What is your delivery address? (Please include street, city, state, and zip code)';
           return res.json({ text: askA, response: askA });
@@ -3808,6 +3834,11 @@ app.post('/chat', async (req, res) => {
     if (!state.orderStep && !state.proposalStep && (/^email-/.test(sessionKey) || (context && context.email_subject) || state.lastProposalUrl)) {
       let qItems = []; try { qItems = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
       const qe = qItems.length ? QE.parseEdits(message) : null;
+      // "N bottles/cans, not cases" in a wording quote-edits.js doesn't know: the model's reading (fact-reader.js).
+      if (qe && !(qe.units || []).length && /\b(?:bottles?|cans?)\b/i.test(message) && /\b(?:cases?|packs?)\b/i.test(message)) {
+        const ucM = (((await FR.factsFor(message, { qa: isQA })) || {}).unit_corrections || []).filter(u => u && +u.count > 0);
+        if (ucM.length) { qe.units = ucM.map(u => ({ count: +u.count, was: null, about: String(u.product || '').trim() })); qe.count += qe.units.length; FR.gap('unit_corrections', 'missed', null, ucM, frCtx); }
+      }
       // Removes / quantities are applied here; anything else in the same email (an add, a swap, a question) goes to the
       // LLM, told what was done — never a code reply that answers only part of the email. Real bug (Oct 2, DC's Goody
       // thread): "swap the ketel one for titos? / remove the water case / remove the sparkling water / add back some
@@ -5954,13 +5985,32 @@ app.post('/chat', async (req, res) => {
     // left off the proposal ("take out the delivery address from the proposal"): kept for the session and applied in
     // code — every estimate, the order summary and the PDF (regenerated when one was sent). Real (Oct 5, DC): the LLM
     // zeroed the tax on one PDF only, the next estimate and PDF had 10% again; "take out the address" was refused.
-    const taxCmd = TAXCMD.read(message);
+    let taxCmd = TAXCMD.read(message);
     const addrCmd = TAXCMD.proposalAddress(message);
-    const feeCmd = TAXCMD.fees(message);   // "tax to 8.8875%", "tip $50 flat", "delivery $0" (Oct 13, Sean)
+    let feeCmd = TAXCMD.fees(message);   // "tax to 8.8875%", "tip $50 flat", "delivery $0" (Oct 13, Sean)
+    // The model's reading of the fees when the code's patterns found none (fact-reader.js): same path from here on.
+    if (!taxCmd && !feeCmd && /\b(?:tax|tip|gratuity|service|delivery)\b/i.test(message)) {
+      const fsM = FR.feesShape(((await FR.factsFor(message, { qa: isQA })) || {}).fees);
+      if (fsM) {
+        FR.gap('fees', 'missed', null, fsM, frCtx);
+        if (fsM.tax_rate === 0) { taxCmd = 'zero'; delete fsM.tax_rate; }
+        feeCmd = Object.keys(fsM).length ? fsM : null;
+      }
+    } else if (feeCmd) {
+      const fsM = FR.feesShape(((await FR.factsFor(message, { qa: isQA })) || {}).fees);
+      const diff = fsM ? Object.keys(feeCmd).filter(k => fsM[k] != null && Math.abs(fsM[k] - feeCmd[k]) > 1e-9) : [];
+      if (diff.length) FR.gap('fees', 'disagree', feeCmd, fsM, frCtx);
+      // Part of the fees read by the code, the rest only by the model ("service 8% and no gratuity"): the rest is added.
+      const extra = fsM ? Object.keys(fsM).filter(k => feeCmd[k] == null && !(k === 'tip_rate' && feeCmd.tip_amount != null) && !(k === 'tip_amount' && feeCmd.tip_rate != null) && !(k === 'tax_rate' && taxCmd)) : [];
+      if (extra.length) { const add = {}; for (const k of extra) add[k] = fsM[k]; FR.gap('fees', 'missed', feeCmd, add, frCtx); Object.assign(feeCmd, add); }
+    }
     // A fee inside a build request (an event brief's "Delivery charge: $0" line, or a message the classifier filed as a
     // build) is kept for the session and the request goes on to be built — the fee never takes the turn. Real (Nov 10,
     // DC on claude.ai): the replayed brief got "Noted — delivery $0.00 ... Your cart is empty right now" and no menu.
-    const feeBriefLines = String(message).split('\n').filter(l => /^\s*(?:[-•*]\s*)?[A-Za-z][\w /&'()-]{1,30}:\s*\S/.test(l)).length;
+    // Lines that only SET a fee ("Adjust the tax to: 8.8875%", "Tip: $50") are the fee command, not an event brief's fields
+    // (proposal-fee-adjustments failed nightly Nov 10-14: three "Adjust the X to:" lines read as a brief, fees kept quietly).
+    const feeBriefLines = String(message).split('\n').filter(l => /^\s*(?:[-•*]\s*)?[A-Za-z][\w /&'()-]{1,30}:\s*\S/.test(l)
+      && !/^\s*(?:[-•*]\s*)?(?:(?:adjust|change|set|make|update)\s+(?:the\s+)?)?(?:sales\s+)?(?:tax|tip|gratuity|service(?:\s+(?:charge|fee))?|delivery(?:\s+(?:fee|charge|cost))?)(?:\s+(?:rate|amount))?(?:\s+to)?\s*:/i.test(l)).length;
     const feeInBuild = (taxCmd || feeCmd) && !addrCmd && !pfHandled && !state.proposalStep && !state.orderStep
       && (feeBriefLines >= 3 || (clsSeen && /^(build_package|custom_list|menu_build|event|recommend)/.test(clsSeen.intent) && clsSeen.confidence >= 0.8));
     if (feeInBuild) {
@@ -6074,7 +6124,14 @@ app.post('/chat', async (req, res) => {
         // in the first email, and Rachel asked "What is the client or company name?" then "What is the event date?").
         // The client / date stated in this very request win ("a proposal for Liquid Labs, event date December 5" —
         // F-0034: Rachel asked "What is the client or company name?" with both in the message).
-        const reqF = require('./event-date.js').proposalRequestFields(message);
+        let reqF = require('./event-date.js').proposalRequestFields(message);
+        // The client / date this message states, as the model read them, when the code's patterns missed (fact-reader.js).
+        {
+          const lfP = (await FR.factsFor(message, { qa: isQA })) || {};
+          const dM = lfP.event_date ? require('./event-date.js').normalizeEventDate(String(lfP.event_date), new Date()) : null;
+          if (lfP.client && !(reqF && reqF.client)) { reqF = Object.assign({}, reqF || {}, { client: String(lfP.client).trim() }); FR.gap('client', 'missed', null, reqF.client, frCtx); }
+          if (dM && dM.date && !(reqF && reqF.date)) { reqF = Object.assign({}, reqF || {}, { date: dM.text }); FR.gap('event_date', 'missed', null, dM.text, frCtx); }
+        }
         if (reqF) {
           if (reqF.client) state.savedClientName = reqF.client;
           if (reqF.date) { state.savedEventDate = reqF.date; state.eventDateNone = false; }

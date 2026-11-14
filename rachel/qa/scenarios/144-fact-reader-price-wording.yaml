@@ -1,0 +1,15 @@
+name: fact-reader-price-wording
+# Nov 14 (DC): per-bottle prices / fees were read only by fixed patterns; "The wines should not be more than $15" was missed and
+# the PDF had Cloudy Bay $37. fact-reader.js: the model reads the wording, the code applies it and records the pattern gap.
+# "nothing pricier than twenty bucks a bottle" is a wording the code's patterns don't know (on purpose: it proves the model path).
+format: plain
+tags: [lists]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "I need 6 bottles of Pinot Noir and 6 bottles of Sauvignon Blanc, keep it reasonable, nothing pricier than twenty bucks a bottle"
+    expect:
+      matches: "(?i)6x [^\\n]*Pinot Noir"
+      not_matches: "(?i)\\b6x [^\\n]*— \\$(?:2[1-9]|[3-9]\\d|\\d{3})\\."
+      log_contains: ["[fact-reader] code MISSED bottle_price"]

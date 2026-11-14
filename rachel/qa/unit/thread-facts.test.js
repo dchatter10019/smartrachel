@@ -66,5 +66,9 @@ ok('newest date wins (Dec 12), Rachel\'s own emails never count', f2.eventDate &
 ok('address + items from the first email', f2.address && /10019/.test(f2.address.value) && f2.items && f2.items.count === 2);
 ok('client from the subject', f2.client && f2.client.value === 'Acme');
 ok('nothing known -> no note', TF.note(TF.gather([], {})) === '');
+// A forwarded copy of Rachel's OWN email is her text, never the customer's facts (Nov 14 QA: "Client: Somebody Else").
+const fr = EB.customerEmails([{ from: DC, current: true, body: 'Send me the proposal again.\n\n---------- Forwarded message ---------\nFrom: Rachel AI <rachelai@getbevvi.com>\nDate: Sat, Nov 14, 2026 at 4:44 AM\n\nClient: Somebody Else\nEvent date: November 14, 2026\n' }]);
+const fRachel = TF.gather(fr, { subject: 'Fwd: New Beverage Order' });
+ok('Rachel\'s forwarded reply gives no client / date', !fRachel.client && !fRachel.eventDate);
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');

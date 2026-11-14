@@ -231,6 +231,18 @@ class Monitor:
         if e.get('qa'): return
         sess = e.get('session', '')
         fields = ', '.join(sorted(set(i.get('field', '?') for i in e.get('issues') or []))) or '?'
+        if e.get('kind') == 'reader_gap':
+            # fact-reader.js (DC, Nov 14): the model read a fact (bottle price, fees, date, client, address, bottles-not-cases)
+            # the code's patterns missed or read differently — the fixer adds the wording to the code's reader.
+            if e.get('gap') == 'disagree':
+                sev = 'medium'
+            else:
+                sev = self.d.get('self_correction', {}).get('severity', 'high')
+            ev = 'code %s %s | model read: %s | code read: %s | customer said: %s' % ('MISSED' if e.get('gap') != 'disagree' else 'DISAGREES on', fields,
+                ' ; '.join('%r' % (i.get('expected'),) for i in e.get('issues') or [])[:300],
+                ' ; '.join('%r' % (i.get('printed'),) for i in e.get('issues') or [])[:200], str(e.get('customer_said', ''))[:400].replace('\n', ' / '))
+            self.store.record('self_correction', sev, "the code's reader %s %s wording (%s)" % ('missed' if e.get('gap') != 'disagree' else 'read differently', fields, sess), [ev], [sess], t or self.now())
+            return
         if e.get('kind') == 'asked_known':
             # server.js THREAD FACTS (DC, Nov 14): Rachel asked an email customer for something the thread already gives.
             ev = 'email asked for %s though the thread gives: %s | Rachel asked: %s | customer said: %s' % (fields,

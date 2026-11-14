@@ -146,8 +146,26 @@ function threadNote(emails, { currentText = '' } = {}) {
 // DC, Nov 14: "all replies to the emails should remember the history" — the model saw the whole thread, but the replies
 // written in code (in-code proposal, quote PDF, email order) read only the newest email + saved values (HI USA: the
 // proposal said November 14, the thread said "the requested delivery date is Thursday, November 19th").
+// A forwarded copy of RACHEL'S OWN email inside a customer's email (and an "On ... rachelai@... wrote:" quote of her) is
+// her text, never the customer's facts. Real (Nov 14 QA, email-forward-bottle-price): DC forwarded her reply back with
+// "Client: Somebody Else / Event date: November 14" in it, and the thread facts pre-filled that client and date.
+function withoutRachel(body) {
+  const lines = String(body || '').replace(/\r/g, '').split('\n'), out = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (FWD.test(lines[i]) && lines.slice(i + 1, i + 8).some(l => /^\s*\*?From:\*?\s.*\brachelai@getbevvi\.com\b/i.test(l))) {
+      let j = i + 1; while (j < lines.length && !FWD.test(lines[j])) j++;
+      i = j - 1; continue;
+    }
+    if (isOnWrote(lines, i) && RACHEL_ADDR.test(lines.slice(i, i + 3).join(' '))) {
+      let j = i + 1; while (j < lines.length && (/^\s*>/.test(lines[j]) || !lines[j].trim() || /wrote:\s*$/.test(lines[j]))) j++;
+      i = j - 1; continue;
+    }
+    out.push(lines[i]);
+  }
+  return out.join('\n');
+}
 function customerEmails(emails) {
-  const list = (emails || []).filter(e => e && String(e.body || '').trim());
+  const list = (emails || []).filter(e => e && String(e.body || '').trim()).map(e => Object.assign({}, e, { body: RACHEL_ADDR.test(String(e.from || '')) ? e.body : withoutRachel(e.body) }));
   const out = [];
   list.forEach((e, k) => {
     if (RACHEL_ADDR.test(String(e.from || ''))) return;
