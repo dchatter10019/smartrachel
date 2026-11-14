@@ -495,6 +495,7 @@ async function buildPackage(iv) {
   // the QA turn limit is 300s. Only successful answers are kept (a failed call is retried by the next caller); every
   // caller gets its own copies (rows are annotated downstream).
   var rawCache = {};
+  var STOCK = require('./stock.js'), rowById = {};   // product_id -> its catalog row (stock count) for the last step
   function rawSearch(term) {
     var k = String(term || '').toLowerCase().replace(/\s+/g, ' ').trim();
     if (!rawCache[k]) rawCache[k] = rawSearchUncached(term).then(function(r) { if (!r.ok) delete rawCache[k]; return r.rows; }, function(e) { delete rawCache[k]; throw e; });
@@ -525,7 +526,10 @@ async function buildPackage(iv) {
       // Bevvi's category first" branch never ran because this mapping dropped the
       // field — the guard fell back to a name regex and rejected every RTD can
       // (Fresca, Topo Chico, Minute Maid, Simply Spiked) as "not a beer".
-      return {name:p.name||"",price:parseFloat(price)||0,sizeStr:sizeStr,url:purl,product_id:pid,upc:p.upc||p.origanlUpc||"",establishmentId:p.establishmentId||"",category:p.category||"",subCategory:p.subCategory||p.subcategory||"",region:p.region||"",appellation:p.appellation||"",varietal:p.varietal||"",country:p.country||""};
+      // inventory = the store's count (stock.js; null = unknown) — every pick and the last step check it (DC, Nov 14).
+      var row={name:p.name||"",price:parseFloat(price)||0,sizeStr:sizeStr,url:purl,product_id:pid,upc:p.upc||p.origanlUpc||"",establishmentId:p.establishmentId||"",category:p.category||"",subCategory:p.subCategory||p.subcategory||"",region:p.region||"",appellation:p.appellation||"",varietal:p.varietal||"",country:p.country||"",inventory:STOCK.inv(p)};
+      if (pid && row.price>0) rowById[pid]=row;
+      return row;
     }).filter(function(p){return p.price>0&&p.name;}) };
   }
 
@@ -819,6 +823,11 @@ async function buildPackage(iv) {
     var seenP={}; pool=pool.filter(function(p){ var k=String(p.name||'').toLowerCase().replace(/\s+/g,' ').trim()+'|'+String(p.sizeStr||p.size||'').toLowerCase().replace(/\s+/g,'');
       if (seenP[k]) { console.log('[buildPackage] duplicate catalog row skipped: '+p.name+' $'+p.price); return false; } seenP[k]=1; return true; });
     if (pool.length===0) return [];
+    // Only products the store has enough of (DC, Nov 14: a pick must meet the quantity). Unknown counts are fine; when no
+    // candidate has enough, the pool is kept and the last step (stock.js enforce) splits or reports it.
+    var needEach=Math.ceil((totalQty||1)/Math.max(1,Math.min(maxUnique||2,pool.length)));
+    var stocked=pool.filter(function(p){return STOCK.enough(p,needEach);});
+    if (stocked.length && stocked.length<pool.length) { console.log('[stock] '+slotType+': '+(pool.length-stocked.length)+' candidate(s) with fewer than '+needEach+' in stock left out ('+pool.filter(function(p){return !STOCK.enough(p,needEach);}).slice(0,3).map(function(p){return p.name+' '+p.inventory;}).join(', ')+')'); pool=stocked; }
     var steps=[0.50,0.35,0.20,0];
     var chosenPool=null;
     for (var s=0;s<steps.length;s++) {
@@ -1685,7 +1694,7 @@ async function buildPackage(iv) {
       }
       packNote='';
       if (match.kind!=='exact') console.log('[buildPackage] NOT EXACT ('+match.kind+'): '+JSON.stringify(np.name)+' -> '+best.name+' — '+match.note);
-      lineItems.push({label:np.name,name:best.name,qty:qty,price:best.price,size:best.sizeStr,url:best.url,product_id:best.product_id,upc:best.upc||"",establishmentId:best.establishmentId||"",category:catN,role:pq.mod?"modifier":undefined,match:match});
+      lineItems.push({label:np.name,name:best.name,qty:qty,price:best.price,size:best.sizeStr,url:best.url,product_id:best.product_id,upc:best.upc||"",establishmentId:best.establishmentId||"",category:catN,role:pq.mod?"modifier":undefined,match:match,customer_qty:pq.hasExplicitQty?true:undefined});
     }
     // Supply check for an event built from generic lines (no customer-stated quantities), as
     // menu_build does — the custom_list path logged nothing, so under-supply went unseen.
@@ -2191,6 +2200,14 @@ async function buildPackage(iv) {
     });
   }
 
+  // STOCK (stock.js, DC Nov 14): no line asks the store for more than it has. A product the customer named keeps what the
+  // store has + similar products offered for the rest (stock_note); Rachel's own picks are replaced / split.
+  var stockShort=[], stockSwaps=[];
+  try {
+    var stE=await STOCK.enforce(lineItems,{ rowFor:function(li){ return rowById[li.product_id]||null; }, search:function(t){ return rawSearch(t); } });
+    stockShort=stE.short; stockSwaps=stE.swaps;
+    if (stockShort.length||stockSwaps.length) { lineItems.length=0; Array.prototype.push.apply(lineItems, stE.lines); }
+  } catch(eS) { console.log('[stock] check failed — lines kept as built: '+eS.message); }
   var pt=productTotal();
   var tax=Math.round(pt*0.10*100)/100;
   var svc=Math.round(pt*0.10*100)/100;
@@ -2236,6 +2253,7 @@ async function buildPackage(iv) {
     // stand-in gets it (server.js applyBasketSubstitute) instead of 1.
     unavailable_qty:JSON.stringify(isCustom&&plannedQty?namedProducts.reduce(function(o,np,ix){ if(unavailable.indexOf(np.name)>=0&&plannedQty[ix]) o[np.name]=plannedQty[ix].qty; return o; },{}):{}),
     brand_substitutions:(typeof brandSubstitutions!=='undefined'?brandSubstitutions:[]).join("; "),
+    stock_short:stockShort.length?JSON.stringify(stockShort):"", stock_note:STOCK.noteFor(stockShort), stock_swaps:stockSwaps,
     total_drinks:String(totalDrinks), drinks_per_person:String(baseDpp), full_bar_note:fullBarNote, beer_note:beerNote,
     category_needs:categoryNeeds?JSON.stringify(categoryNeeds):"", summary:summary };
 }

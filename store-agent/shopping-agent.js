@@ -28,7 +28,8 @@ const { guardAsync: guardCatalog } = require('./catalog-guard.js');
 // Rachel's modules from THIS tree's rachel/ (production: /home/ubuntu/rachel) — a staging shopping-agent run from a
 // worktree must load the worktree's code, not production's.
 const RACHEL_DIR = require('path').join(__dirname, '..', 'rachel');
-const CATALOG = require(RACHEL_DIR + '/catalog-api.js');   // the catalog search: legacy searchCorpProducts or getProducts (CATALOG_API)
+const CATALOG = require(RACHEL_DIR + '/catalog-api.js');
+const STOCK = require(RACHEL_DIR + '/stock.js');   // store stock counts vs quantities (DC, Nov 14)   // the catalog search: legacy searchCorpProducts or getProducts (CATALOG_API)
 const packageModel = require(RACHEL_DIR + '/package-model.js');
 const { classifyProduct } = require(RACHEL_DIR + '/brand-lists.js');
 
@@ -469,6 +470,7 @@ function formatProduct(p) {
     product_id: (p.corpProductFilter && p.corpProductFilter.corpProductId) || p.id || '',
     establishmentId: p.establishmentId || '',
     category: p.category || '',
+    in_stock: STOCK.inv(p),   // the store's count (null = unknown) — stock.js
     brand: p.brandinfo || ''
   };
 }
@@ -580,8 +582,31 @@ async function executeTool(name, input) {
         const ci = rm.products.filter(p => /\b(ciders?|cidres?|cidras?|sidras?|sidres?)\b/i.test(p.name || ''));
         if (ci.length && ci.length < rm.products.length) { console.log('[product_query] ' + JSON.stringify(searchName) + ' is a beer ask — dropped cider(s): ' + ci.map(p => p.name).join(' | ')); rm.products = rm.products.filter(p => ci.indexOf(p) < 0); }
       }
+      // STOCK (stock.js, DC Nov 14) when the ask carries a quantity: a product the customer NAMED (producer words) that the
+      // store has too few of is still shown, with what it has + similar products that cover the rest (stock); a GENERIC ask
+      // ("vodka", "a red wine") shows only products the store has enough of.
+      const qQty = parseInt(q.quantity || q.qty || input.quantity, 10) || 0;
+      let stockOut = null;
+      if (qQty > 1 && rm.products.length) {
+        if (rm.key && rm.key.length) {
+          const top = rm.products[0], have = STOCK.inv(top);
+          if (have !== null && have < qQty) {
+            const need = qQty - have, topR = STOCK.rowOf(top);
+            const pool = (await searchWithFallbacks(loc.kitchen, loc.client, STOCK.termFor(topR), 40)).map(STOCK.rowOf);
+            const sim = STOCK.similar(topR, pool, need, { knownOnly: !STOCK.isPlaceholderStore(top.establishmentId) }).slice(0, 3);   // a known count, except at a placeholder store
+            console.log('[product_query] [stock] ' + top.name + ': asked ' + qQty + ', the store has ' + have + '; similar for the other ' + need + ': ' + (sim.map(o => o.name + ' (' + (o.inventory === null ? '?' : o.inventory) + ')').join(', ') || 'none'));
+            stockOut = { product: top.name, asked: qQty, available: have, need, similar: sim.map(o => formatProduct(o._raw)) };
+          }
+        } else {
+          const ok = rm.products.filter(p => STOCK.enough(p, qQty));
+          if (ok.length < rm.products.length) console.log('[product_query] [stock] ' + JSON.stringify(searchName) + ' x' + qQty + ' — left out ' + (rm.products.length - ok.length) + ' with fewer in stock: ' + rm.products.filter(p => ok.indexOf(p) < 0).slice(0, 5).map(p => p.name + ' (' + STOCK.inv(p) + ')').join(' | '));
+          rm.products = ok;
+        }
+      }
       const filtered = rm.products.slice(0, q.limit || 3).map(formatProduct);
-      results.push(Object.assign({ query: q.name, found: filtered.length > 0, products: filtered }, rm.searchedAs ? { searched_as: rm.searchedAs } : {}));
+      results.push(Object.assign({ query: q.name, found: filtered.length > 0, products: filtered }, rm.searchedAs ? { searched_as: rm.searchedAs } : {},
+        stockOut ? { stock: stockOut, stock_note: STOCK.noteFor([{ name: stockOut.product, asked: qQty, available: stockOut.available, need: stockOut.need, similar: stockOut.similar }]) } : {},
+        !filtered.length && qQty > 1 && !(rm.key && rm.key.length) ? { stock_note: 'Nothing matching "' + searchName + '" has ' + qQty + ' in stock at this store right now.' } : {}));
     }
     // Save first product as basket for proposal/order reuse — but ONLY if there isn't
     // already a multi-item basket in progress, since overwriting a real multi-item order
@@ -753,11 +778,12 @@ async function executeTool(name, input) {
               (item.label || item.name).split(' ').slice(0,2).join(' ');
             const candidates = await searchWithFallbacks(loc.kitchen, loc.client, searchTerm, 20);
             const better = candidates
-              .map(function(p) { return { name: p.name, price: p.salePrice||p.price||0, upc: p.upc||'', url: p.url||'', product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'', establishmentId: p.establishmentId||'', subcategory: p.subCategory||p.subcategory||item.subcategory||'', size: (p.size&&p.units?p.size+p.units:(p.sizeStr||'')) }; })
+              .map(function(p) { return { inventory: STOCK.inv(p), name: p.name, price: p.salePrice||p.price||0, upc: p.upc||'', url: p.url||'', product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'', establishmentId: p.establishmentId||'', subcategory: p.subCategory||p.subcategory||item.subcategory||'', size: (p.size&&p.units?p.size+p.units:(p.sizeStr||'')) }; })
               .filter(function(p) {
                 const n=(p.name||'').toLowerCase();
                 const sub=(p.subCategory||p.subcategory||'').toLowerCase();
                 if (p.price <= item.price || p.price > targetPrice || usedNamesPass1.has(p.name)) return false;
+                if (!STOCK.enough(p, item.qty)) return false;   // never upgrade to a product the store has too few of (stock.js)
                 { const ceil = eventCeiling(item.category, item.label, mixedEv); if (ceil && p.price > ceil) return false; }   // event ceiling (event-ceiling.js)
                 // Same bottle/pack size only — an upgrade is a better product, not a bigger bottle at the
                 // same qty. Real bug (event-serving-mix): 2x Mi Campo 750 mL became 2x Cazadores 1.75 L and
@@ -808,11 +834,12 @@ async function executeTool(name, input) {
                           itemLabel2.includes('beer') || itemLabel2.includes('lager') ? 'beer' :
                           (item.label||item.name).split(' ').slice(0,2).join(' ');
             const cands2 = await searchProducts(loc.kitchen, loc.client, term2, 50, item.price + 1, maxForItem);
-            const best2 = cands2.map(function(p) { return {name:p.name,price:p.salePrice||p.price||0,upc:p.upc||'',url:p.url||'',product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'',establishmentId:p.establishmentId||'',subcategory:p.subCategory||p.subcategory||item.subcategory||'',size:(p.size&&p.units?p.size+p.units:(p.sizeStr||''))}; })
+            const best2 = cands2.map(function(p) { return {inventory:STOCK.inv(p),name:p.name,price:p.salePrice||p.price||0,upc:p.upc||'',url:p.url||'',product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'',establishmentId:p.establishmentId||'',subcategory:p.subCategory||p.subcategory||item.subcategory||'',size:(p.size&&p.units?p.size+p.units:(p.sizeStr||''))}; })
               .filter(function(p) {
                 const n=(p.name||'').toLowerCase();
                 const sub=(p.subCategory||p.subcategory||'').toLowerCase();
                 if (p.price <= item.price || p.price > maxForItem || usedNames.has(p.name)) return false;
+                if (!STOCK.enough(p, item.qty)) return false;   // never upgrade to a product the store has too few of (stock.js)
                 { const ceil = eventCeiling(item.category, item.label, mixedEv); if (ceil && p.price > ceil) return false; }   // event ceiling (event-ceiling.js)
                 // Same bottle/pack size only — an upgrade is a better product, not a bigger bottle at the
                 // same qty. Real bug (event-serving-mix): 2x Mi Campo 750 mL became 2x Cazadores 1.75 L and
@@ -894,6 +921,8 @@ async function executeTool(name, input) {
       drinks_per_person: result.drinks_per_person,
       full_bar_note: result.full_bar_note || '',
       beer_note: result.beer_note ? result.beer_note + ' Say this in one plain line — no question.' : '',
+      stock_note: result.stock_note || '',   // stock.js: a named product the store has too few of + similar ones (appended in code on /chat)
+      stock_short: result.stock_short || '',
       supply_check: supply.text,
       tier_warning: result.tier_warning || '',
       ...eventFacts(result.line_items, input, result.total_drinks)
@@ -969,9 +998,10 @@ async function executeTool(name, input) {
             const candidates = await searchWithFallbacks(loc.kitchen, loc.client, searchTerm, 20);
             const rejectedStyle = [];
             const better = candidates
-              .map(function(p) { return { name: p.name, price: p.salePrice||p.price||0, upc: p.upc||'', url: p.url||'', product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'', establishmentId: p.establishmentId||'', size: (p.size&&p.units?p.size+p.units:(p.sizeStr||'')) }; })
+              .map(function(p) { return { inventory: STOCK.inv(p), name: p.name, price: p.salePrice||p.price||0, upc: p.upc||'', url: p.url||'', product_id:(p.corpProductFilter&&p.corpProductFilter.corpProductId)||p.id||'', establishmentId: p.establishmentId||'', size: (p.size&&p.units?p.size+p.units:(p.sizeStr||'')) }; })
               .filter(function(p) {
                 if (!(p.price > item.price && p.price <= targetPrice * 1.2)) return false;
+                if (!STOCK.enough(p, item.qty)) return false;   // never upgrade to a product the store has too few of (stock.js)
                 { const ceil = input.guests ? require(RACHEL_DIR + '/event-ceiling.js').eventCeiling(item.category, item.label, true) : 0; if (ceil && p.price > ceil) return false; }   // event ceiling (cocktail events mix their spirits)
                 // Same bottle/pack size only — an upgrade is a better product, not a bigger bottle at the
                 // same qty. Real bug (event-serving-mix): 2x Mi Campo 750 mL became 2x Cazadores 1.75 L and
@@ -1052,6 +1082,8 @@ async function executeTool(name, input) {
       unavailable_qty: result.unavailable_qty || '{}',
       supply_check: supply2.text,
       beer_note: result.beer_note ? result.beer_note + ' Say this in one plain line — no question.' : '',
+      stock_note: result.stock_note || '',
+      stock_short: result.stock_short || '',
       tier_warning: result.tier_warning || '',
       ...(input.guests ? eventFacts(finalItems2, input, result.total_drinks) : {})
     };
@@ -1518,7 +1550,7 @@ async function executeTool(name, input) {
 }
 
 const TOOLS = [
-  { name: 'product_query', description: 'Search for specific products. Use for do-you-have or show-me queries.', inputSchema: { type: 'object', properties: { queries: { type: 'array' }, zip: { type: 'string' }, email: { type: 'string' }, min_price: { type: 'number' }, max_price: { type: 'number' } }, required: ['queries', 'zip'] } },
+  { name: 'product_query', description: 'Search for specific products. Use for do-you-have or show-me queries. A query may carry quantity (how many the customer needs): a generic ask then shows only products the store has that many of; a named product with too few in stock comes back with stock {available, similar}.', inputSchema: { type: 'object', properties: { queries: { type: 'array' }, zip: { type: 'string' }, email: { type: 'string' }, min_price: { type: 'number' }, max_price: { type: 'number' } }, required: ['queries', 'zip'] } },
   { name: 'menu_build', description: 'Build event beverage package with guest count and budget.', inputSchema: { type: 'object', properties: { guests: { type: 'number' }, hours: { type: 'number' }, budget: { type: 'number' }, categories: { type: 'array' }, zip: { type: 'string' }, email: { type: 'string' }, package_type: { type: 'string' }, spirit_types: { type: 'array' }, beer_style: { type: 'object' } }, required: ['guests', 'hours', 'zip'] } },
   { name: 'custom_list', description: 'Build package from named product list with quantities.', inputSchema: { type: 'object', properties: { named_products: { type: 'array' }, zip: { type: 'string' }, email: { type: 'string' }, budget: { type: 'number' } }, required: ['named_products', 'zip'] } },
   { name: 'alternatives', description: 'Alternatives for specific products this store does not carry, anchored to the original\'s market price and region.', inputSchema: { type: 'object', properties: { originals: { type: 'array', description: '[{name, category, ref_price?}]' }, zip: { type: 'string' }, email: { type: 'string' } }, required: ['originals', 'zip'] } },
@@ -1590,7 +1622,10 @@ async function handleRequest(req, res) {
         res.end();
       } catch(e) {
         console.error('[shopping-agent] error:', e.message);
-        res.writeHead(500); res.end(JSON.stringify({ error: e.message }));
+        // The SSE headers may already be out: answer on the stream instead of writing headers twice — that threw
+        // ERR_HTTP_HEADERS_SENT and killed the process (15x in shopping-agent.log; Nov 14 staging: a "fetch failed" mid-build).
+        if (res.headersSent) { try { sendSSE(res, { jsonrpc: '2.0', id: null, error: { code: -32603, message: e.message } }); res.end(); } catch (e2) {} }
+        else { res.writeHead(500); res.end(JSON.stringify({ error: e.message })); }
       }
     }));
     return;

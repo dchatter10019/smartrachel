@@ -23,7 +23,8 @@ function catalogUrl(o) {
 
 // The response body -> legacy-shaped rows (array). getProducts: unwrap, rewrite links, price window applied here.
 function rowsFrom(body, m, o) {
-  if (m === 'legacy') return Array.isArray(body) ? body : [];
+  // A search whose rows all show the same stock count carries a placeholder, not stock (stock.js; Boston: every row 10).
+  if (m === 'legacy') return Array.isArray(body) ? require('./stock.js').ignorePlaceholders(body, o.q) : [];
   // Every getProducts search is logged (zip, words, rows) so a staging run gives the list of searches (DC, Oct 7)
   const n = body && Array.isArray(body.products) ? body.products.length : 0;
   console.log('[catalog-api] getProducts zip=' + (o.zip || '') + ' name=' + JSON.stringify(String(o.q || '')) + ' -> ' + n + ' row(s)');
@@ -32,7 +33,7 @@ function rowsFrom(body, m, o) {
     return [];
   }
   const price = p => Number(p.salePrice || p.price || 0);
-  return body.products
+  return require('./stock.js').ignorePlaceholders(body.products, o.q)
     .map(p => p.url ? Object.assign({}, p, { url: String(p.url).replace(/^https:\/\/[a-z0-9-]+\.getbevvi\.com\//i, 'https://bevvibot.getbevvi.com/') }) : p)
     .filter(p => !(o.min > 0 && price(p) < o.min) && !(o.max > 0 && o.max < 9999 && price(p) > o.max));
 }

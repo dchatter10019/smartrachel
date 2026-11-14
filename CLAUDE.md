@@ -169,6 +169,24 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   Left to the LLM: a question, event words (guests/hours/budget), proposal/quote, on-hand stock, swaps/removals/
   alternatives, "->" notes, a "case" line, a line the reader can only file as a "mixer" (unknown brand: "Stella Artois
   12 pack"), email threads, an active event (eventParams.guests), checkout/proposal in progress. Scenario 110 (plain).
+- STORE STOCK (rachel/stock.js; DC, Nov 14: "if the customer asks explicitly a quantity for a certain product ... tell the
+  customer that exact product has only x so you can offer something similar. If the customer doesn't ask for a product
+  explicitly with the desired quantity, it should only offer products that meet the quantity requirements"). The catalog row's
+  `inventory` (both catalog APIs) was never read. Now: unknown / missing = enough (never block on missing data); a store whose
+  in-stock rows all show one count (Boston 02110: every row 10, out-of-stock 0) is a PLACEHOLDER store — that count = unknown,
+  0 = out, remembered per establishmentId in RACHEL_DATA_DIR/stock-placeholder-stores.json (catalog-api.js rowsFrom, every
+  search). CUSTOMER-NAMED + their quantity (line match exact + customer_qty + producer/brand words in what they wrote —
+  "50 bottles of Tito's"; "3 bottles Pinot Noir" is generic): kept at what the store has (0 = line removed), the reply says so
+  in code with up to 3 similar products that cover the rest (same type, size, grape, flavour, alcoholic-ness, price 0.5-1.6x;
+  a known count, except at a placeholder store) — stock.js noteFor -> replyNote; "1" / the option's name adds it at the
+  shortfall (server.js STOCK PICK, state.pendingStock). RACHEL'S PICKS (event slots, generic lines, stand-ins, cocktail
+  ingredients, budget upgrades): buildPackage pick() and all three shopping-agent upgrade passes take only products with
+  enough; the last step of buildPackage (STOCK.enforce) swaps a short line to a similar product with enough, else splits it
+  (Mi Campo is split, never swapped away). product_query takes queries[].quantity: generic = only products with enough;
+  named = result.stock {available, similar} + stock_note. The in-code add-item ("I need 50 bottles of Tito's") passes the
+  quantity and replies in code. The model gets stock_limits (never the note). Connector: build results carry stock_note,
+  presentation says show it word for word; formatProduct carries in_stock. [stock] logs every decision. Scenario 141,
+  qa/unit/stock.test.js.
 - A one-result search (product_query / recommendation / alternatives) at or above CONFIRM_ADD_PRICE ($200) is never captured as
   the basket: it becomes pendingAddOffer (confirm) like add-item's offer — a yes / a quantity adds it ([product-discussed] NOT
   captured). With a basket already

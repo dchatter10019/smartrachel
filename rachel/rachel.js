@@ -57,7 +57,7 @@ const ALL_TOOLS = [
         intent:    { type: "string", enum: ["product_query","menu_build","custom_list","recommendation","alternatives","place_order","generate_proposal","order_history","confirm_substitute","show_basket","update_quantity"] },
         zip:       { type: "string", description: "Delivery zip code" },
         email:     { type: "string", description: "Customer email" },
-        queries:   { type: "array",  description: "For product_query: [{name, category, limit}]" },
+        queries:   { type: "array",  description: "For product_query: [{name, category, limit, quantity}] — quantity = how many the customer said they need (\"50 bottles of vodka\"); results then fit the store's stock" },
         originals: { type: "array",  description: "For alternatives: the products the customer asked for that this store does not carry — [{name, category}], names exactly as the customer gave them. Alternatives are the SAME TYPE as the original (an aperitif for an aperitif, sparkling for sparkling). Only when the customer explicitly asks for another type (\"a sparkling wine close to Lillet's price\") add type: aperitif | fortified | sparkling | rose | red | white." },
         guests:    { type: "number", description: "For menu_build/custom_list" },
         hours:     { type: "number", description: "For menu_build/custom_list — event duration in hours. Use this OR drinks_per_person, not both; if the customer gives drinks-per-person directly, omit hours entirely." },
@@ -795,6 +795,25 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         if (result.full_bar_note) { console.log('[tool] full_bar_note withheld from the model — appended in code'); delete result.full_bar_note; }
         if (result.beer_note) { console.log('[tool] beer_note withheld from the model — appended in code'); delete result.beer_note; }
         if (result.mixers_note) { console.log('[tool] mixers_note withheld from the model — appended in code'); delete result.mixers_note; }
+        // STOCK (stock.js, DC Nov 14): what the store has of a product the customer named + similar products is said in code
+        // (server.js replyNote, numbered so "1" adds it — state.pendingStock). The model only learns that a note follows.
+        try {
+          const shorts = [];
+          if (result.stock_short) { try { shorts.push(...JSON.parse(result.stock_short)); } catch (e) {} }
+          if (saInput.intent === 'product_query' && Array.isArray(result.results)) for (const r of result.results) if (r && r.stock) shorts.push({ name: r.stock.product, asked: r.stock.asked, available: r.stock.available, need: r.stock.need, similar: r.stock.similar || [] });
+          const stNote = result.stock_note || (saInput.intent === 'product_query' && Array.isArray(result.results) ? result.results.map(r => r && r.stock_note).filter(Boolean).join('\n\n') : '');
+          if (stNote && sessionState) {
+            if (String(sessionState.replyNote || '').indexOf(stNote) < 0) sessionState.replyNote = (sessionState.replyNote ? sessionState.replyNote + '\n\n' : '') + stNote;
+            const offers = shorts.filter(x => !x.pick && x.similar && x.similar.length).map(x => ({ for: x.name, need: x.need, options: x.similar }));
+            sessionState.pendingStock = offers.length ? { offers, at: Date.now() } : null;
+            console.log('[stock] note appended in code' + (offers.length ? ' — ' + offers.length + ' offer(s) held for a numbered pick' : ''));
+          }
+          if (stNote) {
+            delete result.stock_note; delete result.stock_short;
+            if (Array.isArray(result.results)) result.results.forEach(r => { if (r) { delete r.stock_note; delete r.stock; } });
+            result.stock_limits = 'Some quantities are limited by what the store has in stock. A note under your reply (added in code) says what the store has and lists similar products with a number to pick — do not repeat it, do not list alternatives yourself and do not claim more than the line items show.';
+          }
+        } catch (e) { console.log('[stock] note not built: ' + e.message); }
         // The builder's own upgrade log ("Ruffino -> Château Gloria") is how the package was made, not news for the customer
         // (Nov 9: "Note: the Ruffino ... was swapped to Château Gloria" under a package the customer had never seen).
         if ((saInput.intent === 'menu_build' || saInput.intent === 'custom_list') && Array.isArray(result.swaps) && result.swaps.length) { console.log('[tool] ' + result.swaps.length + ' builder upgrade(s) withheld from the model (internal, not a customer change)'); delete result.swaps; }

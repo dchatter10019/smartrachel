@@ -1,0 +1,23 @@
+name: stock-limits
+# Nov 14 (DC): "If the customer asks explicitly a quantity for a certain product, e.g. i need 50 bottles of Titos - 750 ML,
+# then tell the customer that exact product has only x so you can offer something similar. If the customer doesn't ask for
+# a product explicitly with the desired quantity, it should only offer products that meet the quantity requirements."
+# The catalog's `inventory` was never read (NYC 10019 Tito's 750 mL: 41). 500 is asked so the test survives stock changes.
+format: plain
+tags: [stock]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "1 Rockefeller Plaza, New York, NY 10019"
+  - send: "I need 500 bottles of Tito's 750 ML"
+    expect:
+      matches: "(?i)Tito's[^\\n]*the store has (?:only \\d+ in stock|none in stock right now) \\(you asked for 500\\)"
+      not_matches: "(?i)500x Tito"
+      log_contains: ["[stock]"]
+  - send: reset
+  - send: "yes"
+  - send: "1 Rockefeller Plaza, New York, NY 10019"
+  # A generic ask with a quantity: only products the store has that many of (Rachel's own pick).
+  - send: "I need 60 bottles of vodka for an office party, any 750 ML is fine"
+    expect:
+      not_matches: "(?i)the store has only \\d+ in stock \\(you asked"

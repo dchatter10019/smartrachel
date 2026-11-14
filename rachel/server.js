@@ -500,7 +500,7 @@ function clearCart(state, email, format, why) {
   let n = 0; try { n = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
   const was = String(state.lastLineItems || '').slice(0, 120);
   { const kpC = KEPTP.keepFrom(state); if (kpC) state.keptProposal = kpC; }   // the proposal can be picked up again by name
-  state.lastLineItems = '[]'; state.pendingSubstitutes = []; state.unavailableQty = {}; state.pendingAddOffer = null; state.pendingQtyFor = null; state.mixersSettled = false; state.eventFacts = null;
+  state.lastLineItems = '[]'; state.pendingSubstitutes = []; state.unavailableQty = {}; state.pendingAddOffer = null; state.pendingStock = null; state.pendingQtyFor = null; state.mixersSettled = false; state.eventFacts = null;
   state.shownOptions = null; state.proposalWithOptions = false; if (!(state.bottlePrice && Date.now() - (state.bottlePrice.at || 0) < 120000)) state.bottlePrice = null;   // one stated this turn stays
   state.originalRequest = ''; state.onHand = []; state.onHandReleased = [];
   state.lastProposalUrl = ''; state.savedClientName = ''; state.savedEventDate = ''; state.eventDateNone = false;
@@ -4419,6 +4419,34 @@ app.post('/chat', async (req, res) => {
       if (/\btax[- ]?exempt\b|\bno\s+(sales\s+)?tax\b|\bset\s+tax\s+to\s+(0|zero)\b/i.test(message)) po.tax_exempt = true;
       if (Object.keys(po).length) { state.proposalOpts = po; state.eventParams = Object.assign({}, state.eventParams || {}, { proposalOpts: po }); saveFlowState(); console.log('[proposal] options captured:', JSON.stringify(po)); }
     }
+    // STOCK PICK (stock.js, DC Nov 14): the reply said "<product>: the store has only N ... Similar, with M in stock: 1. ... Reply
+    // with a number and I'll add M of it." A number / one option's name adds that product at M; anything else lets it lapse.
+    if (state.pendingStock && !state.orderStep && !state.proposalStep && !isInternalMsg) {
+      const ps = state.pendingStock; state.pendingStock = null; saveFlowState();
+      const offers = (ps.offers || []).filter(o => o && o.options && o.options.length);
+      const t = String(message || '').trim().toLowerCase().replace(/[.!]+$/, '');
+      const nzS = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+      let hit = null;
+      const num = t.match(/^(?:(?:yes|ok|okay|sure)[,\s]+)?(?:#|no\.?\s*|number\s+|option\s+|the\s+)?([1-9])(?:st|nd|rd|th)?(?:\s+(?:one|please|pls))?$/);
+      if (num && offers.length === 1 && offers[0].options[+num[1] - 1]) hit = { offer: offers[0], opt: offers[0].options[+num[1] - 1] };
+      if (!hit && t.length <= 80 && !num) for (const o of offers) for (const op of o.options) {
+        const w = nzS(op.name).slice(0, 10);
+        if (w.length >= 5 && nzS(t).indexOf(w) >= 0) { hit = { offer: o, opt: op }; break; }
+      }
+      if (hit) {
+        const op = hit.opt, q = hit.offer.need;
+        let it = []; try { it = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+        const ex = it.find(x => nzS(x.name) === nzS(op.name));
+        if (ex) { ex.qty = (Number(ex.qty || ex.quantity) || 0) + q; ex.quantity = ex.qty; }
+        else it.push({ label: op.name, name: op.name, qty: q, quantity: q, price: Number(op.price) || 0, size: op.size || '', url: op.url || '', product_id: op.product_id || '', upc: op.upc || '', establishmentId: op.establishmentId || '', category: op.category || '', qty_confirmed: true });
+        state.lastLineItems = JSON.stringify(it); saveFlowState(); events.action('updated_basket');
+        console.log('[stock] pick ' + JSON.stringify(t.slice(0, 40)) + ' -> added ' + q + 'x ' + op.name + ' (for ' + hit.offer.for + ')');
+        const rSt = 'Added ' + q + 'x ' + op.name + ' — ' + usd(Number(op.price) || 0) + ' ea, for the rest of the ' + hit.offer.for + '.' + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+        recordTurn(sessionKey, message, rSt, false);
+        return res.json({ text: rSt, response: rSt });
+      }
+      console.log('[stock] offer lapsed — reply is not a pick: ' + JSON.stringify(t.slice(0, 60)));
+    }
     // Answer to the add-item confirmation ("I found X — $1,099.99 a bottle. Want me to add it? If so,
     // how many bottles?"). A yes or a quantity adds it; anything else lets the offer lapse (logged)
     // and the message is handled normally.
@@ -4720,16 +4748,17 @@ app.post('/chat', async (req, res) => {
         const listedM = require('./multipick.js').matchListedByName(require('./classify-intent.js').groundedRef(clsRef, message) || clsRef, (lastRepliesBySession[sessionKey] || []).slice(-3));
         const listed = listedM && listedM.matches.length ? listedM.matches.map(o => ({ name: o.name, price: o.price, salePrice: o.price, sizeStr: o.size })) : null;
         if (listedM) console.log('[add-item] listed-name ' + JSON.stringify(clsRef) + ': ' + listedM.matches.length + ' of ' + listedM.listSize + ' listed options fit' + (listed ? ' -> ' + JSON.stringify(listed.map(p => p.name)) : ' — searching the catalog'));
-        let prods = listed;
+        let prods = listed, stockQ = null;
         if (!prods) {
           const rr = await fetch(STAGING.SA_URL, {
             method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
-            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: clsRef.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim(), limit: 8 }], zip: state.zip || '', email: email } } })
+            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: clsRef.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim(), limit: 8, quantity: clsQty > 1 ? clsQty : undefined }], zip: state.zip || '', email: email } } })
           });
           const rt = await rr.text(); const rl = rt.split('\n').find(l => l.startsWith('data:'));
           const rd = rl ? JSON.parse(rl.replace('data:', '').trim()) : null;
           const rres = rd ? JSON.parse(rd.result.content[0].text) : null;
           prods = (rres && rres.results && rres.results[0] && rres.results[0].products) || [];
+          stockQ = (rres && rres.results && rres.results[0] && rres.results[0].stock) || null;   // stock.js: the named product is short
         }
         // Relevance on DESCRIPTIVE requests. Real case: 'Red Wine (French Burgundy) 750ml'
         // matched the generic words and returned Chiantis and Merlots, presented as if they
@@ -4842,6 +4871,27 @@ app.post('/chat', async (req, res) => {
               const rT = 'Got it — ' + kq + 'x ' + labelR + ' (replacing ' + targetA.name + ').' + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
               return res.json({ text: rT, response: rT });
             }
+          }
+          // STOCK (stock.js, DC Nov 14: "i need 50 bottles of Titos - 750 ML"): the store has fewer than asked -> what it has goes
+          // in the cart (none: nothing), the reply says so and offers similar products that cover the rest (a number adds one).
+          if (clsQty > 1 && pr.in_stock !== null && pr.in_stock !== undefined && Number(pr.in_stock) < clsQty) {
+            const have = Number(pr.in_stock), need = clsQty - have;
+            const sim = stockQ && nz(stockQ.product) === nz(pr.name) ? (stockQ.similar || []) : [];
+            let added = false;
+            if (have > 0) {
+              const rrS = await applyBasketSubstitute(sessionKey, email, '', pr.name, price, size, { qty: have, add: true });
+              if (!(rrS && rrS.success === false)) {
+                added = true; retirePendingFor(state, pr.name);
+                try { const it = JSON.parse(state.lastLineItems || '[]'); const row = it.find(x => nz(x.name) === nz(pr.name)); if (row) { row.qty = have; row.quantity = have; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); } } catch (e) {}
+              }
+            }
+            state.pendingStock = sim.length ? { offers: [{ for: pr.name, need, options: sim }], at: Date.now() } : null; saveFlowState();
+            console.log('[stock] add-item ' + pr.name + ': asked ' + clsQty + ', the store has ' + have + (added ? ' -> ' + have + ' added' : '') + '; ' + sim.length + ' similar offered for the other ' + need);
+            let rSk = require('./stock.js').noteFor([{ name: pr.name, size, asked: clsQty, available: added ? have : 0, need: added ? need : clsQty, similar: sim }]);
+            if (have > 0 && !added) rSk = 'Sorry — I couldn\'t add ' + pr.name + ' just now (the store didn\'t answer). ' + rSk.replace(/so I put \d+ in your cart\./, '');
+            if (added) rSk += basketAfterChange(state);
+            recordTurn(sessionKey, message, rSk, false);
+            return res.json({ text: rSk, response: rSk });
           }
           // CONFIRM BEFORE ADDING a costly or vintage-specific bottle the customer didn't name exactly.
           // Real bug (DC, Sep 29, Slack): "I need an opus" put Opus One 2017 at $1,099.99 straight into
