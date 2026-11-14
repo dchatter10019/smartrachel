@@ -517,6 +517,24 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           saInput.named_products = splitMergedNamedProducts(saInput.named_products);
           try { for (const l of require('./original-compare.js').reconcileNamed(saInput.named_products, customerMessage)) console.log('[list-reconcile] ' + l); } catch (e) { console.log('[list-reconcile] error: ' + e.message); }
           if (saInput._ohAvoid) saInput.named_products.forEach(np => { if (np && !np.avoid) np.avoid = saInput._ohAvoid; });   // lines added by the reconcile too
+          // Beer counted in single bottles / cans ("IPA – 48 bottles/cans", "48 cans of Stella"): the count is UNITS, and the
+          // builder turns it into packs (np.unit_count). Real (Nov 14, Eterra Kitchen): the model sent {IPA, qty 48} and the
+          // proposal had 48 x Goose Island IPA 12-packs (576 bottles, $1,535.52).
+          try {
+            const txtU = String(customerMessage || '') + '\n' + String((sessionState && sessionState.originalRequest) || '');
+            for (const np of saInput.named_products) {
+              const q = parseInt(np && np.qty, 10);
+              if (!np || !(q > 1) || np.unit_count) continue;
+              const words = String(np.name || '').toLowerCase().replace(/['’]/g, '').split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !/^(beers?|bottles?|cans?|cases?|packs?|the|and|of)$/.test(w));
+              if (!words.length) continue;
+              const unitRe = new RegExp('\\b' + q + '\\s*(?:x\\s*)?(?:bottles?|cans?|btls?)(?:\\s*/\\s*(?:bottles?|cans?))?\\b', 'i');
+              const lineU = txtU.split(/\n/).find(l => { const ll = l.toLowerCase().replace(/['’]/g, ''); return words.every(w => new RegExp('\\b' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(ll)) && unitRe.test(ll) && !/\b(?:cases?|packs?|\d+\s*-?\s*pk|\d+\s*x\s*\d+\s*(?:oz|ml))\b/i.test(ll); });
+              if (lineU && (np.category === 'beer' || /\b(?:ipa|lager|ale|pilsner|pils|stout|porter|beer|seltzer|cider|kolsch|hefeweizen)\b/i.test(np.name + ' ' + lineU))) {
+                np.unit_count = true;
+                console.log('[list-units] ' + JSON.stringify(np.name) + ' x' + q + ' counts single bottles/cans (' + JSON.stringify(lineU.trim().slice(0, 60)) + ') — the builder sizes packs from it');
+              }
+            }
+          } catch (e) { console.log('[list-units] not checked: ' + e.message); }
           // A quantity the customer SAID in words is theirs, not the calculator's. Real bug:
           // "2 bottles of Tito's 750ml and a Whispering Angel" — the LLM omitted qty for the
           // rosé and the system sized it to 3. Only for non-event lists (no guests), and only

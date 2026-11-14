@@ -1644,6 +1644,11 @@ async function buildPackage(iv) {
         var perCase=gotP>=12?1:Math.ceil(24/gotP), q4=cases*perCase;
         if (q4!==qty) { console.log('[buildPackage] case: '+JSON.stringify(np.name)+' = '+cases+' case(s); '+best.name+' is '+(gotP>1?'a '+gotP+'-pack':'a single')+' -> qty '+q4+' ('+(q4*gotP)+' units)'); qty=q4; }
       }
+      // Single bottles / cans counted for a pack product (rachel.js [list-units]): "IPA – 48 bottles/cans" + a 12-pack = 4.
+      if (np.unit_count) {
+        var upk=PM.packCount(best.name)||PM.packCount(best.sizeStr)||1;
+        if (upk>1) { var qU=Math.max(1,Math.ceil(qty/upk-1e-9)); console.log('[buildPackage] units: '+JSON.stringify(np.name)+' '+qty+' bottles/cans; '+best.name+' is a '+upk+'-pack -> '+qU+' ('+(qU*upk)+' units)'); qty=qU; }
+      }
       if (np.volume_ml) {
         var vT=String(best.name||'')+' '+String(best.sizeStr||'');
         var vm=vT.toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l|liter|litre|oz|fl\.?\s*oz)\b/);

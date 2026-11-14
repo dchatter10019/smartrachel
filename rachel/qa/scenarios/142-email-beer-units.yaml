@@ -1,0 +1,18 @@
+name: email-beer-units
+# Nov 14 (DC forwarding Eterra Kitchen): "IPA – 48 bottles/cans" was priced as 48 x 12-packs (576 bottles, $1,535.52), and
+# "we need 48 bottles not 48 cases. Make the update and send over a new updated proposal" got the same PDF back.
+fresh: true
+tags: [email]
+format: plain
+context: {email_subject: "Fwd: New Beverage Order – November 17", user_name: "QA Tester"}
+turns:
+  - send: "Can you send me a proposal after reading the email below? Yes I am over 21\r\n\r\n---------- Forwarded message ---------\r\nFrom: Esthefany Fernandez <esthefany@eterrakitchen.com>\r\nSubject: New Beverage Order – November 17\r\n\r\nHi,\r\n\r\nWe would like to submit a new beverage order for delivery on *Tuesday, November 17.*\r\n\r\n*Delivery Address:*\r\n1580 Park Avenue\r\nKitchen 3\r\nNew York, NY 10029\r\n\r\n*Order Details:*\r\n\r\nProsecco – 24 bottles\r\n\r\nPinot Grigio – 10 bottles\r\n\r\nIPA – 48 bottles/cans\r\n\r\nThank you so much!"
+    expect:
+      matches: "(?i)\\b(?:4|8|2)x [^\\n]*IPA[^\\n]*(?:12|6|24) ?x"
+      not_matches: "(?i)\\b48x [^\\n]*IPA"
+      log_contains: ["[list-units]"]
+  - send: "Everything looks good except for the beer.. we need 24 bottles not 4 cases. Make the update and send over a new updated proposal"
+    expect:
+      matches: "(?i)IPA[^\\n]*: \\d+ → (?:1|2|4)\\b"
+      contains: ["updated PDF proposal"]
+      log_contains: ["[quote-edits]"]

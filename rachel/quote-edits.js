@@ -101,7 +101,17 @@ function parseEdits(text) {
   // "take out the alternatives" / "remove the options" = the options listed in the proposal (proposal-options.js), never a
   // line called "alternatives" (Nov 13, connector: "Not in the quote, so nothing to change: alternatives.").
   out.removes = out.removes.filter(n => !/^(?:the\s+|all\s+|any\s+)?(?:(?:wine|beer|other|extra|listed)\s+)?(?:options?|alternatives?|choices)\b/i.test(n));
-  out.count = out.removes.length + out.setQty.length + out.attrs.length;
+  // "we need 48 bottles not 48 cases", "48 cans, not packs", "48 bottles of the IPA, not 48 cases": the count is single
+  // bottles / cans of a PACK line -> packs = ceil(count / pack size). Real (Nov 14, Eterra Kitchen): "Everything looks good
+  // except for the beer.. we need 48 bottles not 48 cases. Make the update and send over a new updated proposal" — nothing
+  // read it and the same PDF (48 x Goose Island IPA 12-packs) went out again.
+  out.units = [];
+  const unitRe = /\b(\d{1,4})\s*(?:x\s*)?(?:bottles?|cans?|btls?)(?:\s*\/\s*(?:bottles?|cans?))?(?:\s+of\s+(?:the\s+)?([a-z][\w'’ -]{1,40}?))?\s*[,;—–-]?\s*(?:and\s+|but\s+)?not\s+(?:(\d{1,4})\s*)?(?:x\s*)?(?:cases?|packs?|\d{1,2}\s*-?\s*packs?)\b/gi;
+  while ((m = unitRe.exec(flat))) {
+    const about = (m[2] || (flat.match(/\b(?:for|of|on)\s+(?:the\s+)?(beers?|ipas?|lagers?|seltzers?|ciders?)\b/i) || [])[1] || '').trim();
+    out.units.push({ count: parseInt(m[1], 10), was: m[3] ? parseInt(m[3], 10) : null, about });
+  }
+  out.count = out.removes.length + out.setQty.length + out.attrs.length + out.units.length;
   return out;
 }
 
@@ -185,6 +195,21 @@ function applyEdits(items, edits) {
         changes.push({ kind: 'removed', name: clean(it.name), from: it.qty || it.quantity || 1, why: (a.packaging === 'bottle' ? 'bottled ' : 'canned ') + a.category });
       }
     });
+  }
+  for (const u of edits.units || []) {
+    const packOf = it => PM.packCount(it.name) || PM.packCount(it.size || '') || 1;
+    let c = src.map((it, i) => ({ it, i })).filter(x => !removed.has(x.i) && packOf(x.it) > 1);
+    if (u.about) {
+      const cat = CAT[String(u.about).toLowerCase().replace(/s$/, '')] || CAT[String(u.about).toLowerCase()];
+      const byAbout = c.filter(x => cat ? catOf(x.it) === cat || (cat === 'beer' && /\b(?:ipa|lager|ale|pils|stout|porter|beer)\b/i.test(x.it.name)) : score(u.about, x.it) > 0);
+      if (byAbout.length) c = byAbout;
+    }
+    if (c.length > 1 && u.was != null) { const byQty = c.filter(x => (x.it.qty || x.it.quantity) === u.was); if (byQty.length) c = byQty; }
+    if (!c.length) { notFound.push(u.count + ' bottles/cans' + (u.about ? ' of ' + u.about : '')); continue; }
+    if (c.length > 1) { ambiguous.push({ name: u.count + ' bottles/cans' + (u.about ? ' of ' + u.about : ''), options: c.map(x => clean(x.it.name)) }); continue; }
+    const it = c[0].it, pk = packOf(it), before = it.qty || it.quantity || 1, q = Math.max(1, Math.ceil(u.count / pk - 1e-9));
+    it.qty = q; it.quantity = q;
+    changes.push({ kind: 'qty', name: clean(it.name), from: before, to: q, why: u.count + ' ' + (/can/i.test(it.name) ? 'cans' : 'bottles') + ' = ' + q + ' x ' + pk + '-pack' });
   }
   return { items: src.filter((_, i) => !removed.has(i)), changes, notFound, ambiguous };
 }

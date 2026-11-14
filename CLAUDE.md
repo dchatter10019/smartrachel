@@ -187,6 +187,14 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   quantity and replies in code. The model gets stock_limits (never the note). Connector: build results carry stock_note,
   presentation says show it word for word; formatProduct carries in_stock. [stock] logs every decision. Scenario 141,
   qa/unit/stock.test.js.
+- Beer counted in single bottles / cans (Nov 14, DC forwarding Eterra Kitchen): "IPA – 48 bottles/cans" was priced as 48 x
+  Goose Island 12-packs (576 bottles, $1,535.52); "we need 48 bottles not 48 cases. Make the update and send over a new
+  updated proposal" got the same PDF back; and 15 Pinot Noir (10 Belle Glos + 5 Etude, split by stock) both swapped to
+  Underwood ended at 5. Now, every channel: rachel.js [list-units] flags a beer named_product whose own list line counts
+  bottles/cans (no case/pack word) -> buildPackage np.unit_count -> qty = ceil(units / pack) ([buildPackage] units:);
+  quote-edits.js reads "N bottles/cans [of X], not [N] cases/packs" (units edit -> the pack line of that beer / with that
+  qty / the only pack line -> ceil(N / pack), PDF regenerated); applyBasketSubstitute ADDS a removed line's qty when its
+  replacement is already a basket line (was: set). Scenario 142, qa/unit/eterra-nov14.test.js.
 - A one-result search (product_query / recommendation / alternatives) at or above CONFIRM_ADD_PRICE ($200) is never captured as
   the basket: it becomes pendingAddOffer (confirm) like add-item's offer — a yes / a quantity adds it ([product-discussed] NOT
   captured). With a basket already

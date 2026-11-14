@@ -778,6 +778,7 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
             }
           }
         }
+        let removedLine = false;   // the original was a basket line of its own (taken out here)
         if (originalItem) {
           const removeIdx = basketLineFor(items, originalItem);
           if (removeIdx >= 0) console.log('[confirm-substitute] line replaced: ' + JSON.stringify(items[removeIdx].name || items[removeIdx].label));
@@ -785,7 +786,7 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
             qtyToUse = items[removeIdx].qty || items[removeIdx].quantity || 1; qtyKnown = true;
             categoryToUse = items[removeIdx].category || '';
             packFrom = (items[removeIdx].name || '') + ' ' + (items[removeIdx].size || '');
-            items.splice(removeIdx, 1);
+            items.splice(removeIdx, 1); removedLine = true;
           } else {
             const rq = (opts && opts.qty) || ((getState(sessionKey).unavailableQty || {})[originalItem]) || requestedQtyFor(sessionKey, originalItem);
             if (rq) { qtyToUse = rq; qtyKnown = true; console.log('[confirm-substitute] ' + JSON.stringify(originalItem) + ' was never in the basket (not carried) — its requested qty ' + rq + ' goes to ' + replacementName); }
@@ -903,7 +904,9 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
           // A replace sets the quantity; an add (no original) tops it up.
           // Original not in the basket (already replaced) and no quantity known: the line keeps its own. Real (Oct 5, DC):
           // the LLM re-sent "Ruffino -> La Marca" after the swap and 44x La Marca became 1x (the PDF showed 1 bottle).
-          ex.qty = originalItem ? (qtyKnown ? qtyToUse : (ex.qty || ex.quantity || 1)) : ((ex.qty || ex.quantity || 1) + (qtyToUse || 1));
+          // Another basket line swapped INTO a product already in the basket adds its bottles. Real (Nov 14, Eterra Kitchen):
+          // 15 Pinot Noir were 10 Belle Glos + 5 Etude; both -> Underwood gave 10, then the merge SET 5 (PDF: 5x Underwood).
+          ex.qty = originalItem ? (removedLine ? (ex.qty || ex.quantity || 1) + (qtyToUse || 1) : qtyKnown ? qtyToUse : (ex.qty || ex.quantity || 1)) : ((ex.qty || ex.quantity || 1) + (qtyToUse || 1));
           if (originalItem && !qtyKnown) console.log('[confirm-substitute] ' + JSON.stringify(originalItem) + ' is not in the basket and ' + ex.name + ' already is — its qty ' + ex.qty + ' is kept');
           ex.quantity = ex.qty; ex.subst_at = Date.now();
           if (rp) ex.price = rp;
