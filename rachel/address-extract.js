@@ -138,4 +138,25 @@ function stripLeadingName(addr) {
   return { address: parts.slice(i).join(', '), dropped: parts.slice(0, i).join(', ') };
 }
 
-module.exports = { splitAddress, findAddress, findAddressNoZip, formatGeocoded, stripLeadingName, cleanTyped };
+// The address under a label in an email ("*Delivery Address:*" / "Deliver to:" then a venue line, the street, maps links,
+// "Kitchen 3", "New York, NY [10029]") -> "891 Amsterdam Ave, New York, NY" | with the zip, or null. For the whole-thread
+// search (server.js threadAddressFor): findAddressNoZip cleans the label away before looking for it. Real (Nov 14, HI USA
+// NYC Hostel): the address sat in the email Esthefany's forwarded reply quoted, and Rachel asked for it.
+function addressAfterLabel(text) {
+  const lines = String(text || '').replace(/\r/g, '').split('\n').map(x => x.replace(/^\s*(?:>\s?)+/, ''));   // quoted ("> ") lines too
+  for (let i = 0; i < lines.length; i++) {
+    const l = lines[i].replace(/[*_]/g, '');
+    const m = l.match(/\b(?:delivery|shipping|venue|event)?\s*address\s*:\s*(.*)$/i) || l.match(/\bdeliver(?:ed|y)?\s+(?:to|at)\s*:\s*(.*)$/i);
+    if (!m) continue;
+    const block = cleanTyped([m[1]].concat(lines.slice(i + 1, i + 9)).join('\n'), { fromStreet: true });
+    const ls = block.split('\n').map(x => x.trim()).filter(Boolean).slice(0, 5);
+    if (!/^\d{1,6}[a-z]?\s+[A-Za-z]/.test(ls[0] || '')) continue;
+    const z = findAddress(ls.join(', '));
+    if (z) return z;
+    const cs = ls.slice(1).find(x => /^[A-Za-z .'-]{2,30},?\s+[A-Z]{2}\b\.?$/.test(x));
+    if (cs) return (ls[0] + ', ' + cs).replace(/\s+/g, ' ').trim();
+  }
+  return null;
+}
+
+module.exports = { splitAddress, findAddress, findAddressNoZip, formatGeocoded, stripLeadingName, cleanTyped, addressAfterLabel };

@@ -1499,6 +1499,24 @@ function threadPriorTexts(sessionKey) {
   const turns = (sessions[sessionKey] || []).filter(m => m.role === 'user').map(m => typeof m.content === 'string' ? m.content : (Array.isArray(m.content) ? m.content.filter(c => c.type === 'text').map(c => c.text).join('\n') : '')).filter(Boolean).reverse();
   return th.length ? th.concat(turns) : turns;
 }
+// The delivery address the customer's emails give (whole thread, newest first — incl. the history a forwarded reply quotes)
+// -> "891 Amsterdam Ave, New York, NY 10025" (geocoded when it has no zip) or null. Real (Nov 14, HI USA NYC Hostel): DC
+// forwarded Esthefany's "I forgot the delivery date" reply; the address was in her original, quoted below it, and Rachel
+// asked "What's your delivery address?".
+async function threadAddressFor(sessionKey) {
+  const AX = require('./address-extract.js');   // only email turns have a thread copy (EMAIL_THREAD_EMAILS)
+  const list = threadCustomerEmails(sessionKey);
+  for (let k = 0; k < list.length; k++) {
+    const t = list[k].text;
+    const a = AX.addressAfterLabel(t) || AX.findAddress(AX.cleanTyped(t)) || AX.findAddressNoZip(t);
+    if (!a) continue;
+    if (/\b\d{5}(?:-\d{4})?\s*$/.test(a)) { console.log('[addr] from the email thread (' + (k ? k + ' email(s) back' : 'this email, quoted history') + '): ' + JSON.stringify(a)); return a; }
+    const g = await geocodeAddress(a).catch(() => null);
+    if (g && g.zip) { console.log('[addr] from the email thread (' + (k ? k + ' email(s) back' : 'this email, quoted history') + '): ' + JSON.stringify(a) + ' -> ' + g.formatted); return /\b\d{5}\b/.test(g.formatted || '') ? g.formatted : a + ' ' + g.zip; }
+    console.log('[addr] the email thread has ' + JSON.stringify(a) + ' but it did not geocode — asking');
+  }
+  return null;
+}
 function threadEventDate(sessionKey) {
   const ED = require('./event-date.js');
   const list = threadCustomerEmails(sessionKey);
@@ -2069,6 +2087,23 @@ app.post('/chat', async (req, res) => {
       const hist = context && Array.isArray(context.thread_history) ? context.thread_history : null;
       const cur = { from: (context && (context.user_name ? context.user_name + ' <' + (context.user_email || '') + '>' : context.user_email)) || 'customer', body: rawEmail, current: true };
       if (hist || !EMAIL_THREAD_EMAILS.has(String(session_id))) EMAIL_THREAD_EMAILS.set(String(session_id), require('./email-body.js').customerEmails([].concat(hist || [], [cur])));
+      // A NEW email conversation (empty cart) whose only order list is in the history the forwarded email QUOTES: those lines
+      // are the request. Real (Nov 14, HI USA NYC Hostel): DC forwarded Esthefany's "I forgot to mention ... delivery date is
+      // Thursday, November 19th" reply; her order (Sauvignon Blanc 10 / Pinot Noir 6 / Prosecco 5) and address were quoted
+      // under it, cut, and Rachel asked for the address, then "How many bottles?". Never with a cart: an edit email that
+      // re-quotes an old list (Sep 29, Gen II Fund) must not re-add it.
+      try {
+        const stQ = getState(String(session_id));
+        let cartQ = []; try { cartQ = JSON.parse(stQ.lastLineItems || '[]'); } catch (e) {}
+        const cutCount = l => /^\s*(?:[-•*·]\s+\S|\d{1,4}\s*(?:x|×)\s*\S)|\S.*\s[–—-]\s*\d{1,4}\s*(?:x\s*)?(?:bottles?|btls?|cans?|cases?|packs?)\b/i.test(l);
+        if (!cartQ.length && message !== rawEmail && String(message).split('\n').filter(cutCount).length < 2) {
+          const quoted = rawEmail.replace(/\r/g, '').split('\n').map(l => l.replace(/^\s*(?:>\s?)+/, '')).filter(l => cutCount(l) && String(message).indexOf(l.trim()) < 0).map(l => l.trim()).slice(0, 60);
+          if (quoted.length >= 2) {
+            message = String(message).trim() + '\n\nOrder (from the email quoted below):\n' + quoted.join('\n');
+            console.log('[email-body] new conversation, empty cart — the order list in the quoted email is the request (' + quoted.length + ' line(s)): ' + JSON.stringify(quoted.slice(0, 4)));
+          }
+        }
+      } catch (e) { console.log('[email-body] quoted order not checked: ' + e.message); }
       if (hist || !EMAIL_THREAD_NOTES.has(String(session_id))) {
         const tn = require('./email-body.js').threadNote([].concat(hist || [], [cur]), { currentText: message });
         if (tn.note) { EMAIL_THREAD_NOTES.set(String(session_id), tn.note); console.log('[email-thread] ' + tn.count + ' email(s) in the notes (' + tn.chars + ' chars' + (tn.omitted ? ', ' + tn.omitted + ' in between left out for length' : '') + ')'); }
@@ -2762,12 +2797,15 @@ app.post('/chat', async (req, res) => {
         if (rest.replace(/[^a-z0-9]/gi, '').length > 8) {
           state.pendingIntent = [rest, state.pendingIntent].filter(Boolean).join('. ');
           console.log('[age] request carried with the yes, held for after the address: ' + JSON.stringify(rest).slice(0, 80));
-          if (state.step === 'addr_new' && !require('./address-extract.js').findAddress(state.pendingIntent)) {
+          const thA = state.step === 'addr_new' && !require('./address-extract.js').findAddress(state.pendingIntent) ? await threadAddressFor(sessionKey) : null;
+          if (thA) state.pendingIntent = state.pendingIntent + '\nAddress: ' + thA;
+          else if (state.step === 'addr_new' && !require('./address-extract.js').findAddress(state.pendingIntent)) {
             saveFlowState();
             const askA = 'Thanks! What\'s your delivery address? (street, city, state and zip) — I\'ll pick up your request right after.';
             return res.json({ text: askA, response: askA });
           }
-        } else if (state.step === 'addr_new' && !(state.pendingIntent && require('./address-extract.js').findAddress(state.pendingIntent))) {
+        } else if (state.step === 'addr_new' && !(state.pendingIntent && require('./address-extract.js').findAddress(state.pendingIntent))
+            && !(await threadAddressFor(sessionKey).then(a => { if (a) state.pendingIntent = (state.pendingIntent ? state.pendingIntent + '\n' : '') + 'Address: ' + a; return a; }))) {
           saveFlowState();
           const askA = 'What is your delivery address? (Please include street, city, state, and zip code)';
           return res.json({ text: askA, response: askA });

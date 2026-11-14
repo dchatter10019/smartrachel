@@ -114,7 +114,16 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   date the thread gives when this email has none: [proposal] / [quote-pdf] / [email-order] ... from the email thread),
   threadPriorTexts (email order name / email / phone / delivery instructions from every earlier email, forwards included),
   and the proposal guard (a printed date the customer never wrote anywhere in the thread -> the thread's date, CORRECTED; a
-  client named anywhere in the thread is never "corrected" to the subject's). qa/unit/email-thread-facts.test.js. The sender's signature is
+  client named anywhere in the thread is never "corrected" to the subject's). qa/unit/email-thread-facts.test.js.
+  The DELIVERY ADDRESS and the ORDER too (Nov 14, DC: HI USA re-forward — "it could not recognise the delivery address when it
+  was clearly stated"): DC forwarded Esthefany's "I forgot to mention ... November 19th" reply; her address + order were in
+  the original she QUOTED under it, latest() cut them, Rachel asked for the address, then "How many bottles?". Now: before
+  asking for an address, an email turn searches the thread's customer emails incl. quoted history (server.js threadAddressFor
+  -> address-extract.js addressAfterLabel: "Delivery Address:" + venue line + street + maps links + "City, ST [zip]";
+  geocoded when no zip; [addr] from the email thread) and appends "Address: ..." to the held request; a NEW conversation
+  (empty cart) whose order list exists only in the history the email quotes appends those lines as the request ([email-body]
+  new conversation, empty cart — the order list in the quoted email is the request) — never with a cart (Sep 29 Gen II: a
+  re-quoted old list must not re-add lines). Scenario 143, qa/unit/address-thread.test.js. The sender's signature is
   cut too (stripSignature: "-- ", a line that is the From name, or a trailing contact block). The first real request
   (a list) is kept as state.originalRequest and shown to the LLM every turn, with state.onHand. On every
   continuation the agent sends the thread's first non-Rachel email (context.thread_first_body); a session with no
