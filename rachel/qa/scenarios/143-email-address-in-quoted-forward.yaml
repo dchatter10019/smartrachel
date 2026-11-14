@@ -1,15 +1,17 @@
 name: email-address-in-quoted-forward
 # Nov 14 (DC): forwarded Esthefany's "I forgot to mention ... the requested delivery date is Thursday, November 19th" reply.
 # The address and order were in her ORIGINAL email, quoted under it; the email cut dropped them and Rachel asked "What's your
-# delivery address?" — DC had to type it. The address step now reads the whole thread (server.js threadAddressFor).
+# delivery address?" — DC had to type it. Re-forwarded 08:45: the quoted lines had no bullets ("Sauvignon Blanc – 10 bottles"),
+# so it took the step-by-step flow and asked client, then the event date the email gives. The address step now reads the whole thread (server.js threadAddressFor).
 fresh: true
 tags: [email]
 format: plain
 context: {email_subject: "Fwd: Order Request – QA Hostel Private Reception", user_name: "QA Tester"}
 turns:
-  - send: "Can you create a proposal for this? The wine bottles should not exceed\r\n$15.  I am over 21\r\n\r\n---------- Forwarded message ---------\r\nFrom: Esthefany Fernandez <esthefany@eterrakitchen.com>\r\nDate: Fri, Nov 13, 2026 at 3:22 PM\r\nSubject: Re: Order Request – QA Hostel Private Reception\r\n\r\nHello,\r\n\r\nMy apologies for the oversight. I forgot to mention that the requested\r\ndelivery date is* Thursday, November 19th*\r\n\r\nThank you\r\n\r\nOn Fri, Nov 13, 2026 at 3:10 PM Esthefany Fernandez <esthefany@eterrakitchen.com> wrote:\r\n\r\n> Hello,\r\n>\r\n> We would like to place an order for the following items:\r\n>\r\n> *Delivery Address:*\r\n> QA Hostel – Penthouse\r\n> 891 Amsterdam Ave\r\n> <https://www.google.com/maps/search/891+Amsterdam+Ave+New+York,+NY?entry=gmail&source=g>\r\n> New York, NY\r\n> <https://www.google.com/maps/search/891+Amsterdam+Ave+New+York,+NY?entry=gmail&source=g>\r\n>\r\n> *Order:*\r\n>\r\n>    - Sauvignon Blanc – 10 bottles\r\n>    - Pinot Noir – 6 bottles\r\n>    - Prosecco – 5 bottles\r\n>\r\n> Thank you"
+  - send: "Can you create a proposal for this? The wine bottles should not exceed\r\n$15.  I am over 21\r\n\r\n---------- Forwarded message ---------\r\nFrom: Esthefany Fernandez <esthefany@eterrakitchen.com>\r\nDate: Fri, Nov 13, 2026 at 3:22 PM\r\nSubject: Re: Order Request – QA Hostel Private Reception\r\n\r\nHello,\r\n\r\nMy apologies for the oversight. I forgot to mention that the requested\r\ndelivery date is* Thursday, November 19th*\r\n\r\nThank you\r\n\r\nOn Fri, Nov 13, 2026 at 3:10 PM Esthefany Fernandez <esthefany@eterrakitchen.com> wrote:\r\n\r\n> Hello,\r\n>\r\n> We would like to place an order for the following items:\r\n>\r\n> *Delivery Address:*\r\n> QA Hostel – Penthouse\r\n> 891 Amsterdam Ave\r\n> <https://www.google.com/maps/search/891+Amsterdam+Ave+New+York,+NY?entry=gmail&source=g>\r\n> New York, NY\r\n> <https://www.google.com/maps/search/891+Amsterdam+Ave+New+York,+NY?entry=gmail&source=g>\r\n>\r\n> *Order:*\r\n>\r\n> Sauvignon Blanc – 10 bottles\r\n>\r\n> Pinot Noir – 6 bottles\r\n>\r\n> Prosecco – 5 bottles\r\n>\r\n> Thank you"
     expect:
       contains: ["891 Amsterdam Ave", "Sauvignon Blanc", "Pinot Noir", "Prosecco"]
       matches: "(?i)\\b10x [^\\n]*Sauvignon Blanc"
       not_matches: "(?i)what(?:'s| is) your delivery address|how many bottles|what beverages"
-      log_contains: ["[addr] from the email thread", "the order list in the quoted email is the request"]
+      not_contains: ["client or company name", "What is the event date"]
+      log_contains: ["[addr] from the email thread", "the order list in the quoted email is the request", "[proposal] email with its own item list"]

@@ -2099,7 +2099,7 @@ app.post('/chat', async (req, res) => {
         if (!cartQ.length && message !== rawEmail && String(message).split('\n').filter(cutCount).length < 2) {
           const quoted = rawEmail.replace(/\r/g, '').split('\n').map(l => l.replace(/^\s*(?:>\s?)+/, '')).filter(l => cutCount(l) && String(message).indexOf(l.trim()) < 0).map(l => l.trim()).slice(0, 60);
           if (quoted.length >= 2) {
-            message = String(message).trim() + '\n\nOrder (from the email quoted below):\n' + quoted.join('\n');
+            message = String(message).trim() + '\n\nOrder (from the email quoted below):\n' + quoted.map(l => /^[-•*·]\s/.test(l) ? l : '- ' + l).join('\n');
             console.log('[email-body] new conversation, empty cart — the order list in the quoted email is the request (' + quoted.length + ' line(s)): ' + JSON.stringify(quoted.slice(0, 4)));
           }
         }
@@ -5819,7 +5819,7 @@ app.post('/chat', async (req, res) => {
     // gate): the flow reloaded an older saved basket from gbrain and asked "client?" then "date?", both in the email.
     // QA never hit it: QA identities have no saved basket, so they always took the list path.
     const emailListAsk = (/^email-/.test(sessionKey) || !!(context && context.email_subject))
-      && String(message).split(/\n/).filter(l => /^\s*(?:[-•*·]|\d+\s*(?:x|×)\s+\S)/i.test(l)).length >= 3;
+      && String(message).split(/\n/).filter(l => /^\s*(?:[-•*·]|\d+\s*(?:x|×)\s+\S)/i.test(l) || /\S.*\s[–—-]\s*\d{1,4}\s*(?:x\s*)?(?:bottles?|btls?|cans?|cases?|packs?)\b/i.test(l)).length >= 3;   // "Sauvignon Blanc – 10 bottles" too (Nov 14, Eterra)
     if (isProposalTrigger && emailListAsk && !state.proposalStep) { console.log('[proposal] email with its own item list — the quote path builds it (no step-by-step flow)'); isProposalTrigger = false; }
     // A proposal ask that also changes the basket ("Change Corona Light to 1 case ... then regenerate the KPMG proposal") or
     // that accepts changes Rachel just offered ("Yes sounds good with the choices and create a proposal" after "Shall I go
@@ -6145,6 +6145,12 @@ app.post('/chat', async (req, res) => {
         state.proposalData.client_name = message.split(',')[0].trim();
         // Persist durably so later proposals in this session don't re-ask (Issue C).
         state.savedClientName = state.proposalData.client_name;
+      }
+      // A date the email thread / the original request gives is known too — never asked (Nov 14, DC's HI USA forward: the
+      // email said "the requested delivery date is Thursday, November 19th" and Rachel asked "What is the event date?").
+      if (!state.savedEventDate && !state.eventDateNone) {
+        const tDc = threadEventDate(sessionKey), oDc = !tDc && state.originalRequest ? require('./event-date.js').findEventDateIn(state.originalRequest) : '';
+        if (tDc || oDc) { state.savedEventDate = tDc ? tDc.date : oDc; console.log('[proposal] event date from ' + (tDc ? 'the email thread' : 'the original request') + ': ' + JSON.stringify(state.savedEventDate) + ' — not asked'); }
       }
       // If the event date is already known from an earlier proposal, skip asking again.
       if (state.savedEventDate || state.eventDateNone) {   // "none" is an answer too: never asked again (Oct 5, DC)
