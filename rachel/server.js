@@ -1479,6 +1479,9 @@ async function findSubstitute(name, zip, email) {
   finally { clearTimeout(tm); }
 }
 
+// Email session -> this turn's whole-thread notes block (built in /chat from the email agent's thread_history; in memory
+// only — never saved with the session state; the next email rebuilds it).
+const EMAIL_THREAD_NOTES = new Map();
 async function callRachel({ sessionKey, message, context, format, gbrainContext, addressRule, email, onProposalGenerated, alreadyConfirmed }) {
   // A message that is only a product list is built IN CODE (order-wording.js listItems -> custom_list; DC, Oct 28: "make
   // this behaviour deterministic"): the model never decides whether or how to build it, and the reply is composed in code
@@ -1539,6 +1542,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
     channelNote += '\n\nThe customer\'s message has ' + instrs.length + ' separate instructions:\n' + instrs.map((x, i) => { const d = done.find(z => z.instr === x); return (i + 1) + '. ' + x + (d ? '  [You just changed this in the basket: ' + d.name + ' from ' + d.from + ' to ' + d.to + '. Tell the customer you updated it from ' + d.from + ' to ' + d.to + ' (never "already set" or "no change needed"); do not change it again]' : ''); }).join('\n') + '\nHandle EVERY one this turn — apply it, or ask the question you need to apply it. Never skip one.';
   }
   if (/^email-/.test(String(sessionKey || ''))) channelNote += '\n\nCHANNEL: EMAIL. Your reply is sent as an email reply in the customer\'s thread, with any proposal PDF attached — never offer to email it.';
+  if (EMAIL_THREAD_NOTES.has(String(sessionKey))) channelNote += '\n\n' + EMAIL_THREAD_NOTES.get(String(sessionKey));
   if (stateForEmail.originalRequest) channelNote += '\n\n## THE CUSTOMER\'S ORIGINAL REQUEST (verbatim — the quantities and items they first asked for; use it when they refer to "my original/initial request")\n' + stateForEmail.originalRequest;
   // "my original/initial request": the line-by-line comparison is computed in code (original-compare.js) and given
   // as fact; the LLM explains it and offers the fixes, it does not work it out (Oct 2, DC's Goody thread).
@@ -2020,10 +2024,23 @@ app.post('/chat', async (req, res) => {
   // EMAIL: act on the new text (+ a forwarded message), never the quoted history below it (email-body.js).
   // Real case (Sep 29, Gen II Fund): a forwarded edit request also carried the customer's ORIGINAL order list.
   if (/^email-/.test(String(session_id || '')) || (context && context.email_subject)) {
+    const rawEmail = String(message || '');
     const eb = require('./email-body.js').latest(message);
     if (eb.trimmed) { console.log('[email-body] ' + (eb.rachelForward ? 'a forwarded copy of Rachel\'s own email cut, ' : '') + (eb.forwarded ? 'forwarded message kept, ' : '') + 'quoted history cut: ' + String(message).length + ' -> ' + eb.text.length + ' chars'); message = eb.text; }
     const sig = require('./email-body.js').stripSignature(message, context && context.user_name);
     if (sig.cut) { console.log('[email-body] signature cut: ' + JSON.stringify(sig.cut.slice(0, 80))); message = sig.text; }
+    // The WHOLE thread rides on every LLM turn as context (email-body.js threadNote; DC, Nov 14). The email agent sends the
+    // conversation's earlier emails (context.thread_history, every Gmail thread mapped to this session); this email is added
+    // last with what it quotes / forwards. A call without thread_history (the agent's follow-up call) keeps this email's.
+    try {
+      const hist = context && Array.isArray(context.thread_history) ? context.thread_history : null;
+      if (hist || !EMAIL_THREAD_NOTES.has(String(session_id))) {
+        const cur = { from: (context && (context.user_name ? context.user_name + ' <' + (context.user_email || '') + '>' : context.user_email)) || 'customer', body: rawEmail, current: true };
+        const tn = require('./email-body.js').threadNote([].concat(hist || [], [cur]), { currentText: message });
+        if (tn.note) { EMAIL_THREAD_NOTES.set(String(session_id), tn.note); console.log('[email-thread] ' + tn.count + ' email(s) in the notes (' + tn.chars + ' chars' + (tn.omitted ? ', ' + tn.omitted + ' in between left out for length' : '') + ')'); }
+        else EMAIL_THREAD_NOTES.delete(String(session_id));
+      }
+    } catch (e) { console.log('[email-thread] not built (' + e.message + ')'); }
   }
 
   // ── ORDER FILES (order-file.js; DC, Oct 22) ── an order list sent as a file: photos / PDFs (Claude reads them, as

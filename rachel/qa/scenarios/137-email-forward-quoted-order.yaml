@@ -1,0 +1,17 @@
+name: email-forward-quoted-order
+fresh: true
+tags: [email, proposal]
+# Nov 13 (DC forwarding Eterra Kitchen's HI USA NYC Hostel reply): the forwarded email only said "I forgot the delivery date";
+# the ORDER (Sauvignon Blanc 10 / Pinot Noir 6 / Prosecco 5, contact, phone) was in the history it quoted. The email cut kept
+# only the new text, and Rachel asked "What beverages are needed? How many guests?". DC (Nov 14): "the entire email exchanges
+# should be always present, it's losing context" -> the whole thread rides on every LLM turn as context (email-body.js threadNote).
+format: plain
+context: {email_subject: "Fwd: Re: Order Request – HI USA NYC Hostel", user_name: "QA Tester"}
+turns:
+  - send: "Can you provide me with a proposal? I am over 21.\r\nKeep the price of the bottle around $15 a bottle.\r\n\r\n---------- Forwarded message ---------\r\nFrom: Esthefany Fernandez <esthefany@eterrakitchen.com>\r\nDate: Sat, Nov 14, 2026 at 1:52 AM\r\nSubject: Re: Order Request – HI USA NYC Hostel\r\nTo: QA Tester <rachel_qa@getbevvi.com>\r\n\r\nHello,\r\n\r\nMy apologies for the oversight. I forgot to mention that the requested delivery date is Thursday, November 19th\r\n\r\nOn Fri, Nov 13, 2026 at 6:10 PM Esthefany Fernandez <esthefany@eterrakitchen.com> wrote:\r\n> *Delivery Address:*\r\n> 891 Amsterdam Ave\r\n> New York, NY 10025\r\n>\r\n> *Order:*\r\n>  - Sauvignon Blanc – 10 bottles\r\n>  - Pinot Noir – 6 bottles\r\n>  - Prosecco – 5 bottles\r\n>\r\n> *Delivery Contact:* Stephani Alvarez\r\n> *Phone:* 929-278-4626\r\n"
+    expect:
+      log_contains: ["[email-thread] 1 email(s) in the notes"]
+  - send: "891 Amsterdam Ave, New York, NY 10025"
+    expect:
+      matches: "(?i)sauvignon blanc"
+      not_matches: "(?i)what beverages|how many guests|which (?:drinks|beverages)"

@@ -91,4 +91,53 @@ function stripSignature(text, senderName) {
   return { text: kept, cut: lines.slice(at, end).join('\n').trim() };
 }
 
-module.exports = { latest, stripSignature };
+// ── THE WHOLE EMAIL THREAD as context (DC, Nov 14: "the entire email exchanges should be always present, it's losing
+// context"). Real case (Nov 13, HI USA NYC Hostel): DC forwarded Esthefany's "I forgot the delivery date" reply; her
+// ORDER (Sauvignon Blanc 10 / Pinot Noir 6 / Prosecco 5, contact, window) sat in the quoted history below it, was cut by
+// latest(), and Rachel asked "what beverages, how many guests?". latest() still decides what Rachel ACTS on; this keeps
+// everything else in view, labeled as history, on every LLM turn of an email session.
+// Per email: the conversation's FIRST email is kept whole (what it quotes/forwards happened before Rachel was copied);
+// a later email = its new text + anything it forwards in full (outside content), never what it quotes (those emails are
+// already in the thread) and never a forwarded copy of Rachel's own email. Rachel's emails = her reply text only.
+const RACHEL_ADDR = /rachelai@getbevvi\.com/i;
+const MAPS_LINE = /^[\s>]*<https?:\/\/(?:www\.)?google\.[a-z.]+\/maps\/[^>]*>\s*$/i;
+function forContext(body, { first = false, fromRachel = false } = {}) {
+  const lines = String(body || '').replace(/\r/g, '').split('\n').filter(l => !MAPS_LINE.test(l));
+  let i = 0;
+  while (i < lines.length && !FWD.test(lines[i]) && !isQuote(lines, i)) i++;
+  const top = lines.slice(0, i).join('\n').trim();
+  if (fromRachel) return top.replace(/\n+Warmly,\s*\n\s*Rachel[\s\S]*$/i, '').trim();
+  if (first || i >= lines.length) return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  if (!FWD.test(lines[i])) return top;
+  const head = lines.slice(i, i + 8);
+  if (head.some(l => /^\s*\*?From:\*?\s/i.test(l) && RACHEL_ADDR.test(l))) return top;   // Rachel's own email, forwarded back
+  return (top + '\n\n' + lines.slice(i).join('\n')).replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// emails: [{from, date, body}] oldest first, the CURRENT email last (current: true). -> the notes block ('' = nothing to
+// add: a single email whose text Rachel already has in full). Long threads keep the first email and the newest ones.
+const THREAD_MAX = 40000, FIRST_MAX = 15000;
+function threadNote(emails, { currentText = '' } = {}) {
+  const list = (emails || []).filter(e => e && String(e.body || '').trim());
+  if (!list.length) return { note: '', count: 0, chars: 0, omitted: 0 };
+  const parts = list.map((e, k) => {
+    const fromRachel = RACHEL_ADDR.test(String(e.from || ''));
+    let text = forContext(e.body, { first: k === 0 && !fromRachel, fromRachel });
+    if (k === 0 && text.length > FIRST_MAX) text = text.slice(0, FIRST_MAX) + '\n[... rest of this email cut for length]';
+    const who = fromRachel ? 'Rachel (you)' : String(e.from || 'customer').replace(/\s+/g, ' ').trim();
+    return { head: '--- Email ' + (k + 1) + (e.current ? ' (THE EMAIL YOU ARE ANSWERING NOW)' : '') + ' — From: ' + who + (e.date ? ' — ' + String(e.date).trim() : ''), text };
+  });
+  // One email, nothing cut from it: the customer's message already carries all of it.
+  if (parts.length === 1 && list[0].current && parts[0].text.replace(/\s+/g, ' ').trim() === String(currentText || '').replace(/\s+/g, ' ').trim()) return { note: '', count: 1, chars: 0, omitted: 0 };
+  const size = p => p.head.length + p.text.length + 2;
+  let keep = [parts[0]], budget = THREAD_MAX - size(parts[0]), tail = [];
+  for (let k = parts.length - 1; k >= 1; k--) { if (size(parts[k]) > budget) break; tail.unshift(parts[k]); budget -= size(parts[k]); }
+  const omitted = parts.length - 1 - tail.length;
+  if (omitted) keep.push({ head: '--- [' + omitted + ' email(s) in between left out for length]', text: '' });
+  keep = keep.concat(tail);
+  const note = '## THE WHOLE EMAIL THREAD (every email so far, oldest first, with the history they quote or forward — the full context of this conversation). Use it for every fact the customer or their client already gave: items, quantities, sizes, price limits, dates, delivery address, contact, phone, delivery window, client name. Never ask for something this thread already says. The request to act on NOW is the customer\'s latest email (their message below); earlier requests here were already handled — do not redo them unless that email asks.\n'
+    + keep.map(p => p.head + (p.text ? '\n' + p.text : '')).join('\n\n');
+  return { note, count: parts.length, chars: note.length, omitted };
+}
+
+module.exports = { latest, stripSignature, forContext, threadNote };

@@ -100,7 +100,13 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   joined his Gen II Boston thread -> PDF billed Gen II Fund, delivery Boston). Several possible: the new
   thread asks "which proposal?" (numbered), holds the email, and the answer relinks the thread to that quote
   and replays it there (state.pendingLink; `relink` in the /chat reply). Replies attach the PDF by its real name. Server-side, email bodies are cut to
-  the new text + a forwarded message (email-body.js); quoted history never reaches Rachel. The sender's signature is
+  the new text + a forwarded message (email-body.js) — that is what Rachel ACTS on. The WHOLE thread is context on every
+  LLM turn (DC, Nov 14: "the entire email exchanges should be always present, it's losing context"; Nov 13 HI USA Hostel: the
+  order sat in the forward's quoted history, was cut, and Rachel asked "what beverages?"): email-agent thread_history = every
+  earlier email of every Gmail thread mapped to the session (Rachel's too, max 40) -> context.thread_history -> email-body.js
+  threadNote (first email whole incl. what it quotes/forwards; later emails = new text + whole forwards, never their quotes or
+  a forward of Rachel's own email; Rachel's = her text; 40k chars, first + newest kept) -> server EMAIL_THREAD_NOTES (memory)
+  -> "## THE WHOLE EMAIL THREAD" in the turn notes ([email-thread] N email(s) in the notes). Scenario 137, qa/unit/email-thread.test.js. The sender's signature is
   cut too (stripSignature: "-- ", a line that is the From name, or a trailing contact block). The first real request
   (a list) is kept as state.originalRequest and shown to the LLM every turn, with state.onHand. On every
   continuation the agent sends the thread's first non-Rachel email (context.thread_first_body); a session with no

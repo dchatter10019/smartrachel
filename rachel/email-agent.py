@@ -134,6 +134,7 @@ def get_email(service, msg_id):
     return {'id': msg_id, 'thread_id': msg['threadId'], 'unread': 'UNREAD' in (msg.get('labelIds') or []),
             'auto': automated_reason(headers),
             'from': headers.get('from', ''), 'subject': headers.get('subject', ''), 'body': body.strip(),
+            'date': headers.get('date', ''), 'internal_date': int(msg.get('internalDate') or 0),
             'message_id': headers.get('message-id', ''), 'references': headers.get('references', ''),
             'to': headers.get('to', ''), 'cc': headers.get('cc', ''), 'attachments': attachments, 'att_parts': att_parts}
 
@@ -228,7 +229,31 @@ def thread_first_body(service, thread_id):
         log.error(f'thread first email fetch failed ({thread_id[:8]}): {ex}')
     return ''
 
-def chat_with_rachel(message, session_id, sender_email, sender_name='', subject='', request_id='', first_body='', files=None):
+# Every earlier email of this conversation (DC, Nov 14: "the entire email exchanges should be always present, it's losing
+# context"): the Gmail thread plus any other thread mapped to the same Rachel session (a forward / new thread linked to a
+# quote), oldest first, Rachel's emails included, only those sent before this one. The server shows them to the LLM on
+# every turn as history (email-body.js threadNote). Max 40 emails (the newest); each body max 20k chars.
+def thread_history(service, session_id, email):
+    tids = [email['thread_id']] + [t for t, s in THREAD_SESSIONS.items() if s == session_id and t != email['thread_id']]
+    out = []
+    for tid in tids[:6]:
+        try:
+            t = service.users().threads().get(userId='me', id=tid, format='minimal').execute()
+            for m in t.get('messages', []):
+                if m['id'] == email['id'] or int(m.get('internalDate') or 0) > (email.get('internal_date') or 0):
+                    continue
+                e = get_email(service, m['id'])
+                if e['body']:
+                    out.append({'from': e['from'], 'date': e.get('date', ''), 'body': e['body'][:20000], 'ts': e.get('internal_date', 0)})
+        except Exception as ex:
+            log.error(f'[email-thread] thread {tid[:8]} fetch failed: {ex}')
+    out.sort(key=lambda x: x['ts'])
+    out = out[-40:]
+    for x in out: x.pop('ts', None)
+    log.info(f'[email-thread] {len(out)} earlier email(s) from {len(tids[:6])} thread(s) sent as context')
+    return out
+
+def chat_with_rachel(message, session_id, sender_email, sender_name='', subject='', request_id='', first_body='', files=None, history=None):
     try:
         r = requests.post('http://127.0.0.1:3500/chat', json={
             'message': message,
@@ -242,6 +267,7 @@ def chat_with_rachel(message, session_id, sender_email, sender_name='', subject=
                 'user_name': sender_name,      # From display name: the quote PDF's client fallback
                 'email_subject': subject,      # "... - Gen II Fund" names the client; "quote"/"proposal" asks for the PDF
                 'thread_first_body': first_body,   # the thread's first customer email (server keeps it as the original request)
+                **({'thread_history': history} if history is not None else {}),   # every earlier email: the LLM's context
                 'age_verified': True
             },
             'request_id': request_id,          # the Gmail message id: a retry gets the SAME reply, never a second run
@@ -341,7 +367,7 @@ def chat_following_relink(email, session_id, sender_email, sender_name):
     # One email's reply, following a relink: the thread was asked "which proposal should I update?" and this
     # email answered it. The held email is replayed on the chosen quote's session, and the thread is mapped
     # there from now on. -> (reply text or None, the session the thread belongs to)
-    reply = chat_with_rachel(email['body'], session_id, sender_email, sender_name, email['subject'], email['id'], email.get('first_body', ''), email.get('files'))
+    reply = chat_with_rachel(email['body'], session_id, sender_email, sender_name, email['subject'], email['id'], email.get('first_body', ''), email.get('files'), email.get('history'))
     fu = LAST_FOLLOWUP
     if reply and fu and fu.get('message'):
         # The email's list became the basket; its typed text ("place the order", name, phone, date) now places the order
@@ -393,6 +419,7 @@ def process(service, email):
     if thread_id in THREAD_SESSIONS:
         session_id = THREAD_SESSIONS[thread_id]
         email['first_body'] = thread_first_body(service, thread_id)
+        email['history'] = thread_history(service, session_id, email)
         rachel_response, linked = chat_following_relink(email, session_id, sender_email, sender_name)
         if not rachel_response:
             return _failed(service, email, sender_email, 'continuation')
@@ -415,6 +442,7 @@ def process(service, email):
     # finished after our timeout) instead of running the email again.
     new_id = f'email-{thread_id[:16]}-{sender_email.split("@")[0]}'
     session_id = linked_session(sender_email, email['subject'], email['body'], new_id, email.get('attachments')) or new_id
+    email['history'] = thread_history(service, session_id, email)   # a linked quote's earlier threads; [] for a brand-new one
     rachel_response, session_id = chat_following_relink(email, session_id, sender_email, sender_name)
     if not rachel_response:
         return _failed(service, email, sender_email, 'new thread')   # thread not mapped: the retry gets the same reply (request_id)
