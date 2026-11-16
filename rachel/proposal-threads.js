@@ -42,7 +42,7 @@ function addressFromNotes(notes) {
   while (parts.length > 1 && /^\d+\s+(?:guests?|hours?|hrs?|people|persons?|pax|drinks?|bottles?)\b/i.test(parts[0])) parts.shift();
   const address = parts.join(', ');
   const zip = (address.match(/\b(\d{5})(?:-\d{4})?\b(?!.*\b\d{5}\b)/) || [])[1];
-  return zip && /^\d{1,6}\s+[A-Za-z]/.test(address) ? { address, zip } : null;
+  return zip && /^\d{1,6}\s+(?:[A-Za-z]|\d{1,3}(?:st|nd|rd|th)\b)/i.test(address) ? { address, zip } : null;
 }
 
 module.exports = { record, find, addressFromNotes, _subj: subj };

@@ -1,0 +1,13 @@
+name: address-numbered-street
+# Nov 16 (DC on Slack): "1345 Avenue of the Americas, New York, NY 10105" was geocoded to "1345 6th Ave, New York, NY 10105"
+# and the zip-only check (a LETTER after the house number) asked "What's the street address in 10105?" four times. A
+# numbered street ("6th Ave", "42nd St") is a street. Same /chat address step for Slack, WhatsApp, email and rachel_chat.
+tags: [ux]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "1345 Avenue of the Americas\nNew York, NY 10105"
+    expect:
+      not_contains: ["I need the full street address"]
+      matches: "(?i)1345 (6th Ave|Avenue of the Americas)"
+      log_not_contains: ["[addr] zip only, no street"]

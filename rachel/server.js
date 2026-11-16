@@ -2979,7 +2979,7 @@ app.post('/chat', async (req, res) => {
     const STREET_W = /\b\d{1,6}\s+(?:[A-Za-z0-9'.-]+\s+){0,4}?(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Way|Pl|Place|Ct|Court|Pkwy|Parkway|Ter|Terrace|Sq|Square|Hwy|Highway|Cir|Circle|Plaza|Row|Wharf|Pier|Broadway|Bowery)\b\.?/i;
     const addrLike = !!require('./address-extract.js').findAddress(message) || STREET_W.test(message) || message.trim().split(/\s+/).length <= 8;
     if ((['addr', 'addr_new'].includes(state.step) || (state.orderStep === 'confirm' && /\b(address|deliver to|delivery location)\b/i.test(message)))
-        && /\b\d{1,6}\s+[A-Za-z]/.test(message) && !/^\s*(yes|yeah|yep|no|nope|same)\b[\s.!]*$/i.test(message)
+        && /\b\d{1,6}\s+(?:[A-Za-z]|\d{1,3}(?:st|nd|rd|th)\b)/i.test(message) && !/^\s*(yes|yeah|yep|no|nope|same)\b[\s.!]*$/i.test(message)
         && (addrLike || (console.log('[addr] not geocoded — not address-like: ' + JSON.stringify(message).slice(0, 70)), false))) {   // only a BARE yes/no is skipped; 'no, use 11 Broadway...' is geocoded
       const addrText = message.replace(/^.*?\b(address|deliver to|delivery location|ship to)\b\s*(to|is|:)?\s*/i, '').replace(/^(no|nope|use|instead)[,.\s]+/i, '').trim();
       const geo = await geocodeAddress(addrText);
@@ -3013,7 +3013,9 @@ app.post('/chat', async (req, res) => {
         }
         // A zip alone is not a delivery address. Real bug: "90210" was accepted ("Got it —
         // delivering to 90210") and the order would have gone out with no street.
-        if (!/\b\d{1,6}\s+[A-Za-z]/.test(message.replace(/\b\d{5}(-\d{4})?\b/g, ''))) {
+        // A numbered street counts ("1345 6th Ave"; Nov 16, DC on Slack: Google turned "1345 Avenue of the Americas" into
+        // "1345 6th Ave, New York, NY 10105" and this check, wanting a LETTER after the house number, asked for the street 4x).
+        if (!/\b\d{1,6}\s+(?:[A-Za-z]|\d{1,3}(?:st|nd|rd|th)\b)/i.test(message.replace(/\b\d{5}(-\d{4})?\b/g, ''))) {
           console.log('[addr] zip only, no street — asking for the street address: ' + JSON.stringify(message).slice(0, 60));
           const askS = 'Thanks — I need the full street address for delivery. What\'s the street address in ' + candidateZip + '? (e.g. "425 W 53rd St, New York, NY ' + candidateZip + '")';
           return res.json({ text: askS, response: askS });
