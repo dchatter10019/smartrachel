@@ -1272,6 +1272,35 @@ async function deliveryWindowsOn(state, datePhrase, custZone) {
   const windowZone = WINDOWS_ARE_STORE_LOCAL ? zoneForAddress(state.address) : 'America/New_York';
   return { label, options: avail.deliveryTimes.map(w => fmtWindowInZone(w.deliveryTime || w.displayTime, dateStr, windowZone, custZone || null)), none: avail.deliveryTimes.length === 0 };
 }
+// A street Google places in another zip than the one typed: is the customer's zip really wrong? Google's zip LABEL can be
+// wrong (Nov 16: "1580 Park Avenue, New York, NY 10029" -> labeled 10019, but its point is in East Harlem, 10029), so the
+// street's point is compared with both zips' centres: wrong only when it is nearer Google's zip. Any lookup failing = not
+// wrong (never block an address on missing data). Zip centres are cached for the process.
+const ZIP_CENTRE = {};
+async function zipMismatchReal(geo, typedZip) {
+  try {
+    if (!geo || !geo.zip || !typedZip || geo.zip === typedZip || geo.lat == null) return false;
+    const centre = async z => { if (!(z in ZIP_CENTRE)) { const g = await geocodeZipCentre(z); ZIP_CENTRE[z] = g; } return ZIP_CENTRE[z]; };
+    const [a, b] = [await centre(typedZip), await centre(geo.zip)];
+    if (!a || !b) { console.log('[geocode] zip mismatch ' + typedZip + ' vs ' + geo.zip + ' — a zip centre lookup failed, keeping what was typed'); return false; }
+    const km = (p, q) => { const R = 6371, r = x => x * Math.PI / 180, dLa = r(q.lat - p.lat), dLo = r(q.lng - p.lng); const h = Math.sin(dLa / 2) ** 2 + Math.cos(r(p.lat)) * Math.cos(r(q.lat)) * Math.sin(dLo / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(h)); };
+    const dTyped = km(geo, a), dGoogle = km(geo, b);
+    const real = dGoogle < dTyped;
+    console.log('[geocode] zip mismatch ' + typedZip + ' vs Google ' + geo.zip + ': the street is ' + dTyped.toFixed(2) + ' km from ' + typedZip + ', ' + dGoogle.toFixed(2) + ' km from ' + geo.zip + ' — ' + (real ? 'the typed zip looks wrong' : 'Google\'s zip label looks wrong, keeping what was typed'));
+    return real;
+  } catch (e) { console.log('[geocode] zip mismatch check failed: ' + e.message); return false; }
+}
+async function geocodeZipCentre(zip) {
+  const key = process.env.GOOGLE_MAPS_API_KEY;
+  if (!key) return null;
+  try {
+    const ctrl = new AbortController(); const t = setTimeout(() => ctrl.abort(), 6000);
+    const r = await fetch('https://maps.googleapis.com/maps/api/geocode/json?region=us&components=postal_code:' + encodeURIComponent(zip) + '|country:US&key=' + key, { signal: ctrl.signal });
+    clearTimeout(t);
+    const d = await r.json(); const g = d.results && d.results[0];
+    return g && g.geometry ? { lat: g.geometry.location.lat, lng: g.geometry.location.lng } : null;
+  } catch (e) { return null; }
+}
 async function validateDeliveryTime(state, message, email, format, res) {
   // Parse as WALL-CLOCK. If the customer typed a zone ("11 am PST"), record it but
   // strip it before chrono sees it — otherwise chrono converts to UTC and the bare
@@ -1281,7 +1310,8 @@ async function validateDeliveryTime(state, message, email, format, res) {
   // No zone stated or known: ASK which one, hold the time, and read it in the zone answered (DC, Oct 5: "if the user
   // doesn't specify a time zone, rachel should ask for clarification"). The zone is kept for the conversation
   // (state.custZone) — every later time and window list is in it.
-  const statedZone = explicitZoneIn(message);
+  // "yes" to "Which time zone is <time> in? ... reply yes if it's <the delivery address's zone>" = that zone (Nov 16, DC).
+  const statedZone = explicitZoneIn(message) || (state.orderData.pendingWhen && /^\s*(?:yes|yeah|yep|yup|correct|right|that'?s (?:right|correct|it))\b[\s.!]*$/i.test(message) ? zoneForAddress(state.address) : '');
   if (statedZone) { state.orderData.custZone = statedZone; state.custZone = statedZone; }
   const custZone = statedZone || state.orderData.custZone || state.custZone || '';
   if (!statedZone && custZone) console.log('[delivery-tz] no zone in "' + message.slice(0, 40) + '" — using the zone the customer stated earlier: ' + custZone);
@@ -1300,7 +1330,9 @@ async function validateDeliveryTime(state, message, email, format, res) {
     state.orderData.pendingWhen = message;
     const where = { 'America/Los_Angeles': 'Pacific', 'America/Denver': 'Mountain', 'America/Chicago': 'Central', 'America/New_York': 'Eastern', 'America/Phoenix': 'Arizona', 'Pacific/Honolulu': 'Hawaii', 'America/Anchorage': 'Alaska' }[storeZone] || storeZone;
     console.log('[delivery-tz] no time zone stated or known for "' + message.slice(0, 40) + '" — asking (delivery address is on ' + where + ' time)');
-    const askTz = 'Which time zone is that in — Pacific (PT), Mountain (MT), Central (CT) or Eastern (ET)? (The delivery address is on ' + where + ' time.)';
+    // The time read is said back (Nov 16, DC: the email's "Delivery Window: 10:00 AM – 12:00 PM" was read, but the reply only
+    // asked "Which time zone is that in?" — it looked as if the time was missed, and DC typed it again).
+    const askTz = 'Which time zone is the delivery time (' + String(message).trim().replace(/[.\s]+$/, '') + ') in — Pacific (PT), Mountain (MT), Central (CT) or Eastern (ET)? (The delivery address is on ' + where + ' time — reply "yes" if it\'s ' + where + '.)';
     return res.json({ text: askTz, response: askTz });
   }
   if (!hasTime) {
@@ -3004,7 +3036,7 @@ app.post('/chat', async (req, res) => {
           console.log('[geocode]', JSON.stringify(addrText).slice(0, 60), '->', geo.formatted);
           message = message.replace(addrText, geo.formatted);
           state.geocoded = { formatted: geo.formatted, zip: geo.zip, lat: geo.lat, lng: geo.lng };
-        } else if (['addr', 'addr_new'].includes(state.step) && !addrMismatchKept) {
+        } else if (['addr', 'addr_new'].includes(state.step) && !addrMismatchKept && await zipMismatchReal(geo, hadZip)) {
           // The street is somewhere else than the zip says. Ask, never store it silently (Nov 16, DC on Slack: "425 W 53rd St,
           // New York, NY 10105" — Google: 10019 — was accepted; the order went to the wrong street for a 10105 delivery).
           state.addrMismatch = { typed: message.trim(), formatted: geo.formatted, zip: geo.zip }; saveFlowState();
@@ -3535,7 +3567,7 @@ app.post('/chat', async (req, res) => {
         if (!addrMismatchKept && !state.orderStep && !state.proposalStep) {
           const gR = await geocodeAddress(am[1]).catch(() => null);
           console.log('[addr] verified at ready: ' + JSON.stringify(am[1]) + ' -> ' + (gR ? gR.formatted + ' (' + gR.zip + ')' : 'no geocode'));
-          if (gR && gR.zip && gR.zip !== newZip) {
+          if (gR && gR.zip && gR.zip !== newZip && await zipMismatchReal(gR, newZip)) {
             state.addrMismatch = { typed: String(message).trim(), formatted: gR.formatted, zip: gR.zip }; saveFlowState();
             console.log('[geocode] zip mismatch — asking the customer (address change): typed ' + newZip + ', Google ' + gR.zip + ' (' + gR.formatted + ')');
             const bR = format === 'slack' ? '*' : '';
@@ -3958,6 +3990,7 @@ app.post('/chat', async (req, res) => {
           try {
             const url = await quotePdf(state, itR, String(state.savedClientName || '').trim(), state.savedEventDate || '', 0);
             pdfR = '\n\nYour updated PDF proposal is attached: ' + url; console.log('[edit-reader] proposal regenerated (' + nItems + ' lines): ' + url);
+            state.editReaderPdf = { url, at: Date.now(), key: basketKeyOf(itR) };   // the model's generate_proposal this turn reuses it (rachel.js)
           } catch (e) { pdfR = '\n\nI couldn\'t regenerate the PDF just now — reply "send the proposal" and I\'ll try again.'; console.log('[edit-reader] proposal regeneration FAILED (changes kept, customer told): ' + e.message); }
         } else if (done.length && (rd.regenerate_proposal || (rd.also || []).includes('proposal')) && !state.lastProposalUrl) rest.push('proposal');
         // the reply lists the changes like the quote edits do (Removed / Quantity changed / Replaced / Added / fees)
@@ -4115,7 +4148,7 @@ app.post('/chat', async (req, res) => {
       }
       // A bare "2pm" answers the time question; a bare "ET" / "Pacific" answers the time-zone question (DC, Oct 5).
       const eoQ = state.emailOrder || {};
-      const zoneAnswer = !!((eoQ.pending_when || eoQ.awaiting_zone) && String(message).trim().length <= 120 && explicitZoneIn(message));
+      const zoneAnswer = !!((eoQ.pending_when || eoQ.awaiting_zone) && String(message).trim().length <= 120 && (explicitZoneIn(message) || /^\s*(?:yes|yeah|yep|yup|correct|right|that'?s (?:right|correct|it))\b[\s.!]*$/i.test(String(message).split('\n')[0])));
       // Waiting on contact details and the code read none: the model's reading (fact-reader contact) fills what it states.
       // Real (Nov 14, DC): "First and last Name: Diana Maranzano" was read by nothing; the turn went to the model, whose
       // place_order was refused, and it told DC "The system will create the order ... shortly" — nothing was placed.
@@ -4265,7 +4298,8 @@ app.post('/chat', async (req, res) => {
           if (tW) { whenPhrase = od.delivery_date + ' at ' + tW; whenSrc = 'thread'; console.log('[email-order] delivery time from the email thread (' + fW.from + '): ' + JSON.stringify(fW.value) + ' -> ' + JSON.stringify(whenPhrase)); }
         }
         // The zone: stated in this email ("times in PST please"), or — when Rachel asked for it — a short answer ("ET").
-        { const zE = zoneStatedIn(message) || ((od.pending_when || od.awaiting_zone) && String(message).trim().length <= 120 ? explicitZoneIn(message) : '');
+        { const zE = zoneStatedIn(message) || ((od.pending_when || od.awaiting_zone) && String(message).trim().length <= 120 ? explicitZoneIn(message) : '')
+            || ((od.pending_when || od.awaiting_zone) && /^\s*(?:yes|yeah|yep|yup|correct|right|that'?s (?:right|correct|it))\b[\s.!]*$/i.test(String(message).split('\n')[0]) ? zoneForAddress(state.address) : '');   // "yes" = the delivery address's zone
           if (zE) { od.cust_zone = zE; state.custZone = zE; od.awaiting_zone = false; } else if (!od.cust_zone && state.custZone) od.cust_zone = state.custZone; }
         // A time Rachel held while asking the zone, now answered.
         if (!whenPhrase && od.pending_when && od.cust_zone) { whenPhrase = od.pending_when; whenSrc = 'held'; console.log('[email-order] zone answered (' + od.cust_zone + ') — the held time ' + JSON.stringify(od.pending_when) + ' is checked in it'); }
@@ -5388,8 +5422,17 @@ app.post('/chat', async (req, res) => {
       return res.json({ text: r1, response: r1 });
     }
     // change_contact outside confirm: update the saved name/phone/email in one step.
-    if (!state.orderStep && !state.proposalStep && (clsIntent === 'change_contact' || (/\b(phone|number|email|e-mail|name)\b/i.test(message) && /\b(change|update|use|switch|correct|fix|set)\b/i.test(message)))) {
-      const cm = message.replace(/<tel:[^|>]*\|([^>]*)>/g, '$1').replace(/<mailto:[^|>]*\|([^>]*)>/g, '$1').replace(/<([^>]+)>/g, '$1');
+    // The word fallback needs the change verb NEXT TO the contact word ("update the email to x@y", "change my phone"), and the
+    // value is read from the customer's own words only — never a forwarded message's From / To / Cc lines (Nov 16, DC email:
+    // "can you review the EMAIL below and UPDATE the original proposal" + a forward from bella@ -> "updated email
+    // bella@eterrakitchen.com"; the forward's revised quantities were never applied).
+    const ownContactText = String(message).split(/^\s*-{2,}\s*Forwarded message\s*-{2,}|^\s*On .{5,120}wrote:\s*$/im)[0]
+      .split('\n').filter(l => !/^\s*\*?(?:from|to|cc|bcc|date|sent|subject)\s*:/i.test(l)).join('\n');
+    const contactWords = /\b(?:change|update|use|switch|correct|fix|set)\b[^.?!\n]{0,25}\b(?:phone|number|email|e-mail|name)\b|\b(?:phone|number|email|e-mail|name)\b[^.?!\n]{0,25}\b(?:should be|is now|to|instead)\b/i.test(ownContactText);
+    if (!state.orderStep && !state.proposalStep && clsIntent !== 'change_contact' && /\b(phone|number|email|e-mail|name)\b/i.test(message) && /\b(change|update|use|switch|correct|fix|set)\b/i.test(message) && !contactWords)
+      console.log('[order] contact change word fallback NOT applied — no change wording next to a contact word in the customer\'s own text: ' + JSON.stringify(message.slice(0, 80)));
+    if (!state.orderStep && !state.proposalStep && (clsIntent === 'change_contact' || contactWords)) {
+      const cm = ownContactText.replace(/<tel:[^|>]*\|([^>]*)>/g, '$1').replace(/<mailto:[^|>]*\|([^>]*)>/g, '$1').replace(/<([^>]+)>/g, '$1');
       const sc = Object.assign({}, state.savedCustomer || {});
       const ph = cm.match(/(?:\+?1[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}/), em = cm.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/);
       const nm = /\bname\b/i.test(cm) ? cm.match(/\bname\b\s*(?:to|is|:)?\s*([A-Z][a-zA-Z'-]+(?:\s+[A-Z][a-zA-Z'-]+)+)/) : null;

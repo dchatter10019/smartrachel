@@ -1074,6 +1074,21 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   contact fallbacks run only then). Scenario 147 (DC's sequence: place -> "Create the order now" -> bare name), qa/unit/
   order-reader.test.js.
 
+- Nov 16 fixes (DC on Slack + Eterra Kitchen emails), every /chat channel. Address: a numbered street counts ("1345 6th Ave"
+  — Google's form of Avenue of the Americas — asked for the street 4x); a street Google places in another zip is ASKED about
+  (state.addrMismatch; "yes" = Google's, the same address again = as typed) only when its point is nearer Google's zip centre
+  than the typed one (server.js zipMismatchReal — Google labels 1580 Park Ave 10029 as 10019); the street prompt's example is a
+  street only (DC pasted the old "425 W 53rd St, ..., NY <his zip>" example back). Checkout: "make the delivery to 0" read
+  (tax-command.js bare amount ending the message) and the confirm step takes the fact reader's fees; the reply to "Ordering
+  as <name>..." changes the contact too (customer-contacts.js contactChangeIn); a message naming a PLACED order with a new
+  address ("redo the order with the following address ...") reopens that order (placed-order-msg.js: "redo", bare "address"),
+  never the cart's address change; the same store keeps the delivery time. Contact word fallback ("email" + "update") needs
+  the verb next to the contact word in the customer's own text, never a forward's From/To/Cc. Edit reader: revise / update /
+  adjust / quantities trigger it; a revised type+count list = set_qty on that type's line ("A or B" keeps the line that is
+  A or B); unchanged counts skipped; the model's generate_proposal reuses the reader's PDF that turn (no second link). Zone
+  question names the time read ("Which time zone is the delivery time (tomorrow at 12:00 PM) in ... reply "yes" if it's
+  Eastern") and "yes" = the delivery address's zone (chat + email). Scenarios 148-152.
+
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
   so PDFs sent before Oct 15 still open (ask DC first; nginx).

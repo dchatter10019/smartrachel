@@ -23,3 +23,12 @@ turns:
   - send: "1345 Avenue of the Americas, New York, NY 10105"
     expect:
       matches: "(?i)delivering to 1345 (6th Ave|Avenue of the Americas)"
+  # Google's zip LABEL can be wrong: "1580 Park Avenue ... 10029" is labeled 10019 by Google, but its point is in East Harlem
+  # (10029). Asked only when the street is nearer Google's zip than the typed one (server.js zipMismatchReal).
+  - send: reset
+  - send: "yes"
+  - send: "1580 Park Avenue, New York, NY 10029"
+    expect:
+      not_contains: ["Just to check the address"]
+      matches: "(?i)delivering to 1580 Park Ave"
+      log_contains: ["Google's zip label looks wrong, keeping what was typed"]

@@ -1,0 +1,21 @@
+name: email-order-window-zone-yes
+fresh: true
+tags: [email]
+# Nov 16 (DC, Eterra Kitchen "New Beverage Order – November 17"): the forward said "*Delivery Window: 12:00 PM – 2:00 PM*"
+# (no zone). "place the order" got "Which time zone is that in?" with "What I have so far — ... delivery date: Tuesday,
+# November 17" — the time read was never said, so it looked missed and DC typed the time again. The question now names the
+# time it read, and "yes" = the delivery address's zone. (Tomorrow here: the QA runs every day.)
+format: plain
+context: {email_subject: "Fwd: New Beverage Order", user_name: "QA Tester"}
+turns:
+  - send: "Can you send a proposal for the order below? I am over 21\r\n\r\n---------- Forwarded message ---------\r\nFrom: Esthefany Fernandez <qa-esthefany@getbevvi.com>\r\nSubject: New Beverage Order\r\n\r\nHi,\r\n\r\nWe would like to submit a new beverage order for delivery tomorrow.\r\n\r\n*Delivery Address:*\r\n1580 Park Avenue\r\nNew York, NY 10029\r\n\r\n*Delivery Window: 12:00 PM – 2:00 PM*\r\n\r\n*Delivery Contact:* Esthefany Fernandez\r\nPhone: 347-302-1782\r\nEmail: esthefany@example.com\r\n\r\n*Order Details:*\r\n\r\n6 x Ruffino Prosecco\r\n\r\nThank you!"
+    expect:
+      contains: ["PDF proposal is attached"]
+  - send: "place the order"
+    expect:
+      contains: ["Which time zone", "12:00 PM", "yes"]
+      log_contains: ["[delivery-tz] no time zone stated or known"]
+  - send: "yes"
+    expect:
+      contains: ["Here is your Payment Link", "12:00 PM"]
+      log_contains: ["America/New_York"]

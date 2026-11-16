@@ -735,6 +735,16 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           const result = await onSubstituteConfirmed(saInput.original_item || '', saInput.replacement_name || '', saInput.replacement_price || 0, saInput.replacement_size || '');
           return result || { success: true };
         }
+        // The edit reader already regenerated the PDF this turn from this same basket: no second PDF (Nov 16, DC email: the reply
+        // carried two proposal links after "update the original proposal" + a question in the forward).
+        if (saInput.intent === 'generate_proposal' && sessionState && sessionState.editReaderPdf && Date.now() - sessionState.editReaderPdf.at < 180000) {
+          const erp = sessionState.editReaderPdf; let liNow = []; try { liNow = JSON.parse(sessionState.lastLineItems || '[]'); } catch (e) {}
+          const keyNow = liNow.map(x => String(x.name || '').toLowerCase() + ':' + (x.qty || x.quantity)).sort().join('|');
+          if (keyNow === erp.key) {
+            console.log('[proposal] the model\'s generate_proposal NOT run — the edit reader regenerated this basket\'s PDF this turn: ' + erp.url);
+            return { success: true, download_url: erp.url, note: 'This proposal was already regenerated this turn and its link is already in the reply. Do not show the link again and do not say a new one was made.' };
+          }
+        }
         // Email orders are placed in code (server.js EMAIL ORDER: contact, real delivery window, payment link). Real (Oct 3,
         // Foodie For All): the LLM tried its own place_order with delivery "2025-10-05", was blocked by the gate below, and
         // then asked "place the order, or send you a PDF proposal?" after the customer had already said place it.

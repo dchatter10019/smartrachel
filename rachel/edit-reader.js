@@ -28,6 +28,7 @@ You get: Rachel's last message, the basket as numbered lines (L1, L2, ...), and 
 - units {line, qty}: the customer counts SINGLE bottles/cans of a PACK line ("we need 24 bottles not 4 cases" on "4x Goose Island IPA 12 x 12 OZ") -> units {line, qty: 24}. Copy their count; never convert it to packs yourself.
 - replace {line, product, qty?}: swap a basket line for a shown product. qty only when the customer states a new count; otherwise omit it (the line keeps its quantity).
 - add {product, qty}: add a shown product as a NEW line (qty = the count the customer states; 0 if they state none).
+A REVISED LIST of drink types + counts — typed, or in an email the sender forwards asking to apply it ("please revise as follows: White – Pinot Grigio or Sauvignon Blanc 8 / Red – Pinot Noir 6 / Prosecco 5", "new numbers: Prosecco 15 bottles") — is set_qty on the basket line of each type (its grape / style / colour, e.g. "Red – Pinot Noir" = the Pinot Noir line). "A or B" with a basket line that is A or B = that line, kept (set_qty; never replace it with the other). A type with no basket line is "search" in also; a line the revised list leaves out is unchanged unless the customer says to remove it.
 A "yes" / "do that" / "sounds good" to a change Rachel offered in her last message = that change (e.g. Rachel: "Want me to swap the Cloudy Bay out for the Nicolas Idiart Sancerre?" + customer: "yes" -> replace {line: <Cloudy Bay's line>, product: <the Sancerre's P number>}). Rachel offering to swap X for Y means X is the basket line and Y is the new product.
 Never invent a line or product number. A product that is not in the P list cannot be added or swapped in: put "search" in also instead. A price limit per bottle ("wines under $15") is not an op: put "other" in also.
 regenerate_proposal = true when the customer asks for a new/updated/regenerated proposal, PDF or quote, or says yes to Rachel's offer that included regenerating it.
@@ -47,7 +48,10 @@ const TOOL = { name: 'edits', description: 'The basket changes the customer mess
 
 // Worth a call? A basket, and wording that can change it or accept an offer. ("2" after a numbered list, product lists and
 // whole new requests keep their own deterministic paths.)
-const EDIT_WORDS = /\b(?:remove|take (?:out|off)|drop|delete|get rid of|without|no (?:more|need)|don'?t (?:need|want)|do not (?:need|want)|swap|switch|replace|substitute|instead|change|make (?:it|that|them|those|the|this)|only|just|increase|decrease|reduce|bump|lower|more|less|fewer|add|include|go with|keep|cut|exclude|leave out)\b/i;
+// "revise / update / adjust / new numbers / quantities" too (Nov 16, DC forwarding Bella: "update the original proposal" +
+// "please revise as follows: White – Pinot Grigio or Sauvignon Blanc 8 / Red – Pinot Noir 6 / Prosecco 5" was rebuilt by the model
+// from scratch, which swapped the quote's Sauvignon Blanc for a Pinot Grigio).
+const EDIT_WORDS = /\b(?:revise[ds]?|revision|update[ds]?|adjust(?:ed|ments?)?|new (?:numbers|quantities|counts)|quantit(?:y|ies)|remove|take (?:out|off)|drop|delete|get rid of|without|no (?:more|need)|don'?t (?:need|want)|do not (?:need|want)|swap|switch|replace|substitute|instead|change|make (?:it|that|them|those|the|this)|only|just|increase|decrease|reduce|bump|lower|more|less|fewer|add|include|go with|keep|cut|exclude|leave out)\b/i;
 const YES = /^\W*(?:yes|yeah|yep|yup|sure|ok(?:ay)?|sounds good|looks good|perfect|great|go ahead|please do|do (?:it|that|those|these|so)|let'?s do (?:it|that)|approved?|confirmed?|that works|works for me)\b/i;
 const OFFER = /\b(?:swap|switch|replace|substitut|go with|use|change|instead|in place of|add)\w*\b[^?\n]*\?/i;
 function wants(message, ctx = {}) {
@@ -160,6 +164,8 @@ function validate(reading, basket, message) {
       return { ok: false, why: kind + ' L' + o.line + ' to ' + qty + ': the customer counted single bottles/cans of a pack line (the units reader converts it)' };
     }
     if (kind === 'replace' && qty === 0) qty = null;
+    // A revised list repeats lines that keep their count ("Red – Pinot Noir 6" on a 6x line): no change, not "6 -> 6" (Nov 16).
+    if (kind === 'set_qty' && index >= 0 && qty === parseInt(basket[index].qty || basket[index].quantity || 0, 10)) { console.log('[edit-reader] set_qty L' + o.line + ' to ' + qty + ' skipped — already ' + qty); continue; }
     ops.push({ op: kind, index, item: index >= 0 ? basket[index] : null, product, qty });
   }
   return { ok: true, ops };

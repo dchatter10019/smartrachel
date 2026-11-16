@@ -266,7 +266,7 @@ function askText(miss, od, problem) {
   if (zoneOnly) return "Happy to get this order going! I'll create it and send the payment link as soon as I know your time zone." +
     (problem ? '\n\n' + problem : '') +
     (have.length ? '\n\nWhat I have so far — ' + have.join('; ') + '.' : '') +
-    '\n\nJust reply with the time zone (e.g. "ET") and I\'ll take it from there. Thank you!';
+    '\n\nJust reply "yes" if it\'s the delivery address\'s time zone, or name the zone (e.g. "ET"), and I\'ll take it from there. Thank you!';
   return "Happy to get this order going! I'll create it and send the payment link as soon as I have " + (miss.length > 1 ? miss.slice(0, -1).join(', ') + ' and ' + miss[miss.length - 1] : miss[0]) + '.' +
     (problem ? '\n\n' + problem : '') +
     (have.length ? '\n\nWhat I have so far — ' + have.join('; ') + '.' : '') +

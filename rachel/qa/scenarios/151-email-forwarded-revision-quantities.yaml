@@ -1,0 +1,19 @@
+name: email-forwarded-revision-quantities
+# Nov 16 (DC forwarding Bella / Eterra Kitchen, HI USA NYC Hostel thread): "can you review the email below and update the
+# original proposal accordingly?" + Bella's forward "White – Pinot Grigio or Sauvignon Blanc 8 / Red – Pinot Noir 6 /
+# Prosecco 5" got "Got it — updated email bella@eterrakitchen.com" (the contact fallback read "email" + "update" and took the
+# forward's From: address); the quantities were never applied and DC had to send "update Barkan ... to 8 bottles".
+fresh: true
+tags: [email]
+format: plain
+context: {email_subject: "Fwd: Order Request – HI USA NYC Hostel", user_name: "QA Tester"}
+turns:
+  - send: "Can you send me a proposal for the order below? Yes I am over 21\r\n\r\nDelivery Address: 891 Amsterdam Ave, New York, NY 10025\r\nDelivery date: Thursday, November 19\r\n\r\n10 x Barkan Classic Sauvignon Blanc\r\n6 x Underwood Pinot Noir\r\n5 x Ruffino Prosecco"
+    expect:
+      contains: ["Sauvignon Blanc", "Pinot Noir", "Prosecco"]
+  - send: "can you review the email below and update the original proposal accordingly?\r\n\r\n---------- Forwarded message ---------\r\nFrom: Bella Karakis <bella@eterrakitchen.com>\r\nDate: Sun, Nov 15, 2026 at 12:52 PM\r\nSubject: RE: Order Request – HI USA NYC Hostel\r\nTo: QA Tester <qa-rachel@getbevvi.com>\r\n\r\n\r\nAnd this one, please revise as follows:\r\n\r\nWhite – Pinot Grigio or Sauvignon Blanc\r\n\r\n8\r\n\r\n\r\n\r\nRed – Pinot Noir\r\n\r\n6\r\n\r\n\r\n\r\nProsecco\r\n\r\n5\r\n\r\n\r\n\r\n\r\nCurious:  I thought delivery was free when we spoke about it last.\r\n\r\n*Bella Karakis*\r\nCEO\r\n917-215-3309"
+    expect:
+      not_contains: ["updated email"]
+      matches: "(?i)\\b8x [^\\n]*Sauvignon Blanc"
+      not_matches: "(?i)\\b10x [^\\n]*Sauvignon Blanc"
+      log_not_contains: ["[order] contact change outside confirm"]
