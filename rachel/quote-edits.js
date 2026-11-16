@@ -87,7 +87,11 @@ function parseEdits(text) {
     // "Take out the cloudy bay and regenerate the proposal." — the name ends before "and <regenerate / send ...>".
     // Real (Nov 14, DC email): the whole tail was the name, it held "proposal", the remove was skipped and the in-code
     // proposal path printed the PDF again with Cloudy Bay still on it.
-    const nm = m[1].replace(/\s+(?:and|then|&)\s+(?:then\s+)?(?:re-?generate|re-?send|send|update|redo|re-?do|make|create|give|share|email)\b.*$/i, '').trim();
+    let nm = m[1].replace(/\s+(?:and|then|&)\s+(?:then\s+)?(?:re-?generate|re-?send|send|update|redo|re-?do|make|create|give|share|email)\b.*$/i, '').trim();
+    // "Lets remove the IPA altogether." — a trailing adverb is not part of the name (Nov 15, Eterra Kitchen forward via DC:
+    // "IPA altogether" matched no basket line, so the code's reader missed the removal the edit reader made; F-0254).
+    const nmAdv = nm.replace(/\s+(?:altogether|all\s+together|entirely|completely|totally|as\s+well|too|please|for\s+now)\s*$/i, '').trim();
+    if (nmAdv !== nm && nmAdv.length >= 2) { console.log('[quote-edits] remove name: trailing "' + nm.slice(nmAdv.length).trim() + '" dropped -> "' + nmAdv + '"'); nm = nmAdv; }
     if (/\b(?:from|all|any|following|items?|these|those|below|date|client|name|pdf|proposal|quote|link|order|it|that|this|them)\b/i.test(nm) || out.removes.includes(nm)) continue;
     out.removes.push(nm);
   }

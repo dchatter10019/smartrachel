@@ -1,0 +1,16 @@
+name: fix-f-0254-remove-altogether
+# F-0254 (Nov 15, DC forwarding Bella / Eterra Kitchen): "Lets remove the IPA altogether." — the code's remove reader took
+# "IPA altogether" as the product name, matched no basket line and disagreed with the edit reader (which removed the IPA);
+# the self-correction was flagged "needs a person". A trailing "altogether / entirely / too ..." is not part of the name.
+fresh: true
+tags: [email]
+format: plain
+context: {email_subject: "Fwd: New Beverage Order – November 17", user_name: "QA Tester"}
+turns:
+  - send: "Can you send me a proposal for the order below? Yes I am over 21\r\n\r\nDelivery Address: 891 Amsterdam Ave, New York, NY 10025\r\nDelivery date: Tuesday, November 17\r\n\r\n24 x Ruffino Prosecco\r\n6 x Underwood Pinot Noir\r\n4 x Goose Island IPA 12 x 12 OZ Bottles"
+    expect:
+      contains: ["Prosecco", "Goose Island"]
+  - send: "can you look into this? update the previous proposal\r\n\r\n---------- Forwarded message ---------\r\nFrom: Bella Karakis <bella@eterrakitchen.com>\r\nDate: Sun, Nov 15, 2026 at 12:28 PM\r\nSubject: RE: New Beverage Order – November 17\r\nTo: QA Tester <qa-rachel@getbevvi.com>\r\n\r\n\r\nA few revisions to the invoice:\r\n\r\n\r\n\r\nLets remove the IPA altogether.\r\n\r\n\r\n\r\nTy,\r\n\r\n*Bella Karakis*\r\nCEO"
+    expect:
+      not_matches: "(?i)\\d+x [^\\n]*Goose Island"
+      log_not_contains: ["DISAGREE on basket_edits"]
