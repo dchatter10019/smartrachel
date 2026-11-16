@@ -1,0 +1,38 @@
+name: placed-order-new-address-and-fee
+# Nov 16 (DC on Slack, order BEVVI-AI-INFO-20261116-010951): "redo the order with the following address 1345 Avenue of the
+# Americas, New York, NY 10105" went to the cart's address change (cart cleared) and the model wrote an "Order Summary" with
+# no checkout behind it; "make the delivery charge to be free" then got "Your cart is empty". A new address for a placed
+# order now reopens THAT order at the confirm step with the new address (same store = same time kept), and the fee change
+# re-shows the summary. Same /chat path for Slack, WhatsApp and rachel_chat (email keeps its own placed-order path).
+format: plain
+tags: [orders]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+  - send: "place the order"
+  - send: "QA Tester"
+  - send: "same"
+  - send: "9175550100"
+  - send: "tomorrow at 5 pm ET"
+  - send: "none"
+  - send: "no tip"
+  - send: "yes"
+    expect: {matches: "placed|confirmed|submitted"}
+  - send: "redo the order with the following address 1350 Avenue of the Americas, New York, NY 10019"
+    expect:
+      contains: ["it replaces order #", "Order Summary", "1350", "Kim Crawford", "5:00 PM"]
+      log_contains: ["[addr] message names the placed order", "[order-change]"]
+      log_not_contains: ["[cart] cleared"]
+  - send: "make the delivery charge to be free"
+    expect:
+      contains: ["Order Summary", "Estimated delivery: $0.00", "1350"]
+      not_contains: ["cart is empty"]
+  - send: "yes"
+    expect:
+      matches: "placed|confirmed|submitted"
+      contains: ["1350"]
+      log_contains: ["delivery_charge 0"]

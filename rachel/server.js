@@ -3458,7 +3458,16 @@ app.post('/chat', async (req, res) => {
     // "I'm not able to change the delivery address mid-conversation". Changing it is allowed:
     // check coverage, and if a different store serves it, the basket (built for the old
     // store's catalog) has to be rebuilt — say so.
-    if (state.step === 'ready' && !state.orderStep && !state.proposalStep) {
+    // A new address for a PLACED order ("redo the order with the following address ...") is a change to that order: the
+    // PLACED ORDER block restores it into checkout and the confirm step changes the address. Here it cleared the cart and
+    // the model wrote an order summary with no checkout behind it; the fee change after it found an empty cart (Nov 16, DC
+    // on Slack, order BEVVI-AI-INFO-20261116-010951). Email threads keep their own placed-order path.
+    let placedOrderAddr = false;
+    { const poA = state.placedOrder; let cartA = 0; try { cartA = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
+      if (poA && !poA.resolved && cartA === 0 && !/^email-/.test(sessionKey) && !(context && context.email_subject) && POM.namesOrder(message, poA.order_id)) {
+        placedOrderAddr = true; console.log('[addr] message names the placed order ' + poA.order_id + ' — the address goes to that order, not the cart: ' + JSON.stringify(message).slice(0, 80));
+      } }
+    if (state.step === 'ready' && !state.orderStep && !state.proposalStep && !placedOrderAddr) {
       // address-extract.js, not a one-line pattern: "100 Federal Street, Floor 6, Boston, MA 02110" (a unit with a
       // number) didn't match, so the change fell through to the LLM (Sep 29, Gen II session).
       const AX = require('./address-extract.js');
@@ -5937,6 +5946,7 @@ app.post('/chat', async (req, res) => {
             return res.json({ text: rNo, response: rNo });
           }
           const sameStore = prevCov && cov && prevCov.client === cov.client;
+          const prevWhenA = { iso: state.orderData.delivery_datetime_iso, dt: state.orderData.delivery_datetime, win: state.orderData.delivery_window_display };
           state.address = newAddr; state.zip = zm[1]; state.addrConfirmed = true;
           state.orderData.delivery_datetime_iso = null; state.orderData.delivery_datetime = null; state.orderData.delivery_window_display = null; state.orderData.datetime_validated = false;
           state.savedDeliveryIso = null; state.savedDeliveryWindow = null; state.savedDeliveryLabel = null;
@@ -5944,6 +5954,15 @@ app.post('/chat', async (req, res) => {
           state.savedCustomer = { name: od0.name, phone: od0.phone, email: od0.email };
           if (od0.delivery_instructions && !/\b\d{5}\b/.test(od0.delivery_instructions)) state.savedInstructions = od0.delivery_instructions;
           console.log('[order] address change at confirm ->', newAddr, '| same store:', sameStore);
+          // The SAME store (establishment) delivers to the new address: its windows are the same, so the time stays and the
+          // summary is shown again (Nov 16, DC: the corrected address for a placed order re-asked the time).
+          let estA = ''; try { estA = (JSON.parse(state.lastLineItems || '[]').find(li => li && li.establishmentId) || {}).establishmentId || ''; } catch (e) {}
+          if (sameStore && prevWhenA.iso && cov.establishmentId && estA && cov.establishmentId === estA) {
+            Object.assign(state.orderData, { delivery_datetime_iso: prevWhenA.iso, delivery_datetime: prevWhenA.dt, delivery_window_display: prevWhenA.win, datetime_validated: true, instructions_asked: true });
+            state.orderStep = 'confirm'; saveFlowState();
+            console.log('[order] address change at confirm — same store ' + estA + ', delivery time kept: ' + (prevWhenA.win || prevWhenA.dt));
+            return renderOrderSummary(state, email, format, res);
+          }
           if (sameStore) {
             state.orderStep = 'details'; saveFlowState();
             const rA = 'Delivery address updated to ' + newAddr + '. Delivery windows differ by address — what delivery date and time would you like?';

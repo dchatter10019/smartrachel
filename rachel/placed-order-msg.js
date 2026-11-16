@@ -10,7 +10,8 @@ const PAID = /\b(?:i|we)(?:'ve| have)?\s+(?:just\s+|already\s+)?(?:made|complete
 const NOT_PAID = /\b(?:not|n't|never)\s+(?:yet\s+)?(?:been\s+)?(?:paid|made\s+(?:the\s+)?payment)\b|\bhas\s+(?:it|the\s+order)\s+been\s+paid\s*\?|\bunpaid\b/i;
 
 // Delivery details, not items: who receives it, contact phone/email, driver instructions, COI, delivery note/time/address.
-const DETAILS = /\b(?:recipient|receiver|receiving|on-?site contact|point of contact|poc|contact (?:name|person|info|number|phone)|name on the order|customer name|phone(?: number)?|delivery (?:instructions?|notes?|time|window|address|people|person|driver|team)|driver|courier|delivering from|deliver(?:ing)? on behalf|coi|certificate of insurance|loading dock|front desk|reception|buzz|gate code|leave it|drop[- ]?off|deliver (?:it )?to)\b/i;
+// "address" alone counts (Nov 16, DC on Slack: "redo the order with the following address 1345 ..." was not a change).
+const DETAILS = /\b(?:(?:new |different |following |correct )?address|recipient|receiver|receiving|on-?site contact|point of contact|poc|contact (?:name|person|info|number|phone)|name on the order|customer name|phone(?: number)?|delivery (?:instructions?|notes?|time|window|address|people|person|driver|team)|driver|courier|delivering from|deliver(?:ing)? on behalf|coi|certificate of insurance|loading dock|front desk|reception|buzz|gate code|leave it|drop[- ]?off|deliver (?:it )?to)\b/i;
 // Item / basket wording: an item change still needs the reopen question. A verb alone ("add delivery instructions") is an
 // item change only when no delivery detail is named; a drink / container word always is. ("Can you" is not "cans".)
 const ITEM_NOUN = /\b(?:bottles?|cases?|packs?|cans|\d+\s*cans?|wine|beer|vodka|tequila|whiske?y|bourbon|gin|rum|prosecco|champagne|seltzers?|liquor|basket|cart|items?)\b/i;
@@ -18,7 +19,7 @@ const ITEM_VERB = /\b(?:add|remove|drop|take out|swap|replace|instead of|more|le
 
 // A request to change the order: an item verb, or change/update/edit/modify/cancel wording. A question about it
 // ("when will my order arrive?") is not.
-const CHANGE = /\b(?:add|remove|drop|take out|swap|replace|instead|make (?:it|that|them) \d+|more|less|fewer|increase|decrease|extra|change|update|edit|modify|cancel|switch)\b/i;
+const CHANGE = /\b(?:re-?do|add|remove|drop|take out|swap|replace|instead|make (?:it|that|them) \d+|more|less|fewer|increase|decrease|extra|change|update|edit|modify|cancel|switch)\b/i;
 function changeRequest(text) { return CHANGE.test(String(text || '')); }
 
 function paidClaim(text) { const t = String(text || ''); return PAID.test(t) && !NOT_PAID.test(t); }
