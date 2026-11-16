@@ -59,4 +59,28 @@ function recipientNameIn(m) {
   return nm.split(' ').length >= 2 && !/\b(same|email|account|bevvi)\b/i.test(nm) ? nm : null;
 }
 
-module.exports = { get, save, profileName, nameCorrection, refusesName, recipientNameIn };
+// The reply to "Ordering as <name>, <phone>, <email> — tell me if any of that should change. What delivery date and time?"
+// -> { name?, phone?, email?, rest } (rest = the message without the contact parts, for the delivery-time reader), or null.
+// Real (Nov 16, DC on Slack): "Frank Acosta, 6466103382, <mailto:x@y.com|x@y.com>, tomorrow 3 pm EST" — only the time was
+// read and the order went out under the prefilled Slack name and phone.
+function contactChangeIn(m) {
+  const t = String(m || '').replace(/<mailto:[^|>]+\|([^>]+)>/gi, '$1').replace(/<tel:[^|>]+\|([^>]+)>/gi, '$1');
+  const out = {}; let rest = t;
+  const em = t.match(/\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b/);
+  if (em) { out.email = em[0].toLowerCase(); rest = rest.replace(em[0], ' '); }
+  const ph = rest.match(/(?:\+?1[\s.-]?)?\(?\b\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}\b/);
+  if (ph) { out.phone = ph[0].trim(); rest = rest.replace(ph[0], ' '); }
+  // A name = a comma / newline part that is 2-4 capitalized words (or "name is X" / "for X"), never time words.
+  const TIMEW = /\b(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december|am|pm|est|edt|et|pt|pst|ct|cst|mt|noon|same|none|please|thanks)\b/i;
+  for (const part of rest.split(/\s*[,;\n]\s*/)) {
+    const p0 = part.trim().replace(/^(?:(?:no|nope)[,.!]?\s*)?(?:(?:the\s+)?name\s+(?:is|should\s+be)|it'?s\s+for|for|under|use)\s+/i, '').replace(/[.!]+$/, '');
+    if (/^[A-Z][A-Za-zà-ÿ'.-]+(?:\s+[A-Z][A-Za-zà-ÿ'.-]+){1,3}$/.test(p0) && !TIMEW.test(p0) && !/\b(same|email|account|bevvi|my|me)\b/i.test(p0)) {
+      out.name = p0; rest = rest.replace(part, ' '); break;
+    }
+  }
+  if (!Object.keys(out).length) return null;
+  out.rest = rest.replace(/(?:\s*,\s*)+/g, ', ').replace(/^[\s,]+|[\s,]+$/g, '').trim();
+  return out;
+}
+
+module.exports = { get, save, profileName, nameCorrection, refusesName, recipientNameIn, contactChangeIn };

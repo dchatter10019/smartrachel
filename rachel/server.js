@@ -2976,6 +2976,21 @@ app.post('/chat', async (req, res) => {
     // Address-like = a full address, a street word after the number, or a short reply. Real (Oct 7, connector): "Please
     // revise the package: ... 150 guests, 3 hours ... $1,500 total budget" was geocoded ("150 guests") and answered "I
     // couldn't find that address" with the whole request echoed back as the example.
+    // The answer to "I found <street> in <zip>, not <typed zip> ... is that right?" (state.addrMismatch, set below): a yes
+    // takes Google's address; the SAME typed address again keeps what the customer typed (they know their building's zip);
+    // anything else is read as a new address.
+    let addrMismatchKept = false;
+    if (state.addrMismatch && (['addr', 'addr_new'].includes(state.step) || (state.step === 'ready' && !state.orderStep && !state.proposalStep))) {
+      const mm = state.addrMismatch; state.addrMismatch = null; saveFlowState();
+      const normA = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      if (/^\s*(?:yes|yeah|yep|yup|correct|right|ok|okay|sure|that'?s (?:it|right|correct)|use (?:it|that|that one))\b[\s.!]*$/i.test(message)) {
+        console.log('[addr] zip mismatch — customer accepted Google\'s address: ' + mm.formatted);
+        message = mm.formatted; msgLower = message.toLowerCase();
+      } else if (normA(message) === normA(mm.typed)) {
+        console.log('[addr] zip mismatch — customer sent the same address again, keeping what they typed: ' + JSON.stringify(mm.typed));
+        addrMismatchKept = true;
+      }
+    }
     const STREET_W = /\b\d{1,6}\s+(?:[A-Za-z0-9'.-]+\s+){0,4}?(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Way|Pl|Place|Ct|Court|Pkwy|Parkway|Ter|Terrace|Sq|Square|Hwy|Highway|Cir|Circle|Plaza|Row|Wharf|Pier|Broadway|Bowery)\b\.?/i;
     const addrLike = !!require('./address-extract.js').findAddress(message) || STREET_W.test(message) || message.trim().split(/\s+/).length <= 8;
     if ((['addr', 'addr_new'].includes(state.step) || (state.orderStep === 'confirm' && /\b(address|deliver to|delivery location)\b/i.test(message)))
@@ -2989,6 +3004,14 @@ app.post('/chat', async (req, res) => {
           console.log('[geocode]', JSON.stringify(addrText).slice(0, 60), '->', geo.formatted);
           message = message.replace(addrText, geo.formatted);
           state.geocoded = { formatted: geo.formatted, zip: geo.zip, lat: geo.lat, lng: geo.lng };
+        } else if (['addr', 'addr_new'].includes(state.step) && !addrMismatchKept) {
+          // The street is somewhere else than the zip says. Ask, never store it silently (Nov 16, DC on Slack: "425 W 53rd St,
+          // New York, NY 10105" — Google: 10019 — was accepted; the order went to the wrong street for a 10105 delivery).
+          state.addrMismatch = { typed: message.trim(), formatted: geo.formatted, zip: geo.zip }; saveFlowState();
+          console.log('[geocode] zip mismatch — asking the customer: typed ' + hadZip + ', Google ' + geo.zip + ' (' + geo.formatted + ')');
+          const bM = format === 'slack' ? '*' : '';
+          const rM = 'Just to check the address — I found ' + bM + geo.formatted + bM + ', which is in ' + geo.zip + ', not ' + hadZip + '. Is that the right place? Reply "yes" to use it, send the same address again to keep it as you typed it, or send the correct street address.';
+          return res.json({ text: rM, response: rM });
         } else console.log('[geocode] zip mismatch, keeping typed address:', hadZip, 'vs', geo.zip);
       } else if (!/\b\d{5}\b/.test(message) && ['addr', 'addr_new'].includes(state.step)) {
         // No match and no zip: ask specifically rather than repeating the generic prompt.
@@ -3017,7 +3040,9 @@ app.post('/chat', async (req, res) => {
         // "1345 6th Ave, New York, NY 10105" and this check, wanting a LETTER after the house number, asked for the street 4x).
         if (!/\b\d{1,6}\s+(?:[A-Za-z]|\d{1,3}(?:st|nd|rd|th)\b)/i.test(message.replace(/\b\d{5}(-\d{4})?\b/g, ''))) {
           console.log('[addr] zip only, no street — asking for the street address: ' + JSON.stringify(message).slice(0, 60));
-          const askS = 'Thanks — I need the full street address for delivery. What\'s the street address in ' + candidateZip + '? (e.g. "425 W 53rd St, New York, NY ' + candidateZip + '")';
+          // The example is a street only — a full example address carrying the customer's zip was pasted back as their address
+          // (Nov 16, DC on Slack: "425 W 53rd St, New York, NY 10105").
+          const askS = 'Thanks — I need the full street address for delivery. What\'s the street number and name in ' + candidateZip + '? (for example: 350 5th Ave)';
           return res.json({ text: askS, response: askS });
         }
         state.zip = candidateZip;
@@ -3496,6 +3521,18 @@ app.post('/chat', async (req, res) => {
         if (cov && cov.store_count === 0) {
           const rNo = 'I can\'t deliver to ' + newZip + ' yet — no store serves that zip. I\'ll keep delivering to ' + state.address + ', or give me a different address.';
           return res.json({ text: rNo, response: rNo });
+        }
+        // Verified like the address step: a street that Google places in another zip is asked about (Nov 16, DC on Slack).
+        if (!addrMismatchKept && !state.orderStep && !state.proposalStep) {
+          const gR = await geocodeAddress(am[1]).catch(() => null);
+          console.log('[addr] verified at ready: ' + JSON.stringify(am[1]) + ' -> ' + (gR ? gR.formatted + ' (' + gR.zip + ')' : 'no geocode'));
+          if (gR && gR.zip && gR.zip !== newZip) {
+            state.addrMismatch = { typed: String(message).trim(), formatted: gR.formatted, zip: gR.zip }; saveFlowState();
+            console.log('[geocode] zip mismatch — asking the customer (address change): typed ' + newZip + ', Google ' + gR.zip + ' (' + gR.formatted + ')');
+            const bR = format === 'slack' ? '*' : '';
+            const rR = 'Just to check the address — I found ' + bR + gR.formatted + bR + ', which is in ' + gR.zip + ', not ' + newZip + '. Is that the right place? Reply "yes" to use it, send the same address again to keep it as you typed it, or send the correct street address.';
+            return res.json({ text: rR, response: rR });
+          }
         }
         const prevCov = state.zip ? await checkStoreCoverage(state.zip) : null;
         let items = []; try { items = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
@@ -5735,6 +5772,36 @@ app.post('/chat', async (req, res) => {
       message = state.orderData.delivery_datetime;
     }
     if (state.orderStep === 'details') {
+     // The answer to "Ordering as <name>, <phone>, <email> — tell me if any of that should change. What delivery date and
+     // time?" may change the contact too (Nov 16, DC on Slack: "Frank Acosta, 6466103382, <email>, tomorrow 3 pm EST" —
+     // only the time was read; the order went out under the prefilled name + phone). Code first, then the fact reader.
+     if (state.orderData.contactOffered && !state.orderData.datetime_validated) {
+      state.orderData.contactOffered = false;
+      let cc = null; try { cc = contacts.contactChangeIn(message); } catch (e) {}
+      if (!cc) {
+        try {
+          const fc = ((await FR.factsFor(message, { qa: isQA })) || {}).contact || null;
+          const nmOk = fc && fc.name && fc.name.trim().split(/\s+/).length >= 2 && message.includes(fc.name);
+          const phOk = fc && fc.phone && String(fc.phone).replace(/\D/g, '').length >= 10 && message.replace(/\D/g, '').includes(String(fc.phone).replace(/\D/g, '').slice(-10));
+          if (nmOk || phOk) { cc = { name: nmOk ? fc.name.trim() : undefined, phone: phOk ? String(fc.phone) : undefined }; FR.gap('order_contact', 'missed', null, cc, frCtx); }
+        } catch (e) {}
+      }
+      if (cc) {
+        const was = { name: state.orderData.name, phone: state.orderData.phone, email: state.orderData.email };
+        if (cc.name) state.orderData.name = cc.name;
+        if (cc.phone) state.orderData.phone = cc.phone;
+        if (cc.email) state.orderData.email = cc.email;
+        state.savedCustomer = { name: state.orderData.name, phone: state.orderData.phone, email: state.orderData.email };
+        saveFlowState();
+        console.log('[order] contact changed with the delivery time: ' + JSON.stringify(was) + ' -> ' + JSON.stringify({ name: state.orderData.name, phone: state.orderData.phone, email: state.orderData.email }));
+        if (cc.rest && cc.rest !== message) { message = cc.rest; msgLower = message.toLowerCase(); }
+        if (!cc.rest || !/\d|\b(?:today|tomorrow|tonight|mon|tue|wed|thu|fri|sat|sun|noon|asap)/i.test(cc.rest)) {
+          saveFlowState();
+          const aC = 'Got it — ordering as ' + state.orderData.name + ', ' + state.orderData.phone + ', ' + state.orderData.email + '. What delivery date and time would you like?';
+          return res.json({ text: aC, response: aC });
+        }
+      }
+     }
      if (!state.orderData.datetime_validated) {
       const askResp = await validateDeliveryTime(state, message, email, format, res);
       if (askResp) return askResp;
@@ -5801,7 +5868,7 @@ app.post('/chat', async (req, res) => {
       if (!(sc.name && sc.phone)) return null;
       state.orderData.name = sc.name; state.orderData.phone = sc.phone;
       state.orderData.email = sc.email || email || ''; state.orderData.account_email = email || '';
-      state.orderStep = 'details';
+      state.orderStep = 'details'; state.orderData.contactOffered = true;
       saveFlowState();
       console.log('[order] contact known — skipping name/email/phone');
       const a = 'Ordering as ' + sc.name + ', ' + sc.phone + ', ' + state.orderData.email + ' — tell me if any of that should change. What delivery date and time would you like?';
@@ -5925,6 +5992,12 @@ app.post('/chat', async (req, res) => {
       // below applies it and shows the order summary again (Nov 10, DC on Claude Code: the checkout was left and the reply
       // said "service charge 8% on the proposal").
       let feeAtConfirm = false; try { feeAtConfirm = !!(TAXCMD.fees(message) || TAXCMD.read(message)); } catch (e) {}
+      // The model's reading counts too, as in the fee block below (Nov 16, DC on Slack: "make the delivery to 0" twice at the
+      // summary — the fact reader read delivery_fee 0, the patterns didn't, the reply was "Please confirm" and the order went
+      // out with $25 delivery). The fee block applies it (same FR reading, memoized).
+      if (!feeAtConfirm && /\b(?:tax|tip|gratuity|service|delivery)\b/i.test(message)) {
+        try { const fsC = FR.feesShape(((await FR.factsFor(message, { qa: isQA })) || {}).fees); if (fsC) { feeAtConfirm = true; console.log('[order] fee change at confirm read by the fact reader: ' + JSON.stringify(fsC)); } } catch (e) {}
+      }
       if (feeAtConfirm) console.log('[order] fee change at confirm — checkout kept, the summary is shown again with it');
       const isChange0 = !feeAtConfirm && /\b(add|also|remove|drop|take out|swap|replace|change|instead|different|another|more|less|fewer|update|edit)\b/i.test(message) && !yesWords.some(w => msgLower === w);
       // Yes / no as WHOLE words (Nov 11, DC on Claude Code: "Can you find a cheaper la crema Pinot" contained "no" — pi-NO-t

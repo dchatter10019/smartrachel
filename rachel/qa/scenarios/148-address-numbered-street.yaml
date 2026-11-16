@@ -11,3 +11,15 @@ turns:
       not_contains: ["I need the full street address"]
       matches: "(?i)1345 (6th Ave|Avenue of the Americas)"
       log_not_contains: ["[addr] zip only, no street"]
+  # A street in another zip than the one typed is asked about, never stored silently (Nov 16, DC: "425 W 53rd St, New York,
+  # NY 10105" was accepted — 425 W 53rd St is in 10019 — and the order went to the wrong street).
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10105"
+    expect:
+      contains: ["Just to check the address", "10019"]
+      not_contains: ["delivering to 425 W 53rd St, New York, NY 10105"]
+      log_contains: ["[geocode] zip mismatch — asking the customer"]
+  - send: "1345 Avenue of the Americas, New York, NY 10105"
+    expect:
+      matches: "(?i)delivering to 1345 (6th Ave|Avenue of the Americas)"

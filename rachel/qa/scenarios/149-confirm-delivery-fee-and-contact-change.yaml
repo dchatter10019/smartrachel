@@ -1,0 +1,33 @@
+name: confirm-delivery-fee-and-contact-change
+# The contact change ("Ordering as ...") needs a saved contact, which QA identities never get (customer-contacts.js);
+# it is covered by qa/unit/confirm-fee-contact-nov16.test.js and was checked by hand on staging (Nov 16).
+# Nov 16 (DC on Slack, order BEVVI-AI-INFO-20261116-010951): (1) "Frank Acosta, 6466103382, <email>, tomorrow 3 pm EST" in
+# answer to "Ordering as Dipanjan Chatterjee, 917..., ... tell me if any of that should change" — only the time was read,
+# the order went out under the prefilled name/phone; (2) "make the delivery to 0" at the order summary, twice, got "Please
+# confirm — shall I place this order?" and the order was placed with $25 delivery (tax-command.js didn't read the wording,
+# the confirm step never used the fact reader's delivery_fee 0). Same /chat order flow for Slack, WhatsApp and rachel_chat.
+format: plain
+tags: [orders]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+  - send: "place the order"
+  - send: "QA Tester"
+  - send: "same"
+  - send: "9175550100"
+  - send: "tomorrow at 5 pm ET"
+  - send: "none"
+  - send: "no tip"
+    expect: {contains: ["Order Summary", "Shall I go ahead"]}
+  - send: "make the delivery to 0"
+    expect:
+      contains: ["Order Summary", "Estimated delivery: $0.00"]
+      not_contains: ["Please confirm"]
+  - send: "yes"
+    expect:
+      matches: "placed|confirmed|submitted"
+      log_contains: ["delivery_charge 0"]

@@ -50,6 +50,11 @@ function fees(msg) {
   else if (/\b(?:no|remove|drop|waive|take\s+(?:out|off))\s+(?:the\s+)?(?:tip|gratuity)\b/i.test(t)) out.tip_rate = 0;
   if ((m = t.match(new RegExp('\\bdelivery(?:\\s+(?:fee|charge|cost))?\\b' + SET + '\\$\\s*(\\d[\\d,]*(?:\\.\\d+)?)', 'i')))) out.delivery_fee = parseFloat(m[1].replace(/,/g, ''));
   else if ((m = t.match(new RegExp('\\bdelivery\\s+(?:fee|charge|cost)\\b' + SET + NUM + '\\b(?!\\s*%)', 'i')))) out.delivery_fee = parseFloat(m[1]);
+  // A bare amount that ENDS the message ("make the delivery to 0", "make the delivery to be 0", "set delivery to zero";
+  // Nov 16, DC on Slack at the order summary: neither was read and the order went out with $25). Up to 3 digits only and
+  // nothing after it, so "delivery to 10019" / "delivery to 1460 Broadway" stay addresses.
+  else if ((m = t.match(new RegExp('\\bdelivery(?:\\s+(?:fee|charge|cost))?\\b' + SET + '(zero|\\d{1,3}(?:\\.\\d{1,2})?)\\s*(?:dollars?|bucks)?\\s*(?:please)?[\\s.!]*$', 'i')))
+    && !/\b(?:at|by|around|before|after|until|for)\s+\d{1,2}(?:[:.]\d{2})?\s*(?:please)?[\s.!]*$|\b(?:time|am|pm|o'?clock|tomorrow|today|tonight|morning|afternoon|evening|noon)\b/i.test(t)) out.delivery_fee = /zero/i.test(m[1]) ? 0 : parseFloat(m[1]);
   else if (/\bfree\s+delivery\b|\b(?:no|remove|drop|waive|take\s+(?:out|off))\s+(?:the\s+)?delivery\s+(?:fee|charge|cost)\b/i.test(t)) out.delivery_fee = 0;
   return Object.keys(out).length ? out : null;
 }
