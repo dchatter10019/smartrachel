@@ -22,9 +22,22 @@ function catalogUrl(o) {
 }
 
 // The response body -> legacy-shaped rows (array). getProducts: unwrap, rewrite links, price window applied here.
+// A row whose stock is 0 is OUT OF STOCK at every store and is never shown, offered or added (DC, Nov 17: "any quantity
+// that's 0 should be considered as out of stock. doesn't matter which store it's from and should never been shown";
+// Gen2Fund Boston: Oyster Bay / Carlsberg 12 x 16 at 0 were listed, offered, then removed again). Missing stock = unknown, kept.
+function inStockOnly(rows, o) {
+  const out = (rows || []).filter(r => !(r && r.inventory !== null && r.inventory !== undefined && r.inventory !== '' && Number(r.inventory) === 0));
+  if (out.length < (rows || []).length) {
+    const gone = rows.filter(r => out.indexOf(r) < 0).map(r => r.name || r.productName || '?');
+    console.log('[catalog-api] out of stock (0) — not shown: ' + gone.slice(0, 6).join(' | ') + (gone.length > 6 ? ' (+' + (gone.length - 6) + ')' : '') + ' (search ' + JSON.stringify(String((o && o.q) || '')).slice(0, 60) + ' zip ' + ((o && o.zip) || '') + ')');
+  }
+  return out;
+}
+
 function rowsFrom(body, m, o) {
+  o = o || {};
   // A search whose rows all show the same stock count carries a placeholder, not stock (stock.js; Boston: every row 10).
-  if (m === 'legacy') return Array.isArray(body) ? require('./stock.js').ignorePlaceholders(body, o.q) : [];
+  if (m === 'legacy') return Array.isArray(body) ? inStockOnly(require('./stock.js').ignorePlaceholders(body, o.q), o) : [];
   // Every getProducts search is logged (zip, words, rows) so a staging run gives the list of searches (DC, Oct 7)
   const n = body && Array.isArray(body.products) ? body.products.length : 0;
   console.log('[catalog-api] getProducts zip=' + (o.zip || '') + ' name=' + JSON.stringify(String(o.q || '')) + ' -> ' + n + ' row(s)');
@@ -33,7 +46,7 @@ function rowsFrom(body, m, o) {
     return [];
   }
   const price = p => Number(p.salePrice || p.price || 0);
-  return require('./stock.js').ignorePlaceholders(body.products, o.q)
+  return inStockOnly(require('./stock.js').ignorePlaceholders(body.products, o.q), o)
     .map(p => p.url ? Object.assign({}, p, { url: String(p.url).replace(/^https:\/\/[a-z0-9-]+\.getbevvi\.com\//i, 'https://bevvibot.getbevvi.com/') }) : p)
     .filter(p => !(o.min > 0 && price(p) < o.min) && !(o.max > 0 && o.max < 9999 && price(p) > o.max));
 }
@@ -62,4 +75,4 @@ function hyphenJoins(term) {
   return out;
 }
 
-module.exports = { catalogUrl, catalogFetch, rowsFrom, mode, hyphenJoins };
+module.exports = { catalogUrl, catalogFetch, rowsFrom, mode, hyphenJoins, inStockOnly };

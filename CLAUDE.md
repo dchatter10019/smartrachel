@@ -1096,6 +1096,12 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   name word (pack words "30 x 12 oz cans" never count): "change 1x Budweiser 30 x 12 to Budweiser 36 x 12" replaced the
   Michelob Ultra 30 x 12 line. Scenario 154, qa/unit/basket-line.test.js.
 
+- A catalog row with stock 0 is OUT OF STOCK at every store and never shown, offered or added (DC, Nov 17: "any quantity
+  that's 0 should be considered as out of stock. doesn't matter which store its from and should never been shown"):
+  catalog-api.js inStockOnly drops it from every search ([catalog-api] out of stock (0) — not shown); missing stock is still
+  unknown = kept. Gen2Fund Boston: Oyster Bay / Carlsberg 12 x 16 at 0 were listed, offered, removed again, and the Budweiser
+  36 (0) went in through a swap. precheck restarts shopping-agent for catalog-api.js. qa/unit/out-of-stock.test.js.
+
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
   so PDFs sent before Oct 15 still open (ask DC first; nginx).
