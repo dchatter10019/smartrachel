@@ -1236,7 +1236,7 @@ function renderOrderSummary(state, email, format, res) {
     // The full summary on every channel (DC, Oct 28: the same as Slack). WhatsApp and the claude.ai connector got only
     // "Order summary ready. Grand total: $X. Confirm?" — no items, contact, time or instructions to check. Bold = Slack only.
     const B = format === 'slack' ? '*' : '';
-    const summary = B + 'Order Summary' + B + '\n\n' +
+    const summary = takeDeliveryConfirm(state) + B + 'Order Summary' + B + '\n\n' +
         (multiLines ? multiLines.join('\n') : productName + ' x' + qty + ' — $' + unitPrice.toFixed(2) + ' ea = $' + productTotal.toFixed(2)) + '\n' +
         'For: ' + (state.orderData.name || '') + (state.orderData.phone ? ' | ' + state.orderData.phone : '') + '\n' +
         'Recipient email: ' + (state.orderData.email || email || '') + '\n' +
@@ -1260,7 +1260,7 @@ function renderOrderSummary(state, email, format, res) {
 // or null on success with the validated window stored on state.orderData.
 // The store's delivery windows on a date phrase ("Monday, October 5th"): { label, options, none }.
 async function deliveryWindowsOn(state, datePhrase, custZone) {
-  const r = require('./chrono-today.js').parse(String(datePhrase || ''), new Date())[0];
+  const r = require('./chrono-today.js').parse(String(datePhrase || ''), new Date(), { zone: custZone || zoneForAddress(state.address) })[0];
   if (!r) return { label: '', options: [], none: false };
   const d = r.start.date();
   const dateStr = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
@@ -1318,7 +1318,8 @@ async function validateDeliveryTime(state, message, email, format, res) {
   const storeZone = zoneForAddress(state.address);
   const msgForParse = String(message).replace(/\b(PST|PDT|PT|MST|MDT|MT|CST|CDT|CT|EST|EDT|ET)\b/gi, '')
     .replace(/\b(pacific|mountain|central|eastern)(\s+(standard|daylight))?(\s+time)?\b|\b(west|east) coast( time)?\b/gi, '').replace(/\s+/g, ' ').trim();
-  const parsedResults = require('./chrono-today.js').parse(msgForParse, new Date());
+  // read on the calendar of the zone the time is in (customer's, else the delivery address's) — never the server's UTC day
+  const parsedResults = require('./chrono-today.js').parse(msgForParse, new Date(), { zone: custZone || storeZone });
   const hasTime = !!(parsedResults.length && parsedResults[0].start.isCertain('hour'));
   // The answer to "which time zone?": the held time, read in that zone.
   if (!hasTime && statedZone && state.orderData.pendingWhen) {
@@ -1426,7 +1427,22 @@ async function validateDeliveryTime(state, message, email, format, res) {
   } else console.log('[delivery-check] "' + message.slice(0, 40) + '" accepted UNCHECKED — no basket line has a store (establishmentId)');
 
   state.orderData.delivery_datetime = finalDeliveryText;
+  // Said back once the customer has given it (DC, Nov 17: "confirm the date and time once the customer has clarified") —
+  // a relative "tomorrow" / weekday is named as the real date, so a wrong reading is seen before the summary.
+  state.orderData.delivery_confirm_note = '';
+  if (finalDeliveryText !== message.trim() && state.orderData.delivery_date_label && state.orderData.delivery_window_display) {
+    const rel = (String(message).match(/\b(today|tonight|tomorrow|(?:this |next )?(?:mon|tues|wednes|thurs|fri|satur|sun)day)\b/i) || [])[1];
+    state.orderData.delivery_confirm_note = 'Got it — delivery on ' + state.orderData.delivery_date_label + (rel ? ' (' + rel.toLowerCase() + ')' : '') + ', ' + state.orderData.delivery_window_display + '.';
+    console.log('[delivery] confirmed back to the customer: "' + String(message).slice(0, 40) + '" -> ' + state.orderData.delivery_date_label + ', ' + state.orderData.delivery_window_display);
+  }
   return null;
+}
+// The confirmation line for a just-accepted delivery time, shown once (on the next reply).
+function takeDeliveryConfirm(state) {
+  const od = state.orderData || {};
+  const n = od.delivery_confirm_note || '';
+  od.delivery_confirm_note = '';
+  return n ? n + '\n\n' : '';
 }
 const cta = require('./cta.js');
 const QE = require('./quote-edits.js');   // edits to a quote the customer already has, applied in code
@@ -4104,7 +4120,7 @@ app.post('/chat', async (req, res) => {
         const rdO = await OR.read(message, { earlier: earlierO, lastReply: String((lastRepliesBySession[sessionKey] || []).slice(-1)[0] || ''),
           sender: String((context && context.user_name) || '') + ' <' + email + '>' + (orStaff ? ' (a Bevvi colleague — not the customer)' : ''), needs: state.emailOrder ? EO.missing(state.emailOrder) : [], qa: isQA });
         if (rdO) {
-          orC = OR.check(rdO, { newText: message, earlierTexts: earlierO, staffNames, rachelTexts: (lastRepliesBySession[sessionKey] || []).slice(-6), zoneOf: z => explicitZoneIn(z) || zoneStatedIn(z) });
+          orC = OR.check(rdO, { newText: message, earlierTexts: earlierO, staffNames, rachelTexts: (lastRepliesBySession[sessionKey] || []).slice(-6), zoneOf: z => explicitZoneIn(z) || zoneStatedIn(z), zone: state.custZone || zoneForAddress(state.address) });
           console.log('[order-reader] checked: intent ' + orC.intent + ' | this email ' + JSON.stringify(Object.fromEntries(Object.entries(orC.fields.new).map(([k, v]) => [k, v.value])))
             + ' | earlier ' + JSON.stringify(Object.fromEntries(Object.entries(orC.fields.earlier).map(([k, v]) => [k, v.value]))) + (orC.rejected.length ? ' | DROPPED ' + JSON.stringify(orC.rejected) : ''));
         }
@@ -4320,7 +4336,7 @@ app.post('/chat', async (req, res) => {
           // The customer's stated zone and the date whose windows were offered carry across the thread's emails (each
           // email is a new turn) — "2 PM" after windows shown in ET is 2 PM ET, as on Slack (Oct 5, DC).
           state.orderData = { custZone: od.cust_zone || '', windowsDate: od.windows_date || '', pendingWhen: od.pending_when || '' }; let askedT = null;
-          await validateDeliveryTime(state, whenPhrase, email, format, { json: pl => { askedT = pl && (pl.text || pl.response); return null; } });
+          await validateDeliveryTime(state, whenPhrase, email, format, { json: pl => { askedT = pl && (pl.text || pl.response); return null; } }); state.orderData.delivery_confirm_note = '';   // email / connector replies show the delivery themselves
           if (state.orderData.custZone) od.cust_zone = state.orderData.custZone;
           if (state.orderData.windowsDate) od.windows_date = state.orderData.windowsDate;
           od.pending_when = state.orderData.pendingWhen || '';
@@ -5865,7 +5881,7 @@ app.post('/chat', async (req, res) => {
         state.orderData.instructions_asked = true;
         state.orderStep = 'instructions';
         saveFlowState();
-        const askI = 'Any delivery instructions for the driver? (e.g. buzzer or door code, loading dock, floor/suite, or an on-site contact) — or say "none".';
+        const askI = takeDeliveryConfirm(state) + 'Any delivery instructions for the driver? (e.g. buzzer or door code, loading dock, floor/suite, or an on-site contact) — or say "none".';
         return res.json({ text: askI, response: askI });
       }
       // Never present an unvalidated delivery time. If no ISO instant was produced (no
@@ -7893,7 +7909,7 @@ app.post('/internal/order-preview', async (req, res) => {
   else {
     const st = { lastLineItems: JSON.stringify(items), address, orderData: {} };
     let asked = null;
-    await validateDeliveryTime(st, String(b.delivery_datetime), '', 'plain', { json: pl => { asked = pl && (pl.text || pl.response); return null; } });
+    await validateDeliveryTime(st, String(b.delivery_datetime), '', 'plain', { json: pl => { asked = pl && (pl.text || pl.response); return null; } }); st.orderData.delivery_confirm_note = '';   // email / connector replies show the delivery themselves
     if (asked) problems.push(asked);
     else delivery = { window: st.orderData.delivery_window_display || st.orderData.delivery_datetime || '', date: st.orderData.delivery_date_label || '', iso: st.orderData.delivery_datetime_iso || '', raw: st.orderData.delivery_datetime || '' };
   }

@@ -1102,6 +1102,15 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   unknown = kept. Gen2Fund Boston: Oyster Bay / Carlsberg 12 x 16 at 0 were listed, offered, removed again, and the Budweiser
   36 (0) went in through a swap. precheck restarts shopping-agent for catalog-api.js. qa/unit/out-of-stock.test.js.
 
+- Relative delivery dates on the delivery zone's calendar + the time said back (Nov 17, DC on Slack): Sun Nov 15 8:06 PM ET
+  (01:06 UTC Nov 16) "tomorrow 3 pm EST" was booked Tue Nov 17 — chrono read "tomorrow" on the server's UTC day. chrono-today.js
+  parse(text, now, {zone}) reads today / tomorrow / weekdays against the zone's wall clock (wallNow), results still wall-clock
+  fields; validateDeliveryTime + deliveryWindowsOn pass the customer's zone, else the address's; order-reader's date check too.
+  Once a time is accepted against a real window the next chat reply opens "Got it — delivery on Tue, Nov 17 (tomorrow), 3:00 PM -
+  4:00 PM ET." (takeDeliveryConfirm; before the driver-instructions question, or the summary after a time change; [delivery]
+  confirmed back to the customer). Email / connector replies already state the delivery (note cleared there).
+  Scenario 155, qa/unit/delivery-date-zone.test.js.
+
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
   so PDFs sent before Oct 15 still open (ask DC first; nginx).

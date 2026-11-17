@@ -128,9 +128,10 @@ function check(rd, ctx = {}) {
   take('onsite_phone', s.phone, phoneTest, fmtPhone);
   take('date', d.date, (v) => {
     if (NOT_TIME.test(v) && !/^today$/i.test(v)) return 'not a date';
-    const r = require('./chrono-today.js').parse(v, ctx.now || new Date())[0];
+    const CTD = require('./chrono-today.js');
+    const r = CTD.parse(v, ctx.now || new Date(), { zone: ctx.zone })[0];
     if (!r && !/^(?:today|tomorrow)$/i.test(v)) return 'not a date the code can read';
-    if (r) { const t0 = new Date(ctx.now || new Date()); t0.setHours(0, 0, 0, 0); if (r.start.date().getTime() < t0.getTime()) return 'before today'; }
+    if (r) { const t0 = CTD.wallNow(ctx.zone, ctx.now || new Date()); t0.setHours(0, 0, 0, 0); if (r.start.date().getTime() < t0.getTime()) return 'before today'; }
     return '';
   });
   take('time', d.start_time, (v) => (NOT_TIME.test(v) ? '"' + v + '" is not a delivery time' : /\d/.test(v) || /\bnoon\b/i.test(v) ? '' : 'not a time'));

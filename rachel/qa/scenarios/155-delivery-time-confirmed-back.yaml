@@ -1,0 +1,26 @@
+# DC, Nov 17: "confirm the date and time once the customer has clarified" — after "tomorrow 3 pm EST" at 8 PM ET was booked a
+# day late (server's UTC day). The accepted delivery is said back with its real date before the next question.
+name: delivery-time-confirmed-back
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+  - send: "place the order"
+    expect: {contains: ["full name"]}
+  - send: "QA Tester"
+  - send: "same"
+  - send: "9175550100"
+    expect: {contains: ["date", "time"]}
+  - send: "tomorrow at 5 pm ET"
+    expect:
+      contains: ["Got it — delivery on", "(tomorrow)", "instructions"]
+      matches: "0?5:00 PM - 0?6:00 PM ET"
+      log_contains: ["[delivery] confirmed back to the customer"]
+  - send: "none"
+  - send: "no tip"
+    expect: {contains: ["Order Summary"], not_contains: ["Got it — delivery on"]}
+  - send: "change the delivery time to 3 pm tomorrow"
+    expect: {contains: ["Got it — delivery on", "Shall I go ahead"], matches: "0?3:00 PM - 0?4:00 PM ET"}
