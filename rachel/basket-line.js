@@ -11,7 +11,19 @@ function basketLineFor(items, itemName) {
   const origW = nrmW(cleaned);
   if (!origW.length) return -1;
   const need = Math.min(origW.length, Math.max(2, Math.ceil(origW.length * 0.6)));
-  return (items || []).findIndex(it => { const iw = new Set(nrmW(it.name || it.label)); return origW.filter(w => iw.has(w)).length >= need; });
+  // The BEST line wins, and it must share a NAME word — pack words ("30", "x", "12", "cans") are not a name. Real (Nov 17,
+  // DC on Slack, Gen2Fund): "change 1x Budweiser 30 x 12 OZ Cans to 1x Budweiser 36 x 12 OZ Cans" replaced the Michelob
+  // Ultra 30 x 12 OZ Cans line (listed first; "30 x cans" was 3 of the 4 words needed) and left the Budweiser line.
+  const PACKW = /^(?:\d+|x|\d+x|pack|packs|pk|case|cases|can|cans|bottle|bottles|btl|btls|oz|ml)$/;
+  const nameW = origW.filter(w => !PACKW.test(w));
+  let bestI = -1, bestS = 0;
+  (items || []).forEach((it, i) => {
+    const iw = new Set(nrmW(it.name || it.label));
+    const s = origW.filter(w => iw.has(w)).length;
+    if (s < need || !nameW.some(w => iw.has(w))) return;
+    if (s > bestS) { bestS = s; bestI = i; }
+  });
+  return bestI;
 }
 
 module.exports = basketLineFor;

@@ -1089,6 +1089,13 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   question names the time read ("Which time zone is the delivery time (tomorrow at 12:00 PM) in ... reply "yes" if it's
   Eastern") and "yes" = the delivery address's zone (chat + email). Scenarios 148-152.
 
+- Nov 17 (DC on Slack, Gen2Fund Boston list): the same wine / spirit in another size stands in at the volume asked, said
+  (functions.js size-mismatch block: "RumChata Liqueur 1.75L" -> 2 x RumChata Original 750 mL, "1.75L isn't carried — 2 x
+  750 mL (1.5 L) for the 1.75 L asked"; largest bottle not over the asked size, qty = volume rounded; [buildPackage] size:) —
+  it was UNAVAILABLE, then 1x, and the Limón was offered. basket-line.js takes the BEST-scoring line and it must share a
+  name word (pack words "30 x 12 oz cans" never count): "change 1x Budweiser 30 x 12 to Budweiser 36 x 12" replaced the
+  Michelob Ultra 30 x 12 line. Scenario 154, qa/unit/basket-line.test.js.
+
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
   so PDFs sent before Oct 15 still open (ask DC first; nginx).

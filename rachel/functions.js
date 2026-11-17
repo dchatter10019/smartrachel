@@ -1603,6 +1603,28 @@ async function buildPackage(iv) {
           console.log('[buildPackage] size: ' + best.name + ' — its name states ' + requestedSizeMatch[0] + ' (size field ' + best.sizeStr + ') — counted as the requested size');
           foundSizeNorm = reqSizeNorm;
         }
+        // The SAME bottle in another size (a wine / spirit / liqueur): that bottle, enough of them for the volume asked,
+        // said. Real (Nov 17, DC on Slack, Gen2Fund Boston): "(1) RumChata Liqueur 1.75L" was UNAVAILABLE with RumChata
+        // Original 750 mL on the shelf; the cart then got it at 1x (750 mL for 1.75 L) and Rachel offered the Limón.
+        // Quantity = the asked volume / the bottle, rounded (1.75 L -> 2 x 750 mL). Packs and minis never.
+        if (reqSizeNorm !== foundSizeNorm && (catN === 'wine' || catN === 'spirits')) {
+          var mlOf = function (t) { var m = String(t || '').toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l|liter|litre)\b/); return m ? (/^m/.test(m[2]) ? +m[1] : +m[1] * 1000) : 0; };
+          var askMl = mlOf(requestedSizeMatch[0]);
+          var bwZ = PM.brandWords(reqForFit);
+          var sameProd = function (p) { return p && !isMini(p) && altSane(p) && !PM.packCount(p.name) && !PM.fit(reqForFit, p).missing.filter(function (w) { return bwZ.indexOf(w) >= 0; }).length && mlOf((p.sizeStr || '') + ' ' + p.name) > 0; };
+          if (askMl > 0 && sameProd(best)) {
+            var szPick = best, szMl = mlOf((best.sizeStr || '') + ' ' + best.name);
+            (found || []).forEach(function (p) {   // the largest bottle not over the asked size; ties keep the ranking (best first)
+              var m = sameProd(p) ? mlOf((p.sizeStr || '') + ' ' + p.name) : 0;
+              if (m > 0 && m <= askMl && (szMl > askMl || m > szMl)) { szPick = p; szMl = m; }
+            });
+            if (szMl > 0 && Math.abs(szMl - askMl) > 1) {
+              best = szPick; foundSizeNorm = reqSizeNorm;
+              np._sizeTo = { askMl: askMl, unitMl: szMl, asked: requestedSizeMatch[0] };
+              console.log('[buildPackage] size: ' + JSON.stringify(np.name) + ' — ' + requestedSizeMatch[0] + ' not carried; same bottle in ' + Math.round(szMl) + ' mL: ' + best.name + ' (qty sized to the volume below)');
+            }
+          }
+        }
         if (reqSizeNorm !== foundSizeNorm) {
           console.log('[buildPackage] UNAVAILABLE (size mismatch):', JSON.stringify(np.name), 'best match:', JSON.stringify(best && best.name));
           unavailable.push(np.name);
@@ -1660,9 +1682,17 @@ async function buildPackage(iv) {
           qty=q5;
         } else console.log('[buildPackage] volume: '+JSON.stringify(np.name)+' asked '+np.volume_ml+' mL; '+best.name+' has no readable size — qty '+qty+' kept (flagged)');
       }
+      if (np._sizeTo) {   // the same bottle in another size (size-mismatch block above): the asked volume, rounded
+        var zT=np._sizeTo, q6=Math.max(1,Math.round(qty*zT.askMl/zT.unitMl));
+        var fmtL=function(ml){ return ml>=1000 ? (Math.round(ml/10)/100)+' L' : Math.round(ml)+' mL'; };
+        nearNote=zT.asked.replace(/\s+/g,'')+' isn\'t carried — '+q6+' x '+fmtL(zT.unitMl)+' ('+fmtL(q6*zT.unitMl)+') for the '+fmtL(qty*zT.askMl)+' asked';
+        console.log('[buildPackage] size: '+qty+' x '+JSON.stringify(np.name)+' = '+Math.round(qty*zT.askMl)+' mL -> '+q6+' x '+best.name);
+        qty=q6; delete np._sizeTo;
+      }
       if (typeof packNote==='string' && packNote) vd.note=vd.note.replace(/\d+-pack, not \d+/, packNote);
       var match=altNote ? {kind:'alternative',asked:np.name,note:altNote+(vd.note&&/packs here/.test(vd.note)?'; '+packNote:'')} : vd.kind==='exact' ? {kind:'exact'} : {kind:'closest',asked:np.name,note:vd.note};
       if (nearNote && match.kind==='exact') match={kind:'closest',asked:np.name,note:nearNote};
+      else if (nearNote && /isn't carried — \d+ x/.test(nearNote) && match.kind==='closest') match.note=nearNote+(match.note&&match.note.indexOf(nearNote)<0?'; '+match.note:'');
       // The request names two brands' words and the pick has only one of them ("Remy Cointreau" -> Remy Martin
       // 1738): the other word may be a product of its own. Real bug (Oct 1, DC): the note said "no cointreau in
       // stock" while Cointreau Orange Liqueur 750 mL was on the shelf. Search the missing brand words and

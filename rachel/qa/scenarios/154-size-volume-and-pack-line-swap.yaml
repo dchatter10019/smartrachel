@@ -1,0 +1,26 @@
+name: size-volume-and-pack-line-swap
+format: plain
+# Nov 17 (DC on Slack, Gen2Fund Boston order list). (1) "(1) RumChata Liqueur 1.75L" was UNAVAILABLE (size mismatch)
+# with RumChata Original 750 mL on the shelf; it went in at 1x (750 mL for 1.75 L) and Rachel offered the Limón. The same
+# bottle in another size now stands in at the volume asked (1.75 L -> 2 x 750 mL), said. (2) "change 1x Budweiser 30 x 12
+# OZ Cans to 1x Budweiser 36 x 12 OZ Cans" replaced the MICHELOB ULTRA 30 x 12 line (listed first; the pack words matched)
+# and left the Budweiser line: basket-line.js now takes the best line, and it must share a name word.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "100 Federal St, Boston, MA 02110"
+  - send: "- 2 x Michelob Ultra 30 x 12 OZ Cans\n- 1 x Budweiser 30 x 12 OZ Cans\n- 1 x RumChata Liqueur 1.75L"
+    expect:
+      contains: ["RumChata Original", "Michelob Ultra", "Budweiser"]
+      not_contains: ["RumChata Liqueur 1.75L isn't available", "Limón"]
+      matches: "2x RumChata Original Cream Liqueur"
+      log_contains: ["[buildPackage] size: \"RumChata Liqueur 1.75L\""]
+  - send: "also change 1x Budweiser 30 x 12 OZ Cans — $29.99 ea = $29.99 to 1x Budweiser 36 x 12 OZ Cans"
+    expect:
+      contains: ["2x Michelob Ultra 30 x 12 OZ Cans", "Budweiser 36 x 12 OZ Cans"]
+      not_contains: ["Budweiser 30 x 12 OZ Cans —"]
+      log_not_contains: ["[confirm-substitute] line replaced: \"Michelob Ultra"]
+  - send: "show me the basket"
+    expect:
+      contains: ["2x Michelob Ultra 30 x 12 OZ Cans", "1x Budweiser 36 x 12 OZ Cans", "2x RumChata Original"]
+      not_contains: ["Budweiser 30 x 12 OZ Cans"]
