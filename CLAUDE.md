@@ -823,11 +823,11 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   answers about one call at a time, so time ~ number of calls).
 - Catalog 5xx/429: searchProducts retries twice; a build that still hit failures returns CATALOG_UNREACHABLE,
   never "isn't available at this store".
-- The CART is cleared (server.js clearCart, [cart] cleared (<why>); DC, Oct 28) after RACHEL_BASKET_IDLE_HOURS (1) idle (the
-  reply opens "It's been over an hour, so I cleared your earlier cart"; QA: scenario turn `idle: 1.5`), on a new delivery
+- The CART is cleared (server.js clearCart, [cart] cleared (<why>); DC, Oct 28) after RACHEL_BASKET_IDLE_HOURS (4; was 1 until Nov 17 — DC: "four is fine" after the Gen2Fund 19-line cart was cleared
+  3.2h in while he answered its stand-ins; same as the conversation's 4h, so in chat the fresh start now comes first), on a new delivery
   address (was: moved to the new store), and on "new/separate/another order|menu|basket|cart" / "start over" (also mid-
   checkout or mid-proposal). Email threads are exempt from the idle and address clears (the thread's quote stays). clearCart
-  also drops the saved last basket (baskets.json): gbrain.getPackage never reloads one older than 1h outside email (Oct 27:
+  also drops the saved last basket (baskets.json): gbrain.getPackage never reloads one older than 4h outside email (Oct 27:
   the idle reset emptied the session, then checkout reloaded a $1,175 basket from an earlier conversation). Checkout on an
   empty cart is not started ("Your cart is empty right now — what would you like to order?"). Scenario 109.
 - A conversation expires after RACHEL_IDLE_HOURS (4) idle, except email threads; age is re-asked. An email thread's

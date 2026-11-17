@@ -10,13 +10,14 @@ turns:
   - send: "1"
   - send: "2"
     expect: {contains: ["Kim Crawford"]}
-  # 1.5h of silence: the cart is gone, the customer is told, checkout doesn't start on the old basket.
-  - send: "place the order"
+  # 1.5h of silence keeps the cart (DC, Nov 17: "four is fine" — the Gen2Fund cart was cleared after 3.2h mid-answer).
+  # Past 4h the whole conversation starts fresh (scenario 15).
+  - send: "show my basket"
     idle: 1.5
     expect:
-      contains: ["cleared your earlier cart"]
-      not_contains: ["Kim Crawford", "full name", "Ordering as"]
-      log_contains: ["[cart] cleared (idle 1.5h > 1h)"]
+      contains: ["Kim Crawford"]
+      not_contains: ["cleared your earlier cart"]
+      log_not_contains: ["[cart] cleared (idle"]
   - send: "need a kim crawford"
   - send: "1"
   - send: "2"

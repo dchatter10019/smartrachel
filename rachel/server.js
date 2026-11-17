@@ -288,7 +288,7 @@ const packageCache = {};   // cacheKey -> line_items (L1)
 // flowState persisted to disk
 const FLOW_STATE_PATH = dataDir.file('flow-state.json');
 const IDLE_HOURS = Number(process.env.RACHEL_IDLE_HOURS) || 4;
-const BASKET_IDLE_HOURS = Number(process.env.RACHEL_BASKET_IDLE_HOURS) || 1;   // silence after which the cart is emptied (DC, Oct 28)   // silence after which the next message starts a fresh conversation
+const BASKET_IDLE_HOURS = Number(process.env.RACHEL_BASKET_IDLE_HOURS) || 4;   // silence after which the cart is emptied (DC, Oct 28: 1h; Nov 17: 4h — the Gen2Fund 19-line cart was cleared after 3.2h while DC answered its stand-ins)
 const CONFIRM_ADD_PRICE = Number(process.env.RACHEL_CONFIRM_ADD_PRICE) || 200;   // a single search match at/above this per-bottle price is offered, not added (add-item)
 const usd = n => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 let flowState = {};
@@ -2377,7 +2377,7 @@ app.post('/chat', async (req, res) => {
         const _jI = res.json.bind(res);
         res.json = (payload) => {
           try {
-            const note = "It's been over an hour, so I cleared your earlier cart — let's start fresh.";
+            const note = "It's been about " + Math.round(idleH) + " hours, so I cleared your earlier cart — let's start fresh.";
             if (payload && typeof payload.text === 'string' && payload.text.trim() && !/cleared your earlier cart/.test(payload.text)) {
               payload.text = note + '\n\n' + payload.text; if (typeof payload.response === 'string') payload.response = payload.text;
             }
