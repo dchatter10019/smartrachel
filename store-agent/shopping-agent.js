@@ -691,6 +691,7 @@ async function executeTool(name, input) {
       spirit_max_price: input.spirit_max_price || 0, spirit_min_price: input.spirit_min_price || 0,
       beer_pack_size: input.beer_pack_size || 0,
       min_bottle_ml: input.min_bottle_ml || 0,     // rachel/bottle-size.js: "only 750 mL or larger" (Nov 9)
+      exact_bottle_ml: input.exact_bottle_ml || 0, // rachel/bottle-only.js: "use only 750 ml bottles" (Nov 18)
       no_wine_types: input.no_wine_types || null,   // rachel/wine-coverage.js: "no sparkling, only red and white" (Nov 18)
       spirit_types: input.spirit_types || null,   // rachel/event-prefs.js: the spirits the customer asked for (Oct 9)
       wine_lean: input.wine_lean || '',            // rachel/event-wishes.js: "more white than red" (Oct 21)

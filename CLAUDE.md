@@ -1131,6 +1131,21 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   gets it as its name (it read as empty -> generic recommendation). Scenarios 156 (slack), 157 (plain);
   qa/unit/slack-nov18.test.js. alternatives-anchored no longer requires Far Niente (its Chardonnay left the 10010 catalog).
 
+- A QUESTION never rebuilds the basket (Nov 18, DC: "yes build it"; the Foodie For All chat: the model answered a question by
+  calling menu_build again, the cart was replaced and the reply described another package). rachel/rebuild-guard.js
+  questionOnly(message, event): a question (? / why / what / is ...) with no change words (add, remove, swap, make it, more,
+  cheaper, use, rebuild, need, proposal ...) and no NEW guest / hour / $ number (the event's own "enough for 140 guests?" is a
+  question). rachel.js: the MODEL's menu_build / custom_list on such a turn with a basket is refused before the builder
+  ([rebuild-guard] ... REFUSED, basket_kept + current_basket -> the model answers about the cart it has); code-decided builds
+  (scriptedToolCall: [event-dpp], list builds) never are (sessionState.scriptedBuild). Every /chat channel (Slack, WhatsApp,
+  email, rachel_chat); Voiceflow's rachel_build_package is an explicit build, untouched. Scenario 158, qa/unit/rebuild-guard.test.js.
+  Same day, the Nov 18 fixes checked on email + connector: "use only 750 ml bottles" in a BRIEF is read at build time too
+  (bottle-only.js exactSizeIn -> menu_build exact_bottle_ml -> buildPackage wine / spirit slots take that size when carried,
+  [buildPackage] ... only N mL bottles; rachel.js from the customer's words or state.bottleSizeOnly, rachel-mcp build_package
+  from request + serving_mix, which also passes no_wine_types — "no sparkling" never reached Voiceflow's builds); SIZE ONLY
+  regenerates a sent proposal in an email thread (or when asked; [size-only] proposal regenerated); remainderOf drops an
+  email's greeting / sign-off ("Thanks, Sean" went on to the model as "Sean").
+
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
   so PDFs sent before Oct 15 still open (ask DC first; nginx).

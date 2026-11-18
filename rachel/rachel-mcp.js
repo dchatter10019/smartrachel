@@ -706,6 +706,10 @@ async function runTool(name, input, callerEmail, apiKey, mcpSession) {
       if (mixersF.defaulted) console.log('[rachel-mcp] build_package: "mixers" asked for, none named — the standard set: ' + mixers.join(', '));
       const minBottleMl = require('./bottle-size.js').minBottleMlIn(saidText);
       if (minBottleMl) console.log('[rachel-mcp] build_package: ' + minBottleMl + ' mL or larger wine / spirit bottles');
+      // "only 750 ml bottles" / "no sparkling" in the brief — the same readers as Slack / email / rachel_chat (Nov 18).
+      const exactBottleMl = require('./bottle-only.js').exactSizeIn(saidText);
+      const noWineTypes = require('./wine-coverage.js').noWineTypesIn(saidText);
+      if (exactBottleMl || noWineTypes.length) console.log('[rachel-mcp] build_package:' + (exactBottleMl ? ' only ' + exactBottleMl + ' mL bottles' : '') + (noWineTypes.length ? ' no ' + noWineTypes.join(' / ') + ' wine' : ''));
       if (mixers.length || mixed) console.log('[rachel-mcp] build_package mixers: ' + (mixers.join(', ') || 'none named') + (mixed ? ' — mixed drinks' : ''));
       // Which spirits / which beer (event-prefs.js; Oct 7: "bourbon and tequila bar", "Oktoberfest beer" were never passed).
       const EP = require('./event-prefs.js'), sp = cats.includes('spirits') ? EP.spiritTypesIn(saidText) : null, bs = cats.includes('beer') ? EP.beerStyleIn(saidText) : null;
@@ -714,7 +718,7 @@ async function runTool(name, input, callerEmail, apiKey, mcpSession) {
       if (wl || mb) console.log('[rachel-mcp] build_package wishes:' + (wl ? ' wine lean ' + wl : '') + (mb ? ' mix bias ' + mb : ''));
       if (sp || bs) console.log('[rachel-mcp] build_package asked for: ' + (sp ? 'spirits ' + sp.types.join(', ') + ' (' + sp.why + ')' : '') + (sp && bs ? ' · ' : '') + (bs ? 'beer ' + bs.label : ''));
       result = await callShoppingAgent('menu_build', {
-      mixers, mixed_drinks: mixed, mixers_default: mixersF.defaulted || undefined, min_bottle_ml: minBottleMl || undefined,
+      mixers, mixed_drinks: mixed, mixers_default: mixersF.defaulted || undefined, min_bottle_ml: minBottleMl || undefined, exact_bottle_ml: exactBottleMl || undefined, no_wine_types: noWineTypes.length ? noWineTypes : undefined,
       spirit_types: sp ? sp.types : undefined, beer_style: bs || undefined,
       wine_lean: wl || undefined, mix_bias: mb || undefined,
       guests: input.guests,

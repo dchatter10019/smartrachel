@@ -3996,8 +3996,18 @@ app.post('/chat', async (req, res) => {
           + (kept.length ? (resized.length ? '\n\n' : '') + 'Not carried in ' + sizeL + ' here, so I kept ' + (kept.length === 1 ? 'it' : 'them') + ' as is: ' + kept.join(', ') + '. Say "find another" and I\'ll look for one in ' + sizeL + '.' : '');
         console.log('[size-only] ' + sizeL + ' only: ' + resized.length + ' line(s) resized, ' + kept.length + ' kept | session size ' + wantMl);
         const restS = BO.remainderOf(message);
+        // A proposal the customer already has is regenerated (email quotes stay current, like QUOTE EDITS; any channel when the
+        // message asks for it) — Nov 18: the resized basket was only listed, the PDF kept the 1.75 L bottles.
+        let pdfS = '';
+        if (!restS && resized.length && state.lastProposalUrl && (/^email-/.test(String(sessionKey || '')) || /\b(?:proposal|pdf|quote|regenerate)\b/i.test(message))) {
+          try {
+            let itP = []; try { itP = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+            const url = await quotePdf(state, itP, String(state.savedClientName || '').trim(), state.savedEventDate || '', 0);
+            pdfS = '\n\nYour updated PDF proposal is attached: ' + url; console.log('[size-only] proposal regenerated (' + itP.length + ' lines): ' + url);
+          } catch (e) { pdfS = '\n\nI couldn\'t regenerate the PDF just now — reply "send the proposal" and I\'ll try again.'; console.log('[size-only] proposal regeneration FAILED (changes kept, customer told): ' + e.message); }
+        }
         if (!restS) {
-          const rS = said + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+          const rS = said + basketAfterChange(state) + pdfS + (pdfS ? '' : '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?');
           return res.json({ text: rS, response: rS });
         }
         // the rest goes on as its own message, told what was done

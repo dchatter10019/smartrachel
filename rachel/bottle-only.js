@@ -23,8 +23,16 @@ function exactSizeIn(text) {
   return 0;
 }
 function remainderOf(text) {
-  const parts = String(text || '').split(/\s*(?:\.{2,}|…|[.;!\n]|,|\band\s+(?=(?:use|add|make|swap|change|remove|take|get|switch|replace|increase|decrease|also)\b))\s*/i).map(x => x.trim()).filter(Boolean);
-  return parts.filter(p => !exactSizeIn(p)).join('. ').replace(/^(?:and|also|then)\s+/i, '').trim();
+  const parts = String(text || '').split(/\s*(?:\.{2,}|…|[.;!?\n]|,|\band\s+(?=(?:use|add|make|swap|change|remove|take|get|switch|replace|increase|decrease|also)\b))\s*/i).map(x => x.trim()).filter(Boolean);
+  // An email's greeting / sign-off is not a request (Nov 18: "Hi Rachel, ... Thanks, Sean" went on as "Hi Rachel. Sean").
+  const out = [];
+  for (const p of parts) {
+    if (/^(?:thanks?(?: you| so much| a lot)?|thx|cheers|best(?: regards)?|regards|kind regards|warm(?:ly| regards)|sincerely|talk soon)\b/i.test(p)) break;
+    if (/^(?:hi|hello|hey|dear|good (?:morning|afternoon|evening))\b[\w\s'’-]{0,30}$/i.test(p)) continue;
+    if (/^(?:please|pls)$/i.test(p)) continue;
+    if (!exactSizeIn(p)) out.push(p);
+  }
+  return out.join('. ').replace(/^(?:and|also|then)\s+/i, '').trim();
 }
 const mlOf = t => { const m = String(t || '').match(/(\d+(?:\.\d+)?)\s*(ml|cl|l|lt|liters?|litres?)\b/i); return m ? Math.round(+m[1] * UNIT(m[2])) : 0; };
 // The product's name without its size ("Belvedere Organic Vodka - 1.75 L" -> "belvedere organic vodka")

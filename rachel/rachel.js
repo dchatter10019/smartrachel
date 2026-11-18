@@ -449,6 +449,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             saInput.mixers = mx; saInput.mixed_drinks = MX.mixedDrinks(said);
             if (mxF.defaulted) { saInput.mixers_default = true; console.log('[mixers] "mixers" asked for, none named — the standard set: ' + mx.join(', ')); }
             { const mb = require('./bottle-size.js').minBottleMlIn(said); if (mb) { saInput.min_bottle_ml = mb; console.log('[bottle-size] the customer asked for ' + mb + ' mL or larger wine / spirit bottles'); } }
+            { const xb = require('./bottle-only.js').exactSizeIn(said) || (sessionState && sessionState.bottleSizeOnly) || 0; if (xb) { saInput.exact_bottle_ml = xb; console.log('[bottle-only] wine / spirit slots in ' + xb + ' mL bottles (the customer asked for that size only)'); } }
             { const nw = [...new Set([].concat(require('./wine-coverage.js').noWineTypesIn(said), (eventParams && eventParams.no_wine_types) || []))]; if (nw.length) { saInput.no_wine_types = nw; console.log('[wine-coverage] wine kinds left out of this build (the customer\'s words / an earlier removal): ' + nw.join(', ')); } }
             if (mx.length || saInput.mixed_drinks) console.log('[mixers] from the customer\'s words: ' + (mx.join(', ') || 'none named') + (saInput.mixed_drinks ? ' — mixed drinks (mixing-grade spirits)' : ''));
           } catch (e) { console.log('[mixers] error: ' + e.message); }
@@ -768,6 +769,21 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           if (!hasExplicitConfirmation) {
             console.log('[order-confirm-gate] BLOCKED place_order — no explicit confirmation in customer message:', JSON.stringify(customerMessage || '').slice(0, 100));
             return { success: false, order_id: '', payment_url: '', error: 'Order placement blocked: no explicit customer confirmation detected for this turn.', action_required: 'Ask the customer to explicitly confirm (e.g. "yes, place the order") before calling place_order again.' };
+          }
+        }
+        // A QUESTION never rebuilds the basket (rebuild-guard.js; DC, Nov 18). The model's own menu_build / custom_list on a turn
+        // that only asks something would replace the cart and the reply could describe another package. Code-decided builds
+        // (scripted calls) are never refused.
+        if ((saInput.intent === 'menu_build' || saInput.intent === 'custom_list') && !(sessionState && sessionState.scriptedBuild)) {
+          let bkG = []; try { bkG = JSON.parse(currentLineItems || '[]') || []; } catch (e) {}
+          const asked = String((sessionState && sessionState.currentUserMessage) || customerMessage || '');
+          const why = bkG.length ? require('./rebuild-guard.js').questionOnly(asked, eventParams || {}) : '';
+          if (why) {
+            console.log('[rebuild-guard] the model\'s ' + saInput.intent + ' REFUSED — ' + why + ', the basket (' + bkG.length + ' line(s)) is kept: ' + JSON.stringify(asked).slice(0, 100));
+            return { success: false, basket_kept: true,
+              error: 'NOT rebuilt: the customer only asked a question, so the basket was NOT changed.',
+              action_required: 'Answer the customer\'s question about the basket below, as it is. Do not describe any other package or say anything was changed. If a change would help, suggest it and ask whether to make it.',
+              current_basket: bkG.map(li => (li.qty || li.quantity || 1) + ' x ' + li.name + (li.price ? ' — $' + (+li.price).toFixed(2) : '')) };
           }
         }
         const saRes = await fetch(STAGING.SA_URL, {
@@ -1146,7 +1162,9 @@ RULES:
   if (scriptedToolCall) {
     const id = 'toolu_code_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
     console.log('[rachel] scripted ' + scriptedToolCall.name + ' call (' + (scriptedToolCall.narrate ? 'decided in code, the model narrates' : 'no model call') + '): ' + JSON.stringify(scriptedToolCall.input).slice(0, 300));
-    const result = await executeTool(scriptedToolCall.name, scriptedToolCall.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems, onShowBasket, eventParams, onUpdateQuantity, onOrderPlaced, sessionState, customerSaid);
+    if (sessionState) sessionState.scriptedBuild = true;   // decided in code: rebuild-guard never refuses it
+    let result;
+    try { result = await executeTool(scriptedToolCall.name, scriptedToolCall.input, onPackageBuilt, channel_format, onProposalGenerated, customerMessage, alreadyConfirmed, context.user_email || '', sendEmailFn, lastProposalUrl, onUnavailableItems, onProductDiscussed, onSubstituteConfirmed, currentLineItems, onShowBasket, eventParams, onUpdateQuantity, onOrderPlaced, sessionState, customerSaid); } finally { if (sessionState) delete sessionState.scriptedBuild; }
     claudeMessages = [...claudeMessages,
       { role: 'assistant', content: [{ type: 'tool_use', id, name: scriptedToolCall.name, input: scriptedToolCall.input }] },
       { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: JSON.stringify(result) }] }];

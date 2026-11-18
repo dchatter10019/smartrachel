@@ -1,0 +1,24 @@
+name: question-keeps-basket
+# Nov 18 (DC): a QUESTION about a built package never rebuilds it (rebuild-guard.js). In the Foodie For All chat the model
+# answered a question by calling menu_build again: the cart was replaced and the reply described a different package.
+# Plain format = email / WhatsApp / the connector's rachel_chat (rule 8). A change asked as a question still rebuilds.
+tags: [events]
+format: plain
+turns:
+  - send: reset
+  - send: "Need wine, beer and spirits for 40 people, 3 hours, budget $1,500"
+    expect: {contains: ["21"]}
+  - send: "yes"
+    expect: {matches: "(?i)address"}
+  - send: "300 Park Avenue, New York, NY 10022"
+    expect: {matches: "(?i)drink most"}
+  - send: "Even"
+    expect: {contains: ["Product total"]}
+  - send: "Why is there so much vodka? Is that enough for 40 guests?"
+    expect:
+      log_not_contains: ["[ShoppingAgent] intent: menu_build", "[ShoppingAgent] intent: custom_list"]
+      not_matches: "(?i)here'?s (?:your|the) (?:new|updated|revised) (?:package|menu)"
+  - send: "Can we make it 60 guests?"
+    expect:
+      contains: ["Product total"]
+      log_not_contains: ["[rebuild-guard]"]

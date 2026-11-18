@@ -320,6 +320,8 @@ async function buildPackage(iv) {
   var drinksPerPersonInput = parseFloat(iv.drinks_per_person) || 0;
   // "only 750 mL or larger bottles for wine and spirits" (rachel/bottle-size.js; Nov 9: a 375 mL Chandon went in anyway).
   var minBottleMl = parseFloat(iv.min_bottle_ml) || 0;
+  // "use only 750 ml bottles" in the brief (rachel/bottle-only.js; Nov 18): wine / spirit slots take that size when the store has it.
+  var exactBottleMl = parseFloat(iv.exact_bottle_ml) || 0;
   var rawPackageType = iv.package_type;
   var isCustom = (rawPackageType === "CUSTOM" || rawPackageType === "custom");
   var isSplit = (rawPackageType === "SPLIT" || rawPackageType === "split");
@@ -2045,6 +2047,11 @@ async function buildPackage(iv) {
         var bigEnough=(resAll[pIdx]||[]).filter(function(p){ var ml=bottleMlOf(p.name)||bottleMlOf(p.sizeStr); return !ml || ml>=minBottleMl-10; });
         if (bigEnough.length<(resAll[pIdx]||[]).length) console.log('[buildPackage] '+pl.slot+' slot: '+((resAll[pIdx]||[]).length-bigEnough.length)+' bottle(s) under '+minBottleMl+' mL left out — the customer asked for '+minBottleMl+' mL or larger'+(bigEnough.length?'':' (none left — slot unavailable)'));
         resAll[pIdx]=bigEnough;
+      }
+      if (exactBottleMl>0 && (pl.cat==="wine"||pl.cat==="spirits") && pl.slot!=="mixer") {
+        var exactSz=(resAll[pIdx]||[]).filter(function(p){ var ml=bottleMlOf(p.name)||bottleMlOf(p.sizeStr); return ml && Math.abs(ml-exactBottleMl)<=exactBottleMl*0.05; });
+        if (exactSz.length && exactSz.length<(resAll[pIdx]||[]).length) { console.log('[buildPackage] '+pl.slot+' slot: only '+exactBottleMl+' mL bottles, as the customer asked ('+((resAll[pIdx]||[]).length-exactSz.length)+' other size(s) left out)'); resAll[pIdx]=exactSz; }
+        else if (!exactSz.length) console.log('[buildPackage] '+pl.slot+' slot: no '+exactBottleMl+' mL bottle here — other sizes kept');
       }
       // One bottle of a spirit type that needs fewer than a 750 mL's 16 drinks is a 750 mL (or 1 L), not a 1.75 L (Nov 9:
       // Skyy 1.75 L, ~37 drinks, for a 15-guest bar's ~5 vodka drinks).
