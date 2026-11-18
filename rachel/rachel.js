@@ -297,6 +297,11 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         // top_products (the history that surfaces "Kendall Jackson", which they've bought
         // repeatedly) were never consulted. If the customer is asking for a suggestion,
         // force the recommendation intent and carry the category over.
+        // A query the model named "term" / "label" instead of "name" (Nov 18 plain replay: {"label":"Gin 750 mL","term":"Gin
+        // 750 mL"}) read as an empty query: routed to a generic recommendation, never to alternatives for the basket line.
+        if (saInput.intent === 'product_query' && Array.isArray(saInput.queries)) {
+          for (const q of saInput.queries) if (q && !q.name && (q.term || q.label)) { q.name = q.term || q.label; console.log('[product_query] query name taken from ' + (q.term ? 'term' : 'label') + ': ' + JSON.stringify(q.name)); }
+        }
         if (saInput.intent === 'product_query') {
           const m = String(customerMessage || '').toLowerCase();
           const wantsRec = /\b(recommend|recommendation|suggest|suggestion|what(?:'s| is) good|what do you (?:recommend|suggest|think)|pick (?:something|one|a)|any (?:good|nice)|your (?:pick|favorite)|something (?:nice|good))\b/.test(m);
@@ -444,6 +449,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             saInput.mixers = mx; saInput.mixed_drinks = MX.mixedDrinks(said);
             if (mxF.defaulted) { saInput.mixers_default = true; console.log('[mixers] "mixers" asked for, none named — the standard set: ' + mx.join(', ')); }
             { const mb = require('./bottle-size.js').minBottleMlIn(said); if (mb) { saInput.min_bottle_ml = mb; console.log('[bottle-size] the customer asked for ' + mb + ' mL or larger wine / spirit bottles'); } }
+            { const nw = [...new Set([].concat(require('./wine-coverage.js').noWineTypesIn(said), (eventParams && eventParams.no_wine_types) || []))]; if (nw.length) { saInput.no_wine_types = nw; console.log('[wine-coverage] wine kinds left out of this build (the customer\'s words / an earlier removal): ' + nw.join(', ')); } }
             if (mx.length || saInput.mixed_drinks) console.log('[mixers] from the customer\'s words: ' + (mx.join(', ') || 'none named') + (saInput.mixed_drinks ? ' — mixed drinks (mixing-grade spirits)' : ''));
           } catch (e) { console.log('[mixers] error: ' + e.message); }
           // Which spirits / which beer the customer asked for (event-prefs.js, Oct 9) — from this message, the original request
@@ -619,7 +625,10 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           const hits = bkS.filter(it => require('./basket-line.js')([it], q.name) === 0);
           if (hits.length === 1) {
             console.log('[swap-to-alternatives] "' + q.name + '" for "' + String(customerMessage).slice(0, 80) + '" -> alternatives to basket line "' + hits[0].name + '"');
-            saInput.intent = 'alternatives'; saInput.originals = [{ name: hits[0].name, category: q.category || hits[0].category || 'wine', exclude: [hits[0].name], basket_price: hits[0].price }]; delete saInput.queries;
+            const qMl = (() => { const m = String(q.name || '').match(/(\d+(?:\.\d+)?)\s*(ml|l|lt|liters?|litres?)\b/i); return m ? (/^m/i.test(m[2]) ? +m[1] : +m[1] * 1000) : 0; })();
+            const sizeMl = qMl || (sessionState && sessionState.bottleSizeOnly) || 0;   // the size asked ("Gin 750 mL" / "only 750 ml bottles")
+            saInput.intent = 'alternatives'; saInput.originals = [{ name: hits[0].name, category: q.category || hits[0].category || 'wine', exclude: [hits[0].name], basket_price: hits[0].price, size_ml: sizeMl || undefined }]; delete saInput.queries;
+            if (sizeMl) console.log('[swap-to-alternatives] in the ' + sizeMl + ' mL the customer asked for');
           } else if (hits.length > 1) console.log('[swap-to-alternatives] not rerouted: "' + q.name + '" matches ' + hits.length + ' basket lines');
         }
         // A replacement the customer wrote as "A -> B" must replace A's line — the LLM's original_item is checked against the

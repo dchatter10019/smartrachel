@@ -1,0 +1,49 @@
+name: event-140-sizes-sparkling-gin
+# Nov 18 (DC on Slack, Foodie For All, 140 guests / 2 h, 300 Park Ave): "2 hours" answered with the mix question was lost
+# and asked again; "Use only 750 ml bottles… use high west for bourbon" REMOVED the 1.75 L / 1.5 L lines (vodka + bourbon
+# back at 1 x 750 = under half, sparkling gone); "find a different gin" listed only 1 L gins and said there was no 750 mL
+# gin; "Use the Hendricks" fit none of the listed gins (apostrophe); "The regular Hendrick's gin" -> "couldn't find";
+# "Ok find any other gin" -> "Got it. What else can I get you?"; "I don't need sparkling only red and white wines" removed
+# the sparkling without adding red/white; "delivery as free ... tip to be $50" -> delivery $50; "Thursday 19th" printed raw.
+tags: [events]
+turns:
+  - send: reset
+  - send: "Need wine + beer + spirits for 140 people. Budget 25 to 30 a person"
+    expect: {contains: ["21"]}
+  - send: "yes"
+    expect: {matches: "(?i)address"}
+  - send: "300 Park Avenue ny, ny"
+    expect:
+      matches: "(?i)drink most[\\s\\S]*how long is the event"
+  - send: "2 hours"
+    expect:
+      matches: "(?i)got it — 2 hours[\\s\\S]*drink most"
+      log_contains: ["[menu] event length kept from the reply"]
+  - send: "Even"
+    expect:
+      contains: ["Product total"]
+      not_matches: "(?i)how long is the event"
+  - send: "Use only 750 ml bottles… use high west for bourbon"
+    expect:
+      contains: ["High West", "4x Chandon California Brut - 750", "3x Belvedere Organic Vodka - 750"]
+      log_contains: ["[size-only] 750 mL only", "(same volume)"]
+  - send: "Find a different gin"
+    expect:
+      matches: "(?i)750"
+      not_matches: "(?i)no 750 ?ml gin|options below are all 1 ?l"
+      log_contains: ["candidate(s) in the 750 mL asked for"]
+  - send: "I don't need sparkling only red  and white wines"
+    expect:
+      matches: "(?i)guests covered[\\s\\S]*\\(6 more bottles\\)"
+      log_contains: ["[wine-coverage] sparkling removed from the event package"]
+  - send: "Change the service charge to 8 pct and make the delivery as free and make the tip to be $50"
+    expect:
+      matches: "(?i)delivery \\$0\\.00"
+      not_matches: "(?i)delivery \\$50"
+  - send: "Create a proposal"
+    expect: {matches: "(?i)client|company"}
+  - send: "Foodie For All"
+    expect: {matches: "(?i)event date"}
+  - send: "Thursday 19th"
+    expect:
+      matches: "(?i)November 19|proposals/bevvi-proposal-foodie-for-all-2026-11-19"

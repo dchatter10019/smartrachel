@@ -691,6 +691,7 @@ async function executeTool(name, input) {
       spirit_max_price: input.spirit_max_price || 0, spirit_min_price: input.spirit_min_price || 0,
       beer_pack_size: input.beer_pack_size || 0,
       min_bottle_ml: input.min_bottle_ml || 0,     // rachel/bottle-size.js: "only 750 mL or larger" (Nov 9)
+      no_wine_types: input.no_wine_types || null,   // rachel/wine-coverage.js: "no sparkling, only red and white" (Nov 18)
       spirit_types: input.spirit_types || null,   // rachel/event-prefs.js: the spirits the customer asked for (Oct 9)
       wine_lean: input.wine_lean || '',            // rachel/event-wishes.js: "more white than red" (Oct 21)
       mix_bias: input.mix_bias || '',              // rachel/event-wishes.js: "more beer than wine", "heavy on the spirits"
@@ -1130,7 +1131,17 @@ async function executeTool(name, input) {
       const excl = new Set([o.name].concat(Array.isArray(o.exclude) ? o.exclude : []).map(nmX));
       const nC = cands.length; cands = cands.filter(p => !excl.has(nmX(formatProduct(p).name)) && !excl.has(nmX(p.name)));
       if (cands.length < nC) console.log('[alternatives] left out ' + (nC - cands.length) + ' candidate(s) = the product being replaced: ' + JSON.stringify([...excl]));
-      const r = rankAlternatives({ name: o.name, type: o.type || '' }, cands.map(p => Object.assign(formatProduct(p), { subCategory: p.subCategory || '' })), ref || null);
+      // The bottle size the customer asked for (o.size_ml: "Gin 750 mL", or the session's "only 750 ml bottles") — Nov 18,
+      // DC on Slack: after "use only 750 ml bottles", "find a different gin" listed only 1 L gins (the size of the Monkey 47
+      // line) and said "there's no 750 mL gin available here" with Hendrick's 750 on the shelf.
+      const wantMl = parseFloat(o.size_ml) || 0;
+      if (wantMl) {
+        const mlP = p => { const f = formatProduct(p); const t = (f.name || '') + ' ' + (f.size || f.sizeStr || ''); const m = t.match(/(\d+(?:\.\d+)?)\s*(ml|l|lt|liters?|litres?)\b/i); return m ? (/^m/i.test(m[2]) ? +m[1] : +m[1] * 1000) : 0; };
+        const atSize = cands.filter(p => Math.abs(mlP(p) - wantMl) <= wantMl * 0.05);
+        if (atSize.length) { console.log('[alternatives] ' + atSize.length + ' of ' + cands.length + ' candidate(s) in the ' + wantMl + ' mL asked for — only those ranked'); cands = atSize; }
+        else console.log('[alternatives] none in ' + wantMl + ' mL — every size ranked (the reply says so)');
+      }
+      const r = rankAlternatives({ name: o.name, type: o.type || '' }, cands.map(p => Object.assign(formatProduct(p), { subCategory: p.subCategory || '' })), ref || null, wantMl ? { want_ml: wantMl } : undefined);
       console.log('[alternatives] ' + JSON.stringify(o.name) + ' | varietal ' + (r.varietal || '?') + ' | region ' + (r.region || '?') + ' | ref ' + (ref ? '$' + ref.toFixed(2) + ' (' + refSource + ')' : 'none') +
         ' | considered ' + r.considered + ', rejected ' + r.rejected.length + ' | picks: ' + r.alternatives.map(a => a.name + ' $' + a.price + ' [' + a.tier + ', ' + a.region_match + ']').join('; ') + (r.no_tier_match ? ' | NO TIER MATCH' : ''));
       return { query: o.name, found: r.alternatives.length > 0, original_price_estimate: ref ? Math.round(ref) : null, price_source: refSource || null,

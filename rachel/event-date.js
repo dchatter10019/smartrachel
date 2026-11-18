@@ -44,6 +44,26 @@ function normalizeEventDate(raw, now = new Date()) {
     r = m && build(+m[2] - 1, +m[3], +m[1], now);
   }
   if (!r) {
+    // A day of the month with no month, maybe with its weekday: "Thursday 19th", "the 19th", "Thu the 19th" (Nov 18, DC on
+    // Slack: "Thursday 19th" was printed on the PDF as is and the file was named with today's date). = the next upcoming
+    // day with that number; with a weekday, the first of the next 3 months where that day IS that weekday.
+    const dm = s.match(/^\W*(?:(sun|mon|tues?|wed(?:nes)?|thu(?:rs?)?|fri|sat(?:ur)?)(?:day)?,?\s+)?(?:the\s+)?(\d{1,2})(st|nd|rd|th)?\W*$/i);
+    if (dm && (dm[1] || dm[3]) && +dm[2] >= 1 && +dm[2] <= 31) {
+      const WDS = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'];
+      const wi = dm[1] ? WDS.indexOf(dm[1].toLowerCase().slice(0, 3)) : -1;
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      let first = null;
+      for (let k = 0; k < 13; k++) {
+        const d = new Date(today.getFullYear(), today.getMonth() + k, +dm[2]);
+        if (d.getDate() !== +dm[2] || d < today) continue;
+        if (!first) first = d;
+        if (wi < 0 || d.getDay() === wi) { first = d; break; }
+        if (k >= 2) break;   // no such weekday within 3 months = a slip; the next upcoming day number stands
+      }
+      if (first) r = { text: MONTHS[first.getMonth()][0].toUpperCase() + MONTHS[first.getMonth()].slice(1) + ' ' + first.getDate() + ', ' + first.getFullYear(), moved: false };
+    }
+  }
+  if (!r) {
     // "this Sunday", "next Friday", "coming Saturday", "tomorrow", a bare "Sunday" (Nov 13, connector: "This Sunday" was
     // printed on the PDF as the event date). "this <day>" = the next one from today (today itself if it is that day);
     // "next <day>" = the one after this week's when today is earlier in the week than it, as people mean it.

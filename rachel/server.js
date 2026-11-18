@@ -783,7 +783,8 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
           const removeIdx = basketLineFor(items, originalItem);
           if (removeIdx >= 0) console.log('[confirm-substitute] line replaced: ' + JSON.stringify(items[removeIdx].name || items[removeIdx].label));
           if (removeIdx >= 0) {
-            qtyToUse = items[removeIdx].qty || items[removeIdx].quantity || 1; qtyKnown = true;
+            // a count the caller gives wins (size-only: 2 x 1.5 L -> 4 x 750 mL; Nov 18 it was stored at the line's 2)
+            qtyToUse = (opts && Number(opts.qty) > 0 ? Number(opts.qty) : 0) || items[removeIdx].qty || items[removeIdx].quantity || 1; qtyKnown = true;
             categoryToUse = items[removeIdx].category || '';
             packFrom = (items[removeIdx].name || '') + ' ' + (items[removeIdx].size || '');
             items.splice(removeIdx, 1); removedLine = true;
@@ -888,6 +889,18 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
           const replText = (resolved.name || replacementName) + ' ' + (resolved.sizeStr || resolved.size || replacementSize || '');
           const pk = packStandInQty(packFrom, qtyToUse, replText);
           if (pk) { console.log('[confirm-substitute] pack: ' + qtyToUse + ' x ' + pk.from + '-pack (' + JSON.stringify(packFrom.trim()) + ') -> ' + pk.qty + ' x ' + pk.to + '-pack of ' + (resolved.name || replacementName)); qtyToUse = pk.qty; }
+          // An EVENT package line swapped to a smaller bottle keeps its volume (Nov 18, DC on Slack, 140 guests: "use high west
+          // for bourbon" put 1 x High West 750 mL in place of 1 x Woodford 1.75 L — under half the bourbon). Not when the
+          // customer gave the count, and not outside an event (one bottle for one bottle there).
+          else if (removedLine && !(opts && opts.qty) && state.eventParams && Number(state.eventParams.guests) > 0) {
+            const volB = x => { const m = String(x || '').toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l|lt|liters?|litres?)\b/); return m ? (/^m/.test(m[2]) ? +m[1] : +m[1] * 1000) : 0; };
+            const vO = volB(packFrom), vR = volB(resolved.name) || volB(resolved.sizeStr || resolved.size || replacementSize);
+            if (vO && vR && vR < vO * 0.9) {
+              const qv = Math.ceil((qtyToUse * vO) / vR - 0.02);
+              console.log('[confirm-substitute] event volume kept: ' + qtyToUse + ' x ' + Math.round(vO) + ' mL -> ' + qv + ' x ' + Math.round(vR) + ' mL of ' + (resolved.name || replacementName));
+              qtyToUse = qv;
+            }
+          }
         }
         const rp = resolved ? (parseFloat(resolved.salePrice || resolved.price) || replacementPrice || 0) : (replacementPrice || 0);
         const newPid = resolved ? ((resolved.corpProductFilter && resolved.corpProductFilter.corpProductId) || resolved.product_id || resolved.id || '') : '';
@@ -3367,9 +3380,15 @@ app.post('/chat', async (req, res) => {
             ? LIST_SCALE_NOTE
             : 'The customer answered which drinks their guests will have most (' + JSON.stringify(message).slice(0, 80) + '). That preference is applied automatically by the system. Build the event package now with intent=menu_build exactly as you normally would — do NOT set category_splits. In one short line, mention the package leans toward what they said.';
         } else if (!pm.reasked) {
-          pm.reasked = true; saveFlowState();
+          pm.reasked = true;
+          // The event length answered alone is kept on the held request (Nov 18, DC on Slack: "2 hours" to "what will they
+          // drink most? And how long is the event?" got the mix question again, then "Even" built without the hours and
+          // the model asked "how long is the event?" a second time).
+          const durR = durationIn(message);
+          if (durR && !durationIn(pm.message)) { pm.message = pm.message.trimEnd() + ' The event is ' + durR + ' long.'; console.log('[menu] event length kept from the reply: ' + JSON.stringify(durR) + ' — the mix is still asked'); }
+          saveFlowState();
           console.log('[menu] no serving preference in reply — asking once more: ' + JSON.stringify(message).slice(0, 60));
-          const rQ = 'Just so I get the quantities right — which will your guests drink most: ' + pm.labels.join(', ') + '? You can say "mostly ' + pm.labels[0] + '", name two, or "about even".';
+          const rQ = (durR ? 'Got it — ' + durR + '. ' : '') + 'Just so I get the quantities right — which will your guests drink most: ' + pm.labels.join(', ') + '? You can say "mostly ' + pm.labels[0] + '", name two, or "about even".';
           return res.json({ text: rQ, response: rQ });
         } else {
           state.pendingMenu = null; saveFlowState();
@@ -3937,6 +3956,57 @@ app.post('/chat', async (req, res) => {
     // nothing re-sent the PDF. Scope: email sessions and sessions that already have a proposal; an edit
     // that also ADDS items goes to the LLM (adds need a catalog search). Removals/quantities only.
     let preText = '';   // quote edits applied this turn, shown above the order reply when the same email also orders
+    // ── SIZE ONLY (bottle-only.js; Nov 18, DC on Slack: "Use only 750 ml bottles… use high west for bourbon") ────────────
+    // Each wine / spirit line in another size -> the same product in that size at the same volume (in code); none in that
+    // size = kept and said. The rest of the message ("use high west for bourbon") goes on as its own message.
+    if (state.step === 'ready' && !state.orderStep && !state.proposalStep && !state.emailReplace && !state.replacingOrder && !isInternalMsgEarly(message)) {
+      const BO = require('./bottle-only.js');
+      const wantMl = BO.exactSizeIn(message);
+      let itS = []; try { itS = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+      if (wantMl && itS.length) {
+        state.bottleSizeOnly = wantMl;
+        const isWS = li => /^(?:wine|spirits?|liquor)$/i.test(String(li.category || '')) || /^spirit:|^(?:red|white|rose|sparkling)$/.test(require('./drink-type.js').typeOf({ name: li.name }));
+        const off = itS.filter(li => isWS(li) && !/\b\d+\s*x\s*\d/i.test(li.name) && BO.mlOf(li.name + ' ' + (li.size || '')) && Math.abs(BO.mlOf(li.name + ' ' + (li.size || '')) - wantMl) > wantMl * 0.05);
+        const resized = [], kept = [];
+        const restS0 = BO.remainderOf(message).toLowerCase();
+        for (const li of off) {
+          // a line the rest of the message changes ("use high west for bourbon") is left to it — never "kept" then swapped
+          { const st = require('./spirit-type.js').spiritType(li.name); if (restS0 && st && new RegExp('\\b' + st + '\\b').test(restS0)) { console.log('[size-only] ' + li.name + ' left to the rest of the message (' + JSON.stringify(restS0) + ')'); continue; } }
+          const ml0 = BO.mlOf(li.name + ' ' + (li.size || '')), q0 = Number(li.qty || li.quantity) || 1;
+          let prods = [];
+          try {
+            const rr = await fetch(STAGING.SA_URL, { method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
+              body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: BO.coreOf(li.name) + ' ' + wantMl + ' mL', limit: 8 }], zip: state.zip || '', email } } }) });
+            const rt = await rr.text(); const rl = rt.split('\n').find(l => l.startsWith('data:'));
+            const rres = rl ? JSON.parse(JSON.parse(rl.replace('data:', '').trim()).result.content[0].text) : null;
+            prods = (rres && rres.results && rres.results[0] && rres.results[0].products) || [];
+          } catch (e) { console.log('[size-only] search failed for ' + li.name + ': ' + e.message); }
+          const p = BO.sameInSize(li.name, prods, wantMl);
+          if (!p) { kept.push(li.name); console.log('[size-only] KEPT ' + li.name + ' — not carried in ' + wantMl + ' mL (' + prods.length + ' result(s) searched)'); continue; }
+          const q = Math.max(1, Math.ceil(q0 * ml0 / wantMl - 0.02));
+          const inv = Number(p.in_stock != null ? p.in_stock : p.inventory);
+          if (inv > 0 && inv < q) { kept.push(li.name + ' (only ' + inv + ' in ' + wantMl + ' mL in stock)'); console.log('[size-only] KEPT ' + li.name + ' — ' + p.name + ' has ' + inv + ' in stock, ' + q + ' needed (stock.js)'); continue; }
+          const r = await applyBasketSubstitute(sessionKey, email, li.name, p.name, parseFloat(p.salePrice || p.price) || 0, p.sizeStr || p.size || '', { qty: q });
+          if (r && r.success !== false) { const qd = Number(r.qty) || q; resized.push(q0 + 'x ' + li.name + ' → ' + qd + 'x ' + p.name); console.log('[size-only] ' + q0 + ' x ' + ml0 + ' mL ' + li.name + ' -> ' + qd + ' x ' + wantMl + ' mL ' + p.name + (qd === q ? ' (same volume)' : ' (asked ' + q + ')')); }
+          else { kept.push(li.name); console.log('[size-only] KEPT ' + li.name + ' — the swap was refused: ' + ((r && r.error) || '?')); }
+        }
+        saveFlowState();
+        const sizeL = wantMl >= 1000 ? (wantMl / 1000) + ' L' : wantMl + ' mL';
+        const said = (resized.length ? 'Done — ' + sizeL + ' bottles only, same amount to drink:\n' + resized.map(x => '• ' + x).join('\n') : (off.length ? '' : 'Everything is already in ' + sizeL + ' bottles.'))
+          + (kept.length ? (resized.length ? '\n\n' : '') + 'Not carried in ' + sizeL + ' here, so I kept ' + (kept.length === 1 ? 'it' : 'them') + ' as is: ' + kept.join(', ') + '. Say "find another" and I\'ll look for one in ' + sizeL + '.' : '');
+        console.log('[size-only] ' + sizeL + ' only: ' + resized.length + ' line(s) resized, ' + kept.length + ' kept | session size ' + wantMl);
+        const restS = BO.remainderOf(message);
+        if (!restS) {
+          const rS = said + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+          return res.json({ text: rS, response: rS });
+        }
+        // the rest goes on as its own message, told what was done
+        state.codeDoneThisTurn = (state.codeDoneThisTurn || []).concat(resized.map(x => 'resized to ' + sizeL + ': ' + x), kept.map(k => 'kept (no ' + sizeL + '): ' + k));
+        message = restS; msgLower = message.toLowerCase().trim();
+        { const _jS = res.json.bind(res); const pS = said; res.json = (payload) => { try { const t0 = payload && (payload.text || payload.response); if (typeof t0 === 'string' && pS && t0.indexOf(pS) < 0) { payload.text = pS + '\n\n' + t0; payload.response = payload.text; } } catch (e) {} return _jS(payload); }; }
+        console.log('[size-only] the rest of the message goes on: ' + JSON.stringify(restS));
+      }
+    }
     // ── EDIT READER (edit-reader.js; DC, Nov 14: "use a llm to parse the intent and then call the appropriate code") ────────
     // The model reads the basket changes in this message (remove / quantity / swap for a product just shown / add a shown
     // product, a yes to Rachel's offered change, "regenerate the proposal"); the code checks every one against the basket and
@@ -3976,10 +4046,25 @@ app.post('/chat', async (req, res) => {
           if (o.units) console.log('[edit-reader] units: ' + o.units.count + ' single bottles/cans of ' + o.item.name + ' = ' + o.qty + ' x ' + o.units.pack + '-pack (ceil, in code)');
           done.push(o.item.name + ': ' + from + ' -> ' + o.qty);
         }
+        const removedR = [];
         for (const o of v.ops.filter(x => x.op === 'remove')) {
           const i = itR.findIndex(x => nzR(x.name) === nzR(o.item.name));
           if (i < 0) { failed.push(o.item.name + ' (no longer in the basket)'); continue; }
-          itR.splice(i, 1); done.push('removed ' + o.item.name);
+          removedR.push(itR[i]); itR.splice(i, 1); done.push('removed ' + o.item.name);
+        }
+        // A whole kind of wine out of an EVENT package: its servings go to the wine that stays (wine-coverage.js; Nov 18).
+        let coverNoteR = '';
+        if (removedR.length) {
+          const wc = require('./wine-coverage.js').rebalance(itR, removedR, { guests: state.eventParams && state.eventParams.guests });
+          if (wc) {
+            itR = wc.items;
+            for (const c of wc.changes) done.push(c.name + ': ' + c.from + ' -> ' + c.to);
+            const kind = wc.types.map(t => t === 'rose' ? 'rosé' : t).join(' and ');
+            coverNoteR = 'To keep your ' + state.eventParams.guests + ' guests covered, the ' + kind + '\'s servings went to the wine you kept (' + wc.bottles + ' more bottle' + (wc.bottles === 1 ? '' : 's') + ').';
+            // a later rebuild leaves that kind out too
+            state.eventParams = Object.assign({}, state.eventParams, { no_wine_types: [...new Set([].concat(state.eventParams.no_wine_types || [], wc.types))] });
+            console.log('[wine-coverage] ' + kind + ' removed from the event package — ' + wc.bottles + ' bottle(s) added to the wine kept: ' + JSON.stringify(wc.changes.map(c => c.name + ' ' + c.from + '->' + c.to)) + ' | no_wine_types ' + JSON.stringify(state.eventParams.no_wine_types));
+          }
         }
         state.lastLineItems = JSON.stringify(itR);
         packageCache[makeCacheKey(email, state.zip, state.lastFingerprint)] = state.lastLineItems;
@@ -4015,6 +4100,7 @@ app.post('/chat', async (req, res) => {
         const partsR = grpR.map(([h, t, f]) => { const ds = done.filter(t); return ds.length ? h + ':\n' + ds.map(d => '\u2022 ' + f(d)).join('\n') : ''; }).filter(Boolean);
         const feeDone = done.filter(d => / on the proposal$/.test(d));
         if (feeDone.length) partsR.push(feeDone.map(d => d.charAt(0).toUpperCase() + d.slice(1) + '.').join(' '));
+        if (coverNoteR) partsR.push(coverNoteR);
         const doneLine = done.length ? 'Done \u2014 here are the changes:\n\n' + partsR.join('\n\n') : '';
         const failLine = failed.length ? (doneLine ? '\n\n' : '') + 'I couldn\'t make this change: ' + failed.join('; ') + '.' : '';
         if (!rest.length) {
@@ -5218,7 +5304,7 @@ app.post('/chat', async (req, res) => {
         if (!prods) {
           const rr = await fetch(STAGING.SA_URL, {
             method: 'POST', headers: { 'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream' },
-            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: clsRef.replace(/[()]/g, ' ').replace(/\s+/g, ' ').trim(), limit: 8, quantity: clsQty > 1 ? clsQty : undefined }], zip: state.zip || '', email: email } } })
+            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'product_query', arguments: { queries: [{ name: clsRef.replace(/[()]/g, ' ').replace(/\b(?:the\s+)?(?:regular|normal|plain|standard|usual)\b/gi, ' ').replace(/\s+/g, ' ').trim(), limit: 8, quantity: clsQty > 1 ? clsQty : undefined }], zip: state.zip || '', email: email } } })
           });
           const rt = await rr.text(); const rl = rt.split('\n').find(l => l.startsWith('data:'));
           const rd = rl ? JSON.parse(rl.replace('data:', '').trim()) : null;

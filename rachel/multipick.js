@@ -121,13 +121,29 @@ function replacementTarget(pick, items) {
 // recent reply has a list; else { matches } — one = that product, several = ask among them,
 // none = the customer named something not listed.
 const REF_FILLER = new Set(['the', 'please', 'bottle', 'bottles', 'wine', 'one', 'add', 'cart', 'that', 'this', 'with', 'and']);
+// "the regular / normal / plain X" = the listed X with no extra words (Nov 18, DC on Slack: "The regular Hendrick's gin"
+// under "Hendrick's Another Gin / Hendrick's Gin" matched neither, then the catalog search for "regular Hendrick's gin"
+// found nothing — "I couldn't find regular Hendrick's gin").
+const PLAIN_WORDS = new Set(['regular', 'normal', 'plain', 'standard', 'usual', 'basic', 'classic']);
+// Apostrophes never split a word here: "Hendricks" (typed) = "Hendrick's" / "Hendrick’s" (listed). Nov 18: "Use the
+// Hendricks" fit 0 of the 3 listed gins (the list had Hendrick's Gin 1 L) and every Hendrick's size was listed instead.
+const keyWords = x => normP(x).replace(/[’'`]/g, '').split(/[^a-z0-9]+/).filter(w => w.length >= 3);
 function matchListedByName(ref, replies) {
-  const rw = wordsOf(ref).filter(w => !REF_FILLER.has(w) && !/^\d+$/.test(w));
+  const all = keyWords(ref);
+  const plain = all.some(w => PLAIN_WORDS.has(w));
+  const rw = all.filter(w => !REF_FILLER.has(w) && !PLAIN_WORDS.has(w) && !/^\d+$/.test(w));
   if (!rw.length) return null;
   for (const text of (replies || []).slice().reverse()) {
     const opts = parseOptionGroups(text).flatMap(g => g.options.map(o => Object.assign({ heading: g.heading }, o)));
     if (opts.length < 2) continue;
-    const matches = opts.filter(o => { const ow = wordsOf(o.name); return rw.every(w => ow.some(x => x === w || (w.length >= 3 && x.startsWith(w)))); });
+    let matches = opts.filter(o => { const ow = keyWords(o.name); return rw.every(w => ow.some(x => x === w || (w.length >= 3 && x.startsWith(w)))); });
+    if (plain && matches.length > 1) {
+      const SIZE = /^(?:\d+(?:ml|l|oz)?|ml|oz)$/;
+      const extra = o => keyWords(o.name).filter(x => !SIZE.test(x) && !rw.some(w => x === w || x.startsWith(w))).length;
+      const least = Math.min(...matches.map(extra));
+      const fewest = matches.filter(o => extra(o) === least);
+      if (fewest.length < matches.length) { console.log('[multipick] "' + all.filter(w => PLAIN_WORDS.has(w)).join(' ') + '" = the listed option with no extra words: ' + fewest.map(o => o.name).join(' | ')); matches = fewest; }
+    }
     return { matches, listSize: opts.length };
   }
   return null;

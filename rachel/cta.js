@@ -174,7 +174,14 @@ function accepted(ctaOrId, message) {
   const c = typeof ctaOrId === 'string' ? findCta(ctaOrId) : ctaOrId;
   // "Here is what I want to order: <list>" / "do not place the order yet" is never a yes (order-wording.js, Oct 27).
   if (require('./order-wording.js').notACheckout(message)) return false;
-  return !!(c && c.accept && c.accept.test(String(message || '')));
+  const msg = String(message || '');
+  if (!(c && c.accept && c.accept.test(msg))) return false;
+  // "Ok <a new request>" is that request, not a yes to the offer (Nov 18, DC on Slack: "Ok find any other gin" after
+  // "place the order, or send you a PDF proposal?" was taken as a bare yes -> "Got it. What else can I get you?", no search).
+  const rest = msg.replace(/^\s*(?:yes|yep|yeah|sure|ok(?:ay)?)\b[\s,.!-]*/i, '');
+  if (rest !== msg && rest.split(/\s+/).filter(Boolean).length >= 2 && !c.accept.test(rest)
+    && /\b(?:find|search|look|add|swap|switch|replace|change|remove|take|drop|use|show|get|need|want|make|increase|decrease|bump|reduce|what|which|how|why|do you|can you|could you|is there|are there)\b/i.test(rest)) return false;
+  return true;
 }
 
 // A reply that was ONLY the generic trailer strips to nothing. Real bug (DC, Sep 29, Slack): "no" to "add

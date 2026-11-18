@@ -1911,6 +1911,16 @@ async function buildPackage(iv) {
       else if (wineLean==='red'){whiteB=Math.floor(wineBottles*0.4);redB=wineBottles-whiteB;}
       else{redB=Math.round(wineBottles*0.6);whiteB=wineBottles-redB;}
       if (wineLean) console.log('[buildPackage] wine lean '+wineLean+': '+redB+' red / '+whiteB+' white'+(sparkB?' / '+sparkB+' sparkling':''));
+      // Wine kinds the customer left out ("no sparkling, only red and white"; rachel/wine-coverage.js, Nov 18): their
+      // bottles go to the kinds that stay, the same wine total.
+      var noWT=Array.isArray(iv.no_wine_types)?iv.no_wine_types:[];
+      if (noWT.length) {
+        var keepR=noWT.indexOf('red')<0, keepW=noWT.indexOf('white')<0, keepS=noWT.indexOf('sparkling')<0;
+        if (!keepS && sparkB) { if (keepR&&keepW){var toR=Math.round(sparkB*redB/Math.max(1,redB+whiteB));redB+=toR;whiteB+=sparkB-toR;} else if (keepR) redB+=sparkB; else if (keepW) whiteB+=sparkB; sparkB=0; }
+        if (!keepR && redB && (keepW||keepS)) { if (keepW) whiteB+=redB; else sparkB+=redB; redB=0; }
+        if (!keepW && whiteB && (keepR||keepS)) { if (keepR) redB+=whiteB; else sparkB+=whiteB; whiteB=0; }
+        console.log('[buildPackage] wine kinds left out ('+noWT.join(', ')+'): '+redB+' red / '+whiteB+' white'+(sparkB?' / '+sparkB+' sparkling':''));
+      }
     }
     var pb=productBudget||totalBudget;
     var spiritBudget=Math.round(pb*split.spirits*100)/100;

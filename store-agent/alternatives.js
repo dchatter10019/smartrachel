@@ -101,7 +101,9 @@ function rankAlternatives(original, candidates, refPrice, opts) {
     if (ov && varietalOf(c.name) !== ov && !(ov === 'rose' && /\bros[eé]\b/i.test(c.name))) { rejected.push([c.name, 'different varietal']); continue; }
     if (isSparkling(c.name) !== ospark) { rejected.push([c.name, 'still/sparkling mismatch']); continue; }
     if (notWine(c.name) && !notWine(original.name)) { rejected.push([c.name, 'can/cider/seltzer, not a bottle of wine']); continue; }
-    if (isOddSize(c.name, c.size, mlOf(original.name) || 750)) { rejected.push([c.name, 'not a ' + (mlOf(original.name) || 750) + ' mL bottle']); continue; }
+    // o.want_ml: the size the customer asked for (Nov 18: "only 750 ml bottles" — a 1 L Monkey 47's alternatives were 1 L only)
+    const wantMl = o.want_ml || mlOf(original.name) || 750;
+    if (isOddSize(c.name, c.size, wantMl)) { rejected.push([c.name, 'not a ' + wantMl + ' mL bottle']); continue; }
     const creg = regionOf(c.name);
     const rs = regionScore(oreg, creg);
     const diff = refPrice ? (price - refPrice) / refPrice : 0;

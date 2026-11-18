@@ -32,7 +32,9 @@ function fees(msg) {
   const t = String(msg || '').replace(/\r/g, '');
   if (/\?\s*$/.test(t) && !/\b(can|could|please|adjust|change|update|set|make)\b/i.test(t)) return null;
   const out = {};
-  const SET = '(?:[^.?!\\n$%\\d]{0,30}?)(?:\\bto|\\bbe|\\bat|\\bof|\\bis|=|:|\\bas)?\\s*:?\\s*';
+  // The gap between a fee word and its value never crosses ANOTHER fee word or "free" (Nov 18, DC on Slack: "make the
+  // delivery as free and make the tip to be $50" set delivery $50 — the tip's $50).
+  const SET = '(?:(?!\\b(?:tip|gratuity|service|tax|free|delivery)\\b)[^.?!\\n$%\\d]){0,30}?(?:\\bto|\\bbe|\\bat|\\bof|\\bis|=|:|\\bas)?\\s*:?\\s*';
   const NUM = '(\\d+(?:\\.\\d+)?)';
   let m;
   // The number may come first too (Nov 11, DC on Claude Code: "create a porposal with a 8% service charge", "its 8% service
@@ -55,7 +57,7 @@ function fees(msg) {
   // nothing after it, so "delivery to 10019" / "delivery to 1460 Broadway" stay addresses.
   else if ((m = t.match(new RegExp('\\bdelivery(?:\\s+(?:fee|charge|cost))?\\b' + SET + '(zero|\\d{1,3}(?:\\.\\d{1,2})?)\\s*(?:dollars?|bucks)?\\s*(?:please)?[\\s.!]*$', 'i')))
     && !/\b(?:at|by|around|before|after|until|for)\s+\d{1,2}(?:[:.]\d{2})?\s*(?:please)?[\s.!]*$|\b(?:time|am|pm|o'?clock|tomorrow|today|tonight|morning|afternoon|evening|noon)\b/i.test(t)) out.delivery_fee = /zero/i.test(m[1]) ? 0 : parseFloat(m[1]);
-  else if (/\bfree\s+delivery\b|\b(?:no|remove|drop|waive|take\s+(?:out|off))\s+(?:the\s+)?delivery\s+(?:fee|charge|cost)\b/i.test(t)) out.delivery_fee = 0;
+  else if (/\bfree\s+delivery\b|\bdelivery(?:\s+(?:fee|charge|cost))?\s+(?:(?:as|to|be|is|will|should|be|for|now)\s+){0,3}(?:free|complimentary|waived)\b|\b(?:no|remove|drop|waive|take\s+(?:out|off))\s+(?:the\s+)?delivery\s+(?:fee|charge|cost)\b/i.test(t)) out.delivery_fee = 0;
   return Object.keys(out).length ? out : null;
 }
 // "tax 8.8875%, tip $50.00 (flat), delivery $0.00"

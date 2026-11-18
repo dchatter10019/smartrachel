@@ -1111,6 +1111,26 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   confirmed back to the customer). Email / connector replies already state the delivery (note cleared there).
   Scenario 155, qa/unit/delivery-date-zone.test.js.
 
+- Nov 18 (DC on Slack, Foodie For All, 140 guests / 2 h, 300 Park Ave), every /chat channel. "2 hours" answered alone to the
+  mix + length question is kept on the held request (server.js, [menu] event length kept from the reply; was asked again
+  after "Even"). "Use only 750 ml bottles" = rachel/bottle-only.js -> server.js SIZE ONLY (before the edit reader): each
+  wine / spirit line in another size -> the SAME product in that size at the same volume (2 x 1.5 L -> 4 x 750 mL), short
+  stock or not carried = kept and said, a line the rest of the message changes ("use high west for bourbon") is left to it;
+  the rest of the message goes on; state.bottleSizeOnly -> alternatives size_ml (shopping-agent + alternatives.js want_ml:
+  the ranker rejected every bottle not the ORIGINAL's size, so a 1 L Monkey 47 got only 1 L gins and "no 750 mL gin").
+  applyBasketSubstitute honours opts.qty on a basket line and keeps an EVENT line's volume on a smaller bottle
+  ([confirm-substitute] event volume kept: 1 x 1.75 L Woodford -> 3 x 750 High West, was 1). A whole wine kind removed from
+  an event package (all its lines) -> rachel/wine-coverage.js rebalance spreads its volume over the wine kept, said in the
+  reply ([wine-coverage]); eventParams.no_wine_types + the customer's words ("no sparkling", "only red and white") ->
+  menu_build no_wine_types -> buildPackage moves those bottles to the kinds kept (a rebuild had put the sparkling back).
+  multipick matchListedByName ignores apostrophes ("Hendricks" = Hendrick's) and "the regular / plain X" = the listed X with
+  no extra words; add-item's catalog search drops "regular". cta.accepted: "Ok <new request>" is not a yes ("Ok find any other
+  gin" -> "Got it. What else can I get you?"). tax-command fees: a fee's value never crosses another fee word or "free"
+  ("delivery as free ... tip to be $50" set delivery $50); "delivery (as/to be) free" = 0. event-date: "Thursday 19th" / "the
+  19th" = the next such day (a weekday picks among the next 3 months). rachel.js: a product_query named by "term"/"label"
+  gets it as its name (it read as empty -> generic recommendation). Scenarios 156 (slack), 157 (plain);
+  qa/unit/slack-nov18.test.js. alternatives-anchored no longer requires Far Niente (its Chardonnay left the 10010 catalog).
+
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
   so PDFs sent before Oct 15 still open (ask DC first; nginx).
