@@ -13,6 +13,7 @@ const GBRAIN_TOKEN = process.env.GBRAIN_TOKEN || '';  // /etc/gbrain.env
 // accepting connections and getCustomerProfile's get_page waited for the OS connect timeout (~127s), so a WhatsApp
 // "do you have Tito's" sat 145s with no reply while the catalog search itself took a second.
 const GBRAIN_TIMEOUT_MS = Number(process.env.GBRAIN_TIMEOUT_MS) || 15000;
+
 function gbrainFetch(opts, what) {
   return globalThis.fetch(GBRAIN_URL + '/mcp', Object.assign({}, opts, { signal: AbortSignal.timeout(GBRAIN_TIMEOUT_MS) }))
     .catch(function(e) {
@@ -28,6 +29,13 @@ const { guardAsync: guardCatalog } = require('./catalog-guard.js');
 // Rachel's modules from THIS tree's rachel/ (production: /home/ubuntu/rachel) — a staging shopping-agent run from a
 // worktree must load the worktree's code, not production's.
 const RACHEL_DIR = require('path').join(__dirname, '..', 'rachel');
+// A line the customer named by brand ("Josh Cabernet", "Kim Crawford Sauvignon Blanc") is never upgraded to another bottle
+// for the budget (DC, Nov 19: "always the exact name take the preference" — Compass Group's Josh Cabernet became Josh Cellars
+// Reserve Paso Robles $20.39). Generic lines ("Pinot Noir", "Red Wine", event slots) are Rachel's picks and still upgrade.
+function customerNamedLine(item) {
+  if (!item || !item.match || !item.label) return false;
+  try { return require(RACHEL_DIR + '/search-match.js').keyOf(String(item.label)).length > 0; } catch (e) { return false; }
+}
 const CATALOG = require(RACHEL_DIR + '/catalog-api.js');
 const STOCK = require(RACHEL_DIR + '/stock.js');   // store stock counts vs quantities (DC, Nov 14)   // the catalog search: legacy searchCorpProducts or getProducts (CATALOG_API)
 const packageModel = require(RACHEL_DIR + '/package-model.js');
@@ -763,6 +771,7 @@ async function executeTool(name, input) {
           const item = items[ii];
           if (item.category === 'mixer') continue;   // mixers are never upgraded
           if (/\bmi[ -]?campo\b/i.test(item.name || '')) continue;   // tequila stays Mi Campo (rachel/mi-campo.js, DC)
+          if (customerNamedLine(item)) { console.log('[shopping-agent] upgrade SKIPPED for ' + item.name + ' — the customer named it (' + item.label + ')'); continue; }
           const lineSpend = item.qty * item.price;
           const headroomLeft = productBudget - runningTotalUp;
           if (headroomLeft <= 30) break;
@@ -828,6 +837,7 @@ async function executeTool(name, input) {
             if (itemCat2.includes('beer') || itemCat2.includes('lager') || itemCat2.includes('ale')) continue;
             if (/^mixer/.test(itemCat2)) continue;
             if (/\bmi[ -]?campo\b/i.test(item.name || '')) continue;   // tequila stays Mi Campo (rachel/mi-campo.js, DC)
+          if (customerNamedLine(item)) { console.log('[shopping-agent] upgrade SKIPPED for ' + item.name + ' — the customer named it (' + item.label + ')'); continue; }
             const maxForItem = item.price + remaining2 / item.qty;
             const itemLabel2 = (item.label || item.category || '').toLowerCase();
             const term2 = itemLabel2 === 'red wine' ? 'Red Wine' :
@@ -988,6 +998,7 @@ async function executeTool(name, input) {
         for (var ii = 0; ii < items.length; ii++) {
           const item = items[ii];
           if (/\bmi[ -]?campo\b/i.test(item.name || '')) continue;   // tequila stays Mi Campo (rachel/mi-campo.js, DC)
+          if (customerNamedLine(item)) { console.log('[shopping-agent] upgrade SKIPPED for ' + item.name + ' — the customer named it (' + item.label + ')'); continue; }
           const lineSpend = item.qty * item.price;
           const headroomLeft = productBudget - runningTotalUp;
           if (headroomLeft <= 30) break;

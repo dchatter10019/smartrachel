@@ -1414,6 +1414,9 @@ async function buildPackage(iv) {
       // A customer-stated size wins before anything else (real bug: "Tito's 750ml" — the
       // 750 mL was in the results, the price-desc sort put the 1.75 L first, and the size
       // check then declared the 750 mL "unavailable").
+      var beerPackFirst=catN==='beer'&&!/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b|\b\d+\s*-?\s*(?:pk|packs?|ct)\b|\b\d+\s*[x×]\s*\d|\bsingles?\b|\btall\s*boys?\b|\bkegs?\b|\bsixtel\b/i.test(String(np.name||''));
+      var isBeerPack=function(x){ var t=String(x.name||'')+' '+String(x.sizeStr||''); return /\b(?:[2-9]|[1-9]\d)\s*[x×]\s*\d+(?:\.\d+)?\s*(?:oz|ml)\b|\b(?:[2-9]|[1-9]\d)\s*-?\s*(?:pk|packs?|ct)\b|\b(?:[2-9]|[1-9]\d)pkc?\b/i.test(t); };
+      if(beerPackFirst&&found.some(isBeerPack)&&found.some(function(x){return !isBeerPack(x);})) console.log('[buildPackage] beer packs first for '+JSON.stringify(np.name)+' (no size or single asked)');
       var reqSizeSort=(String(np.name||'').match(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/i)||[''])[0].toLowerCase().replace(/\s+/g,'');
       found.sort(function(a,b) {
         if(reqSizeSort){ var sa=String(a.sizeStr||'').toLowerCase().replace(/\s+/g,'')===reqSizeSort?0:1, sb=String(b.sizeStr||'').toLowerCase().replace(/\s+/g,'')===reqSizeSort?0:1; if(sa!==sb) return sa-sb; }
@@ -1422,6 +1425,10 @@ async function buildPackage(iv) {
         if(prefer750){ var hb=function(x){ return /\b(?:187|200|375|500)\s*ml\b/i.test(String(x.sizeStr||'')+' '+String(x.name||''))?1:0; }; var ha=hb(a), hbb=hb(b); if(ha!==hbb) return ha-hbb; }
         // Fit to the request (product-match.js): brand + style words present, no type-changing words, pack size.
         var fa=PM.fit(reqForFit,a).score, fb=PM.fit(reqForFit,b).score; if(fa!==fb) return fb-fa;
+        // Beer: a pack before a single can / bottle when the customer named no size, pack or single (DC, Nov 19: "in case
+        // of beers always packs should have the preference" — Compass Group's "Michelob Ultra" became 21 x a 25 OZ Can,
+        // whose catalog name matched the request exactly).
+        if(beerPackFirst){ var pka=isBeerPack(a)?0:1, pkb=isBeerPack(b)?0:1; if(pka!==pkb) return pka-pkb; }
         var ea=nameKey(a)===reqKey?1:0, eb=nameKey(b)===reqKey?1:0; if(ea!==eb) return eb-ea;
         function score(x){var s=0;var ln=foldD(x.name.toLowerCase());for(var t=0;t<terms.length;t++) if(ln.indexOf(terms[t])>=0) s++;return s;}
         if(altRef0) return Math.abs(a.price-altRef0)-Math.abs(b.price-altRef0);   // an alternative: name words don't apply (brand not carried)

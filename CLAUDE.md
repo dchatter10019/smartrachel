@@ -1160,6 +1160,11 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   had flagged the store after Josh Chardonnay's rows came back with 10 -> swapped to La Playa / Kim Crawford -> Black
   Stallion), and the list is re-read when the other process wrote it (mtime). Every channel (/chat + connector list reads).
   Scenario 161 (plain), qa/unit/slack-brief-nov19.test.js.
+  DC's follow-up the same day: a product the customer NAMED (a line with match + brand words, search-match keyOf) is never
+  budget-upgraded — all three shopping-agent upgrade passes skip it ([shopping-agent] upgrade SKIPPED ... the customer named
+  it; "Josh Cabernet" had become Josh Cellars Reserve Paso Robles); only generic lines / event slots upgrade. A beer line with no
+  size / pack / single / keg asked sorts a PACK before a single can or bottle, right after the fit score (functions.js
+  beerPackFirst, [buildPackage] beer packs first; "Michelob Ultra" had become 21 x a 25 OZ Can). Scenario 161 checks both.
 
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
