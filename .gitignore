@@ -73,3 +73,7 @@ rachel/qa/runs-staging/
 staging/
 snap/
 rachel/qa/evals/
+
+# Voiceflow export (Nov 19): raw + cleaned customer data and the PAT never go in git
+/data/
+.voiceflow-export.env
