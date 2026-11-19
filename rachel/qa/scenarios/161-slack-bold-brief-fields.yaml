@@ -1,0 +1,21 @@
+name: slack-bold-brief-fields
+# Nov 19, DC on Slack (Compass Group, 6426 Bowden Rd, Jacksonville 32216): a brief whose labels Slack sends bold
+# ("• *Customer:* Compass Group", "• *Headcount:* 1000 ppl.", "• *Menu:*") with the drinks as nested ◦ / ▪︎ bullets.
+# [list-reconcile] added the 7 field lines as products, so the reply said "Customer:* Compass Group isn't available at
+# this store" (x7) and offered "alternatives to those 7 items". Also: the store's stock counts are all 10 (a placeholder);
+# a count read before the store was flagged swapped Josh Chardonnay -> La Playa and Kim Crawford -> Black Stallion.
+tags: [events]
+format: plain
+turns:
+  - send: reset
+  - send: "Need drinks for an event"
+    expect: {contains: ["21"]}
+  - send: "yes"
+    expect: {matches: "(?i)address"}
+  - send: "6426 Bowden Rd, Jacksonville, FL 32216"
+  - send: "• *Customer:* Compass Group \n• *Event Date:* December 17th\n• *Headcount:* 1000 ppl.\n• *Length of Event:* 2 hours\n• *Drinks Per Person:*  2 drinks per person\n• *Budget:* $7-9 per person\n• *Menu:*\n    ◦ Wine:\n        ▪︎ Josh Chardonnay\n        ▪︎ Josh Cabernet\n        ▪︎ Kim Crawford Sauvignon Blanc\n        ▪︎ Ruffino Prosecco\n    ◦ Beer:\n        ▪︎ Michelob Ultra\n        ▪︎ Stella Artois\n        ▪︎ Bold City Brown Ale\n        ▪︎ Veterans United Fish Camp Pilsner"
+  - send: "equal"
+    expect:
+      contains: ["Product total", "Josh Cellars Chardonnay", "Kim Crawford"]
+      not_matches: "(?i)(customer|headcount|budget|menu|event date)[:*\\s]*[^\\n]*isn't available|alternatives to those"
+      log_not_contains: ["[list-reconcile] \"*Customer:*", "[stock] SWAPPED: Josh Cellars Chardonnay"]

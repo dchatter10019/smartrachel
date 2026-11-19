@@ -25,14 +25,33 @@ function packOf(s) {
   return m ? +m[1] : 1;
 }
 
+// A brief's "Label: value" line is a fact, never a product (Nov 19, DC on Slack, Compass Group: "• *Customer:* Compass Group",
+// "• *Headcount:* 1000 ppl.", "• *Menu:*" — Slack's bold stars hid the label from every reader, [list-reconcile] added the
+// 7 field lines as mixers and the reply said "Customer:* Compass Group isn't available at this store"). A drink-type
+// label keeps its value as the line ("Wine: Josh Chardonnay"); a bare drink heading ("Wine:") is skipped too.
+const DRINK_LABEL = /^(?:wines?|reds?|whites?|ros[eé]s?|sparkling|bubbles|champagnes?|prosecco|beers?|ciders?|seltzers?|spirits?|liquors?|cocktails?|mixers?|non[- ]?alcoholic|na|n\/a|soft drinks?|sodas?|water|red wines?|white wines?|ros[eé] wines?|sparkling wines?|hard seltzers?|tequilas?|vodkas?|gins?|rums?|whiske?ys?|bourbons?|scotch|liqueurs?)$/i;
+const BRIEF_FIELD = /^(?:customer|client|company|account|organi[sz]ation|host|event(?: name| date| time| type| length| duration)?|date|day|time|delivery(?: date| time| window| address| contact| instructions| fee| charge)?|address|location|venue|occasion|theme|head ?count|guests?(?: count)?|guest count|number of (?:guests|people)|people|attendees|pax|length(?: of (?:the )?event)?|duration|hours|drinks? per (?:person|guest|head)|budget(?: per person)?|price|per person|menu|notes?|special (?:notes|requests|instructions)|instructions|contact|on-?site contact|poc|name|phone(?: number)?|e-?mail|po(?: number)?|window|tax|tip|service(?: charge| fee)?|bartenders?|staff)$/i;
+function fieldLine(part) {
+  const t = String(part || '').replace(/[*_~`]/g, '').trim();
+  const m = t.match(/^([A-Za-z][A-Za-z '&\/().-]{0,30}?)\s*:\s*(.*)$/);
+  if (!m || /^\d/.test(m[1])) return null;
+  if (DRINK_LABEL.test(m[1].trim())) return m[2].trim() ? { keep: m[2].trim() } : { skip: true };
+  if (!m[2].trim() || BRIEF_FIELD.test(m[1].trim())) return { skip: true };
+  return null;   // "Tito's: 3 bottles" stays a product line
+}
+
 function parseRequest(text, onHand) {
   const out = [];
   for (const raw of String(text || '').replace(/\r/g, '').split('\n')) {
     // a bulleted line, or a quantity-led one ("5 x The Prisoner Red Blend 750 mL"). Until Oct 3 only bullets counted, so an
     // unbulleted list parsed as empty: the LLM's left-out lines were never re-added (full suite: Tito's, Lillet, Hendrick's
     // vanished from a "just beer and wine" event list without the "Left out" note naming them).
-    const m = raw.match(/^\s*(?:[-•*·]|\d+[.)])\s+(.+?)\s*$/) || (/^\s*\d{1,3}\s*[x×]\s*[A-Za-z]/i.test(raw) ? [raw, raw.trim()] : null);
+    // Slack's nested bullets are ◦ and ▪︎ (Nov 19).
+    const m = raw.match(/^\s*(?:[-•*·◦▪▫‣○■□►]\ufe0e?|\d+[.)])\s+(.+?)\s*$/) || (/^\s*\d{1,3}\s*[x×]\s*[A-Za-z]/i.test(raw) ? [raw, raw.trim()] : null);
     if (!m) continue;
+    const fl = fieldLine(m[1]);
+    if (fl && fl.skip) continue;
+    if (fl && fl.keep) m[1] = fl.keep;
     for (let part of m[1].split(/\s\+\s/)) {
       if (onHand && OH.isOnHand(part, onHand)) continue;
       const alt = (part.match(/\((?:or\s+)?([^)]*)\)/i) || [])[1] || '';

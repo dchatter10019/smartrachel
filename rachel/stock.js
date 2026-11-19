@@ -22,7 +22,13 @@ const SM = require('./search-match.js');
 function inv(row) {
   if (!row || row.inventory === null || row.inventory === undefined || row.inventory === '') return null;
   const n = Number(row.inventory);
-  return Number.isFinite(n) ? Math.max(0, Math.floor(n)) : null;
+  if (!Number.isFinite(n)) return null;
+  // Read at decision time, not only when the search came back (Nov 19, DC on Slack, Jacksonville 32216: the "Josh
+  // Chardonnay" rows came back with 10 a moment before the parallel "Michelob Ultra" search flagged the store as a
+  // placeholder; the stale 10 then swapped Josh Chardonnay -> La Playa and Kim Crawford -> Black Stallion for 50 bottles).
+  const est = row.establishmentId || (row._raw && row._raw.establishmentId) || '';
+  if (n > 0 && est && flat()[est] === n) return null;
+  return Math.max(0, Math.floor(n));
 }
 const enough = (row, qty) => { const n = inv(row); return n === null || n >= (Number(qty) || 1); };
 
@@ -30,11 +36,18 @@ const enough = (row, qty) => { const n = inv(row); return n === null || n >= (Nu
 // every in-stock row says 10, an out-of-stock one 0). Remembered per establishmentId (RACHEL_DATA_DIR/stock-placeholder-
 // stores.json) so a small search of that store is read the same way: the placeholder = unknown, 0 = out of stock (kept).
 const fs = require('fs');
-let FLAT = null;
+let FLAT = null, FLAT_MTIME = 0, FLAT_CHECKED = 0;
 const flatFile = () => { try { return require('./data-dir.js').file('stock-placeholder-stores.json'); } catch (e) { return ''; } };
+// rachel and the shopping-agent each keep a copy: a store one of them flagged is picked up by the other (file mtime, checked
+// at most once a second).
 function flat() {
-  if (FLAT) return FLAT;
-  try { FLAT = JSON.parse(fs.readFileSync(flatFile(), 'utf8')) || {}; } catch (e) { FLAT = {}; }
+  const now = Date.now();
+  if (FLAT && now - FLAT_CHECKED < 1000) return FLAT;
+  FLAT_CHECKED = now;
+  let mt = 0; try { mt = fs.statSync(flatFile()).mtimeMs; } catch (e) {}
+  if (FLAT && mt === FLAT_MTIME) return FLAT;
+  let disk = {}; try { disk = JSON.parse(fs.readFileSync(flatFile(), 'utf8')) || {}; } catch (e) {}
+  FLAT = Object.assign(FLAT || {}, disk); FLAT_MTIME = mt;
   return FLAT;
 }
 const isPlaceholderStore = est => flat()[est || ''] !== undefined;

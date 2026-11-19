@@ -1151,6 +1151,16 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   5-digit number not followed by a street) in the address step, address change, kept-proposal zip, GetZipCode; a yes to the
   zip-mismatch question is final. Bevvi has no store for 98004 (Bellevue). Scenarios 159, 160, qa/unit/address-extract.test.js.
 
+- Slack bold brief fields + placeholder stock race (Nov 19, DC on Slack, Compass Group, Jacksonville 32216): "• *Customer:*
+  Compass Group" / "• *Headcount:* 1000 ppl." / "• *Menu:*" (Slack bolds the label) were read as list lines by
+  original-compare.js parseRequest -> [list-reconcile] added 7 "products" -> "Customer:* Compass Group isn't available at this
+  store" x7. Now a brief field ("Label: value", stars / underscores ignored; BRIEF_FIELD) or an empty heading is never a
+  request line; a drink label keeps its value ("Wine: Josh Chardonnay"); an unknown label stays ("Tito's: 3 bottles");
+  Slack's nested ◦ / ▪︎ bullets count. stock.js inv() checks the placeholder store list at decision time (a parallel search
+  had flagged the store after Josh Chardonnay's rows came back with 10 -> swapped to La Playa / Kim Crawford -> Black
+  Stallion), and the list is re-read when the other process wrote it (mtime). Every channel (/chat + connector list reads).
+  Scenario 161 (plain), qa/unit/slack-brief-nov19.test.js.
+
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
   so PDFs sent before Oct 15 still open (ask DC first; nginx).
