@@ -1165,6 +1165,8 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   it; "Josh Cabernet" had become Josh Cellars Reserve Paso Robles); only generic lines / event slots upgrade. A beer line with no
   size / pack / single / keg asked sorts a PACK before a single can or bottle, right after the fit score (functions.js
   beerPackFirst, [buildPackage] beer packs first; "Michelob Ultra" had become 21 x a 25 OZ Can). Scenario 161 checks both.
+  Also: "FL 32216" in a typed address was read as a FLOOR by address-extract.js UNIT (fl.) -> the echo "6426 Bowden Rd, FL
+  32216, Jacksonville, FL 32216" (every Florida address typed with state + zip); a unit is never a 5-digit number now.
 
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days

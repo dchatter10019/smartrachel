@@ -114,7 +114,9 @@ function splitAddress(text) {
 // "Floor 6" into "#6", which doesn't tell a driver it's a floor. So: street number + route, then the
 // customer's own unit wording if they gave one (else Google's subpremise as "#6"), then city, state zip.
 // components: Google address_components; typed: what the customer wrote. Returns null if incomplete.
-const UNIT = /\b(?:(?:floor|fl\.?|suite|ste\.?|apartment|apt\.?|unit|room|rm\.?|building|bldg\.?)\s*#?\s*[A-Za-z0-9-]+|\d+(?:st|nd|rd|th)\s+floor|#\s*[A-Za-z0-9-]+)(?=\s*(?:,|$|\s))/i;
+// "FL 32216" is Florida + its zip, never floor 32216 (Nov 19, DC on Slack: "6426 Bowden Rd, FL 32216, Jacksonville, FL 32216"):
+// no unit is a 5-digit number.
+const UNIT = /\b(?:(?:floor|fl\.?|suite|ste\.?|apartment|apt\.?|unit|room|rm\.?|building|bldg\.?)\s*#?\s*(?!\d{5}(?:-\d{4})?\b)[A-Za-z0-9-]+|\d+(?:st|nd|rd|th)\s+floor|#\s*[A-Za-z0-9-]+)(?=\s*(?:,|$|\s))/i;
 function formatGeocoded(components, typed) {
   const c = {};
   for (const x of (components || [])) for (const ty of (x.types || [])) if (!c[ty]) c[ty] = x.short_name;

@@ -55,5 +55,10 @@ eq('zip: no state code', zipOf('12345 Main St, Springfield 62704'), '62704');
 eq('zip: house number only = none', zipOf('10900 NE 8th St'), '');
 eq('zip: bare zip', zipOf('deliver to 10019'), '10019');
 eq('zip: zip+4', zipOf('100 Federal St, Floor 6, Boston, MA 02110-1234'), '02110');
+// Nov 19, DC on Slack: "FL 32216" was read as floor 32216 -> "6426 Bowden Rd, FL 32216, Jacksonville, FL 32216"
+{ const F = require('../../address-extract.js').formatGeocoded;
+  const comp = [['6426', 'street_number'], ['Bowden Rd', 'route'], ['Jacksonville', 'locality'], ['FL', 'administrative_area_level_1'], ['32216', 'postal_code']].map(([short_name, t]) => ({ short_name, types: [t] }));
+  eq('Florida + zip is not a floor', F(comp, '6426 Bowden Rd, Jacksonville, FL 32216'), '6426 Bowden Rd, Jacksonville, FL 32216');
+  eq('a real floor is kept', F(comp, '6426 Bowden Rd Fl 3, Jacksonville, FL 32216'), '6426 Bowden Rd, Fl 3, Jacksonville, FL 32216'); }
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');
