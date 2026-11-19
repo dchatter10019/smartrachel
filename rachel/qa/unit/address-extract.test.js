@@ -47,5 +47,13 @@ eq('order "to" address: the quantity is not the street', sj('Send 2 cases of Ste
 eq('"deliver to ... please" leaves nothing', sj('deliver to 425 W 53rd St, New York, NY 10019 please'), JSON.stringify({ address: '425 W 53rd St, New York, NY 10019', rest: null }));
 eq('a unit stays in the address', sj('100 Federal Street, Floor 6, Boston, MA 02110'), JSON.stringify({ address: '100 Federal Street, Floor 6, Boston, MA 02110', rest: null }));
 eq('no address', splitAddress('need 2 cases of Bud Light'), null);
+const { zipOf } = require('../../address-extract.js');
+eq('zip: a 5-digit house number is not the zip (Nov 19, Bellevue)', zipOf('10900 NE 8TH STE 525 Bellevue, WA 98004'), '98004');
+eq('zip: Slack maps link + label', zipOf('<https://www.google.com/maps/search/10900+NE+8TH+STE+525+Bellevue,+WA+98004?entry=gmail&amp;source=g|10900 NE 8TH STE 525 Bellevue, WA 98004>'), '98004');
+eq('zip: geocoded form with ", USA"', zipOf('10900 NE 8th St #525, Bellevue, WA 98004, USA'), '98004');
+eq('zip: no state code', zipOf('12345 Main St, Springfield 62704'), '62704');
+eq('zip: house number only = none', zipOf('10900 NE 8th St'), '');
+eq('zip: bare zip', zipOf('deliver to 10019'), '10019');
+eq('zip: zip+4', zipOf('100 Federal St, Floor 6, Boston, MA 02110-1234'), '02110');
 if (failed) { console.log(failed + ' failed'); process.exit(1); }
 console.log('all passed');

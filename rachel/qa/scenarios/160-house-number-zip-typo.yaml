@@ -1,0 +1,14 @@
+name: house-number-zip-typo
+tags: [address]
+format: plain
+turns:
+  # Nov 19 (DC on Slack): "16435 Military Rd South SeaTac WA 9818" (zip typo) -> "98188, not 16435. Is that the right place?" and every
+  # "yes" asked the same question again (Google's own address read 16435 as its zip).
+  - send: reset
+  - send: "hi"
+    expect: {contains: ["21"]}
+  - send: "yes"
+    expect: {matches: "(?i)address"}
+  - send: "16435 Military Rd South SeaTac WA 9818"
+    expect:
+      not_contains: ["not 16435"]

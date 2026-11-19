@@ -960,8 +960,8 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
 
       case 'GetZipCode': {
         const addr = toolInput.address || '';
-        const match = addr.match(/\b(\d{5})\b/);
-        if (match) return { zip: match[1], found: true };
+        const zipG = require('./address-extract.js').zipOf(addr);   // never the house number ("10900 NE 8th St ... WA 98004")
+        if (zipG) return { zip: zipG, found: true };
         return { zip: '', found: false, error: 'No zip code found in address' };
       }
 

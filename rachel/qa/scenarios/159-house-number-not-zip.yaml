@@ -1,0 +1,16 @@
+name: house-number-not-zip
+# Nov 19 (DC on Slack): "10900 NE 8TH STE 525 Bellevue, WA 98004" (a Gmail maps link in Slack) -> "we don't currently have a
+# store serving the 10900 zip code" — the first 5-digit number (the house number) was read as the zip. Bevvi has no store
+# for 98004 either, so the reply must name 98004. address-extract.js zipOf.
+tags: [address]
+format: plain
+turns:
+  - send: reset
+  - send: "hi"
+    expect: {contains: ["21"]}
+  - send: "yes"
+    expect: {matches: "(?i)address"}
+  - send: "10900 NE 8TH STE 525 Bellevue, WA 98004"
+    expect:
+      contains: ["98004"]
+      not_contains: ["10900 zip"]

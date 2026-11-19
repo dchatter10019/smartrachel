@@ -3047,6 +3047,7 @@ app.post('/chat', async (req, res) => {
       if (/^\s*(?:yes|yeah|yep|yup|correct|right|ok|okay|sure|that'?s (?:it|right|correct)|use (?:it|that|that one))\b[\s.!]*$/i.test(message)) {
         console.log('[addr] zip mismatch — customer accepted Google\'s address: ' + mm.formatted);
         message = mm.formatted; msgLower = message.toLowerCase();
+        addrMismatchKept = true;   // a yes is final — never the same question again (Nov 19: "yes" re-asked 3x for SeaTac)
       } else if (normA(message) === normA(mm.typed)) {
         console.log('[addr] zip mismatch — customer sent the same address again, keeping what they typed: ' + JSON.stringify(mm.typed));
         addrMismatchKept = true;
@@ -3060,7 +3061,7 @@ app.post('/chat', async (req, res) => {
       const addrText = message.replace(/^.*?\b(address|deliver to|delivery location|ship to)\b\s*(to|is|:)?\s*/i, '').replace(/^(no|nope|use|instead)[,.\s]+/i, '').trim();
       const geo = await geocodeAddress(addrText);
       if (geo) {
-        const hadZip = (message.match(/\b(\d{5})\b/) || [])[1];
+        const hadZip = require('./address-extract.js').zipOf(message) || undefined;   // never the house number (Nov 19: 10900 NE 8th St ... WA 98004)
         if (!hadZip || hadZip === geo.zip) {
           console.log('[geocode]', JSON.stringify(addrText).slice(0, 60), '->', geo.formatted);
           message = message.replace(addrText, geo.formatted);
@@ -3074,7 +3075,7 @@ app.post('/chat', async (req, res) => {
           const rM = 'Just to check the address — I found ' + bM + geo.formatted + bM + ', which is in ' + geo.zip + ', not ' + hadZip + '. Is that the right place? Reply "yes" to use it, send the same address again to keep it as you typed it, or send the correct street address.';
           return res.json({ text: rM, response: rM });
         } else console.log('[geocode] zip mismatch, keeping typed address:', hadZip, 'vs', geo.zip);
-      } else if (!/\b\d{5}\b/.test(message) && ['addr', 'addr_new'].includes(state.step)) {
+      } else if (!require('./address-extract.js').zipOf(message) && ['addr', 'addr_new'].includes(state.step)) {
         // No match and no zip: ask specifically rather than repeating the generic prompt.
         const rG = 'I couldn\'t find that address — could you double-check the street number and city, or add the zip code? (e.g. "' + addrText + ', 10019")';
         return res.json({ text: rG, response: rG });
@@ -3087,9 +3088,11 @@ app.post('/chat', async (req, res) => {
       // Strip a conversational prefix so "address is 425 W 53rd St" is stored as the
       // address, not the sentence (real bug: summary read "Delivery to: address is 425...").
       message = message.replace(/^\s*(?:my |the |our )?(?:new |delivery |shipping )?address(?: is|:)?\s*/i, '').replace(/^\s*(?:deliver(?: it)? to|ship(?: it)? to|send(?: it)? to)\s*:?\s*/i, '').trim();
-      const zipMatch = message.match(/\b(\d{5})\b/);
-      if (zipMatch) {
-        const candidateZip = zipMatch[1];
+      // The zip, never a 5-digit house number (Nov 19, DC on Slack: "10900 NE 8TH STE 525 Bellevue, WA 98004" -> "we don't
+      // have a store serving the 10900 zip code"; address-extract.js zipOf).
+      const zipA = require('./address-extract.js').zipOf(message);
+      if (zipA) {
+        const candidateZip = zipA;
         const coverage = await checkStoreCoverage(candidateZip);
         if (coverage && coverage.store_count === 0) {
           const noStoreMsg = `Sorry, it looks like we don't currently have a store serving the ${candidateZip} zip code, so I'm unable to fulfill orders there yet. I'd recommend reaching out to our support team at bevvi-support@getbevvi.com — they can look into delivery options for your area. Would you like to try a different delivery address?`;
@@ -3099,7 +3102,7 @@ app.post('/chat', async (req, res) => {
         // delivering to 90210") and the order would have gone out with no street.
         // A numbered street counts ("1345 6th Ave"; Nov 16, DC on Slack: Google turned "1345 Avenue of the Americas" into
         // "1345 6th Ave, New York, NY 10105" and this check, wanting a LETTER after the house number, asked for the street 4x).
-        if (!/\b\d{1,6}\s+(?:[A-Za-z]|\d{1,3}(?:st|nd|rd|th)\b)/i.test(message.replace(/\b\d{5}(-\d{4})?\b/g, ''))) {
+        if (!/\b\d{1,6}\s+(?:[A-Za-z]|\d{1,3}(?:st|nd|rd|th)\b)/i.test(message.replace(new RegExp('\\b' + candidateZip + '(-\\d{4})?\\b', 'g'), ''))) {
           console.log('[addr] zip only, no street — asking for the street address: ' + JSON.stringify(message).slice(0, 60));
           // The example is a street only — a full example address carrying the customer's zip was pasted back as their address
           // (Nov 16, DC on Slack: "425 W 53rd St, New York, NY 10105").
@@ -3219,10 +3222,9 @@ app.post('/chat', async (req, res) => {
         // Keep pendingIntent as-is so the original request can still be replayed once a new address is confirmed
         const ask = 'No problem! What is your delivery address? (Include street, city, state, and zip)';
         return res.json({ text: ask, response: ask });
-      } else if (/\b\d{5}\b/.test(message)) {
+      } else if (require('./address-extract.js').zipOf(message)) {
         // Customer provided a brand-new address directly (with or without "no" framing) — treat it as a new address instead of re-asking
-        const zipMatch = message.match(/\b(\d{5})\b/);
-        const candidateZip = zipMatch[1];
+        const candidateZip = require('./address-extract.js').zipOf(message);
         const coverage = await checkStoreCoverage(candidateZip);
         if (coverage && coverage.store_count === 0) {
           const noStoreMsg = `Sorry, it looks like we don't currently have a store serving the ${candidateZip} zip code, so I'm unable to fulfill orders there yet. I'd recommend reaching out to our support team at bevvi-support@getbevvi.com. Would you like to try a different delivery address?`;
@@ -3317,7 +3319,7 @@ app.post('/chat', async (req, res) => {
       if (!kpR) { console.log('[kept-proposal] ' + state.keptProposal.pdf + ' has no saved lines — dropped'); state.keptProposal = null; saveFlowState(); }
       else if (whyR && nowN) console.log('[kept-proposal] NOT resumed — the cart already has ' + nowN + ' line(s) (' + state.keptProposal.pdf + ')');
       else if (whyR) {
-        const zipP = (KEPTP.addressOf(kpR).match(/\b(\d{5})\b/) || [])[1] || '';
+        const zipP = require('./address-extract.js').zipOf(KEPTP.addressOf(kpR));
         if (zipP && state.zip && zipP !== state.zip) console.log('[kept-proposal] NOT resumed — it delivers to ' + zipP + ', this conversation to ' + state.zip + ' (' + state.keptProposal.pdf + ')');
         else {
           loadProposalInto(state, kpR, KEPTP.lines(kpR), sessionKey);
@@ -6092,7 +6094,7 @@ app.post('/chat', async (req, res) => {
       const isAddrChange = cls === 'change_address' || (/\b(address|deliver to|delivery location|ship to)\b/i.test(message) && /\b(change|update|different|instead|use|switch|move)\b/i.test(message) && /\b\d{5}\b/.test(message));
       if (isAddrChange && !yesWords.some(w => msgLower === w)) {
         const newAddr = message.replace(/^.*?\b(address|deliver to|delivery location|ship to)\b\s*(to|is|:)?\s*/i, '').trim();
-        const zm = newAddr.match(/\b(\d{5})\b/);
+        const zm = (z => z ? [z, z] : null)(require('./address-extract.js').zipOf(newAddr));   // never a house number
         if (zm) {
           const prevCov = await checkStoreCoverage(state.zip);
           const cov = await checkStoreCoverage(zm[1]);

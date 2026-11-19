@@ -1145,6 +1145,11 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   from request + serving_mix, which also passes no_wine_types — "no sparkling" never reached Voiceflow's builds); SIZE ONLY
   regenerates a sent proposal in an email thread (or when asked; [size-only] proposal regenerated); remainderOf drops an
   email's greeting / sign-off ("Thanks, Sean" went on to the model as "Sean").
+- The zip is never a 5-digit house number (Nov 19, DC on Slack): "10900 NE 8TH STE 525 Bellevue, WA 98004" -> "no store serving
+  the 10900 zip code"; "16435 Military Rd South SeaTac WA 9818" -> "98188, not 16435 — is that right?" and every "yes" asked
+  again (Google's own address read 16435 too). address-extract.js zipOf (state code + zip, else a zip ending the text, else a
+  5-digit number not followed by a street) in the address step, address change, kept-proposal zip, GetZipCode; a yes to the
+  zip-mismatch question is final. Bevvi has no store for 98004 (Bellevue). Scenarios 159, 160, qa/unit/address-extract.test.js.
 
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days

@@ -159,4 +159,25 @@ function addressAfterLabel(text) {
   return null;
 }
 
-module.exports = { splitAddress, findAddress, findAddressNoZip, formatGeocoded, stripLeadingName, cleanTyped, addressAfterLabel };
+
+// The zip of an address — never its house number (Nov 19, DC on Slack: "10900 NE 8TH STE 525 Bellevue, WA 98004" was read
+// as zip 10900, the first 5-digit number, and Rachel said "we don't have a store serving the 10900 zip code"). Order:
+// a state code + zip ("WA 98004") — the last one; a 5-digit number ending the text; else any 5-digit number that is not a
+// house number (one followed by a street: "10900 NE 8th", "12345 Main St"), the last one. Links (<url|label>, maps URLs)
+// are removed first. Returns '' when there is none.
+const STATES = new Set('AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY PR'.split(' '));
+function zipOf(text) {
+  const t = String(text || '').replace(/<(?:https?:\/\/|mailto:)[^|>]*\|([^>]*)>/gi, '$1').replace(/<?(?:https?:\/\/|mailto:)\S*>?/gi, ' ');
+  let m, last = '';
+  const RS = /\b([A-Za-z]{2})\.?[,\s]+(\d{5})(?:-\d{4})?\b/g;
+  while ((m = RS.exec(t))) if (STATES.has(m[1].toUpperCase())) last = m[2];
+  if (last) return last;
+  const end = t.match(/\b(\d{5})(?:-\d{4})?\W*$/);
+  if (end) return end[1];
+  const HOUSE = /^\s+(?:[NSEW]{1,2}\b|(?:[A-Za-z0-9'.-]+\s+){0,4}?(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Way|Pl|Place|Ct|Court|Pkwy|Parkway|Ter|Terrace|Hwy|Highway|Cir|Circle|Plaza)\b)/i;
+  const RZ = /\b(\d{5})(?:-\d{4})?\b/g;
+  while ((m = RZ.exec(t))) if (!HOUSE.test(t.slice(m.index + m[0].length))) last = m[1];
+  return last;
+}
+
+module.exports = { zipOf, splitAddress, findAddress, findAddressNoZip, formatGeocoded, stripLeadingName, cleanTyped, addressAfterLabel };
