@@ -51,6 +51,8 @@ def is_greeting(msg):
 # ---------------------------------------------------------------- scrubbing
 EMAIL = re.compile(r"[A-Za-z0-9._%+'-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 ORDER = re.compile(r"\bBEVVI-[A-Za-z0-9-]+", re.I)
+# Air Culinaire's own order numbers ("ADD TO THIS ORDER B000495196"), Nov 19
+CLIENT_ORDER = re.compile(r"\bB\d{7,}\b")
 PHONE = re.compile(r"(?<![\w$.])(?:\+?1[\s.-]?)?(?:\(\d{3}\)|\d{3})[\s.-]?\d{3}[\s.-]?\d{4}(?![\w.])")
 # "St" / "Dr" are also name prefixes on bottles (St-Germain, St. Supery, Dr. Loosen): as a street type they must
 # not be followed by another word, unless it is a unit / direction word. A count ("2 bottles St Germain") is not
@@ -71,6 +73,7 @@ def scrub(text):
         return text
     text = EMAIL.sub("[EMAIL]", text)
     text = ORDER.sub("[ORDER]", text)
+    text = CLIENT_ORDER.sub("[ORDER]", text)
     text = ADDRESS.sub("[ADDRESS]", text)
     text = PHONE.sub("[PHONE]", text)
     return text
