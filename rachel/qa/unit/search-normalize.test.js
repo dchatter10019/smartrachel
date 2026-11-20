@@ -59,7 +59,13 @@ ok('expansionMissed: nothing expanded -> no retry', SN.expansionMissed('opus one
   ok('searchedText: spell check / abbreviation changed the text -> that text', SN.searchedText('proseco', 'prosecco') === 'prosecco' && SN.searchedText('rombauer chard 750ml', 'rombauer chardonnay 750ml') === 'rombauer chardonnay 750ml');
   ok('searchedText: unchanged (or only case / punctuation) -> null, judged as typed', SN.searchedText('opus one', 'opus one') === null && SN.searchedText('Opus One', 'opus one') === null && SN.searchedText('x', null) === null);
   ok('relevance: judged on "proseco" every Prosecco is dropped (the bug)', SM.rankByMatch('proseco', rows).products.length === 0);
-  ok('relevance: judged on the searched "prosecco" both are kept', SM.rankByMatch(SN.searchedText('proseco', 'prosecco'), rows).products.length === 2); }
+  ok('relevance: judged on the searched "prosecco" both are kept', SM.rankByMatch(SN.searchedText('proseco', 'prosecco'), rows).products.length === 2);
+  // Every layer, not only the spell check: the alias layer rewrites the search text before the search, so the rows are
+  // judged on the alias target ("vueve" -> "Veuve Clicquot"), never the typed word.
+  const vrows = [{ name: 'Veuve Clicquot Yellow Label Brut - 750 ML', price: 69 }];
+  const vt = (SN.aliasFor('vueve') || {}).to;
+  ok('relevance: alias "vueve" -> searched "Veuve Clicquot", judged on it the Veuve is kept (as typed it is dropped)', vt === 'Veuve Clicquot' && SM.rankByMatch(vt, vrows).products.length === 1 && SM.rankByMatch('vueve', vrows).products.length === 0);
+  ok('relevance: abbreviation "cakebread chard" judged on the expanded text keeps a Cakebread Chardonnay', SM.rankByMatch(SN.expandAbbreviations('cakebread chard'), [{ name: 'Cakebread Cellars Chardonnay - 750 ML', price: 55 }]).products.length === 1); }
 
 // ── Off switch: rachel/data/search-normalize-config.json, read at start ──
 { const fs = require('fs'), path = require('path'), os = require('os');

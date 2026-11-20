@@ -10,5 +10,6 @@ turns:
   - send: "rombauer chard 750ml"
     expect:
       matches: "(?i)rombauer[^\\n]*chardonnay"
-      log_contains: ['"rombauer chard 750ml" -> "rombauer chardonnay 750ml" (abbreviation)']
+      # the size is spaced ("750 ml") before the abbreviation layer runs, so that is the logged text
+      log_contains: ['"rombauer chard 750 ml" -> "rombauer chardonnay 750 ml" (abbreviation)']
       log_not_contains: ['(alias)']
