@@ -193,6 +193,13 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           console.log('[proposal] options injected into generate_proposal:', JSON.stringify(eventParams.proposalOpts));
         }
         const saInput = Object.assign({}, toolInput, { channel: (sessionState && sessionState.basketChannel) || channelFormat || toolInput.channel || 'slack' });   // an email thread's own basket key (gbrain.js basketKey)
+        // The customer's WHOLE message is a product alias ("vueve", "dom p"): the model's search for that same text searches
+        // the alias's product instead (search-normalize.js aliasTerm; never part of a longer request). Nov 20.
+        if (require('./search-normalize.js').aliasFor(customerMessage)) {
+          const SNa = require('./search-normalize.js');
+          for (const q of (Array.isArray(saInput.queries) ? saInput.queries : [])) { if (q && q.name) q.name = SNa.aliasTerm(q.name, customerMessage); if (q && q.term) q.term = SNa.aliasTerm(q.term, customerMessage); }
+          for (const np of (Array.isArray(saInput.named_products) ? saInput.named_products : [])) if (np && np.name) np.name = SNa.aliasTerm(np.name, customerMessage);
+        }
         if (requesterEmail) {
           if (saInput.email && saInput.email !== requesterEmail) {
             console.log('[ShoppingAgent] overriding LLM-supplied email', saInput.email, '->', requesterEmail);

@@ -585,6 +585,7 @@ const basketLineFor = require('./basket-line.js');   // the basket line an item 
 const REMOVED = require('./removed-lines.js');
 const PSQ = require('./pending-sub-qty.js');   // a swap held while Rachel asks "how many?" (next message only)   // lines taken out in code, kept 30 min with their qty (a later pick replaces them)
 const AR = require('./add-replace.js');   // add-item: replace a basket line or add a new one (DC, Nov 20)
+const SN = require('./search-normalize.js');   // abbreviations / whole-message aliases / zero-result spell check before searches (Nov 20)
 // The ONE not-carried item (still pending) that a picked product stands in for: same varietal, or the same drink type
 // when the last reply named that item. -> { name, qty } | null. Used by every pick path (numbered list, add-item by
 // name), so a pick REPLACES the missing line at its planned qty. Real bug (Sep 30, DC): fixed in the add-item path
@@ -3013,7 +3014,8 @@ app.post('/chat', async (req, res) => {
         // gate instead of being discarded — real gap on email/WhatsApp, where the first
         // message usually IS the order. Only the FIRST one: a later off-script reply at the
         // gate must not overwrite the customer's actual request.
-        const greetingOnly = msgLower.length < 12 || /^(hi|hello|hey|yo|hola|good (morning|afternoon|evening)|reset)[\s!.,]*$/i.test(msgLower);
+        // A short message that IS a product alias ("DOM", "titos") is a request, held through the gate (search-normalize.js).
+        const greetingOnly = !SN.aliasFor(message) && (msgLower.length < 12 || /^(hi|hello|hey|yo|hola|good (morning|afternoon|evening)|reset)[\s!.,]*$/i.test(msgLower));
         if (!greetingOnly && !state.pendingIntent && !freshTurn) {
           state.pendingIntent = message; saveFlowState();
           const ack = 'Thanks — I have your request and will pick it up right after one quick check. Are you 21 or older?';
@@ -3364,7 +3366,25 @@ app.post('/chat', async (req, res) => {
         const nmA = (Date.now() - (state.pendingSaveName.at || 0) < 30 * 60000) ? SB.nameAnswer(message) : '';
         state.pendingSaveName = null; saveFlowState();
         if (nmA) sbCmd = { kind: 'save', name: nmA };
-        else console.log('[saved-basket] name question NOT answered — ' + JSON.stringify(message.slice(0, 60)) + ' goes on as a normal message');
+        else {
+          console.log('[saved-basket] name question NOT answered — ' + JSON.stringify(message.slice(0, 60)) + ' goes on as a normal message');
+          // Only the code saves. A reply that still says the basket was saved (Nov 20: "Saved! Your basket "WAT" is ready to
+          // go" with nothing saved) has that paragraph replaced by the name question again.
+          const savedBefore = SB.list(who).length;
+          const _jS = res.json.bind(res);
+          res.json = (payload) => {
+            try {
+              if (payload && typeof payload.text === 'string' && SB.claimsSaved(payload.text) && SB.list(who).length === savedBefore) {
+                const ask = 'I haven\'t saved the basket yet — what name would you like for it? (e.g. "Holiday Party")';
+                const fix = (t) => { const paras = String(t || '').split(/\n\s*\n/); const i = paras.findIndex(p => SB.claimsSaved(p)); if (i >= 0) paras[i] = ask; return paras.filter((p, j) => j === i || !SB.claimsSaved(p)).join('\n\n'); };
+                payload.text = fix(payload.text); if (typeof payload.response === 'string') payload.response = fix(payload.response);
+                const stS = flowState[sessionKey]; if (stS) { stS.pendingSaveName = { at: Date.now() }; saveFlowState(); }
+                console.log('[saved-basket] reply said the basket was saved but nothing was saved — REPLACED with the name question');
+              }
+            } catch (e) {}
+            return _jS(payload);
+          };
+        }
       }
       const sbReply = (t) => { recordTurn(sessionKey, message, t, false); return res.json({ text: t, response: t }); };
       const cartNow = () => { try { return JSON.parse(state.lastLineItems || '[]'); } catch (e) { return []; } };
@@ -5332,7 +5352,12 @@ app.post('/chat', async (req, res) => {
         const { classifyIntent, groundedRef } = require('./classify-intent.js');
         const lastR2 = (lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '';
         let bsz2 = 0; try { bsz2 = JSON.parse(state.lastLineItems || '[]').length; } catch (e) {}
-        const cr = await classifyIntent(message, { lastKind: 'other', orderStep: null, basketSize: bsz2, lastQuestion: lastR2.slice(0, 160) });
+        // The whole message is a product alias ("DOM", "vueve", "dom p"): it is a product search, in code — never a greeting
+        // for the model to answer (Nov 20 QA: "DOM" -> "I'm here and ready to help!"). search-normalize.js aliasFor.
+        const alM = SN.aliasFor(message);
+        if (alM) console.log('[search-normalize] ' + JSON.stringify(message) + ' -> ' + JSON.stringify(alM.to) + ' (alias) — routed to add-item, classifier not called');
+        const cr = alM ? { intent: 'add_item', ref: alM.to, qty: 0, confidence: 1, source: 'rule:alias' }
+          : await classifyIntent(message, { lastKind: 'other', orderStep: null, basketSize: bsz2, lastQuestion: lastR2.slice(0, 160) });
         // Per-intent thresholds: the cost of a wrong route differs. show_basket is harmless
         // if wrong (0.65); place_order starts a multi-step flow (0.75); add_item changes
         // the basket (0.8).
@@ -5729,11 +5754,11 @@ app.post('/chat', async (req, res) => {
             const intI = AR.intentFor(message, itI, basketLineFor);
             state.pendingAddIntent = { intent: intI, options: prods.map(pr => pr.name), at: Date.now() }; saveFlowState();
             console.log('[add-item] options listed - stored decision ' + AR.intentLabel(intI) + ' (' + intI.reason + ') for the next pick'); }
-          const rC = 'I found a few options for ' + clsRef + ':\n\n' + lines.join('\n') + '\n\nWhich one would you like to add?';
+          const rC = 'I found a few options for ' + (SN.aliasFor(message) ? String(message).trim() : clsRef) + ':\n\n' + lines.join('\n') + '\n\nWhich one would you like to add?';
           return res.json({ text: rC, response: rC });
         }
         state.notFoundAsk = { message, at: Date.now() }; saveFlowState();   // a new address re-runs it there (DC, Oct 28)
-        const rD = 'I couldn\'t find ' + clsRef + ' at the store that delivers to ' + (state.address || 'your address') + '. Want me to look for something similar — or if it\'s for another address, send it and I\'ll check that store.';
+        const rD = 'I couldn\'t find ' + (SN.aliasFor(message) ? String(message).trim() : clsRef) + ' at the store that delivers to ' + (state.address || 'your address') + '. Want me to look for something similar — or if it\'s for another address, send it and I\'ll check that store.';
         return res.json({ text: rD, response: rD });
       } catch (e) { console.log('[add-item] error, falling through:', e.message); }
     }
@@ -7462,15 +7487,18 @@ app.post('/chat', async (req, res) => {
         let picked = null;
         const numM = msgClean.match(/^(?:option\s*|#\s*)?(\d{1,2})\s*\.?$/i);
         if (numM) picked = pickLines.find(l => l.n === parseInt(numM[1])) || null;
+        // The name the customer typed, as the search would read it ("vueve" -> Veuve Clicquot, "cakebread chard" ->
+        // "cakebread chardonnay"); matching only — the reply still quotes the product picked.
+        const msgPick = (() => { const al = SN.aliasFor(msgClean); if (al) { console.log('[search-normalize] ' + JSON.stringify(msgClean) + ' -> ' + JSON.stringify(al.to) + ' (alias, pick by name)'); return al.to; } return SN.expandAbbreviations(msgClean); })();
         if (!picked) {
-          const mN = norm(msgClean);
+          const mN = norm(msgPick);
           // Tolerant match — fuzzy prefix/overlap, not exact. Real bug: the customer typed
           // "La Crema Chardonnay Sonoma Coas" (one letter short) and the exact-name check
           // failed, so the options were re-listed. Accept if the message is a prefix of
           // the option (>= 8 chars), the option is a prefix of the message, or they share
           // >= 70% of meaningful words.
           const words = s => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/).filter(w => w.length > 2 && !/^\d+$/.test(w) && !/^(the|and|with|ml|oz|bottle|can|pack)$/.test(w));
-          const mW = words(msgClean);
+          const mW = words(msgPick);
           const scored = pickLines.map(l => {
             const lN = norm(l.name), lW = words(l.name);
             const prefix = (mN.length >= 8 && lN.indexOf(mN) === 0) || (lN.length >= 8 && mN.indexOf(lN) === 0);
@@ -7496,7 +7524,7 @@ app.post('/chat', async (req, res) => {
           // Only a message that is JUST this pick is resolved here; anything more (a question,
           // a second pick, a swap instruction) goes to the LLM whole. Real bug (Sep 28): a pick +
           // "Do you have regular Don Julio blanco?" + "Casamigos look good" lost the last two.
-          const leftover = require('./multipick.js').pickLeftover(msgClean, picked);
+          const leftover = require('./multipick.js').pickLeftover(msgPick, picked);
           // ...and the substitute merge below must not take it back. Real (Oct 5 nightly, F-0016): Bacardi 750 not
           // carried (pending) -> "Buffalo Trace Bourbon looks good. Do you have Casamigos Blanco?" was merged at 1x,
           // the Casamigos question dropped.

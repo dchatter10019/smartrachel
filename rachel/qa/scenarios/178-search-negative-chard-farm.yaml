@@ -1,0 +1,14 @@
+name: search-negative-chard-farm
+tags: [ux, search-normalize]
+# Nov 20 (DC): "Chard Farm" is a real winery (New Zealand) — the "chard" -> "chardonnay" abbreviation must never turn it
+# into something else. The expanded search finds nothing, so the text as typed is searched next, before any other
+# fallback (search-normalize.js expansionMissed). Not carried at 10019, so the reply says so with the customer's words.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+    expect: {contains: ["10019"]}
+  - send: "Chard Farm pinot noir"
+    expect:
+      not_matches: "(?i)chardonnay farm"
+      log_contains: ['[search-normalize] expansion found nothing - retried original']

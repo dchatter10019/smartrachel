@@ -1,0 +1,13 @@
+name: search-alias-vueve
+tags: [ux, search-normalize]
+# Nov 20 (DC): search-text normalization before every product search (rachel/search-normalize.js) — alias: the whole message "vueve" searches Veuve Clicquot (Nov 20 QA email run: the model found it; now in code)
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+    expect: {contains: ["10019"]}
+  - send: "vueve"
+    expect:
+      contains: ["Veuve"]
+      not_contains: ["ready to help", "couldn't find"]
+      log_contains: ['[search-normalize] "vueve" -> "Veuve Clicquot" (alias)']

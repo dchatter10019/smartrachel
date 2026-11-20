@@ -1,0 +1,6 @@
+{
+  "about": "Off switch for rachel/search-normalize.js (DC, Nov 20). Read once at service start: set a layer to false and restart rachel + shopping-agent (precheck.sh --deploy) to turn it off with no code change.",
+  "abbreviations": true,
+  "aliases": true,
+  "spellcheck": true
+}

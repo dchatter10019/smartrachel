@@ -1,0 +1,24 @@
+name: saved-basket-slack-link-name
+# Nov 20 (DC on Slack): "save the basket" -> name asked -> "WAT - 707 Roy Moore Rd, Ona, FL 33865" (Slack linked the
+# address: "WAT - <https://www.google.com/maps/...|707 Roy Moore Rd, ...>"). The name was refused (link markup, 9 words),
+# the model replied "Saved! Your basket "WAT" is ready to go" with nothing saved, and "show all the saved baskets" said none.
+tags: [basket]
+format: slack
+turns:
+  - send: reset
+  - send: "I need 3 bottles of Tito's 750ml"
+    expect: {matches: "(?i)21"}
+  - send: "yes"
+    expect: {matches: "(?i)address"}
+  - send: "1 Rockefeller Plaza, New York, NY 10020"
+    expect: {matches: "(?i)tito"}
+  - send: "save the basket"
+    expect: {matches: "(?i)what would you like to call"}
+  - send: "QA WAT - <https://www.google.com/maps/search/707+Roy+Moore+Rd,+Ona,+FL+33865?entry=gmail&amp;source=g|707 Roy Moore Rd, Ona, FL 33865>"
+    expect:
+      contains: ["Saved your basket as", "QA WAT - 707 Roy Moore Rd, Ona, FL 33865"]
+      log_contains: ["[saved-basket] saved \"QA WAT - 707 Roy Moore Rd, Ona, FL 33865\""]
+  - send: "show all the saved baskets"
+    expect: {contains: ["QA WAT - 707 Roy Moore Rd"]}
+  - send: "delete saved basket QA WAT - 707 Roy Moore Rd, Ona, FL 33865"
+    expect: {contains: ["Deleted your saved basket"]}

@@ -52,5 +52,10 @@ const lt = SB.listText('dc@getbevvi.com');
 assert.ok(/saved [A-Z][a-z]{2} \d{1,2}, \d{4}/.test(lt) && /Board dinner/.test(lt) && !/^\s*1\./m.test(lt), lt); n++;
 eq(SB.remove('dc@getbevvi.com', 'Board Dinner').name, 'Board dinner');
 eq(SB.list('dc@getbevvi.com').length, 1);
+// Nov 20 (DC on Slack): the name answer had a Slack-linked address in it.
+eq(SB.nameAnswer('WAT - <https://www.google.com/maps/search/707+Roy+Moore+Rd,+Ona,+FL+33865?entry=gmail&amp;source=g|707 Roy Moore Rd, Ona, FL 33865>'), 'WAT - 707 Roy Moore Rd, Ona, FL 33865');
+eq(SB.parse('save this basket as <https://x.com/a|Party Night>').name, 'Party Night');
+eq(SB.claimsSaved('Saved! Your basket "WAT" is ready to go whenever you are.'), true);
+eq(SB.claimsSaved('Would you like me to place the order, or send you a PDF proposal?'), false);
 fs.rmSync(dir, { recursive: true, force: true });
 console.log('saved-baskets: ' + n + ' checks passed');

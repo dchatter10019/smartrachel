@@ -1,0 +1,14 @@
+name: search-abbr-cakebread-chard
+tags: [ux, search-normalize]
+# Nov 20 (DC): "cakebread chard" is a whole-message key in the approved alias file, so the ALIAS layer handles it (aliases
+# come first) -> Cakebread Chardonnay. The abbreviation layer is covered by 180 ("rombauer chard 750ml", no alias key).
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+    expect: {contains: ["10019"]}
+  - send: "cakebread chard"
+    expect:
+      contains: ["Cakebread"]
+      matches: "(?i)cakebread[^\\n]*chardonnay"
+      log_contains: ['"cakebread chard" -> "Cakebread Chardonnay" (alias)']

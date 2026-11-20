@@ -711,13 +711,20 @@ async function buildPackage(iv) {
       // Expand any colloquial brand nickname to the catalog's formal name up front —
       // safe no-op if absent, fixes the search immediately if present (e.g. "Sam
       // Adams" -> "Samuel Adams"), before any size/diacritic retry logic runs.
-      term = expandBrandNicknames(term);
+      var typedTerm = expandBrandNicknames(term);
+      term = require('./search-normalize.js').expandAbbreviations(typedTerm);   // "chard" -> "chardonnay" (Nov 20)
       var requestedSize = extractRequestedSize(term);
       var bestSoFar = [];
 
       // Try the term exactly as given first — this preserves precise size-matching
       // when the format happens to be correct (e.g. "Angel's Envy Bourbon 750 ML").
       var results = await rawSearch(term);
+      // The expansion found nothing: the text as typed, once, before any other retry; the retries below use it
+      // ("Chard Farm Pinot Noir" is a winery). search-normalize.js expansionMissed.
+      if (require('./search-normalize.js').expansionMissed(typedTerm, term, results.length)) {
+        term = typedTerm; requestedSize = extractRequestedSize(term);
+        results = await rawSearch(term);
+      }
       if (results.length > 0) {
         bestSoFar = results;
         if (resultsMatchRequestedSize(results, requestedSize)) return results;
@@ -797,6 +804,15 @@ async function buildPackage(iv) {
       // If NOTHING at all was found by any exact-match retry, try the generalized
       // fuzzy fallback before giving up entirely — catches brand-naming mismatches
       // we haven't seen before, without needing to hardcode each one.
+      // Zero-result spell check (search-normalize.js): nothing found by any exact retry -> the closest CATEGORY words, ONE retry.
+      if (bestSoFar.length === 0) {
+        var fx = require('./search-normalize.js').spellFix(term);
+        if (fx) {
+          var fxResults = require('./search-normalize.js').acceptFix(fx, await rawSearch(fx.term));
+          console.log('[doSearch] spell-check retry ' + JSON.stringify(term) + ' -> ' + JSON.stringify(fx.term) + ': ' + fxResults.length + ' result(s) kept');
+          if (fxResults.length > 0) return fxResults;
+        }
+      }
       if (bestSoFar.length === 0) {
         var fuzzyResults = await fuzzyFallbackSearch(stripSizeFromSearchTerm(stripDiacritics(term)) || term, searchCategory);
         if (fuzzyResults.length > 0) return fuzzyResults;

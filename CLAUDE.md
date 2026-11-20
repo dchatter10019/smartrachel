@@ -1187,7 +1187,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   refreshed + said, relinked by product_id / UPC / name+size, a line not found = left out + said; a non-empty cart / checkout
   is cleared first; client + fees saved with it restored), "delete saved basket X". A load/delete of a name that is no saved
   basket is passed on unless the message said "saved" / load / retrieve / restore. [saved-basket] logs every decision.
-  Scenario 162, qa/unit/saved-baskets.test.js.
+  Slack link markup is read as plain text (saved-baskets.js unwrap; Nov 20 DC: the name "WAT - 707 Roy Moore Rd, Ona, FL 33865"
+  came as "WAT - <maps-url|707 Roy Moore Rd...>", was refused, and the MODEL replied "Saved!" with nothing saved); a reply that
+  claims a save the code didn't make is replaced by the name question again ([saved-basket] ... REPLACED). Scenarios 162, 181, qa/unit/saved-baskets.test.js.
 
 - Swap with no known quantity (Nov 20 nightly, pick-plus-question / F-0016: "Instead of the Bacardi I'd like a higher end
   bourbon, same 5 bottles" — the edit reader removed the 5x Bacardi, the Buffalo Trace picked next went in at a silent 1x
@@ -1223,6 +1225,28 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   (rule) or classified add_item >= 0.8 reach this route ("let's go with Tito's 750ml for vodka" scores ~0.6-0.7 -> the
   model's confirm_substitute). Scenarios 165-169, qa/unit/add-replace.test.js. Open: F-0296 (model-written swap reply
   invented a price), F-0297 (search "Oyster Bay Sauvignon Blanc" also returns 5 Cabernet Sauvignons).
+
+- SEARCH NORMALIZE (DC, Nov 20; rachel/search-normalize.js, no LLM). Before every product search — shopping-agent
+  searchWithFallbacks (add-item, the model's product_query, alternatives, stock lookups, the connector's rachel_search) and
+  buildPackage doSearch (list / event lines) — three layers: (1) abbreviations (rachel/data/search-abbreviations.json,
+  whole words, longest first: chard / cab / sauv blanc / sav / champ / cabsav; code guards: "cab franc" never expanded,
+  "cab sav(v)" = cabernet sauvignon); an expanded search that finds nothing is retried ONCE with the text as typed before any
+  other fallback, and the fallbacks then use it ([search-normalize] expansion found nothing - retried original; "Chard Farm"
+  is a winery); (2) aliases (rachel/data/search-aliases.json, the WHOLE message normalized = a key: "vueve", "DOM", "dom p")
+  -> at the ready step routed to add-item in code (classifier skipped, "... (alias) — routed to add-item"), held through the
+  age gate (never a greeting), the model's search of that same text rewritten (rachel.js), the pick-by-name match; never
+  inside a longer message, never while another question waits (address / zip question, checkout, proposal); (3) zero-result
+  spell check — only after every exact retry found nothing — against the FIXED category words in
+  rachel/data/search-category-words.json only (prosecco, chardonnay, tequila...; 5+ letters; typed word 4+ letters, same
+  first letter, one unique closest match), retried once, kept only when a returned product names every word of the
+  corrected search; product_query's relevance filter (search-match rankByMatch) judges rows by the text actually searched
+  when a layer changed it (rows.searchedAs; [product_query] relevance judged on the searched text — staging: "proseco" found 12
+  Proseccos as "prosecco" and the filter dropped them all). No store vocabulary, no brand spell check (queued). Replies keep the customer's own words. Every rewrite
+  logs [search-normalize] "<before>" -> "<after>" (<layer>). OFF SWITCH: rachel/data/search-normalize-config.json
+  {abbreviations, aliases, spellcheck} true|false, read at service start ([search-normalize] layers: ...) — set false and
+  run precheck.sh --deploy (restarts rachel + shopping-agent) to turn a layer off with no code change. The alias /
+  abbreviation files are generated from the Voiceflow export (rachel/data/README.md). Scenarios 170-180,
+  qa/unit/search-normalize.test.js.
 
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days

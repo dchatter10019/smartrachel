@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "match": "whole_word",
+  "match_rule": "whole words of the normalized message only (never inside a longer word); longest pattern first",
+  "normalize": "lowercase; accents removed (NFKD, combining marks dropped); apostrophes removed; any other punctuation -> space; runs of spaces -> one space; trimmed (data/voiceflow-export-tools/alias_candidates.py norm)",
+  "abbreviations": [
+    {
+      "typed": "sauv blanc",
+      "expands_to": "sauvignon blanc"
+    },
+    {
+      "typed": "cabsav",
+      "expands_to": "cabernet sauvignon"
+    },
+    {
+      "typed": "champ",
+      "expands_to": "champagne"
+    },
+    {
+      "typed": "chard",
+      "expands_to": "chardonnay"
+    },
+    {
+      "typed": "cab",
+      "expands_to": "cabernet"
+    },
+    {
+      "typed": "sav",
+      "expands_to": "sauvignon blanc"
+    }
+  ]
+}

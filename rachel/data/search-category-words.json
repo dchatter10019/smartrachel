@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "about": "Layer 3 of rachel/search-normalize.js (DC, Nov 20): the ONLY words the zero-result spell check may correct a typed word to. Fixed list, edited by hand — never learned from searches. Each word is a catalog category (Wine / Beer / Liquor) or a type word rachel/drink-type.js and rachel/spirit-type.js already use to classify catalog rows. 5+ letters only: shorter targets (gin, rum, rye, ale, ipa, rose, brut, noir, blanc, gris, franc, wine, beer) sit too close to real brand words.",
+  "words": [
+    "prosecco", "champagne", "sparkling", "lambrusco",
+    "chardonnay", "sauvignon", "cabernet", "pinot", "grigio", "merlot", "riesling", "malbec", "syrah", "shiraz",
+    "zinfandel", "moscato", "tempranillo", "sangiovese", "viognier", "chianti",
+    "tequila", "mezcal", "vodka", "whiskey", "whisky", "bourbon", "scotch", "cognac", "brandy", "liqueur", "liquor", "vermouth",
+    "lager", "pilsner", "stout", "seltzer", "cider"
+  ]
+}

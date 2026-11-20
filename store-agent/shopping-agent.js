@@ -37,6 +37,7 @@ function customerNamedLine(item) {
   try { return require(RACHEL_DIR + '/search-match.js').keyOf(String(item.label)).length > 0; } catch (e) { return false; }
 }
 const CATALOG = require(RACHEL_DIR + '/catalog-api.js');
+const SN = require(RACHEL_DIR + '/search-normalize.js');   // abbreviations + zero-result spell check before every search (DC, Nov 20)
 const STOCK = require(RACHEL_DIR + '/stock.js');   // store stock counts vs quantities (DC, Nov 14)   // the catalog search: legacy searchCorpProducts or getProducts (CATALOG_API)
 const packageModel = require(RACHEL_DIR + '/package-model.js');
 const { classifyProduct } = require(RACHEL_DIR + '/brand-lists.js');
@@ -398,12 +399,32 @@ function expandBrandNicknames(term) {
   return result;
 }
 
+// The rows carry .searchedAs = the text actually searched when a search-normalize layer changed it (an abbreviation kept,
+// or the spell check's retry) — product_query's relevance filter reads it, never the reply (Nov 20: "proseco" found 12
+// Proseccos as "prosecco", then the filter dropped all 12 for not containing "proseco").
 async function searchWithFallbacks(location, client, name, limit, minPrice, maxPrice) {
+  const meta = {};
+  const products = await searchWithFallbacksRaw(location, client, name, limit, minPrice, maxPrice, meta);
+  const sa = SN.searchedText(name, meta.searchedAs);
+  if (Array.isArray(products) && products.length && sa) products.searchedAs = sa;
+  return products;
+}
+async function searchWithFallbacksRaw(location, client, name, limit, minPrice, maxPrice, meta) {
+  meta = meta || {};
   const name0 = name;
-  name = stripDescriptors(spaceSize(expandBrandNicknames(name)));
+  const typed = stripDescriptors(spaceSize(expandBrandNicknames(name)));
+  name = SN.expandAbbreviations(typed);
+  if (name !== typed) meta.searchedAs = name;
   if (stripDescriptors(name0) !== name0) console.log('[search] descriptor words dropped from the search text: ' + JSON.stringify(name0) + ' -> ' + JSON.stringify(name));
   let products = await searchProducts(location, client, name, limit || 10, minPrice, maxPrice);
   if (products.length) return products;
+  // The expansion found nothing: the text as typed, once, before any other fallback; the fallbacks below then use it
+  // ("Chard Farm Pinot Noir" is a winery, not "chardonnay Farm"). search-normalize.js expansionMissed.
+  if (SN.expansionMissed(typed, name, products.length)) {
+    name = typed; meta.searchedAs = null;
+    products = await searchProducts(location, client, name, limit || 10, minPrice, maxPrice);
+    if (products.length) return products;
+  }
   // The catalog search needs the possessive apostrophe: "Titos Handmade Vodka 1.75L" -> nothing, "Tito's ..." -> found.
   // Real (Oct 2, DC's Goody thread, SF 94104): "swap the ketel one for titos" -> "Tito's 1.75L isn't available", and a
   // 750 mL Tito's went in instead. Each "<word>s" (no apostrophe) is tried as "<word>'s", up to 2 words.
@@ -446,6 +467,14 @@ async function searchWithFallbacks(location, client, name, limit, minPrice, maxP
     products = await searchProducts(location, client, alt, limit || 10, minPrice, maxPrice);
     if (products.length) { console.log('[searchWithFallbacks] hyphen-join retry succeeded:', JSON.stringify(name), '->', JSON.stringify(alt)); return products; }
   }
+  // Zero-result spell check (search-normalize.js): only here, after every exact retry found nothing, never when the
+  // search found products. Each typed word -> its closest CATEGORY word (data/search-category-words.json), retried ONCE.
+  { const fx = SN.spellFix(name);
+    if (fx) {
+      products = SN.acceptFix(fx, await searchProducts(location, client, fx.term, limit || 10, minPrice, maxPrice));
+      console.log('[searchWithFallbacks] spell-check retry ' + JSON.stringify(name) + ' -> ' + JSON.stringify(fx.term) + ': ' + products.length + ' result(s) kept');
+      if (products.length) { meta.searchedAs = fx.term; return products; }
+    } }
   // Normalize common category names
   const nameMap = {'champagne': 'champagne', 'prosecco': 'prosecco', 'sparkling wine': 'champagne',
                    'red wine': 'cabernet', 'white wine': 'chardonnay', 'rose': 'rose wine', 'ros\u00e9': 'rose wine'};
@@ -513,6 +542,7 @@ async function executeTool(name, input) {
       // "Don Julio Tequila 750 mL" (zip 33409, Sep 29) returned Primavera / Rosado / Alma Miel and
       // never the Blanco or Reposado the customer meant ("regular Don Julio blanco").
       let raw = await searchWithFallbacks(loc.kitchen, loc.client, searchName, Math.max(q.limit || 5, 12), priceRange.min || undefined, qMax || undefined);
+      const mainRaw = raw;
       if (!raw.length && (qMin || qMax)) console.log('[product_query] ' + JSON.stringify(searchName) + ' — nothing in the price range');
       // Try fallback terms if main search fails
       for (var fi = 0; fi < fallbacks.length && raw.length === 0; fi++) {
@@ -540,7 +570,11 @@ async function executeTool(name, input) {
       // price-only order put them first — on the connector "Green Chartreuse" came back as Johnnie Walker Green, "Rioja"
       // as an Argentine Malbec blend (DC, Oct 6). Results that don't carry the query's producer words are dropped; none
       // left = not carried here.
-      const rm = require(RACHEL_DIR + '/search-match.js').rankByMatch(searchName, coreRank);
+      // The text actually searched when a search-normalize layer changed it ("proseco" -> "prosecco"); the reply keeps the
+      // customer's words. Only for the main search's rows (a fallback_terms search is still judged by searchName).
+      const matchName = (raw === mainRaw && raw.searchedAs) || searchName;
+      if (matchName !== searchName) console.log('[product_query] relevance judged on the searched text ' + JSON.stringify(matchName) + ' (typed ' + JSON.stringify(searchName) + ')');
+      const rm = require(RACHEL_DIR + '/search-match.js').rankByMatch(matchName, coreRank);
       // A MIXER asked for by name (mixers.js: Coke, OJ, tonic...) with no spirit in the query is never answered with an
       // alcoholic product that carries its word — Oct 8 (connector): "Coca-Cola" -> "Jack Daniel's & Coca-Cola" as found.
       try {

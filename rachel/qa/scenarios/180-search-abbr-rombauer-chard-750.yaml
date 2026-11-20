@@ -1,0 +1,14 @@
+name: search-abbr-rombauer-chard-750
+tags: [ux, search-normalize]
+# Nov 20 (DC): the ABBREVIATION layer on a message that is NOT an alias key ("rombauer chard" is a key; with "750ml" the whole
+# message is not, and aliases never match inside a longer message): "chard" -> "chardonnay", a Rombauer Chardonnay shown.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+    expect: {contains: ["10019"]}
+  - send: "rombauer chard 750ml"
+    expect:
+      matches: "(?i)rombauer[^\\n]*chardonnay"
+      log_contains: ['"rombauer chard 750ml" -> "rombauer chardonnay 750ml" (abbreviation)']
+      log_not_contains: ['(alias)']

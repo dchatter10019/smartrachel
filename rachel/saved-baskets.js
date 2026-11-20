@@ -16,6 +16,14 @@ const NOUN = '(?:basket|cart|order|list|selection|package|menu)';
 const VERB_LOAD = '(?:load|retrieve|restore|reload|recall|open|pull up|bring back|bring up|use|get|switch to|go back to|re-?use)';
 const VERB_DEL = '(?:delete|remove|discard|forget|erase|drop)';
 
+// Slack / email link markup as plain text (Nov 20, DC on Slack: the name answer "WAT - 707 Roy Moore Rd, Ona, FL 33865"
+// arrived as "WAT - <https://www.google.com/maps/search/...|707 Roy Moore Rd, Ona, FL 33865>" — Slack linked the address —
+// and was refused as too long; the model then said "Saved!" with nothing saved). "<url|label>" -> label, "<url>" -> url.
+function unwrap(s) {
+  return String(s || '').replace(/<((?:https?|mailto|tel):[^|>\s]*)\|([^>]*)>/gi, '$2').replace(/<((?:https?|mailto|tel):[^>\s]*)>/gi, '$1')
+    .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
+}
+
 // A name as the customer typed it: quotes, trailing punctuation and politeness removed.
 function cleanName(s) {
   let n = String(s || '').replace(/\s+/g, ' ').trim();
@@ -33,7 +41,7 @@ const norm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ
 // X.\n\nThanks,\nDC"); any other second line = not a command.
 const FILLER = /^(?:(?:hi|hey|hello|dear|good (?:morning|afternoon|evening))\b[^\n]{0,30}|(?:thanks?|thank you|thx|cheers|best|regards|best regards|warmly|sincerely|kind regards)\b[^\n]{0,30}|[A-Z][A-Za-z.'-]*(?: [A-Z][A-Za-z.'-]*){0,2}[,.]?|-+|--\s*)$/;
 function parse(message) {
-  const lines = String(message || '').replace(/\r/g, '').split('\n').map(l => l.trim()).filter(Boolean);
+  const lines = unwrap(message).replace(/\r/g, '').split('\n').map(l => l.trim()).filter(Boolean);
   if (lines.length <= 1) return parseLine(lines[0] || '');
   if (lines.length > 8) return null;
   const hits = lines.map(parseLine);
@@ -71,8 +79,8 @@ function parseLine(m) {
 
 // "what should I call it?" answered: a short line that is a name, not a request.
 function nameAnswer(message) {
-  const m = String(message || '').trim();
-  if (!m || m.length > 60 || /\n|\?/.test(m) || m.split(/\s+/).length > 8) return '';
+  const m = unwrap(message).trim();
+  if (!m || m.length > 60 || /\n|\?/.test(m) || m.split(/\s+/).length > 12) return '';
   if (/^(?:no|nope|cancel|never ?mind|skip|forget it|don'?t)\b/i.test(m)) return '';
   if (/\b(?:add|remove|swap|replace|order|checkout|proposal|deliver|address|show|basket|cart)\b/i.test(m)) return '';
   return cleanName(m.replace(/^(?:call it|name it|save it as|it'?s|as)\s+/i, ''));
@@ -122,6 +130,10 @@ function fmtDate(iso) { const d = new Date(iso); return isNaN(d) ? '' : MONTHS[d
 const money = n => '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const lineText = li => qtyOf(li) + 'x ' + li.name + ' — ' + money(parseFloat(li.price) || 0) + ' ea = ' + money(qtyOf(li) * (parseFloat(li.price) || 0));
 
+// A reply that tells the customer their basket was saved (the model's own words; only the code saves).
+const SAVED_CLAIM = /\b(?:saved|i'?ve saved|i saved|is saved|has been saved)\b[^.\n]{0,60}\b(?:basket|cart)\b|\b(?:basket|cart)\b[^.\n]{0,60}\b(?:saved|is ready to go whenever)\b/i;
+function claimsSaved(text) { return SAVED_CLAIM.test(String(text || '')); }
+
 // Bullets, never "1." — a numbered list would be read by the multi-pick resolver as options to pick from.
 function listText(email) {
   const all = list(email);
@@ -134,4 +146,4 @@ function listText(email) {
 }
 function namesText(email) { return list(email).map(b => '"' + b.name + '"').join(', '); }
 
-module.exports = { parse, nameAnswer, cleanName, list, find, save, remove, listText, namesText, lineText, totalOf, fmtDate, money, FILE };
+module.exports = { parse, nameAnswer, unwrap, claimsSaved, cleanName, list, find, save, remove, listText, namesText, lineText, totalOf, fmtDate, money, FILE };
