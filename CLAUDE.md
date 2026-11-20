@@ -355,7 +355,7 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
    tree has nothing to roll back. Plain `precheck.sh` = lint only; `--smoke` tests the live service.
    `precheck.sh --deploy --stage-first` (the default to use): the 22-scenario smoke set on staging from the working tree
    FIRST — a change that fails there never restarts production; production then gets only the 4-scenario `prodcheck`
-   set (tag prodcheck; `qa/run.py --tag <t>`). DC (Oct 2): deploy without asking, then commit + push.
+   set (tag prodcheck; `qa/run.py --tag <t>`). DC (Oct 2) said deploy without asking — REVOKED Nov 20, see rule 10. Deploy only an approved change, then commit + push.
    DC (Oct 3, cost): NO full suite after deploys — the gate is staging smoke + prodcheck; the full suite (`./qa/run.py`,
    ~$15-20 of Rachel tokens) runs only in the 08:00 UTC nightly. Fix/revert whatever the nightly shows newly failing.
    Don't run staging and a production full suite at the same time (shared box; turns time out).
@@ -386,6 +386,14 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
    tools/list (rachel-mcp.log: voiceflow-client initialize, then tool calls only). Oct 16: its rachel_generate_proposal
    still had only email + client_name, never sent line_items, so every call was held at the age check. The fixer's
    "Fix ready" post adds the warning in code when the branch touches those files (ops/fixer.py voiceflow_warning).
+
+10. NO DEPLOY WITHOUT DC'S APPROVAL OF THAT CHANGE (DC, Nov 20; replaces the Oct 2 "deploy without asking"). Never deploy
+   to production (precheck.sh --deploy, any service restart) before DC has explicitly approved that specific change. An
+   approval covers only the change it names — not other uncommitted work in the tree: `precheck.sh --deploy` ships the WHOLE
+   working tree, so check `git status` and stash or hold anything unapproved first. A deploy that happens by mistake is
+   reported in the FIRST LINE of the next message (what went live, when, how). Nov 20: the saved-basket fix's deploy at
+   15:42 UTC (7876ca6) also shipped the uncommitted search-normalize work before DC had approved it.
+   (The fixer's Slack ✅ / deploy-fix.sh is DC's approval of that fix.)
 
 ## Debug-and-fix loop (spec: "Rachel — Automated Debug-and-Fix Loop", Sep 29)
 - Step 1 staging: done (see Staging above). Step 2 monitor: ops/monitor.py (thresholds ops/monitor.yaml) reads the logs,
