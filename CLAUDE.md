@@ -1168,6 +1168,17 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   Also: "FL 32216" in a typed address was read as a FLOOR by address-extract.js UNIT (fl.) -> the echo "6426 Bowden Rd, FL
   32216, Jacksonville, FL 32216" (every Florida address typed with state + zip); a unit is never a 5-digit number now.
 
+- SAVED BASKETS (DC, Nov 20: "save a basket and name it and later retrieve it ... list the basket and date it was created"):
+  rachel/saved-baskets.js + server.js SAVED BASKETS (ready state, before the kept proposal / classifier / edit reader / LLM;
+  every /chat channel incl. email + rachel_chat — no new connector tool, Voiceflow unchanged). Per customer email (all channels;
+  RACHEL_DATA_DIR/saved-baskets.json, max 50): "save this basket as X" (no name -> asked, state.pendingSaveName; re-saving a
+  name replaces its lines and keeps created_at), "show my saved baskets" (bullets, never "1." — multipick; items, product
+  total, saved / updated date, zip), "load X" / "use my X basket" (each line re-searched at the store for THIS address: price
+  refreshed + said, relinked by product_id / UPC / name+size, a line not found = left out + said; a non-empty cart / checkout
+  is cleared first; client + fees saved with it restored), "delete saved basket X". A load/delete of a name that is no saved
+  basket is passed on unless the message said "saved" / load / retrieve / restore. [saved-basket] logs every decision.
+  Scenario 162, qa/unit/saved-baskets.test.js.
+
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
   so PDFs sent before Oct 15 still open (ask DC first; nginx).

@@ -3308,6 +3308,105 @@ app.post('/chat', async (req, res) => {
       return res.json({ text: addrQ, response: addrQ });
     }
 
+    // ── SAVED BASKETS (saved-baskets.js; DC, Nov 20: "save a basket and name it and later retrieve it ... list the basket
+    // and date it was created"). In code, every /chat channel, before the classifier / edit reader / LLM. Kept per customer
+    // email (all their channels). Load = the cart again, each line re-checked at the store serving this address.
+    if (state.step === 'ready' && state.orderStep !== 'placing' && !/^__/.test(message)) {
+      const SB = require('./saved-baskets.js');
+      const who = email || ('session:' + sessionKey);
+      let sbCmd = SB.parse(message);
+      if (!sbCmd && state.pendingSaveName) {
+        const nmA = (Date.now() - (state.pendingSaveName.at || 0) < 30 * 60000) ? SB.nameAnswer(message) : '';
+        state.pendingSaveName = null; saveFlowState();
+        if (nmA) sbCmd = { kind: 'save', name: nmA };
+        else console.log('[saved-basket] name question NOT answered — ' + JSON.stringify(message.slice(0, 60)) + ' goes on as a normal message');
+      }
+      const sbReply = (t) => { recordTurn(sessionKey, message, t, false); return res.json({ text: t, response: t }); };
+      const cartNow = () => { try { return JSON.parse(state.lastLineItems || '[]'); } catch (e) { return []; } };
+      if (sbCmd && sbCmd.kind === 'list') {
+        console.log('[saved-basket] list for ' + who + ': ' + SB.list(who).length + ' basket(s)');
+        return sbReply(SB.listText(who));
+      }
+      if (sbCmd && sbCmd.kind === 'save') {
+        const itemsS = cartNow();
+        if (!itemsS.length) { console.log('[saved-basket] save NOT done — the cart is empty'); return sbReply('Your cart is empty right now, so there\'s nothing to save yet. Add some drinks and then say "save this basket as <name>".'); }
+        if (!sbCmd.name) {
+          state.pendingSaveName = { at: Date.now() }; saveFlowState();
+          console.log('[saved-basket] save asked with no name — asking for one');
+          return sbReply('Happy to save it. What would you like to call this basket? (e.g. "Holiday Party")');
+        }
+        try {
+          const { entry, replaced } = SB.save(who, sbCmd.name, itemsS, { zip: state.zip || '', address: state.address || '', client: state.savedClientName || '', fees: state.proposalOpts && Object.keys(state.proposalOpts).length ? state.proposalOpts : null, tax_exempt: !!state.taxExempt, channel: format || '', session: sessionKey });
+          console.log('[saved-basket] ' + (replaced ? 'UPDATED' : 'saved') + ' "' + entry.name + '" for ' + who + ': ' + itemsS.length + ' line(s), ' + SB.money(entry.total) + (state.zip ? ', zip ' + state.zip : ''));
+          return sbReply((replaced ? 'Updated your saved basket *' + entry.name + '* (first saved ' + SB.fmtDate(entry.created_at) + ')' : 'Saved your basket as *' + entry.name + '*') +
+            ' — ' + itemsS.length + ' item' + (itemsS.length === 1 ? '' : 's') + ', ' + SB.money(entry.total) + ' product total.\n\n' + itemsS.map(SB.lineText).join('\n') +
+            '\n\nSay "load ' + entry.name + '" any time to bring it back, or "show my saved baskets" to see them all. Your cart is unchanged — would you like to place the order, generate a PDF proposal, or keep editing?');
+        } catch (e) { console.log('[saved-basket] save FAILED: ' + e.message); return sbReply('Sorry — I couldn\'t save that basket just now. Please try again in a moment.'); }
+      }
+      if (sbCmd && (sbCmd.kind === 'load' || sbCmd.kind === 'delete')) {
+        const f = SB.find(who, sbCmd.name);
+        if (!f.entry) {
+          if (f.matches.length > 1) { console.log('[saved-basket] ' + sbCmd.kind + ' "' + sbCmd.name + '" — ' + f.matches.length + ' names fit, asked which'); return sbReply('A few saved baskets fit "' + sbCmd.name + '": ' + f.matches.map(b => '"' + b.name + '"').join(', ') + '. Which one?'); }
+          if (sbCmd.explicit) {
+            console.log('[saved-basket] ' + sbCmd.kind + ' "' + sbCmd.name + '" — no saved basket by that name for ' + who);
+            const names = SB.namesText(who);
+            return sbReply('I don\'t have a saved basket called "' + sbCmd.name + '".' + (names ? ' Your saved baskets: ' + names + '.' : ' You haven\'t saved any baskets yet — say "save this basket as <name>" when your cart is ready.'));
+          }
+          console.log('[saved-basket] "' + sbCmd.name + '" is not a saved basket name and the message didn\'t say "saved" — NOT a saved-basket command, goes on');
+          sbCmd = null;
+        } else if (sbCmd.kind === 'delete') {
+          SB.remove(who, f.entry.name);
+          console.log('[saved-basket] deleted "' + f.entry.name + '" for ' + who);
+          return sbReply('Deleted your saved basket *' + f.entry.name + '* (saved ' + SB.fmtDate(f.entry.created_at) + '). Your current cart is unchanged.');
+        } else {
+          const e = f.entry, before = cartNow().length;
+          const items = JSON.parse(JSON.stringify(e.items || []));
+          // Each line re-checked at the store that serves THIS address: price now, still carried (stock 0 = out), relinked
+          // to this store's product (a basket saved for another zip is matched by UPC / name + size).
+          const nzS = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+          const changes = [], gone = [], unchecked = [];
+          const catOf = c => /spirit|liquor/i.test(c || '') ? 'liquor' : /wine/i.test(c || '') ? 'wine' : /beer/i.test(c || '') ? 'beer' : '';
+          const kept = [];
+          if (state.zip) {
+            const checks = await Promise.all(items.map(li => catalogSearch(state.zip, li.name, catOf(li.category)).then(rows => ({ li, rows }), err => ({ li, err }))));
+            for (const { li, rows, err } of checks) {
+              if (err) { unchecked.push(li.name); kept.push(li); continue; }
+              const hit = rows.find(r => li.product_id && r.product_id === li.product_id) || rows.find(r => li.upc && r.upc && String(r.upc) === String(li.upc)) ||
+                rows.find(r => nzS(r.name) === nzS(li.name) && (!li.size || !r.size || nzS(r.size) === nzS(li.size)));
+              if (!hit) { gone.push(li.name); console.log('[saved-basket] load "' + e.name + '": ' + li.name + ' NOT carried / out of stock at the store for ' + state.zip + ' — left out'); continue; }
+              const was = parseFloat(li.price) || 0, now = parseFloat(hit.price) || 0;
+              if (now > 0 && Math.abs(now - was) >= 0.005) { changes.push(li.name + ': ' + SB.money(was) + ' → ' + SB.money(now)); li.price = now; }
+              Object.assign(li, { product_id: hit.product_id || li.product_id, upc: hit.upc || li.upc, establishmentId: hit.establishmentId || li.establishmentId, url: hit.url || li.url });
+              kept.push(li);
+            }
+          } else kept.push(...items);
+          if (!kept.length) {
+            console.log('[saved-basket] load "' + e.name + '" NOT done — none of its ' + items.length + ' line(s) are carried at the store for ' + state.zip);
+            return sbReply('I found your saved basket *' + e.name + '*, but none of its items are available at the store that delivers to ' + (state.address || state.zip) + ' right now: ' + gone.join('; ') + '. Your cart is unchanged — want me to find similar products?');
+          }
+          if (before || state.orderStep || state.proposalStep || state.lastProposalUrl) clearCart(state, email, format, 'saved basket "' + e.name + '" loaded');
+          state.lastLineItems = JSON.stringify(kept); state.pendingSubstitutes = []; state.pendingAddOffer = null; state.pendingQtyFor = null; state.lastCta = null;
+          if (e.client) state.savedClientName = e.client;
+          if (e.fees) { state.proposalOpts = Object.assign({}, e.fees); state.eventParams = Object.assign({}, state.eventParams || {}, { proposalOpts: state.proposalOpts }); }
+          if (e.tax_exempt) state.taxExempt = true;
+          saveFlowState();
+          try { if (email) saveBasket(email, state.lastLineItems, '', format || 'slack').catch(() => {}); } catch (er) {}
+          console.log('[saved-basket] loaded "' + e.name + '" for ' + who + ' (saved ' + e.created_at + '): ' + kept.length + '/' + items.length + ' line(s)' + (gone.length ? ', left out: ' + gone.join(' | ') : '') + (changes.length ? ', repriced: ' + changes.join(' | ') : '') + (unchecked.length ? ', NOT checked (search failed): ' + unchecked.join(' | ') : '') + (before ? ', replaced a ' + before + '-line cart' : ''));
+          const tot = SB.totalOf(kept);
+          const otherStore = e.zip && state.zip && e.zip !== state.zip;
+          const rL = 'Loaded your saved basket *' + e.name + '* (saved ' + SB.fmtDate(e.created_at) + (SB.fmtDate(e.updated_at) !== SB.fmtDate(e.created_at) ? ', updated ' + SB.fmtDate(e.updated_at) : '') + ')' +
+            (before ? ' — it replaces the ' + before + ' item' + (before === 1 ? '' : 's') + ' that were in your cart' : '') + '.\n\n' +
+            (otherStore ? 'It was saved for delivery to ' + e.zip + '; I matched it to the store that delivers to ' + state.zip + '.\n\n' : '') +
+            kept.map(SB.lineText).join('\n') + '\n\nProduct total: ' + SB.money(tot) +
+            (changes.length ? '\n\nPrices that changed since you saved it:\n' + changes.map(c => '• ' + c).join('\n') : '') +
+            (gone.length ? '\n\nNo longer available at this store, so I left ' + (gone.length === 1 ? 'it' : 'them') + ' out:\n' + gone.map(g => '• ' + g).join('\n') : '') +
+            (unchecked.length ? '\n\nI couldn\'t re-check the current price of: ' + unchecked.join('; ') + '.' : '') +
+            '\n\nWould you like to place the order, generate a PDF proposal, or make any changes?';
+          return sbReply(rL);
+        }
+      }
+    }
+
     // ── A KEPT PROPOSAL comes back (kept-proposal.js; DC, Nov 11) ──────────────
     // Empty cart, no proposal in this conversation, and the message names the proposal kept from the last one (its client,
     // "the proposal"): its lines, client, date and fees are the cart again, so "add the following to iCapital" adds to it.

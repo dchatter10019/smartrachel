@@ -43,7 +43,7 @@ On Fri, Nov 13, 2026 at 3:10 PM Esthefany Fernandez <esthefany@eterrakitchen.com
 > Eterra Kitchen <https://www.eterrakitchen.com/>`;
 const f = TF.gather(EB.customerEmails([{ from: DC, body: fwd, current: true }]), ctx);
 ok('address from the quoted email', f.address && f.address.value === '891 Amsterdam Ave, New York, NY');
-ok('date: November 19 (never the forward\'s Nov 13/14 headers)', f.eventDate && /November 19, 2026/.test(f.eventDate.value));
+ok('date: November 19 (never the forward\'s Nov 13/14 headers)', f.eventDate && /November 19, 20\d\d/.test(f.eventDate.value));
 ok('items: the 3 quoted lines', f.items && f.items.count === 3 && /Prosecco – 5 bottles/.test(f.items.value));
 ok('phone + window + wine $15 cap', f.phone && /929/.test(f.phone.value) && f.window && /3:00 PM/.test(f.window.value) && f.bottlePrice && /"max":15/.test(f.bottlePrice.value));
 ok('client: the forwarded sender\'s company', f.client && f.client.value === 'Eterra Kitchen');

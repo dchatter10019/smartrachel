@@ -1,0 +1,38 @@
+name: saved-baskets
+# Nov 20 (DC): "a way to save a basket and name it and later retrieve it. Also ability to list the basket and date it was
+# created" (saved-baskets.js, server.js SAVED BASKETS — in code, every /chat channel). Plain format = email / WhatsApp /
+# the connector's rachel_chat (rule 8). Save asks for a name when none is given; load re-checks each line at the store.
+tags: [basket]
+format: plain
+turns:
+  - send: reset
+  - send: "I need 3 bottles of Tito's 750ml"
+    expect: {matches: "(?i)21"}
+  - send: "yes"
+    expect: {matches: "(?i)address"}
+  - send: "1 Rockefeller Plaza, New York, NY 10020"
+    expect: {matches: "(?i)tito"}
+  - send: "save this basket"
+    expect: {matches: "(?i)what would you like to call"}
+  - send: "QA Friday drinks"
+    expect:
+      contains: ["Saved your basket as", "QA Friday drinks"]
+      log_contains: ["[saved-basket] saved \"QA Friday drinks\""]
+  - send: "start a new order"
+  - send: "yes"
+  - send: "show my saved baskets"
+    expect:
+      contains: ["QA Friday drinks"]
+      matches: "saved [A-Z][a-z]{2} \\d{1,2}, \\d{4}"
+  - send: "load QA Friday drinks"
+    expect:
+      contains: ["Loaded your saved basket", "Tito", "Product total"]
+      log_contains: ["[saved-basket] loaded \"QA Friday drinks\""]
+  - send: "show my basket"
+    expect: {contains: ["Tito"]}
+  - send: "load my Nonexistent saved basket"
+    expect: {matches: "(?i)don't have a saved basket called"}
+  - send: "delete saved basket QA Friday drinks"
+    expect: {contains: ["Deleted your saved basket"]}
+  - send: "show my saved baskets"
+    expect: {matches: "(?i)don't have any saved baskets"}
