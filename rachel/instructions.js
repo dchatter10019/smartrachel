@@ -74,10 +74,15 @@ function unaddressed(instrs, reply, before, after) {
   // used, not a task (Nov 9, DC: "I haven't done this one yet: • Headcount: 15 people" under the package).
   // Contact fields too ("*Delivery Contact:* Stephani Alvarez", "*Phone:* 929-278-4626" — Nov 13, DC's email), and a
   // per-bottle price, which is applied in code (bottle-price.js: "Average price of $15").
-  const FIELD = /^\s*(?:[-•*]\s*)?(?:head ?count|guests?|guest count|number of (?:guests|people)|people|attendees|budget|duration|length|event (?:date|time|length)|date|delivery (?:time|date|address|window|contact)|address|time|location|venue|occasion|event type|client|company|(?:on-?site |delivery )?contact|phone(?: number)?|cell|mobile|tel|e-?mail|name|po(?: number)?|window)\s*:/i;
+  const FIELD = /^\s*(?:[-•*]\s*)?(?:head ?count|guests?|guest count|number of (?:guests|people)|people|attendees|budget|duration|length|event (?:date|time|length)|date|delivery (?:time|date|address|window|contact)|address|time|location|venue|occasion|event type|client|company|(?:on-?site |delivery )?contact|phone(?: number)?|cell|mobile|tel|e-?mail|name|po(?: number)?|window|requests?|special requests?|notes?|menu|drinks?|beverages?|theme|style|preferences?|crowd|demographics?|comments?|details)\s*:/i;
   return instrs.filter(instr => {
     if (APPROVAL.test(String(instr))) return false;
     if (FIELD.test(String(instr).replace(/\*/g, ''))) return false;
+    // A basket line pasted back as Rachel prints it ("4x New Amsterdam Gluten Free Vodka - 750 ML — $16.67 ea = $66.68"),
+    // unchanged, is what the customer is asking ABOUT, not a task (Nov 20, DC on Slack: two pasted lines + "are these the
+    // ingredients for vodka lemon drop" got "I haven't done these yet: • 4x New Amsterdam ... Want me to go ahead with both?").
+    { const pm = String(instr).match(/^\s*(\d+)\s*x\s+(.+?)\s+[—–-]\s*\$[\d,]+(?:\.\d+)?\s*(?:ea\b|each\b|\/)/i);
+      if (pm && (before || []).some(it => key(it) && norm(pm[2]).replace(/\s+/g, ' ').trim() === key(it).replace(/\s+/g, ' ').trim() && q(it) === Number(pm[1]))) return false; }
     try { if (require('./bottle-price.js').read(instr)) return false; } catch (e) {}
     const kw = keywords(instr);
     if (!kw.length) return false;

@@ -50,7 +50,10 @@ function parse(message) {
 }
 function parseLine(m) {
   if (!m || m.length > 160) return null;
-  const t = m.replace(/^(?:hi|hey|hello)[,!]?\s+/i, '').replace(/^(?:rachel[,:]?\s+)/i, '').replace(/^(?:(?:can|could|would) you|please|pls|i(?:'d| would) like (?:you )?to|i want (?:you )?to|let'?s)\s+/i, '').replace(/^please\s+/i, '');
+  // A leading "no" / "actually" / "ok" correcting Rachel's last offer ("no save the basket" after "email this to anyone?" —
+  // Nov 20, DC on Slack: the model showed the basket and saved nothing) is not part of the command.
+  const t = m.replace(/^(?:hi|hey|hello)[,!]?\s+/i, '').replace(/^(?:rachel[,:]?\s+)/i, '')
+    .replace(/^(?:no|nope|nah|actually|ok(?:ay)?|instead|just)\b[,.!]*\s+(?=(?:(?:can|could|would) you\s+|please\s+|pls\s+|i want (?:you )?to\s+|i(?:'d| would) like (?:you )?to\s+|just\s+)?(?:save|store|bookmark|name|call|label|show|list|load|retrieve|restore|delete)\b)/i, '').replace(/^(?:(?:can|could|would) you|please|pls|i(?:'d| would) like (?:you )?to|i want (?:you )?to|let'?s)\s+/i, '').replace(/^please\s+/i, '');
   const saved = /\bsaved\b/i.test(t);
   // LIST
   if (/\b(?:list|show|see|view|display|what(?:'s| are| is)?|which|any|all)\b[^.?!]{0,30}\bsaved\s+(?:baskets?|carts?|lists?|orders?|packages?|menus?)\b/i.test(t) ||

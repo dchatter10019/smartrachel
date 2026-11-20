@@ -366,6 +366,10 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           let newBudget = numIn(/budget[^0-9$]*\$?\s*([\d,]+(?:\.\d+)?)\s*k?/i);
           if (newBudget && /\d\s*k\b/i.test(m)) newBudget = newBudget * 1000;
           const newGuests = numIn(/(\d+)\s*(?:people|guests|ppl|attendees|heads?)\b/i);
+          // "the budget is 6 per person" = $6 x guests, never a $6 total (per-person-budget.js; Nov 20, DC on Slack).
+          const ppB = require('./per-person-budget.js').perPerson(customerMessage);
+          const gPP = newGuests || eventParams.guests || saInput.guests;
+          if (ppB && gPP && (newBudget === ppB || newBudget == null)) { newBudget = Math.round(ppB * gPP); console.log('[per-person-budget] override: $' + ppB + ' per person x ' + gPP + ' guests = $' + newBudget + ' budget'); }
           const newHours  = numIn(/(\d+(?:\.\d+)?)\s*(?:hours?|hrs?)\b/i);
           const mentionsItems = /\b(add|remove|swap|replace|instead|also|plus|drop|without)\b/i.test(m);
           const changes = [newBudget, newGuests, newHours].filter(v => v !== null).length;
@@ -375,13 +379,25 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
               saInput.named_products = JSON.parse(eventParams.named_products);
               saInput.guests = newGuests || eventParams.guests || saInput.guests;
               saInput.hours = newHours || eventParams.hours || saInput.hours;
-              if (eventParams.drinks_per_person && !newHours) saInput.drinks_per_person = eventParams.drinks_per_person;
+              if (eventParams.drinks_per_person && !newHours && !(ppB && Number(eventParams.drinks_per_person) === ppB)) saInput.drinks_per_person = eventParams.drinks_per_person;
+              else if (ppB && Number(eventParams.drinks_per_person) === ppB) { delete saInput.drinks_per_person; console.log('[per-person-budget] override: the earlier ' + ppB + ' "drinks per person" was this per-person budget — not carried'); }
               saInput.budget = newBudget || eventParams.budget || saInput.budget;
               if (eventParams.categories && !saInput.categories) saInput.categories = eventParams.categories;
               // Tag which fields the CUSTOMER changed, so the capture only updates those.
               saInput._paramChange = { budget: newBudget, guests: newGuests, hours: newHours };
               console.log('[ShoppingAgent] PARAM-CHANGE OVERRIDE: rebuilt call from persisted eventParams; changes ->', JSON.stringify({ budget: newBudget, guests: newGuests, hours: newHours }), '| intent:', saInput.intent, '| guests:', saInput.guests, '| hours:', saInput.hours, '| budget:', saInput.budget);
             } catch (e) { console.log('[ShoppingAgent] PARAM-CHANGE OVERRIDE failed:', e.message); }
+          }
+        }
+        // A per-person BUDGET the model read as drinks per person, or left out ("100, 3 hours, 6 per person" answering
+        // guests / hours / total budget — Nov 20, DC on Slack: built 6 drinks a person, no budget, $1,756 for 100 guests).
+        if ((saInput.intent === 'custom_list' || saInput.intent === 'menu_build') && !saInput._paramChange) {
+          const ppB2 = require('./per-person-budget.js').perPerson(customerMessage);
+          const g2 = Number(saInput.guests) || (eventParams && Number(eventParams.guests)) || 0;
+          if (ppB2 && g2) {
+            const tot = Math.round(ppB2 * g2);
+            if (Number(saInput.drinks_per_person) === ppB2) { delete saInput.drinks_per_person; console.log('[per-person-budget] ' + ppB2 + ' per person is the budget, not drinks per person — drinks_per_person removed'); }
+            if (Number(saInput.budget) !== tot) { console.log('[per-person-budget] $' + ppB2 + ' per person x ' + g2 + ' guests = $' + tot + ' budget (model sent ' + (saInput.budget || 'none') + ')'); saInput.budget = tot; }
           }
         }
         if ((saInput.intent === 'custom_list' || saInput.intent === 'menu_build') && eventParams) {

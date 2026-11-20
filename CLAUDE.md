@@ -1256,6 +1256,19 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   abbreviation files are generated from the Voiceflow export (rachel/data/README.md). Scenarios 170-180,
   qa/unit/search-normalize.test.js.
 
+- Nov 20 Slack review (DC, "With A Twist", Coral Springs 33071, 100 guests / 3 h, lemon drop + triple sec), every /chat channel.
+  "100, 3 hours, 6 per person" answering guests / hours / total budget was built as 6 DRINKS a person, no budget ($1,756), and
+  "the budget is 6 per person" became a $6 TOTAL (PARAM-CHANGE OVERRIDE) -> failed build -> "per person or per drink?". Now
+  rachel/per-person-budget.js perPerson (money cue or hours in the message; "N drinks per person" never) -> rachel.js budget =
+  N x guests, a drinks_per_person equal to N removed ([per-person-budget]). Fuzzy fallback: a generic type phrase (triple sec,
+  simple syrup, lemon / lime juice, sour mix, club soda, tonic, Irish cream; rachel/type-phrase.js) keeps only products of
+  that kind ("Triple" matched Alizé Triple Melon Liqueur; triple sec may stand in as Cointreau / curaçao / orange liqueur;
+  [doSearch] fuzzy fallback REJECTED for type phrase). A generic "White Wine" / "Red Wine" line is exact when the pick is that
+  kind (drink-type.js; was "Frontera Chardonnay (no white in stock)"). instructions.js: "Requests:" / "Notes:" / "Menu:" ...
+  brief lines and Rachel's basket lines pasted back unchanged are not tasks (no "I haven't done these yet"). saved-baskets.js:
+  a leading "no" / "actually" / "ok" before a save / load / list command ("no save the basket" saved nothing). Scenario 182,
+  qa/unit/slack-wat-nov20.test.js.
+
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
   so PDFs sent before Oct 15 still open (ask DC first; nginx).

@@ -639,6 +639,15 @@ async function buildPackage(iv) {
     var broadResults = await rawSearch(words[0]);
     if (broadResults.length > 0) {
       var scored = scoreCandidates(cleanedTerm, broadResults, null);
+      // A generic type phrase ("Triple Sec", "Simple Syrup", "Lemon Juice") is not brand + words: its first word alone
+      // ("Triple") matched Alizé Triple Melon Liqueur and The Macallan Triple Cask (Nov 20, DC on Slack: "Triple Sec ->
+      // Alizé Triple Melon Liqueur (no sec in stock)"). Only a product of that kind counts (type-phrase.js).
+      var tpAccept = require('./type-phrase.js').acceptFor(cleanedTerm);
+      if (tpAccept) {
+        var tpDrop = scored.filter(function(sc) { return !tpAccept.test(sc.product.name); });
+        if (tpDrop.length) console.log('[doSearch] fuzzy fallback REJECTED for type phrase ' + JSON.stringify(cleanedTerm) + ' (not that kind): ' + tpDrop.map(function(sc){ return sc.product.name; }).join(', '));
+        scored = scored.filter(function(sc) { return tpAccept.test(sc.product.name); });
+      }
       // A mixer never falls back to an alcoholic product. Real bug (event-serving-mix, Sep 27):
       // "Lime Juice" matched White Claw Natural Lime / Bud Light Lime on the word "lime" alone.
       if (String(category || '').toLowerCase() === 'mixer') {
@@ -1674,6 +1683,13 @@ async function buildPackage(iv) {
         console.log('[buildPackage] qty override: LLM supplied qty', np.qty, 'for', JSON.stringify(np.name), 'without qty_from_customer — using calculator value', pq.computedQty);
       }
       var vd=PM.verdict(reqForFit,best), fw=PM.fit(reqForFit,best);
+      // A generic colour line ("White Wine" / "Red Wine" — a bare "Wine" split above, or the customer's own) is EXACT when
+      // the pick is that kind of wine: the word "white" need not be in its name. Real (Nov 20, DC on Slack, Coral Springs):
+      // "White Wine -> 12x Frontera Chardonnay (no white in stock)".
+      if (vd.kind!=='exact' && /^\s*(?:red|white|ros[eé]|sparkling)(?:\s+wine)?\s*$/i.test(String(np.name||''))) {
+        var gcT=require('./drink-type.js'), gcWant=gcT.typeOf({name:np.name}), gcGot=gcT.typeOf(best);
+        if (gcWant && gcWant===gcGot) { console.log('[buildPackage] generic '+JSON.stringify(np.name)+': '+best.name+' is '+gcGot+' wine — exact'); vd={kind:'exact'}; }
+      }
       // A different pack size keeps the customer's unit count: 8 x 12-can packs asked, 8-can packs in stock -> 12.
       if (pq.hasExplicitQty && fw.pack.want && fw.pack.got && fw.pack.want!==fw.pack.got) {
         // The pack step above already converted the count: convert from the customer's own count, never twice. Real

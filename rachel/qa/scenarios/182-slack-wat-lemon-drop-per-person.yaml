@@ -1,0 +1,27 @@
+name: slack-wat-lemon-drop-per-person
+# Nov 20, DC on Slack ("With A Twist", 980 Eagle Trace Blvd W, Coral Springs FL 33071). A brief with "Requests:" / "Notes:"
+# lines got "I haven't done these yet: • Requests: ... • Notes: ... Want me to go ahead with both?" under the intake
+# questions; "100, 3 hours, 6 per person" (answering guests / hours / TOTAL budget) was built as 6 DRINKS a person with no
+# budget ($1,756); "the budget is 6 per person" then became a $6 total and failed; the not-exact notes said "White Wine ->
+# Frontera Chardonnay (no white in stock)" and "Triple Sec -> Alizé Triple Melon Liqueur (no sec in stock)"; pasted basket
+# lines + a question got "I haven't done these yet"; "no save the basket" saved nothing.
+tags: [events]
+format: plain
+turns:
+  - send: reset
+  - send: "Need drinks for an event"
+    expect: {contains: ["21"]}
+  - send: "yes"
+    expect: {matches: "(?i)address"}
+  - send: "980 Eagle Trace Blvd W, Coral Springs, FL 33071"
+  - send: "Requests: Beer, Wine, Seltzers, one sig Vodka (lemon drop); triple sec too.\nNotes: 80% Women. Go light on the beer."
+    expect:
+      not_contains: ["I haven't done"]
+  - send: "100, 3 hours, 6 per person"
+    expect:
+      contains: ["Product total"]
+      not_matches: "(?i)no white in stock|triple melon|no sec in stock|about 7 drinks per person"
+      log_contains: ["[per-person-budget]"]
+  - send: "no save the basket"
+    expect:
+      matches: "(?i)what would you like to call"
