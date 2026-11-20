@@ -1,0 +1,23 @@
+name: add-instead-of-named-line
+tags: [ux]
+# Nov 20 (DC): a message that NAMES the basket line to take out replaces it even when it says "add" ("add Tito's instead of
+# the Grey Goose"); "add = new line" applies only when the line would have to be inferred by type (add-replace.js namedLine).
+# The size is given so the search returns one product (a bare "Tito's" lists 4 sizes and the pick path decides).
+# Outcome only: whichever route takes it (the add rule routes it in code, ref = the whole rest of the message).
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+    expect: {contains: ["10019"]}
+  - send: "I need 3 Grey Goose Vodka 750ml and 4 Patron Silver 750ml"
+    expect: {contains: ["Grey Goose", "Patr"]}
+  - internal:
+      path: /internal/session-basket
+      body:
+        session_id: "{session}"
+        line_items:
+          - {name: "Grey Goose Vodka 750ML", qty: 3, quantity: 3, price: 35.2, size: "750 ML", category: "Liquor"}
+          - {name: "Patrón Silver Tequila - 750 ML", qty: 4, quantity: 4, price: 47.29, size: "750 ML", category: "Liquor"}
+  - send: "add Tito's 750ml instead of the Grey Goose"
+  - send: "show my basket"
+    expect: {contains: ["3x Tito"], not_contains: ["Grey Goose"]}

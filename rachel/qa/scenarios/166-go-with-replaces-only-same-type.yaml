@@ -1,0 +1,22 @@
+name: go-with-replaces-only-same-type
+tags: [ux]
+# Nov 20 (DC): a switch phrase ("let's go with X for vodka") with exactly ONE basket line of the product's own type replaces
+# that line and keeps its quantity. The classifier scores this message add_item ~0.6-0.7 (< 0.8), so the model's
+# confirm_substitute usually handles it: only the outcome is asserted. Scenario 169 asserts the add-item route's own log line.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+    expect: {contains: ["10019"]}
+  - send: "I need 3 Grey Goose Vodka 750ml and 4 Patron Silver 750ml"
+    expect: {contains: ["Grey Goose", "Patr"]}
+  - internal:
+      path: /internal/session-basket
+      body:
+        session_id: "{session}"
+        line_items:
+          - {name: "Grey Goose Vodka 750ML", qty: 3, quantity: 3, price: 35.2, size: "750 ML", category: "Liquor"}
+          - {name: "Patrón Silver Tequila - 750 ML", qty: 4, quantity: 4, price: 47.29, size: "750 ML", category: "Liquor"}
+  - send: "let's go with Tito's 750ml for vodka"
+  - send: "show my basket"
+    expect: {contains: ["3x Tito", "4x Patr"], not_contains: ["Grey Goose"]}

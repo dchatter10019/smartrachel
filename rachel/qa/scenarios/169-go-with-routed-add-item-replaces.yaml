@@ -1,0 +1,25 @@
+name: go-with-routed-add-item-replaces
+tags: [ux]
+# Nov 20 (DC): the add-item route's own replace, asserted by its log line. "let's go with Tito's Handmade Vodka 750ml"
+# scored add_item 0.90-0.92 (3 of 3, Sonnet 4.6 classifier, Nov 20) — routed to add-item (>= 0.8); "go with" + ONE vodka line
+# in the basket -> the Grey Goose line replaced at its 3 bottles (add-replace.js). The classifier is not changed.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+    expect: {contains: ["10019"]}
+  - send: "I need 3 Grey Goose Vodka 750ml and 4 Patron Silver 750ml"
+    expect: {contains: ["Grey Goose", "Patr"]}
+  - internal:
+      path: /internal/session-basket
+      body:
+        session_id: "{session}"
+        line_items:
+          - {name: "Grey Goose Vodka 750ML", qty: 3, quantity: 3, price: 35.2, size: "750 ML", category: "Liquor"}
+          - {name: "Patrón Silver Tequila - 750 ML", qty: 4, quantity: 4, price: 47.29, size: "750 ML", category: "Liquor"}
+  - send: "let's go with Tito's Handmade Vodka 750ml"
+    expect:
+      matches: "(?i)3x Tito"
+      log_contains: ["[add-item] replaced \"Grey Goose Vodka 750ML\" with \"Tito's Handmade Vodka - 750 ML\" qty 3 - reason: go with"]
+  - send: "show my basket"
+    expect: {contains: ["3x Tito", "4x Patr"], not_contains: ["Grey Goose"]}

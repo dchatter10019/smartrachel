@@ -1,0 +1,30 @@
+name: add-other-wine-keeps-line
+tags: [ux]
+# Nov 17 (DC, Slack, Gen2Fund Boston): "can you add Oyster Bay Sauvignon Blanc" replaced 2x Josh Cellars Sauvignon Blanc with
+# an Oyster Bay Rosé — "sauvignon blanc" was read from the MESSAGE as the type, and "add" did not stop it. Every store now
+# carries the Oyster Bay Sauvignon Blanc, so this checks the same message live (an add word -> new line, Josh stays);
+# the Rosé-only case is the unit test (qa/unit/add-replace.test.js, b: Nov 17).
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+    expect: {contains: ["10019"]}
+  - send: "I need 2 Josh Cellars Sauvignon Blanc 750ml"
+    expect: {contains: ["Josh"]}
+  - internal:
+      path: /internal/session-basket
+      body:
+        session_id: "{session}"
+        line_items: [{name: "Josh Cellars Sauvignon Blanc - 750 ML", qty: 2, quantity: 2, price: 15.29, size: "750 ML", category: "Wine"}]
+  - send: "can you add Oyster Bay Sauvignon Blanc"
+    expect:
+      contains: ["Oyster Bay"]
+      not_contains: ["replacing"]
+      log_not_contains: ["[add-item] replaced", "replaces the only other"]
+  # The search lists options (Nov 20: the exact match + 5 Cabernet Sauvignons); the pick applies the add-item decision
+  # stored for "can you add ..." (new_line), never the pick path's own same-type rule.
+  - send: "1"
+    expect:
+      log_not_contains: ["[add-item] replaced", "line replaced: \"Josh"]
+  - send: "show my basket"
+    expect: {contains: ["2x Josh Cellars Sauvignon Blanc", "Oyster Bay Sauvignon Blanc"]}

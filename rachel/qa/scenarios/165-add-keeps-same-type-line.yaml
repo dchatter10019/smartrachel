@@ -1,0 +1,26 @@
+name: add-keeps-same-type-line
+tags: [ux]
+# Nov 20 (DC): "add X" is always a new line. Staging, scenario 164 before its edit: "add Casamigos Blanco Tequila 750ml"
+# replaced the 4x Patrón (add-item's replace-in-varietal + applyBasketSubstitute's "only other line of its type").
+# Now add-replace.js decides: an add word -> new line, logged; the add itself is an explicit add (opts.add).
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+    expect: {contains: ["10019"]}
+  - send: "I need 4 Patron Silver 750ml"
+    expect: {contains: ["Patr"]}
+  - internal:
+      path: /internal/session-basket
+      body:
+        session_id: "{session}"
+        line_items: [{name: "Patrón Silver Tequila - 750 ML", qty: 4, quantity: 4, price: 47.29, size: "750 ML", category: "Liquor"}]
+  - send: "add Casamigos Blanco Tequila 750ml"
+    expect:
+      contains: ["Casamigos"]
+      not_contains: ["replacing"]
+      log_contains: ["[add-item] added as new line - the message says \"add\""]
+      log_not_contains: ["[add-item] replaced", "replaces the only other tequila"]
+  - send: "2"
+  - send: "show my basket"
+    expect: {contains: ["4x Patr", "2x Casamigos"]}

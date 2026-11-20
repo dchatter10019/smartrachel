@@ -331,6 +331,16 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - The `rachel` service does NOT read /etc/rachel.env — its secrets are Environment= lines in
   /etc/systemd/system/rachel.service. A key changed in one place must be changed in both.
 - Gmail service account: /home/ubuntu/config/gmail-service-account.json (domain-wide delegation).
+- logs/gbrain-mcp.log CONTAINS gbrain's ADMIN TOKEN: gbrain-mcp (StandardOutput=append to that file) prints a fresh
+  "Admin Token (paste into /admin login)" banner on EVERY start (GBRAIN_ADMIN_BOOTSTRAP_TOKEN is not set, so the token is
+  regenerated per process; ~/gbrain/src/commands/serve-http.ts). NEVER cat / tail / head it unfiltered — always
+  `grep -viE "token|admin|paste" | grep -vE "[0-9a-f]{20,}"` (Nov 20: a plain tail printed one into a session). The rachel
+  services' own gbrain credential is a different secret: GBRAIN_TOKEN in /etc/gbrain.env (EnvironmentFile of rachel,
+  rachel-mcp, shopping-agent, rachel-slack).
+- gbrain wedge (Oct 5-6, Nov 20): bun at ~100% CPU, main thread running, the :7700 listen queue full (ss -ltn Recv-Q in the
+  hundreds), no outbound connection (not waiting on ollama's embeddings) -> every Rachel turn waits 15s per memory call.
+  Check: `ss -ltn | grep 7700`, `timeout 5 curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:7700/` (404 = alive).
+  Fix: `sudo systemctl restart gbrain-mcp` (ask DC; SIGTERM is ignored while it spins, systemd SIGKILLs after 90s).
 - /etc/bevvi-watchdog.env (ubuntu, 600): BEVVI_SLACK_WEBHOOK for the 03:15 nightly-watchdog cron (was inline in the crontab).
 - Every process on the box, its project, port, files and logs: ops/PROCESSES.md. The dashboard (Agent Workbench, :9000) is
   127.0.0.1 only (it can read/save files and restart services) — reach it with ssh -L 9000:localhost:9000.
@@ -1191,6 +1201,28 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   confirm_substitute replacement_quantity is used only when that exact number is in the customer's current message
   ([confirm-substitute] replacement_quantity N ignored - not in customer message). qa/run.py turns may carry `internal:
   {path, body}` (a mid-conversation /internal call). Scenarios 163, 164; qa/unit/removed-lines.test.js, pending-sub-qty.test.js.
+
+- ADD vs REPLACE (DC, Nov 20; rachel/add-replace.js). Nov 17 (DC, Slack, Gen2Fund): "can you add Oyster Bay Sauvignon Blanc"
+  replaced 2x Josh Cellars Sauvignon Blanc with an Oyster Bay Rosé — the add-item "replace-in-varietal" (Sep 24) read type
+  words from the MESSAGE and took the first line sharing one; applyBasketSubstitute's "only other line of its spirit type"
+  (Sep 29) did the same to any add with no original ("add Casamigos" replaced the 4x Patrón). Now the add-item route replaces
+  a basket line ONLY when (a) the message has a switch phrase (go with / instead / switch to / swap / replace / change to /
+  make it the) and no add word (add / also / too / as well / plus / another), (b) the type comes from the PRODUCT's own name +
+  category (Sauvignon Blanc, Pinot Noir... are one type each), (c) exactly one basket line has it — 2+ = Rachel asks which
+  (bullets; the next message answers: a line named / "new line" / "keep both", else dropped, state.pendingAddReplace). Before
+  all three: a line the message NAMES to take out ("instead of the Grey Goose", "in place of", "replace the Josh", "swap out
+  the Bacardi") is replaced even with "add" (reason: named line); named but not in the basket = a new line + "I didn't find
+  X in your basket". The add rule's ref keeps the clause, so the catalog search text is cut first (searchRef: "X instead of
+  Y" -> X, "replace/swap (out) Y with/for X" -> X; [add-item] search text cut to ...). The route's own adds pass
+  opts.newLine to applyBasketSubstitute (no same-type inference; Rachel's own "swap in for X?" question still names the line
+  unless the message has an add word; a not-carried line's stand-in still applies). An options list shown by add-item stores
+  the message's decision (state.pendingAddIntent: new_line / replace_named:<line> / replace_by_type), applied by the NEXT
+  single pick (number or name) instead of the pick path's same-type rule ([pick] from add-item list - applying ...); anything
+  else clears it (logged). Other lists, multi-pick and the model's confirm_substitute are unchanged. Logs: [add-item] replaced
+  "<old>" with "<new>" qty N - reason: <phrase> / [add-item] added as new line - <reason>. Only messages starting with "add"
+  (rule) or classified add_item >= 0.8 reach this route ("let's go with Tito's 750ml for vodka" scores ~0.6-0.7 -> the
+  model's confirm_substitute). Scenarios 165-169, qa/unit/add-replace.test.js. Open: F-0296 (model-written swap reply
+  invented a price), F-0297 (search "Oyster Bay Sauvignon Blanc" also returns 5 Cabernet Sauvignons).
 
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days

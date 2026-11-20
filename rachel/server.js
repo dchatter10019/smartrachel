@@ -584,6 +584,7 @@ function getChannelNote(format) {
 const basketLineFor = require('./basket-line.js');   // the basket line an item name refers to (whole words)
 const REMOVED = require('./removed-lines.js');
 const PSQ = require('./pending-sub-qty.js');   // a swap held while Rachel asks "how many?" (next message only)   // lines taken out in code, kept 30 min with their qty (a later pick replaces them)
+const AR = require('./add-replace.js');   // add-item: replace a basket line or add a new one (DC, Nov 20)
 // The ONE not-carried item (still pending) that a picked product stands in for: same varietal, or the same drink type
 // when the last reply named that item. -> { name, qty } | null. Used by every pick path (numbered list, add-item by
 // name), so a pick REPLACES the missing line at its planned qty. Real bug (Sep 30, DC): fixed in the add-item path
@@ -668,7 +669,10 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
         // "...(replacing one of the Prisoner bottles)?") — swap-target.js. Nov 10 (DC on Claude Code): the pick by number,
         // by name and the yes to an offer all ADDED the wine, kept The Prisoner and asked "How many bottles?".
         let oneOfIdx = -1, oneOfName = '';
-        if (!originalItem && !(opts && opts.add)) {
+        // opts.newLine (the add-item route, add-replace.js already decided no basket line is replaced): no "only other line of
+        // its type" inference; Rachel's own swap question still names the line unless the message has an add word (opts.addWord).
+        // A not-carried line's stand-in (not a basket line) still applies.
+        if (!originalItem && !(opts && opts.add) && !(opts && opts.newLine && opts.addWord)) {
           try {
             const tg = require('./swap-target.js').swapTarget(String((lastRepliesBySession[sessionKey] || []).slice(-1)[0] || ''), items, replacementName);
             if (tg && tg.index >= 0) {
@@ -683,7 +687,8 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
             const { spiritType } = require('./spirit-type.js');
             const t = spiritType(replacementName);
             const nk0 = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-            const cands = t ? items.filter(it => spiritType(it.name || it.label) === t && nk0(it.name).indexOf(nk0(replacementName).slice(0, 10)) < 0 && !(it.subst_at && Date.now() - it.subst_at < 30 * 60 * 1000)) : [];
+            if (t && opts && opts.newLine) console.log('[confirm-substitute] no original given — ' + replacementName + ': no same-type line inferred (the add-item route decided: new line)');
+            const cands = t && !(opts && opts.newLine) ? items.filter(it => spiritType(it.name || it.label) === t && nk0(it.name).indexOf(nk0(replacementName).slice(0, 10)) < 0 && !(it.subst_at && Date.now() - it.subst_at < 30 * 60 * 1000)) : [];
             if (cands.length === 1) { originalItem = cands[0].name; console.log('[confirm-substitute] no original given — ' + replacementName + ' replaces the only other ' + t + ' in the basket: ' + originalItem + ' (qty ' + (cands[0].qty || cands[0].quantity || 1) + ')'); }
             else if (t) console.log('[confirm-substitute] no original given — ' + cands.length + ' other ' + t + ' line(s) ' + JSON.stringify(cands.map(c => c.name)) + ', adding as a new line');
             if (!originalItem && !cands.length) {
@@ -2728,6 +2733,19 @@ app.post('/chat', async (req, res) => {
   // A swap held while Rachel asked "how many?" lives for THIS message only: a bare whole number completes it (ready state,
   // below), anything else drops it — the model can still finish it later through confirm_substitute replacement_quantity.
   let pendSubQ = null;
+  // The "which line should X replace?" question (add-replace.js) is answered by the NEXT message only.
+  let pendAddR = null;
+  // The add-item decision stored with an options list (add-replace.js intentFor): the NEXT message only, applied if it picks
+  // from that list (pick-list path), else cleared with the reason logged.
+  let pendAddI = null;
+  { const stI0 = getState(sessionKey);
+    if (stI0.pendingAddIntent) {
+      pendAddI = stI0.pendingAddIntent; pendAddI.used = false; stI0.pendingAddIntent = null; saveFlowState();
+      const _jI = res.json.bind(res);
+      res.json = (payload) => { if (pendAddI && !pendAddI.used) { console.log('[pick] add-item decision ' + AR.intentLabel(pendAddI.intent) + ' cleared - ' + (pendAddI.why || 'the next message was not a pick from that list') + ' (' + JSON.stringify(String(message).slice(0, 60)) + ')'); pendAddI.used = true; } return _jI(payload); };
+    } }
+  { const stR0 = getState(sessionKey);
+    if (stR0.pendingAddReplace) { pendAddR = stR0.pendingAddReplace; stR0.pendingAddReplace = null; saveFlowState(); } }
   { const stQ = getState(sessionKey);
     if (stQ.pendingSubQty) {
       const pq = stQ.pendingSubQty, nq = PSQ.bareQty(message); stQ.pendingSubQty = null; saveFlowState();
@@ -4018,6 +4036,39 @@ app.post('/chat', async (req, res) => {
         }
       }
       return res.json({ text: tQ, response: tQ });
+    }
+    // ── WHICH LINE DOES THE ADDED PRODUCT REPLACE? (add-replace.js, Nov 20) ── the answer to Rachel's question when 2+ basket
+    // lines had the product's type: a line named = replaced at its qty; "new line" / "both" / "keep them" = added; anything
+    // else = the question is dropped (logged) and the message goes on as usual.
+    if (pendAddR && Date.now() - (pendAddR.at || 0) < 30 * 60 * 1000) {
+      let itR0 = []; try { itR0 = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+      const ansR = AR.answer(message, pendAddR, itR0, basketLineFor), pp = pendAddR.product, qA = pendAddR.qty || 0;
+      pendAddR = null;
+      if (!ansR) console.log('[add-item] which-line question dropped - the answer named no line and no "new line" (' + JSON.stringify(String(message).slice(0, 60)) + '; ' + pp.name + ')');
+      else if (ansR.action === 'replace') {
+        const rA0 = await applyBasketSubstitute(sessionKey, email, ansR.line.name, pp.name, pp.price, pp.size);
+        if (!(rA0 && rA0.success === false)) {
+          const kq0 = ansR.line.qty || ansR.line.quantity || 1;
+          console.log('[add-item] replaced ' + JSON.stringify(ansR.line.name) + ' with ' + JSON.stringify(pp.name) + ' qty ' + kq0 + ' - reason: the customer chose that line');
+          retirePendingFor(state, pp.name); events.action('updated_basket');
+          const tA0 = 'Got it — ' + kq0 + 'x ' + pp.name + ' (replacing ' + ansR.line.name + ').' + basketAfterChange(state) + '\n\nAnything else, or ready to place the order?';
+          return res.json({ text: tA0, response: tA0 });
+        }
+        console.log('[add-item] which-line answer NOT applied - the swap was refused: ' + ((rA0 && rA0.error) || '?'));
+      } else {
+        const rA1 = await applyBasketSubstitute(sessionKey, email, '', pp.name, pp.price, pp.size, qA ? { add: true, qty: qA } : { add: true });
+        if (!(rA1 && rA1.success === false)) {
+          console.log('[add-item] added as new line - the customer chose a new line (' + pp.name + (qA ? ' x' + qA : '') + ')');
+          retirePendingFor(state, pp.name); events.action('updated_basket');
+          if (qA) { try { const it = JSON.parse(state.lastLineItems || '[]'); const nk = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, ''); const row = it.find(x => nk(x.name) === nk(pp.name)); if (row) { row.qty = qA; row.quantity = qA; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); } } catch (e) {} }
+          else state.pendingQtyFor = pp.name;
+          saveFlowState();
+          const tA1 = qA ? 'Added ' + qA + 'x ' + pp.name + ' as a new line.' + basketAfterChange(state) + '\n\nAnything else, or ready to place the order?'
+            : 'Added ' + pp.name + ' as a new line. How many bottles would you like?';
+          return res.json({ text: tA1, response: tA1 });
+        }
+        console.log('[add-item] which-line answer NOT applied - the add was refused: ' + ((rA1 && rA1.error) || '?'));
+      }
     }
     // ── A FILE THAT NEVER ARRIVED (Oct 29, DC on claude.ai: "@/mnt/user-data/attachments/...arch_ny_proposal.pdf the alcohol
     // in this menu") ── a Claude app passes the customer's attachment as a path on its own machine; the file itself never
@@ -5461,6 +5512,9 @@ app.post('/chat', async (req, res) => {
     // Several names in one ref ('Decoy, Louis Jadot, Wolffer') are picks, not one product —
     // real bug: searched as one string, 0 matches, "couldn't find" after Rachel had just
     // listed all three. Defer to the multi-pick resolver / LLM.
+    // The take-out clause is not part of the product ("Tito's 750ml instead of the Grey Goose" -> search "Tito's 750ml");
+    // add-replace.js reads the full message for the line to replace (Nov 20).
+    if (clsIntent === 'add_item' && clsRef) { const sr = AR.searchRef(clsRef); if (sr.cut && sr.ref) { console.log('[add-item] search text cut to ' + JSON.stringify(sr.ref) + ' (named line clause removed: ' + sr.form + ') from ' + JSON.stringify(clsRef)); clsRef = sr.ref; } }
     const multiName = clsRef && clsRef.split(/\s*(?:,|;|\band\b|\bplus\b|&)\s*/i).filter(x => x.trim().length > 1).length >= 2;
     // A count-less second item: "Add 3 Tito's 750ml and a case of Stella" (one number) -> ref "Tito's 750ml"; added 1
     // Tito's and dropped the Stella silently (Oct 9, staging). classify-intent.js namesAnotherItem.
@@ -5559,12 +5613,20 @@ app.post('/chat', async (req, res) => {
             const rS = pr.name + ' is already in your order (' + bl(q0) + '). How many would you like in total? (Or tell me what else to add.)';
             return res.json({ text: rS, response: rS });
           }
-          // Replace-in-varietal: "let's go with Tito's for vodka" when the basket holds another
-          // vodka means REPLACE it and keep the quantity (3 bottles stay 3), not add a new line.
-          const VARS2 = ['sauvignon','blanc','pinot','noir','grigio','gris','chardonnay','cabernet','merlot','rose','riesling','malbec','syrah','shiraz','zinfandel','champagne','prosecco','cava','tequila','vodka','gin','rum','bourbon','whiskey','whisky','scotch','mezcal','sparkling','liqueur'];
-          const nv2 = x => new Set(String(x||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').split(/[^a-z]+/).filter(w => VARS2.includes(w)));
-          const pvA = nv2(pr.name + ' ' + (pr.category || '') + ' ' + (pr.subCategory || '') + ' ' + message);
-          const targetA = pvA.size ? itemsA.find(it => { const iv = nv2(it.name); return [...pvA].some(v => iv.has(v)); }) : null;
+          // Replace or add (add-replace.js, DC Nov 20): "let's go with Tito's for vodka" with ONE other vodka in the basket
+          // replaces it at its quantity; an add word ("add", "also", "too" ...), no switch phrase, no line of the PRODUCT's own
+          // type, or 2+ such lines (asked which) never replace. Was: type words read from the customer's message too, first
+          // line that shared one (Nov 17: "can you add Oyster Bay Sauvignon Blanc" replaced Josh Sauvignon Blanc with a Rosé).
+          const decA = AR.decide(message, pr, itemsA, basketLineFor);
+          if (decA.notFound) { state.replyNote = 'I didn\'t find ' + decA.notFound + ' in your basket, so ' + pr.name + ' went in as a new line.'; saveFlowState(); }
+          if (decA.action === 'ask') {
+            state.pendingAddReplace = { product: { name: pr.name, price, size }, qty: clsQty > 1 ? clsQty : 0, lines: decA.lines.map(l => l.name || l.label), at: Date.now() };
+            saveFlowState();
+            console.log('[add-item] not replaced - ' + decA.reason + ' ' + JSON.stringify(decA.lines.map(l => l.name)) + ': asked which one');
+            const rW = AR.askText(pr.name, decA.lines, decA.type);
+            return res.json({ text: rW, response: rW });
+          }
+          const targetA = decA.action === 'replace' ? decA.line : null;
           const labelR = pr.name + (size && nz(pr.name).indexOf(nz(size)) < 0 ? ' — ' + size : '') + ' — $' + price.toFixed(2);
           // A pick that stands in for an item that isn't carried (still pending): REPLACE it, with the quantity the
           // customer asked for it. Real bug (Sep 30, DC): "Which one would you like to swap in for the La Crema?" ->
@@ -5593,6 +5655,7 @@ app.post('/chat', async (req, res) => {
             if (!(rr2 && rr2.success === false)) {
               retirePendingFor(state, pr.name);
               const kq = targetA.qty || targetA.quantity || 1;
+              console.log('[add-item] replaced ' + JSON.stringify(targetA.name) + ' with ' + JSON.stringify(pr.name) + ' qty ' + kq + ' - reason: ' + decA.reason);
               const rT = 'Got it — ' + kq + 'x ' + labelR + ' (replacing ' + targetA.name + ').' + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
               return res.json({ text: rT, response: rT });
             }
@@ -5607,6 +5670,7 @@ app.post('/chat', async (req, res) => {
               const rrS = await applyBasketSubstitute(sessionKey, email, '', pr.name, price, size, { qty: have, add: true });
               if (!(rrS && rrS.success === false)) {
                 added = true; retirePendingFor(state, pr.name);
+                console.log('[add-item] added as new line - ' + decA.reason + ' (' + pr.name + ' x' + have + ', what the store has)');
                 try { const it = JSON.parse(state.lastLineItems || '[]'); const row = it.find(x => nz(x.name) === nz(pr.name)); if (row) { row.qty = have; row.quantity = have; row.qty_confirmed = true; state.lastLineItems = JSON.stringify(it); } } catch (e) {}
               }
             }
@@ -5635,8 +5699,10 @@ app.post('/chat', async (req, res) => {
               return res.json({ text: rF, response: rF });
             }
           }
-          const rrAdd = await applyBasketSubstitute(sessionKey, email, '', pr.name, price, size);
+          const rrAdd = await applyBasketSubstitute(sessionKey, email, '', pr.name, price, size, { newLine: true, addWord: AR.ADD_RE.test(message) });   // no same-type line inferred: decided above
             retirePendingFor(state, pr.name);
+          if (rrAdd && rrAdd.success && rrAdd.replaced) console.log('[add-item] replaced ' + JSON.stringify(rrAdd.replaced) + ' with ' + JSON.stringify(pr.name) + ' qty ' + rrAdd.qty + ' - reason: ' + (itemsA.some(it => nz(it.name) === nz(rrAdd.replaced)) ? 'Rachel\'s own question offered it in place of that line' : 'stands in for that not-carried line'));
+          else if (rrAdd && rrAdd.success) console.log('[add-item] added as new line - ' + decA.reason + ' (' + pr.name + ')');
           const label = pr.name + (size && nz(pr.name).indexOf(nz(size)) < 0 ? ' — ' + size : '') + ' — $' + price.toFixed(2);
           // The quantity is already known (the not-carried line it stands in for, or the customer's own list): say it,
           // never ask. Real (Oct 5, DC, Slack): Fever Tree went in at 3x for the not-carried Fever-Tree line, and the
@@ -5657,6 +5723,12 @@ app.post('/chat', async (req, res) => {
         }
         if (prods.length > 1) {
           const lines = prods.map((pr, i) => (i + 1) + '. ' + pr.name + (pr.sizeStr && pr.name.indexOf(pr.sizeStr) < 0 ? ' — ' + pr.sizeStr : '') + ' — $' + (parseFloat(pr.salePrice || pr.price) || 0).toFixed(2));
+          // The add-item rules' decision for THIS message, applied to whichever option is picked next (add-replace.js, Nov 20:
+          // "can you add Oyster Bay Sauvignon Blanc" -> 6 options -> "1" replaced the Josh Sauvignon Blanc by the pick path's own rule).
+          { let itI = []; try { itI = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+            const intI = AR.intentFor(message, itI, basketLineFor);
+            state.pendingAddIntent = { intent: intI, options: prods.map(pr => pr.name), at: Date.now() }; saveFlowState();
+            console.log('[add-item] options listed - stored decision ' + AR.intentLabel(intI) + ' (' + intI.reason + ') for the next pick'); }
           const rC = 'I found a few options for ' + clsRef + ':\n\n' + lines.join('\n') + '\n\nWhich one would you like to add?';
           return res.json({ text: rC, response: rC });
         }
@@ -7441,7 +7513,28 @@ app.post('/chat', async (req, res) => {
             // holds a wine/spirit of this varietal, the pick REPLACES it and keeps the quantity.
             // Real bug: Whispering Angel 2x -> Wölffer picked via this path -> added at 1x.
             let replTarget = null;
-            try {
+            // A pick from an options list the ADD-ITEM route showed: that message's decision (new line / the named line / by
+            // type), never this path's own same-type rule (add-replace.js, Nov 20). Other lists: unchanged.
+            let fromAddList = null;
+            if (pendAddI && !pendAddI.used) {
+              const nkI = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '');
+              if (Date.now() - (pendAddI.at || 0) > 30 * 60 * 1000) pendAddI.why = 'the options list is over 30 minutes old';
+              else if (!(pendAddI.options || []).some(o => nkI(o) === nkI(picked.name))) pendAddI.why = 'the pick ' + JSON.stringify(picked.name) + ' is not on that list';
+              else {
+                pendAddI.used = true;
+                let itP = []; try { itP = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+                fromAddList = AR.applyIntent(pendAddI.intent, picked, itP);
+                console.log('[pick] from add-item list - applying ' + AR.intentLabel(pendAddI.intent) + ' -> ' + fromAddList.action + (fromAddList.line ? ' ' + JSON.stringify(fromAddList.line.name) : '') + ' (' + fromAddList.reason + ')');
+                if (fromAddList.action === 'ask') {
+                  state.pendingAddReplace = { product: { name: picked.name, price: picked.price, size: picked.size }, qty: 0, lines: fromAddList.lines.map(l => l.name || l.label), at: Date.now() }; saveFlowState();
+                  const rWp = AR.askText(picked.name, fromAddList.lines, fromAddList.type);
+                  return res.json({ text: rWp, response: rWp });
+                }
+                if (fromAddList.notFound) { state.replyNote = 'I didn\'t find ' + fromAddList.notFound + ' in your basket, so ' + picked.name + ' went in as a new line.'; saveFlowState(); }
+                if (fromAddList.action === 'replace') replTarget = fromAddList.line;
+              }
+            }
+            if (!fromAddList) try {
               const VARS = ['sauvignon','blanc','pinot','noir','grigio','gris','chardonnay','cabernet','merlot','rose','riesling','malbec','syrah','shiraz','zinfandel','champagne','prosecco','cava','tequila','vodka','gin','rum','bourbon','whiskey','whisky','scotch','mezcal','sparkling'];
               const nv = x => new Set(String(x||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').split(/[^a-z]+/).filter(w => VARS.includes(w)));
               const heading = (lastAssistantTextGate.replace(/\*/g,'').match(/([A-Z][^\n:]{2,60}?)\s+(?:options|alternatives|is available|comes in)/) || [])[1] || '';
@@ -7466,8 +7559,11 @@ app.post('/chat', async (req, res) => {
                 return res.json({ text: rP1, response: rP1 });
               }
             }
-            const r = await applyBasketSubstitute(sessionKey, email, replTarget ? replTarget.name : '', picked.name + (picked.size ? ' - ' + picked.size : ''), picked.price, picked.size);
+            const r = await applyBasketSubstitute(sessionKey, email, replTarget ? replTarget.name : '', picked.name + (picked.size ? ' - ' + picked.size : ''), picked.price, picked.size,
+              fromAddList && !replTarget ? { newLine: true, addWord: pendAddI.intent.kind === 'new_line' } : undefined);   // add-item list: no same-type line inferred
             retirePendingFor(state, picked.name);
+            if (fromAddList && replTarget && !(r && r.success === false)) console.log('[add-item] replaced ' + JSON.stringify(replTarget.name) + ' with ' + JSON.stringify(picked.name) + ' qty ' + (replTarget.qty || replTarget.quantity || 1) + ' - reason: ' + fromAddList.reason + ' (picked from the add-item list)');
+            else if (fromAddList && r && r.success !== false && !r.replaced) console.log('[add-item] added as new line - ' + fromAddList.reason + ' (picked from the add-item list: ' + picked.name + ')');
             if (replTarget && !(r && r.success === false)) {
               const keptQty = replTarget.qty || replTarget.quantity || 1;
               const rR = 'Got it — ' + keptQty + 'x ' + picked.name + (picked.size ? ' — ' + picked.size : '') + ' — $' + picked.price.toFixed(2) + ' (replacing ' + replTarget.name + ').' + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
