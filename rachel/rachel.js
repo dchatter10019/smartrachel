@@ -95,6 +95,7 @@ const ALL_TOOLS = [
         replacement_name: { type: "string", description: "For confirm_substitute ONLY: the exact name of the product the customer confirmed as the replacement (e.g. 'Bombay London Dry Gin')." },
         replacement_price: { type: "number", description: "For confirm_substitute ONLY: the per-unit price of the confirmed replacement, as already shown to the customer." },
         replacement_size: { type: "string", description: "For confirm_substitute ONLY: the size of the confirmed replacement (e.g. '750 mL'), if known." },
+        replacement_quantity: { type: "integer", description: "For confirm_substitute ONLY: how many the customer said they want, when a confirm_substitute result asked for the quantity (QUANTITY_UNKNOWN)." },
         quantity_updates: { type: "array", description: "For update_quantity ONLY: list of {item, qty} — item is the basket item's name (or a distinctive part of it, e.g. 'Stella Artois'), qty is the new quantity (0 removes the item). Send ALL items being changed in ONE call, e.g. a split: [{\"item\":\"Stella Artois\",\"qty\":3},{\"item\":\"Corona Extra\",\"qty\":3}].", items: { type: "object", properties: { item: { type: "string" }, qty: { type: "number" } } } }
       },
       required: ["intent", "zip"]
@@ -742,7 +743,16 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         if (saInput.intent === 'confirm_substitute') {
           if (!onSubstituteConfirmed) return { success: false, error: 'confirm_substitute not available in this context' };
           // Handler is async now (it resolves the replacement to a real catalog product).
-          const result = await onSubstituteConfirmed(saInput.original_item || '', saInput.replacement_name || '', saInput.replacement_price || 0, saInput.replacement_size || '');
+          // replacement_quantity (the customer's answer to the QUANTITY_UNKNOWN question): a whole number >= 1, else ignored
+          // and only when that exact number is in the customer's CURRENT message — else the recorded quantity, or ask.
+          const RL = require('./removed-lines.js'), qtyIn = saInput.replacement_quantity;
+          let qtyOk = RL.validQty(qtyIn);
+          if (qtyIn != null && qtyIn !== '') {
+            if (!qtyOk) console.log('[confirm-substitute] replacement_quantity ' + JSON.stringify(qtyIn) + ' IGNORED (not a whole number >= 1) — the quantity is asked again if unknown');
+            else if (!RL.qtyInMessage(qtyOk, customerMessage)) { console.log('[confirm-substitute] replacement_quantity ' + qtyOk + ' ignored - not in customer message (' + JSON.stringify(String(customerMessage || '').slice(0, 80)) + ')'); qtyOk = 0; }
+            else console.log('[confirm-substitute] replacement_quantity ' + qtyOk + ' -> qty ' + qtyOk + ' used (in the customer message)');
+          }
+          const result = await onSubstituteConfirmed(saInput.original_item || '', saInput.replacement_name || '', saInput.replacement_price || 0, saInput.replacement_size || '', qtyOk);
           return result || { success: true };
         }
         // The edit reader already regenerated the PDF this turn from this same basket: no second PDF (Nov 16, DC email: the reply

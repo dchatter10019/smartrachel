@@ -582,6 +582,8 @@ function getChannelNote(format) {
 // Hoisted so BOTH the confirm_substitute tool path and the deterministic pick-list
 // handler (in the request handler, outside callRachel's scope) share one implementation.
 const basketLineFor = require('./basket-line.js');   // the basket line an item name refers to (whole words)
+const REMOVED = require('./removed-lines.js');
+const PSQ = require('./pending-sub-qty.js');   // a swap held while Rachel asks "how many?" (next message only)   // lines taken out in code, kept 30 min with their qty (a later pick replaces them)
 // The ONE not-carried item (still pending) that a picked product stands in for: same varietal, or the same drink type
 // when the last reply named that item. -> { name, qty } | null. Used by every pick path (numbered list, add-item by
 // name), so a pick REPLACES the missing line at its planned qty. Real bug (Sep 30, DC): fixed in the add-item path
@@ -789,8 +791,19 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
             packFrom = (items[removeIdx].name || '') + ' ' + (items[removeIdx].size || '');
             items.splice(removeIdx, 1); removedLine = true;
           } else {
-            const rq = (opts && opts.qty) || ((getState(sessionKey).unavailableQty || {})[originalItem]) || requestedQtyFor(sessionKey, originalItem);
-            if (rq) { qtyToUse = rq; qtyKnown = true; console.log('[confirm-substitute] ' + JSON.stringify(originalItem) + ' was never in the basket (not carried) — its requested qty ' + rq + ' goes to ' + replacementName); }
+            // Taken out earlier in code (edit reader / quote edits, 30 min): its quantity. Else the not-carried line's planned
+            // qty / the customer's own count. Nothing knows it = ASK, never a silent 1 (Nov 20 nightly: "same 5 bottles" -> 1x).
+            const recRm = !(opts && opts.qty) ? REMOVED.lookup(state, originalItem) : null;
+            const rq = (opts && opts.qty) || (recRm && recRm.qty) || ((getState(sessionKey).unavailableQty || {})[originalItem]) || requestedQtyFor(sessionKey, originalItem);
+            if (recRm && rq === recRm.qty) { qtyToUse = rq; qtyKnown = true; console.log('[confirm-substitute] ' + JSON.stringify(originalItem) + ' was removed earlier - its qty ' + rq + ' goes to ' + replacementName); }
+            else if (rq) { qtyToUse = rq; qtyKnown = true; console.log('[confirm-substitute] ' + JSON.stringify(originalItem) + ' was never in the basket (not carried) — its requested qty ' + rq + ' goes to ' + replacementName); }
+            else {
+              console.log('[confirm-substitute] quantity unknown - asked customer (' + JSON.stringify(originalItem) + ' is not in the basket and no quantity is known for ' + replacementName + ')');
+              const askQ = 'How many ' + replacementName + ' would you like' + ' in place of the ' + originalItem + '?';
+              state.pendingSubQty = PSQ.make(originalItem, replacementName, replacementPrice, replacementSize, items); saveFlowState();
+              return { success: false, needs_quantity: true, original_item: originalItem, replacement: replacementName, ask_customer: askQ,
+                error: 'QUANTITY_UNKNOWN: nothing was changed. "' + originalItem + '" is not in the basket and its quantity is not known. Do not say it was swapped or added. Ask the customer: ' + askQ + ' Then call confirm_substitute again with replacement_quantity set to their answer.' };
+            }
             // A smaller bottle makes up the volume asked for (DC, Oct 1: "smaller bottles are fine but they should add
             // up to 1 L"). "Lemon Juice 1L" x1 -> Master of Mixes 375 mL x3.
             const vol = x => { const m = String(x || '').toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l|liter|litre|oz)\b/); return m ? +m[1] * (m[2] === 'ml' ? 1 : m[2] === 'oz' ? 29.5735 : 1000) : 0; };
@@ -2047,7 +2060,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
         return { success: true, empty: false, line_items: JSON.stringify(items), line_items_display: disp.join('\n'), product_total: total.toFixed(2), item_count: items.length };
       } catch (e) { return { success: false, error: e.message }; }
     },
-    onSubstituteConfirmed: async (originalItem, replacementName, replacementPrice, replacementSize) => applyBasketSubstitute(sessionKey, email, originalItem, replacementName, replacementPrice, replacementSize)
+    onSubstituteConfirmed: async (originalItem, replacementName, replacementPrice, replacementSize, replacementQty) => applyBasketSubstitute(sessionKey, email, originalItem, replacementName, replacementPrice, replacementSize, replacementQty ? { qty: replacementQty } : undefined)
   });
   sessions[sessionKey] = result.messages;
   const out = scrubDisabledOffers(formatResponse(result.response, format), format);
@@ -2712,6 +2725,20 @@ app.post('/chat', async (req, res) => {
   { const _jN = res.json.bind(res); res.json = (payload) => { try { const stN = flowState[sessionKey]; if (stN && stN.replyTail && payload && typeof payload.text === 'string') { const tail = stN.replyTail; stN.replyTail = null; const addTail = (t) => { const paras = String(t || '').trimEnd().split(/\n\s*\n/); if (paras.length > 1 && /\?\s*[*_]*\s*$/.test(paras[paras.length - 1])) paras.pop(); paras.push(tail); return paras.join('\n\n'); }; payload.text = addTail(payload.text); payload.response = addTail(payload.response || ''); console.log('[reply] closing question replaced: ' + tail); saveFlowState(); } if (stN && stN.replyNote && payload && typeof payload.text === 'string') { console.log('[reply] appended note: ' + stN.replyNote.slice(0, 80)); const addNote = (t) => { if (/drinks per person/.test(stN.replyNote)) { const r = require('./package-facts.js').stripModelDrinkClaims(t); if (r.removed) { console.log('[package-facts] removed ' + r.removed + ' drinks-per-person claim(s) the model wrote itself — the code\'s figure is appended'); t = r.text; } } const paras = String(t || '').trimEnd().split(/\n\s*\n/); if (paras.length > 1 && /\?\s*\**\s*$/.test(paras[paras.length - 1])) paras.splice(paras.length - 1, 0, stN.replyNote); else paras.push(stN.replyNote); return paras.join('\n\n'); }; payload.text = addNote(payload.text); payload.response = addNote(payload.response || ''); stN.replyNote = null; saveFlowState(); } } catch (e) {} return _jN(payload); }; }
 
   console.log(`[rachel] chat — session: ${sessionKey} messages: ${sessions[sessionKey].length} — "${message}"`);
+  // A swap held while Rachel asked "how many?" lives for THIS message only: a bare whole number completes it (ready state,
+  // below), anything else drops it — the model can still finish it later through confirm_substitute replacement_quantity.
+  let pendSubQ = null;
+  { const stQ = getState(sessionKey);
+    if (stQ.pendingSubQty) {
+      const pq = stQ.pendingSubQty, nq = PSQ.bareQty(message); stQ.pendingSubQty = null; saveFlowState();
+      if (nq) {
+        pendSubQ = { p: pq, n: nq, used: false };
+        // answered before the ready step (another state / an earlier block replied): said in the log, never silent
+        const _jQ = res.json.bind(res);
+        res.json = (payload) => { if (pendSubQ && !pendSubQ.used) { console.log('[confirm-substitute] pending swap dropped - the quantity answer ' + nq + ' was answered elsewhere (step ' + getState(sessionKey).step + ')'); pendSubQ.used = true; } return _jQ(payload); };
+      }
+      else console.log('[confirm-substitute] pending swap dropped - next message was not a quantity (' + JSON.stringify(String(message).slice(0, 60)) + '; swap ' + JSON.stringify(pq.replacement) + ' for ' + JSON.stringify(pq.original) + ')');
+    } }
 
   try {
     // ── B2B flow (kitchen_location set) — pass straight to Rachel ─────────
@@ -3960,6 +3987,38 @@ app.post('/chat', async (req, res) => {
     console.log('[turn] state.step:', state.step, '| pendingSubstitutes:', JSON.stringify(state.pendingSubstitutes), '| message:', JSON.stringify(message).slice(0,80));
     { const _turnMsg = message; const _json = res.json.bind(res); const _hist0 = sessions[sessionKey], _len0 = (_hist0 || []).length;
       res.json = (payload) => { try { const h = sessions[sessionKey]; recordTurn(sessionKey, _turnMsg, payload && (payload.text || payload.response), h !== _hist0 || (h || []).length !== _len0); } catch (e) {} return _json(payload); }; }
+    // ── HELD SWAP + QUANTITY ANSWER (pending-sub-qty.js, Nov 20) ── Rachel asked "how many <replacement>?" because the
+    // original line was gone and no quantity was known; this bare number completes that swap in code — only on the basket
+    // Rachel asked about, and only while the replacement is still in the catalog. Else nothing changes and she says why.
+    if (pendSubQ && !pendSubQ.used) {
+      pendSubQ.used = true;
+      const { p: pq, n: nq } = pendSubQ;
+      let itQ = []; try { itQ = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+      const chk = PSQ.check(pq, itQ, basketLineFor);
+      let whyQ = chk.ok ? '' : chk.why, rowQ = null;
+      if (!whyQ) {
+        try { rowQ = PSQ.findProduct(await catalogSearch(state.zip || '', pq.replacement), pq.replacement); if (!rowQ) whyQ = 'the replacement is not in this store\'s catalog now'; }
+        catch (e) { whyQ = 'the catalog check failed (' + e.message + ')'; }
+      }
+      let tQ = '';
+      if (whyQ) {
+        console.log('[confirm-substitute] quantity answer ' + nq + ' NOT applied - ' + whyQ + ' (swap ' + JSON.stringify(pq.replacement) + ' for ' + JSON.stringify(pq.original) + ')');
+        tQ = /catalog/.test(whyQ) ? 'I couldn\'t add ' + pq.replacement + ' — it isn\'t available at this store right now, so your basket is unchanged. Want me to show you similar options?'
+          : 'I haven\'t added the ' + pq.replacement + ' — ' + (/changed/.test(whyQ) ? 'your basket changed since I asked' : /back/.test(whyQ) ? 'the ' + pq.original + ' is back in your basket' : 'that question has expired') + ', so nothing was changed. Tell me how many ' + pq.replacement + ' you\'d like and I\'ll put them in.';
+      } else {
+        const rQ = await applyBasketSubstitute(sessionKey, email, pq.original, rowQ.name || pq.replacement, parseFloat(rowQ.salePrice || rowQ.price) || pq.price, rowQ.sizeStr || rowQ.size || pq.size, { qty: nq });
+        if (!rQ || rQ.success === false) {
+          console.log('[confirm-substitute] quantity answer ' + nq + ' NOT applied - the swap was refused: ' + ((rQ && rQ.error) || '?'));
+          tQ = 'I couldn\'t put the ' + pq.replacement + ' in your basket, so nothing was changed. Want me to search for it again?';
+        } else {
+          console.log('[confirm-substitute] quantity answer ' + nq + ' -> ' + (rQ.qty || nq) + 'x ' + (rowQ.name || pq.replacement) + ' in place of ' + JSON.stringify(pq.original));
+          retirePendingFor(state, rowQ.name || pq.replacement);
+          events.action('updated_basket');
+          tQ = 'Got it — ' + (rQ.qty || nq) + 'x ' + (rowQ.name || pq.replacement) + ' in place of the ' + pq.original + '.' + basketAfterChange(state) + '\n\nAnything else, or ready to place the order?';
+        }
+      }
+      return res.json({ text: tQ, response: tQ });
+    }
     // ── A FILE THAT NEVER ARRIVED (Oct 29, DC on claude.ai: "@/mnt/user-data/attachments/...arch_ny_proposal.pdf the alcohol
     // in this menu") ── a Claude app passes the customer's attachment as a path on its own machine; the file itself never
     // reaches Rachel, and the LLM said "that's a limitation on my end" (F-0110). Answered in code, every channel.
@@ -4177,6 +4236,7 @@ app.post('/chat', async (req, res) => {
             console.log('[wine-coverage] ' + kind + ' removed from the event package — ' + wc.bottles + ' bottle(s) added to the wine kept: ' + JSON.stringify(wc.changes.map(c => c.name + ' ' + c.from + '->' + c.to)) + ' | no_wine_types ' + JSON.stringify(state.eventParams.no_wine_types));
           }
         }
+        if (removedR.length) REMOVED.record(state, removedR);
         state.lastLineItems = JSON.stringify(itR);
         packageCache[makeCacheKey(email, state.zip, state.lastFingerprint)] = state.lastLineItems;
         state.pendingAddOffer = null; state.lastCta = null;
@@ -4254,6 +4314,7 @@ app.post('/chat', async (req, res) => {
           + ' | the rest of the email (' + [qe.adds && 'add', qe.swaps && 'swap', (qe.questions || []).length && 'questions'].filter(Boolean).join(', ') + ') goes to the LLM');
         const doneQ = r.changes.map(c => c.kind + ' ' + c.name + (c.to != null ? ' (' + c.from + ' -> ' + c.to + ')' : ''));
         if (r.changes.length) {
+          REMOVED.record(state, r.changes.filter(c => c.kind === 'removed'));
           state.lastLineItems = JSON.stringify(r.items);
           packageCache[makeCacheKey(email, state.zip, state.lastFingerprint)] = state.lastLineItems;
           state.pendingSubstitutes = []; state.lastCta = null;
@@ -4272,6 +4333,7 @@ app.post('/chat', async (req, res) => {
           + (r.notFound.length ? ' | NOT FOUND (told the customer): ' + JSON.stringify(r.notFound) : '') + (r.ambiguous.length ? ' | AMBIGUOUS (asked): ' + JSON.stringify(r.ambiguous) : '')
           + ' | total $' + QE.total(qItems) + ' -> $' + QE.total(r.items));
         if (r.changes.length) {
+          REMOVED.record(state, r.changes.filter(c => c.kind === 'removed'));
           state.lastLineItems = JSON.stringify(r.items);
           packageCache[makeCacheKey(email, state.zip, state.lastFingerprint)] = state.lastLineItems;
           state.pendingSubstitutes = []; state.lastCta = null; saveFlowState();
@@ -7735,8 +7797,8 @@ app.post('/chat', async (req, res) => {
             }
             const subRes = await applyBasketSubstitute(sessionKey, email, originalItemName || '', matched.name + (matched.size ? ' - ' + matched.size : ''), matched.price, matched.size);
             if (subRes && subRes.success === false) {
-              // Never claim a replacement that was refused (unresolved product).
-              const rRef = 'I couldn\'t find "' + matched.name + '" in the catalog, so nothing was changed. Tell me the product you\'d like and I\'ll look it up.';
+              // Never claim a replacement that was refused (unresolved product, or no quantity known: ask it).
+              const rRef = subRes.needs_quantity ? subRes.ask_customer : 'I couldn\'t find "' + matched.name + '" in the catalog, so nothing was changed. Tell me the product you\'d like and I\'ll look it up.';
               return res.json({ text: rRef, response: rRef });
             }
             // applyBasketSubstitute adds at qty 1 (or the replaced item's qty when it finds

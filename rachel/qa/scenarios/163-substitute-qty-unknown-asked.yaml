@@ -1,0 +1,31 @@
+name: substitute-qty-unknown-asked
+tags: [ux]
+# Nov 20 nightly (pick-plus-question / F-0016): a pick whose original line was no longer in the basket went in at a
+# silent 1x while Rachel said 5. Now: no removal record and no known quantity = nothing changed, Rachel ASKS how many;
+# the bare answer ("5") completes that held swap in code (pending-sub-qty.js) and is not asked again — it used to be bound
+# to the only basket line (5x Patrón, staging run 20261120-105913).
+# The internal call empties the Bacardi line the way the model's own update_quantity removal does (no removal record).
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+    expect: {contains: ["10019"]}
+  - send: "I need Bacardi Superior White Rum 750ml and 4 Patron Silver 750ml"
+    expect: {contains: ["Bacardi", "Patr"]}
+  - internal:
+      path: /internal/session-basket
+      body:
+        session_id: "{session}"
+        line_items: [{name: "Patrón Silver Tequila - 750 ML", qty: 4, quantity: 4, price: 47.29, size: "750 ML", category: "Liquor"}]
+  - send: "Replace the Bacardi with Buffalo Trace Kentucky Straight Bourbon 750ml"
+    expect:
+      matches: "(?i)how many"
+      log_contains: ["[confirm-substitute] quantity unknown - asked customer"]
+  - send: "5"
+    expect:
+      matches: "(?i)\\b5\\s*x?\\b[^\\n]*buffalo trace"
+      contains: ["4x Patr"]
+      not_matches: "(?i)how many"
+      log_contains: ["[confirm-substitute] quantity answer 5 ->"]
+  - send: "show my basket"
+    expect: {matches: "(?i)\\b5\\s*x?\\b[^\\n]*buffalo trace", contains: ["Patr"], not_contains: ["Bacardi"]}

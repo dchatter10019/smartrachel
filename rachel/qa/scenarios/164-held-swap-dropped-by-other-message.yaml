@@ -1,0 +1,31 @@
+name: held-swap-dropped-by-other-message
+tags: [ux]
+# Nov 20 (DC): the swap held while Rachel asks "how many <replacement>?" is valid for the NEXT message only. Here the
+# customer asks something else instead; the held swap is dropped, and a later bare "5" answering ANOTHER question must
+# never bring the old Buffalo Trace swap back. The internal call empties the Bacardi line with no removal record (as the
+# model's own update_quantity removal does), so Rachel has to ask.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+    expect: {contains: ["10019"]}
+  - send: "I need Bacardi Superior White Rum 750ml and 4 Patron Silver 750ml"
+    expect: {contains: ["Bacardi", "Patr"]}
+  - internal:
+      path: /internal/session-basket
+      body:
+        session_id: "{session}"
+        line_items: [{name: "Patrón Silver Tequila - 750 ML", qty: 4, quantity: 4, price: 47.29, size: "750 ML", category: "Liquor"}]
+  - send: "Replace the Bacardi with Buffalo Trace Kentucky Straight Bourbon 750ml"
+    expect:
+      matches: "(?i)how many"
+      log_contains: ["[confirm-substitute] quantity unknown - asked customer"]
+  - send: "actually what tequilas do you have?"
+    expect:
+      log_contains: ["[confirm-substitute] pending swap dropped - next message was not a quantity"]
+  - send: "add Tito's Handmade Vodka 750ml"
+  - send: "5"
+    expect:
+      log_not_contains: ["[confirm-substitute] quantity answer"]
+  - send: "show my basket"
+    expect: {contains: ["Tito", "Patr"], not_contains: ["Buffalo", "Bacardi"]}

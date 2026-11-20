@@ -28,4 +28,18 @@ ok('"make it 6 packs" on a pack line is fine', ER.validate({ ops: [{ op: 'set_qt
 { const vu = ER.validate({ ops: [{ op: 'units', line: 1, qty: 24 }], shown: [] }, beer, 'we need 24 bottles not 4 cases');
   ok('units: 24 bottles of a 12-pack line = 2 packs, converted in code', vu.ok && vu.ops[0].op === 'set_qty' && vu.ops[0].qty === 2); }
 ok('units on a line that is not a pack: rejected', !ER.validate({ ops: [{ op: 'units', line: 1, qty: 6 }], shown: [] }, [{ name: 'Tito\'s Handmade Vodka - 750 ML', qty: 2 }], '6 bottles').ok);
+// Fix A (Nov 20 nightly, pick-plus-question / F-0016): a line the customer wants REPLACED by something not chosen yet stays.
+{ const bac = [{ name: 'Bacardi Superior White Rum 750ML', qty: 5, price: 18.58 }, { name: 'Patrón Silver Tequila - 750 ML', qty: 4, price: 47.29 }];
+  const msgA = "Instead of the Bacardi I'd like a higher end bourbon, same 5 bottles — show me a few options";
+  const vA = ER.validate({ ops: [{ op: 'remove', line: 1 }], shown: [] }, bac, msgA);
+  ok('A: "Instead of the Bacardi ... show me a few options" — remove NOT applied, the line stays', vA.ok && vA.ops.length === 0);
+  const vB = ER.validate({ ops: [{ op: 'remove', line: 1 }], shown: [] }, bac, 'remove the Bacardi');
+  ok('A: "remove the Bacardi" still removes it', vB.ok && vB.ops.length === 1 && vB.ops[0].op === 'remove' && vB.ops[0].item.name.startsWith('Bacardi'));
+  ok('A: "swap out the Bacardi for something nicer" keeps the line', ER.validate({ ops: [{ op: 'remove', line: 1 }], shown: [] }, bac, 'swap out the Bacardi for something nicer').ops.length === 0);
+  ok('A: "in place of the Bacardi" keeps the line', ER.validate({ ops: [{ op: 'remove', line: 1 }], shown: [] }, bac, 'in place of the Bacardi, what bourbons do you have?').ops.length === 0);
+  ok('A: a cue that names ANOTHER line does not keep this one ("drop the Bacardi, and switch the Patron")',
+    ER.validate({ ops: [{ op: 'remove', line: 1 }], shown: [] }, bac, 'drop the Bacardi, and switch the Patron to Casamigos').ops.length === 1);
+  ok('A: the reading adds a replacement -> the remove stands', ER.validate({ ops: [{ op: 'remove', line: 1 }, { op: 'add', product: 1, qty: 5 }], shown: [{ name: 'Buffalo Trace Kentucky Straight Bourbon - 750 ML', price: 40.69 }] }, bac, 'Instead of the Bacardi, add 5 Buffalo Trace').ops.some(o => o.op === 'remove'));
+  ok('A: a type word alone is not the line ("instead of white rum ...")', !ER.wantsReplaced('instead of white rum I want vodka. remove the Bacardi', bac[0]));
+}
 if (failed) { console.log(failed + ' failed'); process.exit(1); }

@@ -123,6 +123,22 @@ function read(message, ctx = {}) {
   return memo.get(user).p;
 }
 
+// Does the message name this basket line right after a replace cue ("instead of", "in place of", "replace", "swap (out)",
+// "switch")? The line's distinctive words (brand / name, not type, colour or size words) within the next 8 words of that sentence.
+const REPLACE_CUE = /\b(?:instead\s+of|in\s+place\s+of|replace|swap(?:\s+out)?|switch(?:\s+out)?)\b/gi;
+const LINE_GENERIC = /^(?:wine|wines|vodka|tequila|gin|rum|whiskey|whisky|bourbon|scotch|beer|white|red|rose|superior|blanco|silver|reserve|estate|bottles?|cans?|pack|case|cases|with|from|that|this|those|these|them|ml|oz)$/;
+function wantsReplaced(message, line) {
+  const nrm = s => String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/['’]/g, '');
+  const lineW = nrm(line && (line.name || line.label)).replace(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz)\b/g, ' ').split(/[^a-z0-9]+/).filter(w => w.length >= 3 && !/^\d+$/.test(w) && !LINE_GENERIC.test(w));
+  if (!lineW.length) return false;
+  const msg = nrm(message);
+  for (const m of msg.matchAll(REPLACE_CUE)) {
+    const after = msg.slice(m.index + m[0].length).split(/[.!?;\n]/)[0].split(/[^a-z0-9]+/).filter(Boolean).slice(0, 8);   // this sentence only
+    if (after.some(w => lineW.includes(w))) return true;
+  }
+  return false;
+}
+
 // The model's ops checked against the basket and the shown products. -> { ok, ops: [{op, index, item, product, qty}], why }
 function validate(reading, basket, message) {
   if (!reading) return { ok: false, why: 'no reading' };
@@ -163,6 +179,14 @@ function validate(reading, basket, message) {
         && new RegExp('\\b' + qty + '\\s*(?:x\\s*)?(?:single\\s+)?(?:bottles?|cans?|btls?)\\b', 'i').test(String(message || ''))) {
       return { ok: false, why: kind + ' L' + o.line + ' to ' + qty + ': the customer counted single bottles/cans of a pack line (the units reader converts it)' };
     }
+    // A line the customer wants REPLACED by something not chosen yet ("Instead of the Bacardi I'd like a higher end bourbon,
+    // same 5 bottles — show me a few options") is not a removal: it stays, and the pick replaces it at its quantity through
+    // the normal path. Nov 20 nightly (pick-plus-question / F-0016): the model read "remove", the 5x Bacardi was deleted and
+    // the Buffalo Trace picked next went in at 1x. Only when the reading adds nothing that could be its replacement.
+    if (kind === 'remove' && !(reading.ops || []).some(x => x && x.op === 'add') && wantsReplaced(message, basket[index])) {
+      console.log('[edit-reader] remove L' + o.line + ' NOT applied - customer wants it replaced (' + basket[index].name + ')');
+      continue;
+    }
     if (kind === 'replace' && qty === 0) qty = null;
     // A revised list repeats lines that keep their count ("Red – Pinot Noir 6" on a 6x line): no change, not "6 -> 6" (Nov 16).
     if (kind === 'set_qty' && index >= 0 && qty === parseInt(basket[index].qty || basket[index].quantity || 0, 10)) { console.log('[edit-reader] set_qty L' + o.line + ' to ' + qty + ' skipped — already ' + qty); continue; }
@@ -192,4 +216,4 @@ function disagreement(ops, rv) {
   return diffs;
 }
 
-module.exports = { read, wants, validate, regexView, disagreement, shownFor, prompt, SYSTEM };
+module.exports = { read, wants, validate, wantsReplaced, regexView, disagreement, shownFor, prompt, SYSTEM };

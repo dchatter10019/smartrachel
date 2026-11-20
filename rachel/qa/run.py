@@ -347,6 +347,15 @@ def run_scenario(sc, verbose, parallel=False):
         except Exception as e: failures.append({"turn": 0, "send": "", "fails": [f"setup_internal {su.get('path')}: {e}"], "reply": ""})
     for i, turn in enumerate(sc["turns"], 1):
         turn = _fill(turn, vars_)
+        # internal: {path, body} posted to the server mid-conversation ({email} / {session} filled) — state another path
+        # leaves behind (e.g. a basket line gone with no removal record, Nov 20). A turn with no "send" is only this call.
+        if turn.get("internal"):
+            su = _fill(turn["internal"], {"email": email, "session": session})
+            try:
+                rr = httpx.post(RACHEL[:-len("/chat")] + su["path"], json=su.get("body", {}), timeout=30)
+                if rr.status_code >= 400: failures.append({"turn": i, "send": "", "fails": [f"internal {su.get('path')}: HTTP {rr.status_code} {rr.text[:200]}"], "reply": ""})
+            except Exception as e: failures.append({"turn": i, "send": "", "fails": [f"internal {su.get('path')}: {e}"], "reply": ""})
+            if "send" not in turn: continue
         text = turn.get("send", ""); images = load_image(turn["image"]) if turn.get("image") else None
         logs = bool(set(turn.get("expect", {}) or {}) & {"log_contains", "log_not_contains"})
         glob_scope = sc.get("log_scope") == "global" or transport != "http"

@@ -1179,6 +1179,19 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   basket is passed on unless the message said "saved" / load / retrieve / restore. [saved-basket] logs every decision.
   Scenario 162, qa/unit/saved-baskets.test.js.
 
+- Swap with no known quantity (Nov 20 nightly, pick-plus-question / F-0016: "Instead of the Bacardi I'd like a higher end
+  bourbon, same 5 bottles" — the edit reader removed the 5x Bacardi, the Buffalo Trace picked next went in at a silent 1x
+  while the reply said 5). Every /chat channel: edit-reader.js validate() keeps a line the customer wants REPLACED by
+  something not chosen yet (wantsReplaced: "instead of / in place of / replace / swap (out) / switch" + the line's brand
+  words; [edit-reader] remove L.. NOT applied); lines removed in code (edit reader, quote edits) are kept 30 min with their
+  qty (removed-lines.js, state.recentRemoved) and a pick naming one replaces it at that qty; nothing known = applyBasketSubstitute
+  ASKS "How many X in place of the Y?" ([confirm-substitute] quantity unknown - asked customer; QUANTITY_UNKNOWN to the model),
+  never 1. The held swap (pending-sub-qty.js, state.pendingSubQty) lives for the NEXT message only: a bare number on the same
+  basket, the replacement still in the catalog, completes it in code; anything else drops it (logged). The model's
+  confirm_substitute replacement_quantity is used only when that exact number is in the customer's current message
+  ([confirm-substitute] replacement_quantity N ignored - not in customer message). qa/run.py turns may carry `internal:
+  {path, body}` (a mid-conversation /internal call). Scenarios 163, 164; qa/unit/removed-lines.test.js, pending-sub-qty.test.js.
+
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
   so PDFs sent before Oct 15 still open (ask DC first; nginx).
