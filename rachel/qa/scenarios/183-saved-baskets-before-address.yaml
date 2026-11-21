@@ -1,0 +1,36 @@
+name: saved-baskets-before-address
+# Nov 21 (DC on Slack): "show me all the baskets" after a fresh start -> "are you 21?" -> "yes" -> "What is your delivery
+# address?". Listing saved baskets needs no store: it is answered right after the age question (and at the address
+# question); only loading one asks for the address. "show me all the baskets" is read as the list (saved-baskets.js).
+tags: [basket]
+format: plain
+turns:
+  - send: reset
+  - send: "I need 2 bottles of Tito's 750ml"
+    expect: {matches: "(?i)21"}
+  - send: "yes"
+    expect: {matches: "(?i)address"}
+  - send: "1 Rockefeller Plaza, New York, NY 10020"
+    expect: {matches: "(?i)tito"}
+  - send: "save this basket as QA Before Address"
+    expect: {contains: ["QA Before Address"]}
+  - send: "show me all the baskets"
+    idle: 9
+    expect:
+      contains: ["since we last talked", "21"]
+      log_contains: ["[session] fresh-start note shown — a self-contained request, held as usual"]
+  - send: "yes"
+    expect:
+      contains: ["QA Before Address", "Your saved baskets"]
+      not_matches: "(?i)what is your delivery address"
+      log_contains: ["[saved-basket] list answered after the age question"]
+  - send: "show my saved baskets"
+    expect:
+      contains: ["QA Before Address"]
+      log_contains: ["[saved-basket] list answered at the address step"]
+  - send: "load QA Before Address"
+    expect: {matches: "(?i)address"}
+  - send: "1 Rockefeller Plaza, New York, NY 10020"
+    expect: {contains: ["Loaded your saved basket", "Tito"]}
+  - send: "delete saved basket QA Before Address"
+    expect: {contains: ["Deleted your saved basket"]}

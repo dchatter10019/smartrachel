@@ -1198,6 +1198,11 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   Slack link markup is read as plain text (saved-baskets.js unwrap; Nov 20 DC: the name "WAT - 707 Roy Moore Rd, Ona, FL 33865"
   came as "WAT - <maps-url|707 Roy Moore Rd...>", was refused, and the MODEL replied "Saved!" with nothing saved); a reply that
   claims a save the code didn't make is replaced by the name question again ([saved-basket] ... REPLACED). Scenarios 162, 181, qa/unit/saved-baskets.test.js.
+  Nov 21 (DC on Slack: "show me all the baskets" after a fresh start -> age -> "What is your delivery address?"): the LIST
+  needs no store, so it is answered right after the age yes and at either address question (server.js sbListBeforeAddress,
+  [saved-basket] list answered after the age question / at the address step); a saved-basket command is held through a
+  fresh start; "load X" at the address question is held and replayed after the address. "show me all the baskets" / "list
+  all baskets" / "what baskets do I have" are list commands (plural only — "show me the basket" is the cart). Scenario 183.
 
 - Swap with no known quantity (Nov 20 nightly, pick-plus-question / F-0016: "Instead of the Bacardi I'd like a higher end
   bourbon, same 5 bottles" — the edit reader removed the 5x Bacardi, the Buffalo Trace picked next went in at a silent 1x

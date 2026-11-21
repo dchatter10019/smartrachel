@@ -48,6 +48,9 @@ eq(SB.find('dc@getbevvi.com', 'HOLIDAY  party!').entry.name, 'holiday party');
 eq(SB.find('dc@getbevvi.com', 'board').entry.name, 'Board dinner');
 eq(SB.find('dc@getbevvi.com', 'nothing').entry, null);
 eq(SB.list('someone@else.com').length, 0, 'per customer');
+// Nov 21 (DC on Slack): "show me all the baskets" was not a list command.
+for (const m of ['show me all the baskets', 'list all baskets', 'show baskets', 'what baskets do I have?']) eq(SB.parse(m), { kind: 'list' }, m);
+for (const m of ['show me the basket', 'show my cart', 'show me the baskets of beer you have?']) eq(SB.parse(m), null, m);
 const lt = SB.listText('dc@getbevvi.com');
 assert.ok(/saved [A-Z][a-z]{2} \d{1,2}, \d{4}/.test(lt) && /Board dinner/.test(lt) && !/^\s*1\./m.test(lt), lt); n++;
 eq(SB.remove('dc@getbevvi.com', 'Board Dinner').name, 'Board dinner');

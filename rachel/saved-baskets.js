@@ -58,6 +58,10 @@ function parseLine(m) {
   // LIST
   if (/\b(?:list|show|see|view|display|what(?:'s| are| is)?|which|any|all)\b[^.?!]{0,30}\bsaved\s+(?:baskets?|carts?|lists?|orders?|packages?|menus?)\b/i.test(t) ||
       /\b(?:list|show|see|view|display)\s+(?:me\s+)?(?:all\s+)?(?:of\s+)?(?:my|our)\s+(?:baskets|carts)\b/i.test(t) ||
+      // "show me all the baskets" / "list all baskets" / "what baskets do I have" (Nov 21, DC on Slack: not read as a list,
+      // so after the fresh start it was asked the delivery address). Plural "baskets" only — "show me the basket" is the cart.
+      /^(?:list|show|see|view|display)\s+(?:me\s+)?(?:all\s+)?(?:of\s+)?(?:the\s+)?(?:baskets|carts)\s*[.!?]?$/i.test(t) ||
+      /^(?:what|which)\s+baskets\s+(?:do|have)\s+(?:i|we)\b/i.test(t) ||
       /\b(?:baskets?|carts?)\s+(?:i|we)(?:'ve|\s+have)?\s+saved\b/i.test(t) || /\b(?:baskets?|carts?)\s+(?:have|did)\s+(?:i|we)\s+save(?:d)?\b/i.test(t) || /^\s*(?:my\s+)?saved\s+(?:baskets|carts)\s*\??\s*$/i.test(t))
     return { kind: 'list' };
   // SAVE

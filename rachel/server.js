@@ -2445,7 +2445,7 @@ app.post('/chat', async (req, res) => {
       let selfContained = false;
       try {
         const fieldLines = String(message).split('\n').filter(l => /^\s*(?:[-•*]\s*)?[A-Za-z][A-Za-z /&]{1,30}:\s*\S/.test(l) || /^\s*[-•*]\s+\S/.test(l)).length;
-        selfContained = fieldLines >= 3 || !!require('./address-extract.js').splitAddress(message);
+        selfContained = fieldLines >= 3 || !!require('./address-extract.js').splitAddress(message) || !!require('./saved-baskets.js').parse(message);
       } catch (e) {}
       // The message names the proposal this conversation kept (its client, "the proposal"): it is held, the proposal comes
       // back at the ready step ([kept-proposal]) and its delivery address is used (Nov 11, DC: "add the following to
@@ -2954,6 +2954,18 @@ app.post('/chat', async (req, res) => {
       console.log('[age] refused earlier in this session — still refusing: ' + JSON.stringify(message).slice(0, 60));
       return res.json({ text: AGE_BYE, response: AGE_BYE });
     }
+    // Saved-basket LIST before an address is known (saved-baskets.js): the list needs no store. Load still needs the address.
+    const sbListBeforeAddress = (t) => {
+      try {
+        const SB = require('./saved-baskets.js'), c = t && SB.parse(t);
+        if (!c || c.kind !== 'list') return '';
+        const who = email || ('session:' + sessionKey);
+        console.log('[saved-basket] list for ' + who + ' before the delivery address: ' + SB.list(who).length + ' basket(s)');
+        const txt = SB.listText(who) + (SB.list(who).length ? '\n\nWhen you load one I\'ll ask for the delivery address, so I can check it at the store that delivers there.' : '');
+        recordTurn(sessionKey, t, txt, false);
+        return txt;
+      } catch (e) { console.log('[saved-basket] list before the address failed: ' + e.message); return ''; }
+    };
     if (state.step === 'age') {
       const capsAge = getCapabilities(format);
       const age = parseAgeAnswer(message);
@@ -2972,6 +2984,10 @@ app.post('/chat', async (req, res) => {
             await saveD2CSession(email, Object.assign({}, d2c, { age_verified: true, onboarded: true }));
           } catch(e) {}
         }
+        // A held / carried "show my saved baskets" needs no store: answered now, the address is asked only when one is
+        // loaded (Nov 21, DC on Slack: "show me all the baskets" -> fresh start -> "yes" -> "What is your delivery address?").
+        { const lt = sbListBeforeAddress(state.pendingIntent) || sbListBeforeAddress(stripAgeAnswer(message));
+          if (lt && state.step !== 'ready') { state.pendingIntent = null; saveFlowState(); console.log('[saved-basket] list answered after the age question — no address needed'); return res.json({ text: lt, response: lt }); } }
         // The yes may carry the whole request ("yes I'm over 21, deliver to 425 W 53rd St, NY
         // 10019, I need 2 Tito's"). Real bug: the entire sentence was stored as the ADDRESS and
         // the items were dropped. Keep the rest as the pending request; the address extraction
@@ -3022,6 +3038,19 @@ app.post('/chat', async (req, res) => {
           return res.json({ text: ack, response: ack });
         }
         return res.json({ text: ask, response: ask });
+      }
+    }
+    // "show my saved baskets" at the address question (new or saved address): answered, the question stays open.
+    if ((state.step === 'addr_new' || state.step === 'addr') && (state.ageVerified || !getCapabilities(format).requires_age_verification)) {
+      const lt = sbListBeforeAddress(message);
+      if (lt) { console.log('[saved-basket] list answered at the address step (' + state.step + ') — no address needed'); return res.json({ text: lt, response: lt }); }
+      // "load X" here needs the address first: held, replayed once the address is in (it was dropped: "How can I help?").
+      let sbL = null; try { sbL = require('./saved-baskets.js').parse(message); } catch (e) {}
+      if (sbL && sbL.kind === 'load' && state.step === 'addr_new') {
+        state.pendingIntent = message; saveFlowState();
+        console.log('[saved-basket] load "' + sbL.name + '" at the address step — held for after the address');
+        const askL = 'Sure — what\'s the delivery address? (street, city, state and zip) I\'ll check each item of "' + sbL.name + '" at the store that delivers there.';
+        return res.json({ text: askL, response: askL });
       }
     }
     // Pre-gate message stashed above: if it contains a delivery address, run that through
