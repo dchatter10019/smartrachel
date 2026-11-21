@@ -1,0 +1,25 @@
+name: slack-bellevue-event-fixed-wines
+# Nov 21, DC on Slack (Bellevue 98004, 35-40 guests, 3 PM to 6 PM, $20 a person, 4 wines x 3 fixed + beer styles + Athletic NA).
+# "lager pilsner beer" got Black Raven Light Pilsner LIME and "wheat beer kolsch" Heublein Wheatley VODKA Dirty Martini (a
+# fuzzy "wheat" word match); the pasted "$23.09 ea" became a $23.09 per-bottle wine cap; the beer was sized as beer's 24%
+# share of the drinks although the wines were fixed (about 108 drinks for 40 guests); "how many total drinks?" / "is this
+# enough for 35-40 people?" got the basket only, then the model's own counts (once for 20 guests).
+tags: [events]
+format: plain
+turns:
+  - send: reset
+  - send: "yes"
+    expect: {matches: "(?i)address"}
+  - send: "10900 NE 8th St, STE 525, Bellevue, WA 98004"
+  - send: "create a menu for\n• *Event Length:* 3PM to 6PM\n• *Headcount:* 35-40\nbudget: 20 a person\nneed the following wines:\n3x *Kendall-Jackson Vintner's Reserve Chardonnay 2024 750ML* — $15.74 ea = $47.22\n3x *Oyster Bay Sauvignon Blanc - 750 ML* — $20.99 ea = $62.97\n3x *Le Grand Courtage Blanc de Blancs Brut - 750 ML* — $23.09 ea = $69.27\n3x *La Crema Sonoma Coast Pinot Noir - 750 ML* — $8.39 ea = $25.17\nBeers:  mix of lagers/pilsners, IPAs, wheat beers or Kölsches, and a stout or porter\nNon alcoholic beers: Athletic"
+    expect:
+      contains: ["Product total"]
+      not_matches: "(?i)wheatley|vodka dirty martini|quality floor"
+      log_not_contains: ["[bottle-price] custom_list gets wine"]
+  - send: "how many total drinks?"
+    expect:
+      matches: "(?i)about \\*?\\d+ drinks"
+      log_contains: ["[drinks-check] answered in code"]
+  - send: "is this enough for 35-40 people for event length 3 to 6 pm"
+    expect:
+      matches: "(?i)40 guests over 3 hours"

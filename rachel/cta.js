@@ -201,7 +201,9 @@ function fallbackIfEmpty(text, state, turn, basketItems, log = console.log) {
 // "numbered_list", so a reply like "2" could have been taken as picking the rum. Lines carrying a
 // quantity ("1x", "2 x") lose their "N." prefix; real option lists (no quantity) keep it.
 function denumberBasketLines(text) {
-  return String(text || '').replace(/^(\s*)\d{1,2}[.)]\s+(?=(?:[^\n]*?[\s:*_])?\d{1,3}\s*x\s)/gm, '$1');
+  // "Nx Product" only — a pack size ("— 6x 12 OZ", "4 x 16 OZ") is not a count (Nov 21: a numbered beer options list lost its
+  // numbers 1-5 and kept "6.", and the reply then said "the Kölsch (#3)")
+  return String(text || '').replace(/^(\s*)\d{1,2}[.)]\s+(?=(?:[^\n]*?[\s:*_])?\d{1,3}\s*x\s+(?!\d))/gm, '$1');
 }
 
 module.exports = { trimGenericAlternative, denumberBasketLines, chooseCta, accepted, findCta, stripTrailer, splitCloser, hasRealQuestion, scrubGenericQuestions, fallbackIfEmpty, TABLE, DATE_RE };

@@ -1212,6 +1212,12 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   0.5-1.6x band), numbered across the reply -> state.pendingStock {global} -> STOCK PICK: a number adds that product for the
   missing bottles ("in place of" an out-of-stock line); the other lines' options stay open. A short saved-basket command at
   the age question ("load WAT") is held, never a greeting.
+  Then (DC: "after the age verification ask do you want to list or load saved baskets or create new order"): a customer
+  with saved baskets and nothing held is asked, after the age yes and in the greeting, "start a new order, or load one of your
+  saved baskets?" with the baskets listed (saved-baskets.js choiceText; state.savedChoice, 1h). The answer (choiceAnswer):
+  "new order" -> the address question; a basket's name / "load X" -> loaded at its saved address; "load" / "show" -> the
+  list again, asking which; anything else (an address, a request) is handled as before. No saved baskets = the address
+  question as before. Scenario 184.
 
 - Swap with no known quantity (Nov 20 nightly, pick-plus-question / F-0016: "Instead of the Bacardi I'd like a higher end
   bourbon, same 5 bottles" — the edit reader removed the 5x Bacardi, the Buffalo Trace picked next went in at a silent 1x
@@ -1282,6 +1288,35 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   brief lines and Rachel's basket lines pasted back unchanged are not tasks (no "I haven't done these yet"). saved-baskets.js:
   a leading "no" / "actually" / "ok" before a save / load / list command ("no save the basket" saved nothing). Scenario 182,
   qa/unit/slack-wat-nov20.test.js.
+
+- Nov 21 Slack review (DC, Bellevue WA 98004, Equinix: 4 wines x 3 + beer styles, 35-40 guests, 3 PM-6 PM), every /chat
+  channel. (1) applyBasketSubstitute ignored opts.qty when nothing was replaced: the edit reader's "Add 3 bottles of La
+  Crema" went in at 1x (also stock picks) — now the count given is used ([confirm-substitute] no original — the count given).
+  (2) "remove X and replace it with Y" (Y not shown yet): edit reader block searches Y in code (rachel/replace-with.js) and,
+  with exactly one fitting product, puts it in X's place at the count the message set on every line of X's kind ("3 bottles
+  ... for all Wines"), else X's ([replace-with]); was: X removed, Y only offered. (3) The recommendation intent searched only
+  "beer" for "lagers/pilsners, IPAs, wheat beers or Kölsches, stout or porter" + NA, and Rachel said the store had none —
+  rachel/beer-styles.js: one search per style named, rows whose NAME carries the style word, beer only, plain before
+  flavoured, 3 each, grouped by `style`, styles_not_found said plainly ([recommendation] beer style "X"). (4) buildPackage
+  beer lines naming 2+ styles ("lager pilsner beer", "wheat beer kolsch") or Kölsch were not style lines -> Black Raven
+  Light Pilsner LIME and a fuzzy "wheat" hit, Heublein Wheatley VODKA Dirty Martini; now beer-styles.js handles them
+  ([buildPackage] beer styles line), a style line's pick is exact (no "not an exact match — this is stout"), flavoured beers
+  last. (5) A category the customer fixed (every wine line counted) gives its servings; the rest of the event's drinks go to
+  the open categories ([buildPackage] customer-fixed categories give N of M drinks) — the beer had kept beer's 24% share
+  (~108 drinks for 40 guests). (6) "how many total drinks?" / "is this enough for 35-40 people?" / "enough bottles to cover"
+  were routed show_basket; now rachel/drinks-check.js answers in code from the live basket (wine 5 glasses, a pack = its
+  units) against 2 + 1/hour, guests / hours from the message first ("35-40" = 40, "3 to 6 pm" = 3 h); short = a concrete
+  top-up (cheapest drink first, round-robin, never NA, never a category the customer fixed: "the rule is 3 bottles of wine
+  per type"), state.pendingDrinksTopUp, a yes applies it ([drinks-check]). (7) The fact reader's bottle_price from a pasted
+  line's own price ("— $23.09 ea") is dropped (fact-reader.js bottleShape; it capped the build's wine at $23.09).
+  (8) instructions.js: a pasted option pick that is now a NEW basket line is done, and a pack size ("6x 12 OZ") is never a
+  count ("I haven't done these yet" under three swaps that were made). (9) LOW WINE TIER (tier_warning) skips wines the
+  customer named / counted ("La Crema at $8.39 is below the $12 floor ... $14 more budget"). (10) A fresh-start turn held
+  as a self-contained request no longer says "Please send your request again". (11) cta.js denumberBasketLines read a pack
+  size ("— 6x 12 OZ") as "6x Product" and stripped a numbered options list's numbers (1-5 gone, "6." kept, "the Kölsch
+  (#3)"). Scenarios 185, 186. Not changed (DC to
+  decide): the drinks sentence's total is dpp x guests (Voiceflow parity: 4.5 a person for 40 = "about 200", the basket has
+  180); La Crema Sonoma Coast Pinot Noir is $8.39 in the 98004 catalog (market ~$20+, catalog data).
 
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days

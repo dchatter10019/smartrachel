@@ -1114,7 +1114,7 @@ async function buildPackage(iv) {
       var dpu=catN==="wine"?5:catN==="spirits"?16:(parseInt(np.pack_size)||PM.packCount(np.name)||beerPackSize);   // "...Kolsch 6-pack" is 6 per unit, not the default 12
       // Use the blended per-category share (learned split + floor) instead of the
       // legacy even split, so this path agrees with menu_build.
-      var catDrinks=(catShare[catN]!==undefined)?totalDrinks*catShare[catN]:drinksPerCat;
+      var catDrinks=(catDrinksOverride&&catDrinksOverride[catN]!==undefined)?catDrinksOverride[catN]:(catShare[catN]!==undefined)?totalDrinks*catShare[catN]:drinksPerCat;
       var mod=isModifier(np);
       // Spirit servings come from the BASE spirits only. Real bug (event-serving-mix, Sep 27):
       // tequila, triple sec and vodka each took a third of 40 cocktail servings -> 1 bottle each
@@ -1146,6 +1146,25 @@ async function buildPackage(iv) {
       var cap2=catN==="wine"?Math.max(1,Math.ceil((guests*baseDpp*0.6)/n2)):catN==="beer"?Math.max(1,Math.ceil((guests*baseDpp*0.5)/n2)):Math.max(1,Math.ceil((guests/10+1)/n2));
       if(!hasExplicitQty && catN!=="mixer" && !mod && qty>cap2) qty=cap2;
       return { qty:qty, computedQty:computedQty, hasExplicitQty:hasExplicitQty, qtyFromCustomer:qtyFromCustomer, mod:mod, servings:perProd, cap:cap2 };
+    }
+    // The customer FIXED a whole category (every wine line counted: "3x Kendall-Jackson, 3x Oyster Bay..."): its servings are
+    // known, and the rest of the event's drinks go to the categories left to Rachel, by their shares. Nov 21 (DC, Slack,
+    // Bellevue, 35-40 guests / 3 h): the beer lines still took only beer's 24% share of 160 drinks — about 8 servings a
+    // line — and the menu delivered ~108 drinks (2.7 a person); "is this enough for 35-40 people?" -> no.
+    var catDrinksOverride={};
+    if (guests>0 && totalDrinks>0) {
+      var fixedServ=0, openCats=[], openShare=0;
+      ['wine','beer','spirits'].forEach(function(c){
+        var ls=(byCat[c]||[]).filter(function(np){return !isModifier(np);}); if (!ls.length) return;
+        var allFixed=ls.every(function(np){return (np.qty_from_customer===true||np.qty_from_customer==='true')&&parseInt(np.qty)>0;});
+        if (allFixed) ls.forEach(function(np){ var d=c==='wine'?5:c==='spirits'?16:(parseInt(np.pack_size)||PM.packCount(np.name)||beerPackSize); fixedServ+=parseInt(np.qty)*d; });
+        else { openCats.push(c); openShare+=(catShare[c]||0); }
+      });
+      if (fixedServ>0 && openCats.length) {
+        var remD=Math.max(0,totalDrinks-fixedServ);
+        openCats.forEach(function(c){ catDrinksOverride[c]=openShare>0?remD*(catShare[c]||0)/openShare:remD/openCats.length; });
+        console.log('[buildPackage] customer-fixed categories give '+Math.round(fixedServ)+' of '+Math.round(totalDrinks)+' drinks — the rest goes to '+openCats.map(function(c){return c+' '+Math.round(catDrinksOverride[c]);}).join(', '));
+      }
     }
     var plannedQty=namedProducts.map(planQty);
     // Budget target per unit for generic lines — the category's share of the product budget over
@@ -1185,7 +1204,28 @@ async function buildPackage(iv) {
       var npB=namedProducts[bsI];
       if (String(npB.category||'').toLowerCase()!=='beer') continue;
       var bstL=require('./event-prefs.js').isStyleLine(npB.name);   // a STYLE line only — never "Stella Artois Premium Lager Beer"
+      // Two or more styles in one line ("lager pilsner beer", "wheat beer kolsch", "IPA or pale ale") — beer-styles.js: each
+      // style's beers (name carries the style word, beer only, plain before flavoured). Nov 21 (DC, Slack, Bellevue): "lager
+      // pilsner beer" got Black Raven Light Pilsner LIME and "wheat beer kolsch" a fuzzy word match, Heublein Wheatley VODKA
+      // Dirty Martini; the store had Steeplejack Pilsner, Gaffel Kölsch, Widmer Hefeweizen.
+      var BSm=require('./beer-styles.js'), stM=BSm.stylesIn(npB.name);
+      var restM=String(npB.name||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'');
+      stM.forEach(function(s){ restM=restM.replace(new RegExp(s.re.source,'g'),' '); });
+      restM=restM.replace(/\b(beers?|selections?|styles?|ales?|brews?|cans?|bottles?|btls?|cases?|packs?|pk|oz|ml|l|x|of|a|an|the|some|any|assorted|variety|mix|or|and|like|similar|options?|craft)\b/g,' ').replace(/[\d.,()\/&+\-]+/g,' ').trim();
+      if (stM.length && !restM && (stM.length>1 || !bstL || stM[0].key==='kolsch')) {
+        var rsM=[];
+        for (var tM=0; tM<stM.length; tM++) for (var tT=0; tT<stM[tM].terms.length; tT++) rsM=rsM.concat(await doSearch(stM[tM].terms[tT]));
+        rsM=rsM.filter(function(p){return classifyOk('beer',p)&&!CIDER_RE.test(p.name||'');});
+        var perM=stM.map(function(s){return BSm.rowsFor(s,rsM,npB.name);}), hM=[], seenM={};
+        for (var rI=0; rI<20; rI++) perM.forEach(function(lst){ var p=lst[rI]; if (p&&!seenM[p.name]) { seenM[p.name]=1; hM.push(p); } });   // interleaved: the first pick is a plain beer of a style asked
+        console.log('[buildPackage] beer styles line '+JSON.stringify(npB.name)+': '+stM.map(function(s,i){return s.label+' '+perM[i].length;}).join(', ')+' — '+hM.slice(0,4).map(function(p){return p.name;}).join(' | '));
+        if (hM.length) { npB.label=npB.label||npB.name; npB._styleLine=true; npB.name='Beer'; results[bsI]=hM; continue; }
+        beerNote='This store has no '+stM.map(function(s){return s.label;}).join(' or ')+' beers right now, so I picked popular beers instead.';
+        results[bsI]=(await doSearch('Beer')).filter(function(p){return classifyOk('beer',p)&&!CIDER_RE.test(p.name||'');}); npB.label=npB.label||npB.name; npB._styleLine=true; npB.name='Beer';
+        continue;
+      }
       if (!bstL) continue;
+      npB._styleLine=true;
       var nzL=function(x){return String(x||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9 ]/g,'');};
       var hitsFor=async function(terms){
         var rs=await Promise.all(terms.map(function(t){return doSearch(t);})), seen={}, out=[];
@@ -1194,6 +1234,7 @@ async function buildPackage(iv) {
         return out;
       };
       var hL=await hitsFor(bstL.terms), usedL=bstL.label;
+      { var FLm=require('./beer-styles.js').FLAVOR, reqL=String(npB.name||'').toLowerCase(), flv=function(p){var m=String(p.name||'').toLowerCase().match(FLm); return !!(m&&reqL.indexOf(m[1])<0);}; hL=hL.filter(function(p){return !flv(p);}).concat(hL.filter(flv)); }   // plain before flavoured
       if (!hL.length&&bstL.then) { hL=await hitsFor(bstL.then.terms); usedL=bstL.then.label; }
       if (!hL.length) { hL=(await doSearch('Beer')).filter(function(p){return classifyOk('beer',p)&&!CIDER_RE.test(p.name||'');}); usedL=''; }
       console.log('[buildPackage] beer style line '+JSON.stringify(npB.name)+': '+(usedL?hL.length+' '+usedL+' beer(s)':'none of the style or its family — usual beer')+' — '+hL.slice(0,4).map(function(p){return p.name;}).join(' | '));
@@ -1731,6 +1772,8 @@ async function buildPackage(iv) {
         qty=q6; delete np._sizeTo;
       }
       if (typeof packNote==='string' && packNote) vd.note=vd.note.replace(/\d+-pack, not \d+/, packNote);
+      // a beer STYLE line's pick is the style asked ("Beer" -> a stout for "stout or porter" was shown as "not an exact match — this is stout", Nov 21)
+      if (np._styleLine && !altNote && vd.kind!=='exact') { console.log('[buildPackage] style line '+JSON.stringify(np.label||np.name)+' -> '+best.name+' — exact (the style asked)'); vd={kind:'exact'}; }
       var match=altNote ? {kind:'alternative',asked:np.name,note:altNote+(vd.note&&/packs here/.test(vd.note)?'; '+packNote:'')} : vd.kind==='exact' ? {kind:'exact'} : {kind:'closest',asked:np.name,note:vd.note};
       if (nearNote && match.kind==='exact') match={kind:'closest',asked:np.name,note:nearNote};
       else if (nearNote && /isn't carried — \d+ x/.test(nearNote) && match.kind==='closest') match.note=nearNote+(match.note&&match.note.indexOf(nearNote)<0?'; '+match.note:'');
@@ -2329,7 +2372,10 @@ async function buildPackage(iv) {
       // decides deterministically; Rachel must surface it and offer the tradeoff. No
       // high-side signal by design — higher tiers are welcome sales, not a problem.
       var WINE_FLOOR = 12;
-      var low = lineItems.filter(function(li){ return li.category === 'wine' && (parseFloat(li.price) || 0) > 0 && parseFloat(li.price) < WINE_FLOOR; });
+      // never a wine the customer NAMED or counted themselves (Nov 21, DC on Slack: "La Crema Sonoma Coast at $8.39 is below
+      // the $12/bottle quality floor ... $14 more in budget" — a bottle he had asked for by name, 3 of them)
+      var namedW = function(li){ if (li.customer_qty) return true; try { return !!(li.label && li.match && require('./search-match.js').keyOf(String(li.label)).length); } catch (e) { return false; } };
+      var low = lineItems.filter(function(li){ return li.category === 'wine' && (parseFloat(li.price) || 0) > 0 && parseFloat(li.price) < WINE_FLOOR && !namedW(li); });
       if (!low.length) return '';
       var desc = low.map(function(li){ return li.qty + 'x ' + li.name + ' at $' + parseFloat(li.price).toFixed(2); }).join('; ');
       var shortfall = low.reduce(function(s, li){ return s + li.qty * (WINE_FLOOR - parseFloat(li.price)); }, 0);

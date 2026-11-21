@@ -151,6 +151,28 @@ function listText(email) {
   });
   return 'Your saved baskets (' + all.length + '):\n\n' + rows.join('\n') + '\n\nSay "load <name>" to put one in your cart, or "delete saved basket <name>" to remove one.';
 }
+// Right after the age question, for a customer with saved baskets (DC, Nov 21: "ask do you want to list or load saved
+// baskets or create new order"). Bullets, never numbers (the multi-pick resolver).
+function choiceText(email) {
+  const all = list(email);
+  if (!all.length) return '';
+  const rows = all.slice(0, 10).map(b => { const n = (b.items || []).length; return '• *' + b.name + '* — ' + n + ' item' + (n === 1 ? '' : 's') + ', ' + money(b.total) + ' — saved ' + fmtDate(b.created_at) + (b.address ? ' — delivery to ' + b.address : ''); });
+  return 'Would you like to start a new order, or load one of your saved baskets?\n\nYour saved basket' + (all.length === 1 ? '' : 's') + ':\n' + rows.join('\n') +
+    (all.length > 10 ? '\n(and ' + (all.length - 10) + ' more — say "show my saved baskets")' : '') + '\n\nReply "new order", or the name of a basket to load it.';
+}
+// The answer to choiceText -> {kind: 'new'} | {kind: 'load', name} | {kind: 'list'} | null (anything else: handled as usual).
+function choiceAnswer(message, email) {
+  const m = unwrap(message).trim(), t = m.toLowerCase().replace(/[.!?]+$/, '').trim();
+  if (!t || m.length > 120) return null;
+  const c = parse(m);
+  if (c && c.kind === 'load') { const f = find(email, c.name); return f.entry ? { kind: 'load', name: f.entry.name } : { kind: 'list' }; }
+  if (c && c.kind === 'list') return { kind: 'list' };
+  const f = find(email, m.replace(/^(?:the|my)\s+/i, '').replace(/\s+(?:basket|one|please)$/i, ''));
+  if (f.entry) return { kind: 'load', name: f.entry.name };
+  if (/^(?:(?:a|the)\s+)?(?:new|fresh|create|start|place|another)\b|^(?:i(?:'d| would) like|i want|let'?s)\s+(?:to\s+)?(?:start|create|place|make|do)\s+(?:a\s+)?new\b|\bnew (?:order|basket|cart|one)\b/i.test(t)) return { kind: 'new' };
+  if (/^(?:load|saved|a saved (?:one|basket)|saved (?:one|basket)s?|(?:load|use|open) (?:a|one of my|my) (?:saved )?(?:basket|one)s?|basket|(?:show|list)(?: me)?(?: (?:all|them|all of them|the saved ones|saved))?)$/i.test(t)) return { kind: 'list' };
+  return null;
+}
 function namesText(email) { return list(email).map(b => '"' + b.name + '"').join(', '); }
 
-module.exports = { parse, nameAnswer, unwrap, claimsSaved, cleanName, list, find, save, remove, listText, namesText, lineText, totalOf, fmtDate, money, FILE };
+module.exports = { choiceText, choiceAnswer, parse, nameAnswer, unwrap, claimsSaved, cleanName, list, find, save, remove, listText, namesText, lineText, totalOf, fmtDate, money, FILE };

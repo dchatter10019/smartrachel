@@ -786,6 +786,9 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
             }
           }
         }
+        // A plain add with the customer's count (edit reader "add {product, qty}", a stock pick): that count. Nov 21 (DC, Slack,
+        // Bellevue): "Add 3 bottles of La Crema Sonoma Coast Pinot Noir" went in at 1x — opts.qty was read only with an original.
+        if (!originalItem && opts && Number(opts.qty) > 0) { qtyToUse = Number(opts.qty); qtyKnown = true; console.log('[confirm-substitute] no original — the count given (' + qtyToUse + ') goes to ' + replacementName); }
         let removedLine = false;   // the original was a basket line of its own (taken out here)
         if (originalItem) {
           const removeIdx = basketLineFor(items, originalItem);
@@ -2462,6 +2465,8 @@ app.post('/chat', async (req, res) => {
         }
       } catch (e) { console.log('[kept-proposal] resume check failed: ' + e.message); }
       freshTurn = !selfContained;
+      // held as a new request: never "please send your request again" above "I have your request" (Nov 21, DC on Slack)
+      if (selfContained && fnoteR === fnote) fnoteR = fnote.replace(/ Please send your request again[^.]*\./, ' I\'ll work from the request you just sent.');
       console.log('[session] fresh-start note shown — ' + (selfContained ? 'a self-contained request, held as usual: ' : 'this message is not held: ') + JSON.stringify(String(message).slice(0, 60)));
       freshPrefix = fnoteR;   // put on the reply by the wrapper installed right after the events wrapper (below)
     }
@@ -2906,7 +2911,9 @@ app.post('/chat', async (req, res) => {
           greet += 'How can I help you today?';
         } else {
           s.step = 'addr_new';
-          greet += 'What is your delivery address? (Include street, city, state, and zip)';
+          let chG = ''; try { chG = require('./saved-baskets.js').choiceText(email || ('session:' + sessionKey)); } catch (e) {}
+          if (chG) { s.savedChoice = Date.now(); greet += chG; console.log('[saved-basket] greeting — asked: new order or a saved basket'); }
+          else greet += 'What is your delivery address? (Include street, city, state, and zip)';
         }
       } else {
         s.step = 'age';
@@ -2966,6 +2973,7 @@ app.post('/chat', async (req, res) => {
         return txt;
       } catch (e) { console.log('[saved-basket] list before the address failed: ' + e.message); return ''; }
     };
+    const sbChoiceText = () => { try { return require('./saved-baskets.js').choiceText(email || ('session:' + sessionKey)); } catch (e) { console.log('[saved-basket] choice text failed: ' + e.message); return ''; } };
     // "load X" with no delivery address yet: the address saved WITH the basket is used (DC, Nov 21: "why would you ask for the
     // delivery address again"). The conversation becomes ready at that address; the load handler below says so.
     let sbAddrNote = '';
@@ -3024,6 +3032,9 @@ app.post('/chat', async (req, res) => {
           }
         } else if (state.step === 'addr_new' && !(state.pendingIntent && require('./address-extract.js').findAddress(state.pendingIntent))
             && !(await knownAddressFor(sessionKey, state.pendingIntent || message, { qa: isQA }).then(a => { if (a) state.pendingIntent = (state.pendingIntent ? state.pendingIntent + '\n' : '') + 'Address: ' + a; return a; }))) {
+          // Nothing held + saved baskets: new order or a saved basket? (DC, Nov 21) — the address is asked only for a new order.
+          const chA = !state.pendingIntent ? sbChoiceText() : '';
+          if (chA) { state.savedChoice = Date.now(); saveFlowState(); console.log('[saved-basket] after the age question — asked: new order or a saved basket'); return res.json({ text: chA, response: chA }); }
           saveFlowState();
           const askA = 'What is your delivery address? (Please include street, city, state, and zip code)';
           return res.json({ text: askA, response: askA });
@@ -3062,6 +3073,23 @@ app.post('/chat', async (req, res) => {
     }
     // "show my saved baskets" at the address question (new or saved address): answered, the question stays open.
     if ((state.step === 'addr_new' || state.step === 'addr') && (state.ageVerified || !getCapabilities(format).requires_age_verification)) {
+      // The answer to "new order, or a saved basket?" (sbChoiceText, asked after the age question / in the greeting).
+      if (state.savedChoice) {
+        const SBc = require('./saved-baskets.js'), whoC = email || ('session:' + sessionKey);
+        const ans = (Date.now() - state.savedChoice < 60 * 60000) ? SBc.choiceAnswer(message, whoC) : null;
+        state.savedChoice = null; saveFlowState();
+        console.log('[saved-basket] choice answer ' + JSON.stringify(message.slice(0, 60)) + ' -> ' + (ans ? ans.kind + (ans.name ? ' "' + ans.name + '"' : '') : 'none — handled as usual'));
+        if (ans && ans.kind === 'new') {
+          const askN = state.step === 'addr' && state.address ? 'Great — a new order. I have your delivery address on file as ' + state.address + ' — shall I use this for your order?' : 'Great — a new order. What is your delivery address? (Please include street, city, state, and zip code)';
+          return res.json({ text: askN, response: askN });
+        }
+        if (ans && ans.kind === 'list') {
+          const lc = SBc.list(whoC).length ? SBc.listText(whoC).replace(/Say "load <name>"[^\n]*$/, 'Which one would you like to load? Reply with its name, or "new order".') : SBc.listText(whoC);
+          state.savedChoice = Date.now(); saveFlowState();
+          return res.json({ text: lc, response: lc });
+        }
+        if (ans && ans.kind === 'load') { message = 'load ' + ans.name; msgLower = message.toLowerCase(); }
+      }
       const lt = sbListBeforeAddress(message);
       if (lt) { console.log('[saved-basket] list answered at the address step (' + state.step + ') — no address needed'); return res.json({ text: lt, response: lt }); }
       // "load X" here needs the address first: held, replayed once the address is in (it was dropped: "How can I help?").
@@ -4352,6 +4380,43 @@ app.post('/chat', async (req, res) => {
         console.log('[size-only] the rest of the message goes on: ' + JSON.stringify(restS));
       }
     }
+    // ── DRINKS CHECK (drinks-check.js; Nov 21, DC on Slack: "how many total drinks?" / "is this enough for 35-40 people?" got
+    // the basket only, then the model's hand counts) — answered in code from the live basket; a short one offers a concrete
+    // top-up, and a yes to it is applied here.
+    {
+      const DCk = require('./drinks-check.js');
+      let itD = []; try { itD = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+      const tu = state.pendingDrinksTopUp;
+      if (tu && !(Date.now() - tu.at < 30 * 60000 && DCk.YES.test(message) && !state.orderStep && !state.proposalStep)) {
+        console.log('[drinks-check] top-up offer ' + (Date.now() - tu.at >= 30 * 60000 ? 'lapsed' : 'not taken — ' + JSON.stringify(message.slice(0, 60))));
+        state.pendingDrinksTopUp = null; saveFlowState();
+      } else if (tu) {
+        const nzD = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, ''), doneD = [];
+        for (const t of tu.changes) { const row = itD.find(x => nzD(x.name) === nzD(t.name)); if (row && (+row.qty || 0) === t.from) { row.qty = t.to; row.quantity = t.to; row.qty_confirmed = true; doneD.push(t.name + ': ' + t.from + ' → ' + t.to); } }
+        state.pendingDrinksTopUp = null;
+        if (doneD.length) {
+          state.lastLineItems = JSON.stringify(itD); packageCache[makeCacheKey(email, state.zip, state.lastFingerprint)] = state.lastLineItems;
+          state.pendingAddOffer = null; state.lastCta = null; saveFlowState();
+          try { saveBasket(email, state.lastLineItems, '', format || 'slack').catch(() => {}); } catch (e) {}
+          events.action('updated_basket');
+          const rD = 'Done — here are the changes:\n\nQuantity changed:\n' + doneD.map(d => '• ' + d).join('\n') + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+          console.log('[drinks-check] top-up applied in code: ' + JSON.stringify(doneD));
+          recordTurn(sessionKey, message, rD, false);
+          return res.json({ text: rD, response: rD });
+        }
+        console.log('[drinks-check] top-up NOT applied — the basket changed since it was offered');
+        saveFlowState();
+      } else if (itD.length && !state.orderStep && !state.proposalStep && !isInternalMsgEarly(message) && DCk.asks(message)) {
+        const ep = state.eventParams || {}, ef = state.eventFacts || {}, st = DCk.statedIn(message);
+        const usersD = (sessions[sessionKey] || []).filter(m => m && m.role === 'user' && typeof m.content === 'string').slice(-12).map(m => m.content);
+        const guestsD = st.guests || parseInt(ef.guests || ep.guests, 10) || 0, hoursD = st.hours || parseFloat(ef.hours || ep.hours) || 0;
+        const ck = DCk.check(itD, { guests: guestsD, hours: hoursD, fixedCategories: DCk.fixedIn([message].concat(usersD)) });
+        if (ck.topUp) { state.pendingDrinksTopUp = { at: Date.now(), changes: ck.topUp.map(t => ({ name: t.name, from: t.from, to: t.to })) }; state.pendingAddOffer = null; state.lastCta = null; saveFlowState(); }
+        console.log('[drinks-check] answered in code: ' + ck.delivered + ' drinks vs ' + ck.target + ' (' + guestsD + ' guests, ' + hoursD + ' h)' + (ck.topUp ? ' — top-up offered: ' + JSON.stringify(ck.topUp.map(t => t.name + ' ' + t.from + '->' + t.to)) : ''));
+        recordTurn(sessionKey, message, ck.text, false);
+        return res.json({ text: ck.text, response: ck.text });
+      }
+    }
     // ── EDIT READER (edit-reader.js; DC, Nov 14: "use a llm to parse the intent and then call the appropriate code") ────────
     // The model reads the basket changes in this message (remove / quantity / swap for a product just shown / add a shown
     // product, a yes to Rachel's offered change, "regenerate the proposal"); the code checks every one against the basket and
@@ -4418,6 +4483,32 @@ app.post('/chat', async (req, res) => {
         if (done.length) { state.shownOptions = null; events.action('updated_basket'); }
         saveFlowState();
         try { saveBasket(email, state.lastLineItems, '', format || 'slack').catch(() => {}); } catch (e) {}
+        // "remove X and replace it with Y" (Y not shown yet): Y is searched HERE and, when the store has exactly one product
+        // for it, put in X's place — at the count this message gave every line of X's kind ("lower ... to 3 for all wines"),
+        // else X's own. Nov 21 (DC, Slack): the 19 Crimes was removed, La Crema only offered ("Just to confirm — I have..."),
+        // and the next "Add 3 bottles of La Crema" went in at 1x.
+        if (removedR.length === 1 && (rd.also || []).includes('search') && state.zip) {
+          const RW = require('./replace-with.js'), want = RW.replacementIn(message, removedR[0]);
+          if (want) {
+            try {
+              const rows = await catalogSearch(state.zip, want, removedR[0].category || '');
+              const fits = RW.fitting(rows, want);
+              if (fits.length === 1) {
+                const qW = RW.qtyFor(v.ops, removedR[0], itR);
+                const rW = await applyBasketSubstitute(sessionKey, email, '', fits[0].name, parseFloat(fits[0].salePrice || fits[0].price) || 0, fits[0].sizeStr || fits[0].size || '', { add: true, qty: qW });
+                if (rW && rW.success !== false) {
+                  const di = done.indexOf('removed ' + removedR[0].name);
+                  if (di >= 0) done.splice(di, 1);
+                  done.push('replaced ' + removedR[0].name + ' with ' + (rW.qty || qW) + 'x ' + fits[0].name);
+                  rd.also = (rd.also || []).filter(a => a !== 'search');
+                  try { itR = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+                  state.pendingAddOffer = null;
+                  console.log('[replace-with] "' + want + '" -> ' + fits[0].name + ' x' + (rW.qty || qW) + ' in place of ' + removedR[0].name + ' (one match at this store)');
+                }
+              } else console.log('[replace-with] "' + want + '": ' + fits.length + ' fitting product(s) — left to the model\'s search (' + rows.slice(0, 4).map(p => p.name).join(' | ') + ')');
+            } catch (e) { console.log('[replace-with] search failed (' + e.message + ') — left to the model'); }
+          }
+        }
         editReaderDone = done.length > 0;
         console.log('[edit-reader] APPLIED in code: ' + JSON.stringify(done) + (failed.length ? ' | NOT done: ' + JSON.stringify(failed) : '') + ' | also: ' + JSON.stringify(rd.also));
         const diffs = ER.disagreement(v.ops, rv);

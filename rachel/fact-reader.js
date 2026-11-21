@@ -99,8 +99,18 @@ function feesShape(f) {
   return Object.keys(o).length ? o : null;
 }
 // The model's bottle price in bottle-price.js read() shape.
+// A line that only carries a product's own price — a pasted basket / option line ("3x KJ Chardonnay — $15.74 ea = $47.22",
+// "Gaffel Kölsch — 4x 16 OZ — $18.99"). Its price is never a per-bottle limit.
+const PRICED_LINE = /\$\s?\d[\d,]*(?:\.\d+)?\s*(?:ea|each|\/(?:bottle|btl|case|pack))\b|=\s*\$\s?\d|^\s*[•*\-]?\s*\d+\s*x\s|\s[—–-]\s*\$\s?\d[\d,]*(?:\.\d+)?\s*\**\s*$/i;
 function bottleShape(b, said) {
   if (!b || typeof b !== 'object' || !(+b.max > 0)) return null;
+  // Nov 21 (DC, Slack): a brief pasting "3x Le Grand Courtage ... — $23.09 ea" was read as "wine up to $23.09 a bottle" and
+  // capped the build. A max that appears ONLY inside such lines is a product's price, not a limit.
+  if (said) {
+    const v = +b.max, hasV = t => (String(t).match(/\$\s?\d[\d,]*(?:\.\d+)?/g) || []).some(x => Math.abs(parseFloat(x.replace(/[$,\s]/g, '')) - v) < 0.005);
+    const lines = String(said).split(/\n/), rest = lines.filter(l => !PRICED_LINE.test(l)).join('\n');
+    if (lines.some(l => PRICED_LINE.test(l) && hasV(l)) && !hasV(rest)) { console.log('[fact-reader] bottle_price $' + v + ' NOT used — it is a pasted line\'s own price'); return null; }
+  }
   return { category: b.category === 'spirits' ? 'spirits' : 'wine', max: +b.max, min: +b.min > 0 && +b.min < +b.max ? +b.min : 0, said: String(said || '').replace(/\s+/g, ' ').slice(0, 100), via: 'model' };
 }
 

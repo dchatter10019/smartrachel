@@ -1243,6 +1243,36 @@ async function executeTool(name, input) {
         if (ok) searchTerms.push(p);
       });
     }
+    // Beer STYLES asked for (rachel/beer-styles.js): one search per style, up to 3 of each, labelled with the style; a style
+    // the store has none of is said (styles_not_found), never "not in the catalog" for the lot. Nov 21 (DC, Slack, 98004):
+    // "lagers/pilsners, IPAs, wheat beers or Kölsches, and a stout or porter" + "NA" searched only "beer" and Rachel said the
+    // store had no IPA, Kölsch, stout, porter or NA beer — it carries all of them.
+    {
+      const BS = require(RACHEL_DIR + '/beer-styles.js');
+      const askText = String(input.occasion || '') + ' ' + String(input.query || '') + ' ' + String(input.category || '');
+      const styles = /beer|ale|lager|^$/i.test(String(input.category || '')) ? BS.stylesIn(askText) : [];
+      if (styles.length) {
+        const byStyle = await Promise.all(styles.map(async function(st) {
+          const rs = (await Promise.all(st.terms.map(function(t) { return searchWithFallbacks(loc.kitchen, loc.client, t, 20).catch(function() { return []; }); }))).flat();
+          return { st: st, rows: BS.rowsFor(st, rs.filter(function(p) { return (p.salePrice || p.price || 0) > 0 && STOCK.inv(p) !== 0; }), askText).slice(0, 3) };
+        }));
+        const seenS = {}, products = [], notFound = [];
+        byStyle.forEach(function(x) {
+          const kept = x.rows.filter(function(p) { if (seenS[p.name]) return false; seenS[p.name] = 1; return true; });
+          if (!kept.length) notFound.push(x.st.label);
+          kept.forEach(function(p) { products.push(Object.assign(formatProduct(p), { style: x.st.label })); });
+          console.log('[recommendation] beer style "' + x.st.label + '": ' + (kept.length ? kept.map(function(p) { return p.name + ' $' + (p.salePrice || p.price); }).join(' | ') : 'NONE at this store'));
+        });
+        if (products.length) {
+          return { success: true, products: products, kitchen: loc.kitchen, client: loc.client, store: friendlyStore(loc.kitchen),
+            styles_found: byStyle.filter(function(x) { return notFound.indexOf(x.st.label) < 0; }).map(function(x) { return x.st.label; }), styles_not_found: notFound,
+            instruction: 'Show these GROUPED BY their style field, in that order (each product: name, size, price). These are this store\'s beers of the styles the customer asked for.' +
+              (notFound.length ? ' This store has none of: ' + notFound.join(', ') + ' — say that plainly for those styles only.' : ' Every style asked for is carried — never say a style is missing.') +
+              ' Never comment on the catalog or offer to alert the team.' };
+        }
+        console.log('[recommendation] beer styles ' + JSON.stringify(styles.map(function(s) { return s.label; })) + ': none at this store — the usual recommendation');
+      }
+    }
     if (searchTerms.length === 0) {
       if (input.occasion && input.occasion.toLowerCase().includes('steak')) searchTerms.push('Cabernet Sauvignon', 'Malbec', 'Merlot');
       else searchTerms.push(input.category || 'wine');

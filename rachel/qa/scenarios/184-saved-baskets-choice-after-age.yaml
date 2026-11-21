@@ -1,0 +1,37 @@
+name: saved-baskets-choice-after-age
+# Nov 21 (DC on Slack): after the age question Rachel asked "What is your delivery address?" straight away. A customer with
+# saved baskets is asked first: start a new order, or load a saved basket (listed, with dates and addresses). "new order" ->
+# the address question; a basket's name -> loaded at the address saved with it (no address question).
+tags: [basket]
+format: plain
+turns:
+  - send: reset
+  - send: "I need 2 bottles of Tito's 750ml"
+    expect: {matches: "(?i)21"}
+  - send: "yes"
+    expect: {matches: "(?i)address"}
+  - send: "1 Rockefeller Plaza, New York, NY 10020"
+    expect: {matches: "(?i)tito"}
+  - send: "save this basket as QA Choice"
+    expect: {contains: ["QA Choice"]}
+  - send: "hi"
+    idle: 9
+    expect: {matches: "(?i)21"}
+  - send: "yes"
+    expect:
+      contains: ["new order", "saved basket", "QA Choice", "delivery to 1 Rockefeller Plaza"]
+      not_matches: "(?i)what is your delivery address"
+      log_contains: ["[saved-basket] after the age question — asked: new order or a saved basket"]
+  - send: "new order"
+    expect: {matches: "(?i)delivery address"}
+  - send: "hi"
+    idle: 9
+    expect: {matches: "(?i)21"}
+  - send: "yes"
+    expect: {contains: ["QA Choice"]}
+  - send: "QA Choice"
+    expect:
+      contains: ["Delivering to", "the address saved with this basket", "Loaded your saved basket", "Tito"]
+      log_contains: ["[saved-basket] choice answer \"QA Choice\" -> load"]
+  - send: "delete saved basket QA Choice"
+    expect: {contains: ["Deleted your saved basket"]}

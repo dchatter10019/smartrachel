@@ -1,0 +1,31 @@
+name: slack-bellevue-replace-add-beer-styles
+# Nov 21, DC on Slack (10900 NE 8th St, Bellevue WA 98004). "remove the 19 Crimes ... and replace it with La Crema Sonoma
+# Coast. Additionally ... lower the quantity to 3 bottles ... for all Wines" removed the 19 Crimes and only OFFERED La Crema;
+# "Add 3 bottles of <product> — $8.39 ea" then went in at 1x (applyBasketSubstitute ignored the count when nothing was
+# replaced); "recommend ... lagers/pilsners, IPAs, wheat beers or Kölsches, and a stout or porter" searched only "beer"
+# and Rachel said the store had no IPAs, Kölsches, stouts, porters or NA beers (it carries all of them).
+tags: [basket]
+format: plain
+turns:
+  - send: reset
+  - send: "yes"
+    expect: {matches: "(?i)address"}
+  - send: "10900 NE 8th St, STE 525, Bellevue, WA 98004"
+  - send: "8 x Kendall-Jackson Vintner's Reserve Chardonnay 2024 750ML\n8 x Oyster Bay Sauvignon Blanc 750ML\n8 x 19 Crimes Snoop Cali Red 2019 750ML\n8 x Le Grand Courtage Blanc de Blancs Brut 750ML"
+    expect:
+      contains: ["Product total"]
+  - send: "After reviewing with the team, we would like to remove the 19 Crimes Snoop Cali Red and replace it with La Crema Sonoma Coast. Additionally, can you lower the quantity to 3 bottles for Wine per selection for all Wines?"
+    expect:
+      matches: "(?i)3x La Crema Sonoma Coast"
+      not_matches: "(?i)just to confirm|8x Kendall|19 Crimes Snoop Cali Red - 2019 - 750 ML —"
+      log_contains: ["[replace-with]"]
+  - send: "do you have Kim Crawford Sauvignon Blanc?"
+  - send: "Add 3 bottles of Kim Crawford Sauvignon Blanc"
+    expect:
+      matches: "(?i)3x Kim Crawford"
+      not_matches: "(?i)1x Kim Crawford"
+  - send: "Could you recommend a few beer and NA beverage options to round out the menu? For beer, we'd be interested in a mix of lagers/pilsners, IPAs, wheat beers or Kölsches, and a stout or porter option."
+    expect:
+      matches: "(?i)\\bIPA\\b"
+      not_matches: "(?i)not seeing (?:any )?IPA|aren't showing up|alert the Bevvi team|flag this to the team"
+      log_contains: ["[recommendation] beer style \"IPA\""]

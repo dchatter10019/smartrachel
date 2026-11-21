@@ -86,7 +86,12 @@ function unaddressed(instrs, reply, before, after) {
     try { if (require('./bottle-price.js').read(instr)) return false; } catch (e) {}
     const kw = keywords(instr);
     if (!kw.length) return false;
-    const num = (norm(instr).match(/\bto\s+(\d{1,3})\b|\b(\d{1,3})\s*(?:bottles?|x\b)/) || []).slice(1).find(Boolean);
+    // A pick pasted from Rachel's options ("*Steeplejack West Coast Pilsner* — 6x 12 OZ") that is now a NEW basket line is
+    // done (Nov 21, DC on Slack: three picks were swapped in and the reply still said "I haven't done these yet" — the
+    // "6x" of the pack size was read as "make it 6").
+    { const nameP = norm(String(instr).replace(/\s+[—–]\s.*$|\s+-\s+\$.*$/, ''));
+      if (nameP.length >= 6 && (after || []).some(it => !b.has(key(it)) && key(it).indexOf(nameP.replace(/\s+/g, ' ').trim()) === 0)) return false; }
+    const num = (norm(instr.replace(/\b\d{1,2}\s*x\s*\d+(?:\.\d+)?\s*(?:oz|ml|l|fl ?oz)\b/gi, ' ')).match(/\bto\s+(\d{1,3})\b|\b(\d{1,3})\s*(?:bottles?|x\b)/) || []).slice(1).find(Boolean);
     const matches = it => kw.some(w => has(key(it), w) || spiritType(it.name || it.label) === w || (w === 'whisky' && spiritType(it.name) === 'whiskey'));
     if (num) {
       if ((after || []).some(it => matches(it) && q(it) === Number(num) && b.get(key(it)) !== q(it))) return false;
