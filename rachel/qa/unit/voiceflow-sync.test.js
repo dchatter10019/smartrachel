@@ -69,10 +69,10 @@ function eq(label, got, want) {
   const f = PF.packageFacts(pkg, { guests: 20, hours: 2, targetDrinks: 60 });
   // 3 wine x 5 + 2 x 12 beer + 3 x 16 spirits = 87 -> 4 a person
   eq('wine heading counts sparkling', f.wine_heading, 'WINE — 3 bottles (1 red, 1 white, 1 sparkling)');
-  eq('drinks statement: whole numbers, total = N x guests', f.drinks_statement, 'This package delivers about 4 drinks per person for your 20 guests over 2 hours (about 80 drinks total).');
+  eq('drinks statement: whole numbers, total = the real count of the basket', f.drinks_statement, 'This package delivers about 4 drinks per person for your 20 guests over 2 hours (about 87 drinks total).');
   eq('why: over the target -> variety sentence', /^Your package includes at least one bottle or pack of each type/.test(f.why_drinks_statement), true);
   eq('why: at the target -> sized sentence', /^This package is sized for about 4 drinks per person/.test(PF.packageFacts(pkg, { guests: 20, hours: 2, targetDrinks: 87 }).why_drinks_statement), true);
-  eq('drinks per person given -> no "over N hours"', PF.packageFacts(pkg, { guests: 20, drinksPerPerson: 4, targetDrinks: 80 }).drinks_statement, 'This package delivers about 4 drinks per person for your 20 guests (about 80 drinks total).');
+  eq('drinks per person given -> no "over N hours"', PF.packageFacts(pkg, { guests: 20, drinksPerPerson: 4, targetDrinks: 80 }).drinks_statement, 'This package delivers about 4 drinks per person for your 20 guests (about 87 drinks total).');
   eq('no guests -> no statement (an order, not an event)', PF.packageFacts(pkg, {}).drinks_statement, '');
   eq('1.75 L counted by volume', Math.round(PF.servings({ name: "Tito's Vodka - 1.75 L", qty: 1, category: 'spirits' })), 37);
   eq('the label decides: a "White Wine" line that is a Blanc de Blancs Brut stays white (live, Oct 21: counted as sparkling)',

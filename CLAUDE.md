@@ -1314,9 +1314,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   customer named / counted ("La Crema at $8.39 is below the $12 floor ... $14 more budget"). (10) A fresh-start turn held
   as a self-contained request no longer says "Please send your request again". (11) cta.js denumberBasketLines read a pack
   size ("— 6x 12 OZ") as "6x Product" and stripped a numbered options list's numbers (1-5 gone, "6." kept, "the Kölsch
-  (#3)"). Scenarios 185, 186. Not changed (DC to
-  decide): the drinks sentence's total is dpp x guests (Voiceflow parity: 4.5 a person for 40 = "about 200", the basket has
-  180); La Crema Sonoma Coast Pinot Noir is $8.39 in the 98004 catalog (market ~$20+, catalog data).
+  (#3)"). Scenarios 185, 186. The drinks sentence's
+  total is the basket's REAL count (DC: "state the real count"; package-facts.js — was dpp x guests, 180 drinks read "about
+  200"; per person stays a whole number; Voiceflow's own BuildPackage.js still prints dpp x guests). Catalog data: La Crema Sonoma Coast Pinot Noir is $8.39 in the 98004 catalog (market ~$20+, catalog data).
 
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days

@@ -151,7 +151,7 @@ deploy() {
   # shopping-agent also loads rachel/functions.js, package-model.js and brand-lists.js — a change
   # to only those left it running the old code.
   # generate-proposal.js too: shopping-agent's generate_proposal requires it (Sep 29).
-  echo "$DIRTY" | grep -qE " store-agent/| rachel/(functions|package-model|brand-lists|generate-proposal|product-match|search-match|stock|delivery-instructions|catalog-api|search-normalize|type-phrase|per-person-budget|beer-styles)\.js| rachel/data/search-(aliases|abbreviations|category-words|normalize-config)\.json" && svcs+=(shopping-agent)
+  echo "$DIRTY" | grep -qE " store-agent/| rachel/(functions|package-model|brand-lists|generate-proposal|product-match|search-match|stock|delivery-instructions|catalog-api|search-normalize|type-phrase|per-person-budget|beer-styles|package-facts)\.js| rachel/data/search-(aliases|abbreviations|category-words|normalize-config)\.json" && svcs+=(shopping-agent)
   # The email agent (rachel/email-agent.py) is its own service.
   echo "$DIRTY" | grep -q " rachel/email-agent\.py" && svcs+=(rachel-email)
   # The Slack bot (rachel/rachel_slack_bot.py) is its own service too.

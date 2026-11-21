@@ -51,7 +51,7 @@ function packageFacts(items, o) {
   const hours = parseFloat(o.hours) || 0, givenDpp = parseFloat(o.drinksPerPerson) || 0;
   const hoursTxt = (!givenDpp && hours > 0) ? ' over ' + (Math.round(hours * 10) / 10) + ' hour' + (hours === 1 ? '' : 's') : '';
   out.delivered_drinks = delivered;
-  out.drinks_statement = 'This package delivers about ' + dpp + ' drinks per person for your ' + guests + ' guests' + hoursTxt + ' (about ' + (dpp * guests) + ' drinks total).';
+  out.drinks_statement = 'This package delivers about ' + dpp + ' drinks per person for your ' + guests + ' guests' + hoursTxt + ' (about ' + delivered + ' drinks total).';   // the basket's own count (DC, Nov 21: "state the real count" — was dpp x guests: 180 drinks read "about 200")
   const target = parseFloat(o.targetDrinks) || 0;
   out.why_drinks_statement = (target > 0 && delivered > target * 1.15)
     ? 'Your package includes at least one bottle or pack of each type so there\'s real variety for your ' + guests + ' guests, which is why it covers about ' + dpp + ' drinks per person. The rest of your budget goes into premium selections rather than extra quantity.'

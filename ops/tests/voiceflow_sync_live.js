@@ -27,7 +27,7 @@ const STMT = (g, h) => new RegExp('^This package delivers about (\\d+) drinks pe
 function stmtOk(r, g, h) {
   const m = String(r.drinks_statement || '').match(STMT(g, h));
   ok(m, 'drinks_statement: ' + JSON.stringify(r.drinks_statement));
-  ok(+m[2] === +m[1] * g, 'total is not N x guests: ' + r.drinks_statement);
+  ok(Math.round(+m[2] / g) === +m[1], 'total / guests is not the per-person figure: ' + r.drinks_statement);   // the real count (DC, Nov 21), not N x guests
   ok(r.why_drinks_statement, 'no why_drinks_statement');
 }
 function headingOk(r) {
