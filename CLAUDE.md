@@ -1203,6 +1203,15 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   [saved-basket] list answered after the age question / at the address step); a saved-basket command is held through a
   fresh start; "load X" at the address question is held and replayed after the address. "show me all the baskets" / "list
   all baskets" / "what baskets do I have" are list commands (plural only — "show me the basket" is the cart). Scenario 183.
+  Same day (DC: "why would you ask for the delivery address again ... check if all the inventory is available ... offer
+  alternatives"): a load with no address in the conversation uses the address saved WITH the basket (server.js sbAdoptAddress,
+  after the age yes or at the address question; said on top of the reply; [saved-basket] ... using the address saved with it);
+  only a basket saved without one asks. The list shows that address. Each line's stock is checked (catalog in_stock via
+  stock.inv: unknown = enough, 0 / missing = out): short = kept at what the store has, out = left out, both said, with up to 3
+  similar in-stock products each (stock.similar; searched by the line's grape first, then its type; any price if none in the
+  0.5-1.6x band), numbered across the reply -> state.pendingStock {global} -> STOCK PICK: a number adds that product for the
+  missing bottles ("in place of" an out-of-stock line); the other lines' options stay open. A short saved-basket command at
+  the age question ("load WAT") is held, never a greeting.
 
 - Swap with no known quantity (Nov 20 nightly, pick-plus-question / F-0016: "Instead of the Bacardi I'd like a higher end
   bourbon, same 5 bottles" — the edit reader removed the 5x Bacardi, the Buffalo Trace picked next went in at a silent 1x

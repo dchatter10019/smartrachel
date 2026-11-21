@@ -147,7 +147,7 @@ function listText(email) {
   if (!all.length) return 'You don\'t have any saved baskets yet. When your cart looks right, say "save this basket as <name>" and I\'ll keep it for you.';
   const rows = all.map(b => {
     const n = (b.items || []).length, c = fmtDate(b.created_at), u = fmtDate(b.updated_at);
-    return '• *' + b.name + '* — ' + n + ' item' + (n === 1 ? '' : 's') + ', ' + money(b.total) + ' — saved ' + c + (u && u !== c ? ' (updated ' + u + ')' : '') + (b.zip ? ' — delivery ' + b.zip : '');
+    return '• *' + b.name + '* — ' + n + ' item' + (n === 1 ? '' : 's') + ', ' + money(b.total) + ' — saved ' + c + (u && u !== c ? ' (updated ' + u + ')' : '') + (b.address ? ' — delivery to ' + b.address : b.zip ? ' — delivery ' + b.zip : '');
   });
   return 'Your saved baskets (' + all.length + '):\n\n' + rows.join('\n') + '\n\nSay "load <name>" to put one in your cart, or "delete saved basket <name>" to remove one.';
 }

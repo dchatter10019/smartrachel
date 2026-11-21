@@ -1,7 +1,8 @@
 name: saved-baskets-before-address
 # Nov 21 (DC on Slack): "show me all the baskets" after a fresh start -> "are you 21?" -> "yes" -> "What is your delivery
 # address?". Listing saved baskets needs no store: it is answered right after the age question (and at the address
-# question); only loading one asks for the address. "show me all the baskets" is read as the list (saved-baskets.js).
+# question). Later the same day (DC: "why would you ask for the delivery address again"): loading one uses the address
+# saved with it — no address question. "show me all the baskets" is read as the list (saved-baskets.js).
 tags: [basket]
 format: plain
 turns:
@@ -21,7 +22,8 @@ turns:
       log_contains: ["[session] fresh-start note shown — a self-contained request, held as usual"]
   - send: "yes"
     expect:
-      contains: ["QA Before Address", "Your saved baskets"]
+      contains: ["QA Before Address", "Your saved baskets", "delivery to 1 Rockefeller Plaza"]
+      not_contains: ["I'll ask for the delivery address"]
       not_matches: "(?i)what is your delivery address"
       log_contains: ["[saved-basket] list answered after the age question"]
   - send: "show my saved baskets"
@@ -29,8 +31,9 @@ turns:
       contains: ["QA Before Address"]
       log_contains: ["[saved-basket] list answered at the address step"]
   - send: "load QA Before Address"
-    expect: {matches: "(?i)address"}
-  - send: "1 Rockefeller Plaza, New York, NY 10020"
-    expect: {contains: ["Loaded your saved basket", "Tito"]}
+    expect:
+      contains: ["Delivering to", "the address saved with this basket", "Loaded your saved basket", "Tito"]
+      not_matches: "(?i)what'?s the delivery address"
+      log_contains: ["[saved-basket] load \"QA Before Address\" before an address — using the address saved with it"]
   - send: "delete saved basket QA Before Address"
     expect: {contains: ["Deleted your saved basket"]}

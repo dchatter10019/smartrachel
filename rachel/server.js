@@ -2961,10 +2961,25 @@ app.post('/chat', async (req, res) => {
         if (!c || c.kind !== 'list') return '';
         const who = email || ('session:' + sessionKey);
         console.log('[saved-basket] list for ' + who + ' before the delivery address: ' + SB.list(who).length + ' basket(s)');
-        const txt = SB.listText(who) + (SB.list(who).length ? '\n\nWhen you load one I\'ll ask for the delivery address, so I can check it at the store that delivers there.' : '');
+        const txt = SB.listText(who);
         recordTurn(sessionKey, t, txt, false);
         return txt;
       } catch (e) { console.log('[saved-basket] list before the address failed: ' + e.message); return ''; }
+    };
+    // "load X" with no delivery address yet: the address saved WITH the basket is used (DC, Nov 21: "why would you ask for the
+    // delivery address again"). The conversation becomes ready at that address; the load handler below says so.
+    let sbAddrNote = '';
+    const sbAdoptAddress = (t) => {
+      try {
+        const SB = require('./saved-baskets.js'), c = t && SB.parse(t);
+        if (!c || c.kind !== 'load') return false;
+        const f = SB.find(email || ('session:' + sessionKey), c.name), e = f.entry;
+        if (!e || !e.address || !e.zip) { console.log('[saved-basket] load "' + c.name + '" before an address — ' + (e ? 'no address saved with it, asking' : 'no such saved basket')); return false; }
+        state.address = e.address; state.zip = e.zip; state.addrConfirmed = true; state.step = 'ready'; saveFlowState();
+        sbAddrNote = 'Delivering to ' + e.address + ' — the address saved with this basket (send a new address if it should go somewhere else).';
+        console.log('[saved-basket] load "' + e.name + '" before an address — using the address saved with it: ' + e.address + ' (' + e.zip + ')');
+        return true;
+      } catch (er) { console.log('[saved-basket] saved address check failed: ' + er.message); return false; }
     };
     if (state.step === 'age') {
       const capsAge = getCapabilities(format);
@@ -2988,6 +3003,10 @@ app.post('/chat', async (req, res) => {
         // loaded (Nov 21, DC on Slack: "show me all the baskets" -> fresh start -> "yes" -> "What is your delivery address?").
         { const lt = sbListBeforeAddress(state.pendingIntent) || sbListBeforeAddress(stripAgeAnswer(message));
           if (lt && state.step !== 'ready') { state.pendingIntent = null; saveFlowState(); console.log('[saved-basket] list answered after the age question — no address needed'); return res.json({ text: lt, response: lt }); } }
+        if (state.step !== 'ready') {
+          const heldL = [state.pendingIntent, stripAgeAnswer(message)].find(t => t && sbAdoptAddress(t));
+          if (heldL) { state.pendingIntent = null; message = heldL; msgLower = message.toLowerCase().trim(); saveFlowState(); console.log('[saved-basket] held load replayed after the age question'); }
+        }
         // The yes may carry the whole request ("yes I'm over 21, deliver to 425 W 53rd St, NY
         // 10019, I need 2 Tito's"). Real bug: the entire sentence was stored as the ADDRESS and
         // the items were dropped. Keep the rest as the pending request; the address extraction
@@ -3031,7 +3050,8 @@ app.post('/chat', async (req, res) => {
         // message usually IS the order. Only the FIRST one: a later off-script reply at the
         // gate must not overwrite the customer's actual request.
         // A short message that IS a product alias ("DOM", "titos") is a request, held through the gate (search-normalize.js).
-        const greetingOnly = !SN.aliasFor(message) && (msgLower.length < 12 || /^(hi|hello|hey|yo|hola|good (morning|afternoon|evening)|reset)[\s!.,]*$/i.test(msgLower));
+        // A saved-basket command ("load WAT") is a request too, however short.
+        const greetingOnly = !SN.aliasFor(message) && !require('./saved-baskets.js').parse(message) && (msgLower.length < 12 || /^(hi|hello|hey|yo|hola|good (morning|afternoon|evening)|reset)[\s!.,]*$/i.test(msgLower));
         if (!greetingOnly && !state.pendingIntent && !freshTurn) {
           state.pendingIntent = message; saveFlowState();
           const ack = 'Thanks — I have your request and will pick it up right after one quick check. Are you 21 or older?';
@@ -3046,7 +3066,8 @@ app.post('/chat', async (req, res) => {
       if (lt) { console.log('[saved-basket] list answered at the address step (' + state.step + ') — no address needed'); return res.json({ text: lt, response: lt }); }
       // "load X" here needs the address first: held, replayed once the address is in (it was dropped: "How can I help?").
       let sbL = null; try { sbL = require('./saved-baskets.js').parse(message); } catch (e) {}
-      if (sbL && sbL.kind === 'load' && state.step === 'addr_new') {
+      if (sbL && sbL.kind === 'load' && sbAdoptAddress(message)) { /* ready at the saved address — the load runs below */ }
+      else if (sbL && sbL.kind === 'load' && state.step === 'addr_new') {
         state.pendingIntent = message; saveFlowState();
         console.log('[saved-basket] load "' + sbL.name + '" at the address step — held for after the address');
         const askL = 'Sure — what\'s the delivery address? (street, city, state and zip) I\'ll check each item of "' + sbL.name + '" at the store that delivers there.';
@@ -3458,25 +3479,78 @@ app.post('/chat', async (req, res) => {
           // Each line re-checked at the store that serves THIS address: price now, still carried (stock 0 = out), relinked
           // to this store's product (a basket saved for another zip is matched by UPC / name + size).
           const nzS = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-          const changes = [], gone = [], unchecked = [];
+          const changes = [], gone = [], unchecked = [], short = [];
+          const STOCKM = require('./stock.js');
           const catOf = c => /spirit|liquor/i.test(c || '') ? 'liquor' : /wine/i.test(c || '') ? 'wine' : /beer/i.test(c || '') ? 'beer' : '';
           const kept = [];
+          // Out of stock / short lines and their alternatives, numbered across the reply.
+          const sbStockText = (sh) => {
+            if (!sh.length) return '';
+            let n = 0, any = false;
+            const parts = sh.map(x => {
+              const head = x.available > 0
+                ? '• ' + x.li.name + ' — only ' + x.available + ' in stock (you saved ' + x.asked + '), so the cart has ' + x.available + '.'
+                : '• ' + x.li.name + ' — out of stock right now (you saved ' + x.asked + '), so it isn\'t in the cart.';
+              if (!(x.options || []).length) return head + ' I found nothing similar in stock.';
+              any = true;
+              return head + ' Similar, in stock:\n' + x.options.map(o => '   ' + (++n) + '. ' + o.name + ' — ' + SB.money(o.price)).join('\n');
+            });
+            return '\n\nOut of stock or short at this store:\n' + parts.join('\n') + (any ? '\n\nReply with a number and I\'ll add that one for the missing bottles.' : '');
+          };
           if (state.zip) {
             const checks = await Promise.all(items.map(li => catalogSearch(state.zip, li.name, catOf(li.category)).then(rows => ({ li, rows }), err => ({ li, err }))));
             for (const { li, rows, err } of checks) {
               if (err) { unchecked.push(li.name); kept.push(li); continue; }
               const hit = rows.find(r => li.product_id && r.product_id === li.product_id) || rows.find(r => li.upc && r.upc && String(r.upc) === String(li.upc)) ||
                 rows.find(r => nzS(r.name) === nzS(li.name) && (!li.size || !r.size || nzS(r.size) === nzS(li.size)));
-              if (!hit) { gone.push(li.name); console.log('[saved-basket] load "' + e.name + '": ' + li.name + ' NOT carried / out of stock at the store for ' + state.zip + ' — left out'); continue; }
+              const askedQ = SB.qtyOf ? SB.qtyOf(li) : (Number(li.qty || li.quantity) || 1);
+              if (!hit) { gone.push(li.name); short.push({ li, asked: askedQ, available: 0 }); console.log('[saved-basket] load "' + e.name + '": ' + li.name + ' NOT carried / out of stock at the store for ' + state.zip + ' — left out'); continue; }
               const was = parseFloat(li.price) || 0, now = parseFloat(hit.price) || 0;
               if (now > 0 && Math.abs(now - was) >= 0.005) { changes.push(li.name + ': ' + SB.money(was) + ' → ' + SB.money(now)); li.price = now; }
               Object.assign(li, { product_id: hit.product_id || li.product_id, upc: hit.upc || li.upc, establishmentId: hit.establishmentId || li.establishmentId, url: hit.url || li.url });
+              // Stock (stock.js: unknown = enough, 0 = out): fewer than the basket's quantity -> what the store has, the rest offered.
+              const haveQ = STOCKM.inv(Object.assign({}, hit, { inventory: hit.in_stock }));
+              if (haveQ !== null && haveQ < askedQ) {
+                short.push({ li: Object.assign({}, li), asked: askedQ, available: haveQ });
+                console.log('[saved-basket] load "' + e.name + '": ' + li.name + ' — the store has ' + haveQ + ' of the ' + askedQ + ' saved' + (haveQ ? ', kept at ' + haveQ : ', left out'));
+                if (!haveQ) continue;
+                li.qty = haveQ; li.quantity = haveQ;
+              }
               kept.push(li);
             }
           } else kept.push(...items);
+          // Alternatives for what is out of stock / short (DC, Nov 21: "if not offer alternatives and mention those items are
+          // out of stock"): up to 3 similar products in stock per line (stock.similar: same type, size, grape, flavour, price
+          // 0.5-1.6x, else any price), numbered across the reply; a number adds that one for the rest (STOCK PICK).
+          const offersL = [];
+          if (short.length) {
+            const rowsOf = (ps) => (ps || []).map(p => Object.assign({}, p, { inventory: p.in_stock, sizeStr: p.size }));
+            await Promise.all(short.map(async (sh) => {
+              const need = sh.asked - sh.available;
+              try {
+                // The grape the line names is searched first ("white wine" returned Champagne / Riesling, which similar() then
+                // rejects for a Sauvignon Blanc), then the type.
+                const ex = kept.map(k => k.name);
+                const grapesL = require('./search-match.js').grapesOf(String(sh.li.name || ''));
+                const terms = [grapesL.length ? grapesL.join(' ') : '', STOCKM.termFor(sh.li)].filter((x, i, a) => x && a.indexOf(x) === i);
+                let rows = [], sim = [];
+                for (const term of terms) {
+                  rows = rowsOf(await catalogSearch(state.zip, term, catOf(sh.li.category)));
+                  sim = STOCKM.similar(sh.li, rows, need, { exclude: ex });
+                  if (sim.length) break;
+                }
+                if (!sim.length) { sim = STOCKM.similar(sh.li, rows, need, { exclude: ex, anyPrice: true }); if (sim.length) console.log('[saved-basket] similar for ' + sh.li.name + ' widened to any price'); }
+                sh.options = sim.slice(0, 3).map(r => ({ name: r.name, price: Number(r.price) || 0, size: r.size || '', url: r.url || '', product_id: r.product_id || '', upc: r.upc || '', establishmentId: r.establishmentId || '', category: r.category || '' }));
+              } catch (er) { sh.options = []; console.log('[saved-basket] similar search FAILED for ' + sh.li.name + ': ' + er.message); }
+              sh.need = need;
+              console.log('[saved-basket] ' + sh.li.name + ': ' + sh.options.length + ' similar offered for ' + need + ' (' + sh.options.map(o => o.name).join(' | ') + ')');
+            }));
+            for (const sh of short) if (sh.options.length) offersL.push({ for: sh.li.name, need: sh.need, options: sh.options, replaces: !sh.available });
+          }
           if (!kept.length) {
             console.log('[saved-basket] load "' + e.name + '" NOT done — none of its ' + items.length + ' line(s) are carried at the store for ' + state.zip);
-            return sbReply('I found your saved basket *' + e.name + '*, but none of its items are available at the store that delivers to ' + (state.address || state.zip) + ' right now: ' + gone.join('; ') + '. Your cart is unchanged — want me to find similar products?');
+            state.pendingStock = offersL.length ? { offers: offersL, at: Date.now(), global: true } : null; saveFlowState();
+            return sbReply((sbAddrNote ? sbAddrNote + '\n\n' : '') + 'I found your saved basket *' + e.name + '*, but none of its items are in stock at the store that delivers to ' + (state.address || state.zip) + ' right now.' + sbStockText(short) + (offersL.length ? '' : ' Your cart is unchanged.'));
           }
           if (before || state.orderStep || state.proposalStep || state.lastProposalUrl) clearCart(state, email, format, 'saved basket "' + e.name + '" loaded');
           state.lastLineItems = JSON.stringify(kept); state.pendingSubstitutes = []; state.pendingAddOffer = null; state.pendingQtyFor = null; state.lastCta = null;
@@ -3488,12 +3562,13 @@ app.post('/chat', async (req, res) => {
           console.log('[saved-basket] loaded "' + e.name + '" for ' + who + ' (saved ' + e.created_at + '): ' + kept.length + '/' + items.length + ' line(s)' + (gone.length ? ', left out: ' + gone.join(' | ') : '') + (changes.length ? ', repriced: ' + changes.join(' | ') : '') + (unchecked.length ? ', NOT checked (search failed): ' + unchecked.join(' | ') : '') + (before ? ', replaced a ' + before + '-line cart' : ''));
           const tot = SB.totalOf(kept);
           const otherStore = e.zip && state.zip && e.zip !== state.zip;
-          const rL = 'Loaded your saved basket *' + e.name + '* (saved ' + SB.fmtDate(e.created_at) + (SB.fmtDate(e.updated_at) !== SB.fmtDate(e.created_at) ? ', updated ' + SB.fmtDate(e.updated_at) : '') + ')' +
+          state.pendingStock = offersL.length ? { offers: offersL, at: Date.now(), global: true } : null; saveFlowState();
+          const rL = (sbAddrNote ? sbAddrNote + '\n\n' : '') + 'Loaded your saved basket *' + e.name + '* (saved ' + SB.fmtDate(e.created_at) + (SB.fmtDate(e.updated_at) !== SB.fmtDate(e.created_at) ? ', updated ' + SB.fmtDate(e.updated_at) : '') + ')' +
             (before ? ' — it replaces the ' + before + ' item' + (before === 1 ? '' : 's') + ' that were in your cart' : '') + '.\n\n' +
             (otherStore ? 'It was saved for delivery to ' + e.zip + '; I matched it to the store that delivers to ' + state.zip + '.\n\n' : '') +
             kept.map(SB.lineText).join('\n') + '\n\nProduct total: ' + SB.money(tot) +
             (changes.length ? '\n\nPrices that changed since you saved it:\n' + changes.map(c => '• ' + c).join('\n') : '') +
-            (gone.length ? '\n\nNo longer available at this store, so I left ' + (gone.length === 1 ? 'it' : 'them') + ' out:\n' + gone.map(g => '• ' + g).join('\n') : '') +
+            sbStockText(short) +
             (unchecked.length ? '\n\nI couldn\'t re-check the current price of: ' + unchecked.join('; ') + '.' : '') +
             '\n\nWould you like to place the order, generate a PDF proposal, or make any changes?';
           return sbReply(rL);
@@ -5233,10 +5308,13 @@ app.post('/chat', async (req, res) => {
       let hit = null;
       const num = t.match(/^(?:(?:yes|ok|okay|sure)[,\s]+)?(?:#|no\.?\s*|number\s+|option\s+|the\s+)?([1-9])(?:st|nd|rd|th)?(?:\s+(?:one|please|pls))?$/);
       if (num && offers.length === 1 && offers[0].options[+num[1] - 1]) hit = { offer: offers[0], opt: offers[0].options[+num[1] - 1] };
+      // A saved-basket load numbers the options across several lines (ps.global): "4" = the 4th option shown.
+      if (!hit && num && ps.global) { const flatO = offers.flatMap(o => o.options.map(op => ({ offer: o, opt: op }))); if (flatO[+num[1] - 1]) hit = flatO[+num[1] - 1]; }
       if (!hit && t.length <= 80 && !num) for (const o of offers) for (const op of o.options) {
         const w = nzS(op.name).slice(0, 10);
         if (w.length >= 5 && nzS(t).indexOf(w) >= 0) { hit = { offer: o, opt: op }; break; }
       }
+      if (hit && hit.opt.spent) { console.log('[stock] pick ' + JSON.stringify(t.slice(0, 40)) + ' — that line was already filled, not added again'); hit = null; }
       if (hit) {
         const op = hit.opt, q = hit.offer.need;
         let it = []; try { it = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
@@ -5245,7 +5323,9 @@ app.post('/chat', async (req, res) => {
         else it.push({ label: op.name, name: op.name, qty: q, quantity: q, price: Number(op.price) || 0, size: op.size || '', url: op.url || '', product_id: op.product_id || '', upc: op.upc || '', establishmentId: op.establishmentId || '', category: op.category || '', qty_confirmed: true });
         state.lastLineItems = JSON.stringify(it); saveFlowState(); events.action('updated_basket');
         console.log('[stock] pick ' + JSON.stringify(t.slice(0, 40)) + ' -> added ' + q + 'x ' + op.name + ' (for ' + hit.offer.for + ')');
-        const rSt = 'Added ' + q + 'x ' + op.name + ' — ' + usd(Number(op.price) || 0) + ' ea, for the rest of the ' + hit.offer.for + '.' + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
+        // The other lines' options stay open with the same numbers (the picked line's are spent).
+        if (ps.global && offers.length > 1) { state.pendingStock = Object.assign({}, ps, { offers: ps.offers.map(o => o === hit.offer || (o.for === hit.offer.for) ? Object.assign({}, o, { options: o.options.map(x => Object.assign({}, x, { spent: true })) }) : o), at: Date.now() }); saveFlowState(); }
+        const rSt = 'Added ' + q + 'x ' + op.name + ' — ' + usd(Number(op.price) || 0) + ' ea' + (hit.offer.replaces ? ', in place of the ' + hit.offer.for : ', for the rest of the ' + hit.offer.for) + '.' + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
         recordTurn(sessionKey, message, rSt, false);
         return res.json({ text: rSt, response: rSt });
       }
