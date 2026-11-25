@@ -870,6 +870,13 @@ async function runTool(name, input, callerEmail, apiKey, mcpSession) {
       named.push(np);
     }
     if (!named.length) return { error: 'None of the lines could be read as products. Pass one product per entry, e.g. "3 x Tito\'s 750ml".' };
+    // A brand CHOICE line ("3 1L btls of Bourbon (Woodford / Makers Mark)") is ONE line — the first brand carried, the others as
+    // fallbacks — as on /chat (brand-choice.js; Nov 25, DC: every channel). The customer's own prices stay on the line's label.
+    try {
+      const before = new Map(named.map(n => [n, n.name]));
+      for (const l of require('./brand-choice.js').collapse(named, raw.map(r => r.line))) console.log('[rachel-mcp] proposal_from_list [brand-choice] ' + l);
+      for (const [n, was] of before) if (n.name !== was && givenPrice.has(was)) { givenPrice.set(n.name, givenPrice.get(was)); givenPrice.delete(was); }
+    } catch (e) { console.log('[rachel-mcp] proposal_from_list brand-choice error: ' + e.message); }
     console.log('[rachel-mcp] proposal_from_list ' + named.length + ' line(s) for ' + input.zip + ': ' + named.map(n => n.qty + ' x ' + n.name).join('; '));
     const built = await callShoppingAgent('custom_list', { named_products: named, zip: input.zip, email: input.email || '' });
     if (!built || built.success === false) {

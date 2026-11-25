@@ -1385,6 +1385,9 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   reading is recorded as a reader_gap. edit-reader.js wants(): every basket message of 3+ words (validate() still checks each op).
   Mechanical reading stays in code (Slack markup, "3 1L btls" counts, sizes, prices, totals, age, order placement).
   Scenario 194, qa/unit/drink-rate.test.js; fact-reader.test.js updated to the every-message gate.
+  Every /chat channel (Slack, WhatsApp, email, rachel_chat for Claude apps). The connector's direct tools (Voiceflow) send
+  structured inputs, so no reader runs there; rachel_proposal_from_list applies brand-choice.js collapse to its lines (Nov 25).
+  reprice-multipick turn 5 allows the alternatives intent (the right tool for "find alternative wines around $20").
 
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
