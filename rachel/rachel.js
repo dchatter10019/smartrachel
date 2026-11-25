@@ -465,6 +465,14 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         // MIXERS + MIXED DRINKS (mixers.js, DC Oct 7) for Slack / email / WhatsApp event builds — read in code from what the
         // customer said ("mixed with coke and oj"): menu_build adds those mixers and keeps the spirits at mixing quality. The
         // connector does the same in rachel-mcp.js. Never from the LLM's own wording.
+        // "only suggest 750 mL or above for wines" on a product LIST too (Nov 25, DC on Slack: the list kept 100 x Kim Crawford 375 mL)
+        if (saInput.intent === 'custom_list' || saInput.intent === 'alternatives' || saInput.intent === 'product_query') {
+          try {
+            const saidL = String(customerSaid || '') + '\n' + String(customerMessage || '');
+            const mbL = require('./bottle-size.js').minBottleMlIn(saidL) || (sessionState && sessionState.minBottleMl) || 0;
+            if (mbL) { saInput.min_bottle_ml = mbL; if (sessionState && !sessionState.minBottleMl) sessionState.minBottleMl = mbL; console.log('[bottle-size] ' + saInput.intent + ': wine / spirit bottles of ' + mbL + ' mL or larger (the customer asked)'); }
+          } catch (e) { console.log('[bottle-size] error: ' + e.message); }
+        }
         if (saInput.intent === 'menu_build') {
           try {
             const MX = require('./mixers.js');
@@ -472,7 +480,7 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             const mxF = MX.mixersFor(said), mx = mxF.keys;
             saInput.mixers = mx; saInput.mixed_drinks = MX.mixedDrinks(said);
             if (mxF.defaulted) { saInput.mixers_default = true; console.log('[mixers] "mixers" asked for, none named — the standard set: ' + mx.join(', ')); }
-            { const mb = require('./bottle-size.js').minBottleMlIn(said); if (mb) { saInput.min_bottle_ml = mb; console.log('[bottle-size] the customer asked for ' + mb + ' mL or larger wine / spirit bottles'); } }
+            { const mb = require('./bottle-size.js').minBottleMlIn(said) || (sessionState && sessionState.minBottleMl) || 0; if (mb) { saInput.min_bottle_ml = mb; console.log('[bottle-size] the customer asked for ' + mb + ' mL or larger wine / spirit bottles'); } }
             { const xb = require('./bottle-only.js').exactSizeIn(said) || (sessionState && sessionState.bottleSizeOnly) || 0; if (xb) { saInput.exact_bottle_ml = xb; console.log('[bottle-only] wine / spirit slots in ' + xb + ' mL bottles (the customer asked for that size only)'); } }
             { const nw = [...new Set([].concat(require('./wine-coverage.js').noWineTypesIn(said), (eventParams && eventParams.no_wine_types) || []))]; if (nw.length) { saInput.no_wine_types = nw; console.log('[wine-coverage] wine kinds left out of this build (the customer\'s words / an earlier removal): ' + nw.join(', ')); } }
             if (mx.length || saInput.mixed_drinks) console.log('[mixers] from the customer\'s words: ' + (mx.join(', ') || 'none named') + (saInput.mixed_drinks ? ' — mixed drinks (mixing-grade spirits)' : ''));
@@ -757,7 +765,19 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
         // show_basket: read the authoritative basket in-process (see server.js onShowBasket).
         if (saInput.intent === 'update_quantity') {
           if (!onUpdateQuantity) return { success: false, error: 'update_quantity not available in this context' };
-          return onUpdateQuantity(saInput.quantity_updates || []) || { success: false };
+          // A removal (qty 0) of a line the message neither names nor says the customer already has is not made (Nov 25, DC on
+          // Slack: "they already have 7 cases of White Claw + 15 cases of Yuengling, so remove these" -> all four beer lines 0).
+          const OHq = require('./on-hand.js'), kept = [];
+          const ups = (saInput.quantity_updates || []).filter(u => {
+            if (!u || Number(u.qty) !== 0) return true;
+            const ra = OHq.removalAllowed(customerMessage, u.item);
+            if (ra.ok) return true;
+            console.log('[update_quantity] remove "' + u.item + '" NOT applied - ' + ra.why); kept.push(u.item); return false;
+          });
+          if (kept.length && !ups.length) return { success: false, not_removed: kept, note: 'Nothing was removed: the customer said they already HAVE ' + OHq.inlineOnHand(customerMessage).map(o => o.name).join(' + ') + ', and those products are not in the basket. Tell the customer that, and that the other lines stay as they are. Do not remove lines the customer did not name.' };
+          const r0 = (await onUpdateQuantity(ups)) || { success: false };
+          if (kept.length && r0 && typeof r0 === 'object') { r0.not_removed = kept; r0.note = 'NOT removed (the customer did not name them; they said they already have ' + OHq.inlineOnHand(customerMessage).map(o => o.name).join(' + ') + ', which are not basket lines): ' + kept.join(', ') + '. Say so plainly.'; }
+          return r0;
         }
         if (saInput.intent === 'show_basket') {
           if (!onShowBasket) return { success: false, error: 'show_basket not available in this context' };

@@ -1,0 +1,28 @@
+name: slack-compass-pdf-edits
+# Nov 25, DC on Slack (Compass Group, 6426 Bowden Rd, Jacksonville 32216): the Nov 19 proposal PDF attached with Slack-italic
+# change bullets. (1) The file reader was given the message and APPLIED the edits while transcribing ("Invoice ... with
+# user-requested modifications applied", Prosecco 197, beer counts it worked out), then the typed bullets ran again on top.
+# (2) [list-reconcile] added the bullets as products at 1 each ("_Remove Josh Cellars Chardonnay from proposal_ isn't in stock
+# here" -> 1x Josh, 1x Technique Cab, 1x White Claw, 1x Mionetto). (6) "only suggest 750 ML or above for wines" kept
+# 100 x Kim Crawford 375 mL. Now: the file is built as printed, then the typed changes run as their own turn on it. (7) "you read wrong from the pdf proposal attached" got "What is the client or company name?".
+tags: [lists]
+format: slack
+turns:
+  - send: reset
+  - send: "Need drinks for an event"
+    expect: {contains: ["21"]}
+  - send: "yes"
+    expect: {matches: "(?i)address"}
+  - send: "6426 Bowden Rd, Jacksonville, FL 32216"
+  - send: "take this one.. but make the following changes.. Also only suggest 750 ML or above for wines.\n• _Remove Josh Cellars Chardonnay from proposal_\n• _Remove Josh Cellars Cabernet from proposal_\n• _Add 25 bottles of “Banshee” Cabernet_\n• _PROSECCO — They decided to pre-pour a welcome drink at the door. I will need 1000 pours of Prosecco plus more for the bar. If we assume a smaller pour (4oz?) that puts another 167 bottles on the order. Let’s slightly reduce the number of Prosecco bottles  from 50 to 30 from the exiting list._"
+    image: compass-proposal-nov19.pdf
+    expect:
+      contains: ["Stella Artois", "Michelob Ultra", "Banshee", "Now your changes"]
+      not_contains: ["isn't in stock here", "375 ML", "Technique", "Mionetto", "1x Josh Cellars"]
+      not_matches: "(?i)_?(remove|add) [^\\n]*(isn't|is not) (in stock|carried|available)"
+      log_contains: ["[vision] the message text", "[order-file] the changes ran on the file's list"]
+      log_not_contains: ["[list-reconcile] \"_Remove", "modifications applied"]
+  - send: "you read wrong from the pdf proposal attached"
+    expect:
+      not_matches: "(?i)client or company name|what is the event date"
+      log_contains: ["[proposal] NOT a proposal ask"]

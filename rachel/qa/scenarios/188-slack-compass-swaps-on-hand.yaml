@@ -1,0 +1,27 @@
+name: slack-compass-swaps-on-hand
+# Nov 25, DC on Slack (Compass Group, Jacksonville 32216). (4) DAOU Sauvignon Blanc, shown as an alternative to the Kim Crawford
+# Sauvignon Blanc, replaced the 50x Josh Cellars CABERNET Sauvignon (the single word "sauvignon" matched it). (5) Replacing
+# "100 x Kim Crawford 375 mL" (the stand-in for 50 x 750 mL) with a 750 mL bottle kept 100 bottles — twice the wine.
+# (3) "they already have 7 cases of White Claw + 15 cases of Yuengling, so remove these" removed all four beer lines.
+tags: [lists]
+format: slack
+turns:
+  - send: reset
+  - send: "Need drinks"
+    expect: {contains: ["21"]}
+  - send: "yes"
+  - send: "6426 Bowden Rd, Jacksonville, FL 32216"
+  - send: "50 x Josh Cellars Cabernet Sauvignon 750mL\n50 x Kim Crawford Marlborough Sauvignon Blanc 750mL\n42 x Stella Artois 6x11 OZ Bottles\n11 x Michelob Ultra 24x12 OZ Cans"
+    expect: {contains: ["Josh Cellars Cabernet Sauvignon", "Kim Crawford"]}
+  - send: "any other 750 ML Sauvignon Blanc"
+    expect: {matches: "(?i)sauvignon blanc"}
+  - send: "1"
+    expect:
+      contains: ["Josh Cellars Cabernet Sauvignon"]
+      not_matches: "(?i)100x [^\\n]*750|replacing josh cellars cabernet|got it — 100x"
+      matches: "(?i)50x [^\\n]*(sauvignon blanc|sancerre)[^\\n]*750"
+  - send: "Beer — they confirmed they already have 7 cases of White Claw + 15 cases of Yuengling, so remove these"
+    expect:
+      contains: ["Stella Artois", "Michelob Ultra"]
+      not_matches: "(?i)(both|beers?|stella|michelob)[^\\n.]{0,40}\\bremoved"
+      log_not_contains: ["[update_quantity] removed \"Stella"]

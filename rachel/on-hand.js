@@ -71,4 +71,35 @@ function releasedBy(message, onHand) {
   return out;
 }
 
-module.exports = { parseOnHand, isOnHand, releasedBy };
+// Stock the customer HAS, said inline (Nov 25, DC on Slack, Compass Group): "they confirmed they already have 7 cases of White
+// Claw + 15 cases of Yuengling, so remove these" — neither was in the basket; the edit reader and the model both removed ALL
+// four beer lines (Michelob, Stella, Bold City, Fish Camp). inlineOnHand reads the products named after "already / still have";
+// removalAllowed lets a removal through only for a line that IS one of them or that the message names by its own words.
+function inlineOnHand(text) {
+  const out = [];
+  const t = String(text || '').replace(/[*_~`]/g, '');
+  const re = /\b(?:already|still)\s+(?:have|has|got)\s+([^.?!\n]+)/gi;
+  let m;
+  while ((m = re.exec(t))) {
+    const clause = m[1].split(/,\s*(?:so|and so|which|can|could|please|but)\b|\s+so\s+|\s+(?:which|that)\s+(?:is|are)\b/i)[0];
+    for (const piece of clause.split(/\s*(?:\+|,|&|\band\b|\bplus\b)\s*/i)) {
+      const q = piece.match(/^\s*(\d+)\b/);
+      const name = cleanName(piece.replace(/^\s*\d+\s*(?:cases?|packs?|bottles?|cans?|btls?)?\s*(?:of\s+)?/i, '')).replace(/^(?:the|some)\s+/i, '').trim();
+      if (name && /[a-z]{3}/i.test(name) && name.split(/\s+/).length <= 6) out.push({ name, qty: q ? +q[1] : null });
+    }
+  }
+  return out;
+}
+const GENERIC = new Set(['beer', 'beers', 'lager', 'ale', 'ipa', 'pils', 'pilsner', 'seltzer', 'seltzers', 'wine', 'wines', 'red', 'white', 'rose',
+  'sparkling', 'prosecco', 'spirits', 'cans', 'can', 'bottles', 'bottle', 'pack', 'brut', 'reserve', 'classic', 'original', 'premium', 'light', 'ultra', 'brown']);
+function removalAllowed(message, lineName) {
+  const oh = inlineOnHand(message);
+  if (!oh.length) return { ok: true };
+  if (isOnHand(lineName, oh)) return { ok: true, why: 'the line is stock the customer has' };
+  const msgW = new Set(words(String(message || '').replace(/[*_~`]/g, '')));
+  const own = words(lineName).filter(w => w.length >= 4 && !GENERIC.has(w) && !/^\d/.test(w));
+  if (own.some(w => msgW.has(w))) return { ok: true, why: 'the message names the line' };
+  return { ok: false, why: 'the message says the customer already has ' + oh.map(o => o.name).join(' + ') + ' — "' + lineName + '" is not one of them and is not named' };
+}
+
+module.exports = { parseOnHand, isOnHand, releasedBy, inlineOnHand, removalAllowed };

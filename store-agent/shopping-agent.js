@@ -1006,6 +1006,7 @@ async function executeTool(name, input) {
       client_name: loc.client,
       named_products: JSON.stringify(input.named_products || []),
       // a per-bottle price the customer gave (rachel/bottle-price.js, Nov 13): generic lines are picked inside it
+      min_bottle_ml: input.min_bottle_ml || 0,     // "only 750 mL or above" on a product list too (Nov 25, DC on Slack)
       wine_max_price: input.wine_max_price || 0, wine_min_price: input.wine_min_price || 0,
       spirit_max_price: input.spirit_max_price || 0, spirit_min_price: input.spirit_min_price || 0
     });
@@ -1186,6 +1187,13 @@ async function executeTool(name, input) {
         const atSize = cands.filter(p => Math.abs(mlP(p) - wantMl) <= wantMl * 0.05);
         if (atSize.length) { console.log('[alternatives] ' + atSize.length + ' of ' + cands.length + ' candidate(s) in the ' + wantMl + ' mL asked for — only those ranked'); cands = atSize; }
         else console.log('[alternatives] none in ' + wantMl + ' mL — every size ranked (the reply says so)');
+      }
+      // "only 750 mL or above" (input.min_bottle_ml, Nov 25): smaller wine / spirit bottles are not offered
+      const minMl = parseFloat(input.min_bottle_ml) || 0;
+      if (minMl && !wantMl) {
+        const mlQ = p => { const f = formatProduct(p); const t = (f.name || '') + ' ' + (f.size || f.sizeStr || ''); const m = t.match(/(\d+(?:\.\d+)?)\s*(ml|l|lt|liters?|litres?)\b/i); return m ? (/^m/i.test(m[2]) ? +m[1] : +m[1] * 1000) : 0; };
+        const n0 = cands.length; cands = cands.filter(p => { const ml = mlQ(p); return !ml || ml >= minMl - 10; });
+        if (cands.length < n0) console.log('[alternatives] ' + (n0 - cands.length) + ' candidate(s) under ' + minMl + ' mL left out — the customer asked for ' + minMl + ' mL or larger');
       }
       const r = rankAlternatives({ name: o.name, type: o.type || '' }, cands.map(p => Object.assign(formatProduct(p), { subCategory: p.subCategory || '' })), ref || null, wantMl ? { want_ml: wantMl } : undefined);
       console.log('[alternatives] ' + JSON.stringify(o.name) + ' | varietal ' + (r.varietal || '?') + ' | region ' + (r.region || '?') + ' | ref ' + (ref ? '$' + ref.toFixed(2) + ' (' + refSource + ')' : 'none') +

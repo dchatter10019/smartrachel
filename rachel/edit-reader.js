@@ -25,6 +25,7 @@ const SYSTEM = `You read ONE message a customer sent to a beverage-ordering assi
 You get: Rachel's last message, the basket as numbered lines (L1, L2, ...), and products Rachel just showed or offered (P1, P2, ...). Report ONLY changes the customer asks for or agrees to, pointing at those numbers:
 - remove {line}: take a basket line out ("take out the cloudy bay", "drop the Stella", "we don't need the rosé").
 - set_qty {line, qty}: change how many of a line — also a line the customer lists under "remove" but with a new count ("remove the following: - Whitehaven (I only need 2 bottles)" -> set_qty Whitehaven 2, NOT remove) ("make the Tito's 6", "only 2 cases of Stella" when Stella is 1 case a line -> qty 2). qty is the number of basket units of that line (cases/packs for a pack line; bottles otherwise), as the customer states it.
+  A count added ON TOP of a line ("another 167 bottles", "167 more", "plus 20 for the welcome drink") is set_qty to the new TOTAL: the line's count (or the new base count the same message sets) + the extra ("puts another 167 bottles on the order ... reduce the Prosecco from 50 to 30" -> set_qty Prosecco 197).
 - units {line, qty}: the customer counts SINGLE bottles/cans of a PACK line ("we need 24 bottles not 4 cases" on "4x Goose Island IPA 12 x 12 OZ") -> units {line, qty: 24}. Copy their count; never convert it to packs yourself.
 - replace {line, product, qty?}: swap a basket line for a shown product. qty only when the customer states a new count; otherwise omit it (the line keeps its quantity).
 - add {product, qty}: add a shown product as a NEW line (qty = the count the customer states; 0 if they state none).
@@ -156,6 +157,9 @@ function validate(reading, basket, message) {
     }
     if (kind === 'replace' || kind === 'add') {
       const pi = (parseInt(o.product, 10) || 0) - 1;
+      // An ADD of a product not shown yet ("Add 25 bottles of Banshee Cabernet") is a search for the model — the reading's other
+      // ops still stand (Nov 25, DC on Slack: the whole reading — two removals + Prosecco 197 — was dropped for that one add).
+      if ((pi < 0 || pi >= shown.length) && kind === 'add') { console.log('[edit-reader] add P' + o.product + ' NOT applied - no such shown product; left to the model as a search'); reading.also = [...new Set([].concat(reading.also || [], 'search'))]; continue; }
       if (pi < 0 || pi >= shown.length) return { ok: false, why: kind + ': no shown product P' + o.product };
       product = shown[pi];
       if (kind === 'replace' && nz(product.name) === nz(basket[index].name)) return { ok: false, why: 'replace: P' + o.product + ' is already line L' + o.line };
@@ -186,6 +190,11 @@ function validate(reading, basket, message) {
     if (kind === 'remove' && !(reading.ops || []).some(x => x && x.op === 'add') && wantsReplaced(message, basket[index])) {
       console.log('[edit-reader] remove L' + o.line + ' NOT applied - customer wants it replaced (' + basket[index].name + ')');
       continue;
+    }
+    // "They already have White Claw + Yuengling, so remove these" removes nothing else (Nov 25, on-hand.js removalAllowed).
+    if (kind === 'remove') {
+      const ra = require('./on-hand.js').removalAllowed(message, basket[index].name);
+      if (!ra.ok) { console.log('[edit-reader] remove L' + o.line + ' NOT applied - ' + ra.why); reading.onHandKept = (reading.onHandKept || []).concat(basket[index].name); continue; }
     }
     if (kind === 'replace' && qty === 0) qty = null;
     // A revised list repeats lines that keep their count ("Red – Pinot Noir 6" on a 6x line): no change, not "6 -> 6" (Nov 16).

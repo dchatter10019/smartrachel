@@ -1687,7 +1687,10 @@ async function buildPackage(iv) {
           var askMl = mlOf(requestedSizeMatch[0]);
           var bwZ = PM.brandWords(reqForFit);
           var sameProd = function (p) { return p && !isMini(p) && altSane(p) && !PM.packCount(p.name) && !PM.fit(reqForFit, p).missing.filter(function (w) { return bwZ.indexOf(w) >= 0; }).length && mlOf((p.sizeStr || '') + ' ' + p.name) > 0; };
-          if (askMl > 0 && sameProd(best)) {
+          // "only 750 mL or above" (Nov 25, DC on Slack): never the same bottle in a smaller size — the line is not carried
+          if (askMl > 0 && sameProd(best) && minBottleMl > 0 && mlOf((best.sizeStr || '') + ' ' + best.name) < minBottleMl - 10 && !(found || []).some(function (p) { return sameProd(p) && mlOf((p.sizeStr || '') + ' ' + p.name) >= minBottleMl - 10; })) {
+            console.log('[buildPackage] size: ' + JSON.stringify(np.name) + ' — ' + requestedSizeMatch[0] + ' not carried and the customer asked for ' + minBottleMl + ' mL or larger: the smaller ' + best.name + ' NOT used');
+          } else if (askMl > 0 && sameProd(best)) {
             var szPick = best, szMl = mlOf((best.sizeStr || '') + ' ' + best.name);
             (found || []).forEach(function (p) {   // the largest bottle not over the asked size; ties keep the ranking (best first)
               var m = sameProd(p) ? mlOf((p.sizeStr || '') + ' ' + p.name) : 0;

@@ -52,6 +52,8 @@ function parseRequest(text, onHand) {
     const fl = fieldLine(m[1]);
     if (fl && fl.skip) continue;
     if (fl && fl.keep) m[1] = fl.keep;
+    m[1] = m[1].replace(/^[*_~`]+|[*_~`]+$/g, '').trim();   // Slack bold / italics around the whole line (Nov 25)
+    if (!m[1]) continue;
     for (let part of m[1].split(/\s\+\s/)) {
       if (onHand && OH.isOnHand(part, onHand)) continue;
       const alt = (part.match(/\((?:or\s+)?([^)]*)\)/i) || [])[1] || '';
@@ -229,6 +231,17 @@ function applyNotBoth(items, note) {
 // "can we swap the ketel one for titos?", "remove the water case", "can we add back some wine?" were added as
 // products — Owen's Transfusion, Dr Pepper, San Pellegrino, and "remove the water case isn't available".
 const NOT_A_PRODUCT_LINE = /\?\s*$|^\s*(?:can|could|would|will|should|please|pls|remove|delete|drop|take|swap|switch|replace|change|add|include|make|keep|update|send|we|i|it|this|that|these|those|they|there|so|also|and|but|because|since|if|let'?s|ok|okay|thanks?)\b|\b(?:remove|swap|switch|replace|instead of|on hand|left\s*over|leftover|from last time)\b/i;
+// Slack's italics / bold hid the instruction word (Nov 25, DC on Slack, Compass Group): "_Remove Josh Cellars Chardonnay from
+// proposal_", "_Add 25 bottles of “Banshee” Cabernet_" and two prose paragraphs ("_PROSECCO — They decided to pre-pour a welcome
+// drink ..._") were re-added as products at 1 each (Josh x2, Technique Cab, White Claw, Mionetto) and each searched (~130s turns).
+// The test reads the line without markdown, and a sentence (16+ words, or "they / we ... have / need / decided ...") is prose.
+const PROSE_LINE = /\b(?:they|we|our|their|i|you|he|she)\b[^.]*\b(?:have|has|had|need|needs|want|wants|decided|confirmed|assume|will|would|should|already)\b/i;
+function notAProductLine(text) {
+  const t = String(text || '').replace(/[*_~`]/g, '').replace(/^[\s"'“”]+/, '').trim();
+  if (NOT_A_PRODUCT_LINE.test(t)) return true;
+  if (t.split(/\s+/).filter(Boolean).length >= 16) return true;
+  return PROSE_LINE.test(t);
+}
 // One line of the customer's own list as a named_products item for buildPackage (the customer's count, a volume as
 // volume_ml, the size and pack kept in the name). Used for a list line the LLM left out and by the connector's
 // rachel_proposal_from_list.
@@ -302,7 +315,7 @@ function namedFromListLine(line0) {
 
 function reconcileNamed(namedProducts, text) {
   const all = parseRequest(text, OH.parseOnHand(text));
-  const rows = all.filter(r => !NOT_A_PRODUCT_LINE.test(String(r.text || '')));
+  const rows = all.filter(r => !notAProductLine(r.text));
   if (rows.length < all.length) console.log('[list-reconcile] not product lines (instructions / questions), ignored: ' + JSON.stringify(all.filter(r => !rows.includes(r)).map(r => r.text)));
   const log = [];
   if (rows.length < 3 || !Array.isArray(namedProducts)) return log;
@@ -340,4 +353,4 @@ function reconcileNamed(namedProducts, text) {
   return log;
 }
 
-module.exports = { cleanPastedLine, reconcileNamed, namedFromRow, namedFromListLine, parseRequest, compare, render, reply, isCompareAsk, isApplyAsk, requestNotes, applyNotBoth };
+module.exports = { notAProductLine, cleanPastedLine, reconcileNamed, namedFromRow, namedFromListLine, parseRequest, compare, render, reply, isCompareAsk, isApplyAsk, requestNotes, applyNotBoth };

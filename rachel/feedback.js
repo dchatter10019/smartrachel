@@ -30,6 +30,9 @@ const UNHAPPY = new RegExp([
   "\\bi asked (?:you )?(?:for|about|to)\\b[^.?!\\n]{0,80}\\b(?:but|not|instead|and you|yet)\\b",
   "\\b(?:you |u )?(?:gave|sent|showed|provided|offered|got|answered|did|added|put) (?:me )?(?:\\w+ )?(?:the )?(?:wrong|incorrect)\\b",
   "\\b(?:answered|got (?:it|this|that)|did (?:it|this|that)) wrong\\b", "\\bwrong answer\\b",
+  // "you read wrong from the pdf proposal attached" (Nov 25, DC on Slack) — a verb, up to 3 words, then wrong / incorrectly
+  "\\byou (?:read|got|took|picked|added|put|made|understood|interpreted|parsed|copied|pulled|built)(?: \\w+){0,3} (?:wrong(?:ly)?|incorrect(?:ly)?)\\b",
+  "\\b(?:read|misread|picked up) (?:it |this |that |the \\w+ )?wrong\\b",
   "\\bnot (?:what i (?:expected|was expecting|was looking for|need(?:ed)?|requested|ordered)|even close|right at all|helpful)\\b",
   "\\b(?:that'?s|this is|that is|it'?s) not (?:it|right|correct|what i)\\b",
   "\\byou (?:didn'?t|did not|never) (?:\\w+ )?(?:answer|listen|read|include|add|follow|understand|do what)\\b",

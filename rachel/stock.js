@@ -142,6 +142,30 @@ async function enforce(lines, { rowFor, search }) {
       whole = similar(Object.assign({}, row, li), rows, qty, { anyPrice: true, knownOnly: true });
       if (whole.length) console.log('[stock] ' + li.name + ': no similar product with ' + qty + ' in the price band — widened to any price: ' + whole[0].name + ' $' + whole[0].price);
     }
+    // A BEER pick short of stock, no same-pack beer with enough: another beer pack with enough, counted in bottles / cans
+    // (Nov 25 smoke, 10019: generic "Beer" picked Chimay Première 4 x 11 OZ with 3 in stock; no other 4 x 11 OZ beer, so the
+    // line stayed at 3 packs = 12 servings for 30-40 — conversational-after-basket / event-serving-mix failing since Nov 24).
+    if (!whole.length && /beer/.test(String(li.category || kindOf(Object.assign({}, row, li)) || '')) && !DT.isNA(li)) {
+      const packOf = x => { const m = (String((x && x.name) || '') + ' ' + String((x && (x.sizeStr || x.size)) || '')).toLowerCase().match(/(\d+)\s*x\s*\d/); return m ? +m[1] : 1; };
+      const units = qty * packOf(li);
+      const isBeerPack = r => /\b\d+\s*x\s*\d+(?:\.\d+)?\s*oz\b/i.test(String(r.name || '') + ' ' + String(r.sizeStr || r.size || '')) && !DT.typeOf(r)
+        && !/\b(?:cider|cidre|sidra|seltzer|cocktail|margarita|spritz|wine)\b/i.test(String(r.name || '')) && (!(r.category || r.subCategory) || /beer|ale|lager/i.test(String(r.category || '') + ' ' + String(r.subCategory || '')));
+      // its own "beer" search: the line's type can read as another kind ("Chimay Première RED" = red wine -> "red wine" was searched)
+      const rowsB = /beer/.test(termFor(Object.assign({}, row, li)).toLowerCase()) ? rows : await search('beer').catch(() => []);
+      const cands = (rowsB || []).filter(r => r && r.name && nz(r.name) !== nz(li.name) && isBeerPack(r) && !DT.isNA(r) && !FLAV.test(String(r.name)) && Number(r.price) > 0
+        && enough(r, Math.ceil(units / packOf(r))))   // unknown = enough (house rule); a known count first
+        .sort((a, b) => ((inv(a) === null) - (inv(b) === null)) || Math.abs(Number(a.price) / packOf(a) - (Number(li.price) || 0) / packOf(li)) - Math.abs(Number(b.price) / packOf(b) - (Number(li.price) || 0) / packOf(li)));
+      if (cands.length) {
+        const r = cands[0], q2 = Math.ceil(units / packOf(r));
+        console.log('[stock] SWAPPED (beer, by units): ' + li.name + ' has ' + have + ' (needed ' + qty + ' = ' + units + ' units) -> ' + q2 + 'x ' + r.name + ' (' + (inv(r) === null ? 'count unknown' : inv(r) + ' in stock') + ')');
+        swaps.push({ from: li.name, to: r.name, qty: q2, had: have });
+        const nl = asLine(li, r, q2); delete nl.quantity;
+        if (nl.match && nl.match.kind !== 'exact') nl.match = Object.assign({}, nl.match, { note: (nl.match.note ? nl.match.note + '; ' : '') + li.name + ' had only ' + have + ' in stock' });
+        out.push(nl);
+        continue;
+      }
+      console.log('[stock] ' + li.name + ': no other beer pack with enough for ' + units + ' units (' + (rowsB || []).length + ' beer row(s) searched)');
+    }
     if (whole.length) {
       const r = whole[0];
       console.log('[stock] SWAPPED: ' + li.name + ' has ' + have + ' (needed ' + qty + ') -> ' + r.name + ' (' + (inv(r) === null ? 'count unknown' : inv(r) + ' in stock') + ')');

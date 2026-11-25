@@ -217,7 +217,13 @@ async function transcribeOrderImages(images, caption) {
       if (/^application\/pdf$/i.test(im.media_type)) content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: im.data } });
       else content.push({ type: 'image', source: { type: 'base64', media_type: im.media_type, data: im.data } });
     }
-    content.push({ type: 'text', text: 'This was sent to a beverage-ordering assistant' + (caption ? ' with the caption: "' + caption + '"' : '') + `.
+    // The customer's message is NOT shown to the reader (Nov 25, DC on Slack, Compass Group): given "Remove Josh Cellars ... /
+    // add 25 Banshee / Prosecco 50 -> 30 + 167" with the proposal PDF, it APPLIED the edits while transcribing ("Invoice ...
+    // with user-requested modifications applied", beer counts it worked out itself), then the typed edits ran again on top.
+    // The file is copied as printed; the message's changes are made by the normal edit paths afterwards.
+    if (caption) console.log('[vision] the message text (' + caption.length + ' chars) is not shown to the file reader — the file is copied as printed');
+    content.push({ type: 'text', text: `This file was sent to a beverage-ordering assistant.
+Copy what the FILE shows, exactly as printed: every drink line with its printed quantity. Never add, remove or change a line or a quantity because of anything else — any changes the customer wants are handled separately.
 If it contains a list of drinks to order (handwritten, printed, an invoice, a receipt, an order form), transcribe it as a shopping list — ONE item per line, in the form "<qty> x <product name> <size if shown>". Use the quantities shown; if a quantity is missing, use 1 — except on an order form that lists products with a quantity column: skip the rows whose quantity is blank or 0. Correct obvious misspellings of well-known brands. When a line is a category rather than a brand, write it as a clean search phrase with the distinctive term first and NO parentheses — e.g. "2 x Burgundy red wine 750 mL", "1 x Napa Cabernet 750 mL", "6 x IPA beer". Ignore prices, totals, dates, and non-drink lines.
 If it is NOT a list of drinks to order (a menu photo, a bottle photo, a screenshot, something unrelated), do not invent a list.
 Reply ONLY with JSON: {"is_order": true|false, "list": "<lines joined with \\n, or empty>", "note": "<one short sentence about what the image is, or what was unclear>"}` });
@@ -923,6 +929,17 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
               qtyToUse = qv;
             }
           }
+          // A BIGGER bottle in place of a smaller one keeps the volume, on every basket (Nov 25, DC on Slack, Compass Group: DAOU
+          // 750 mL replaced "100 x Kim Crawford 375 mL" — itself the stand-in for 50 x 750 mL — at 100 bottles, twice the wine).
+          if (removedLine && !(opts && Number(opts.qty) > 0) && !pk) {
+            const volC = x => { const m = String(x || '').toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l|lt|liters?|litres?)\b/); return m ? (/^m/.test(m[2]) ? +m[1] : +m[1] * 1000) : 0; };
+            const vO2 = volC(packFrom), vR2 = volC(resolved.name) || volC(resolved.sizeStr || resolved.size || replacementSize);
+            if (vO2 && vR2 && vR2 > vO2 * 1.1 && !parsePack(packFrom)) {
+              const qv2 = Math.max(1, Math.ceil((qtyToUse * vO2) / vR2 - 0.02));
+              console.log('[confirm-substitute] volume kept on a bigger bottle: ' + qtyToUse + ' x ' + Math.round(vO2) + ' mL -> ' + qv2 + ' x ' + Math.round(vR2) + ' mL of ' + (resolved.name || replacementName));
+              qtyToUse = qv2;
+            }
+          }
         }
         const rp = resolved ? (parseFloat(resolved.salePrice || resolved.price) || replacementPrice || 0) : (replacementPrice || 0);
         const newPid = resolved ? ((resolved.corpProductFilter && resolved.corpProductFilter.corpProductId) || resolved.product_id || resolved.id || '') : '';
@@ -1501,7 +1518,11 @@ function ctaTurn(st, body, question, msg, context) {
   if (question || label !== 'ready') return { kind: label !== 'ready' ? label : 'question', question: true, stateLabel: label };
   const captured = !!(e.ev && e.ev.discussed_capture);   // [product-discussed]: the searched product held as context
   const changed = !captured && (e.basket0 ? events.basketOf(st).sig !== e.basket0.sig : false);
-  const opts = [...String(body).matchAll(OPTION_LINE_RE)].filter(m => !/^\s*\d+\s*x\b/i.test(m[0])).map(m => ({ name: m[1].trim(), size: m[2].trim(), price: parseFloat(m[3].replace(/,/g, '')) }));
+  // "only 750 mL or above" (Nov 25, DC on Slack): a smaller bottle is never the offered stand-in ("Kim Crawford ... 375 mL is in stock — swap it in?")
+  const minMlC = (() => { try { return require('./bottle-size.js').minBottleMlIn(String(msg || '')) || st.minBottleMl || 0; } catch (x) { return 0; } })();
+  const mlOfC = t => { const m = String(t || '').toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l)\b/); return m ? (m[2] === 'ml' ? +m[1] : +m[1] * 1000) : 0; };
+  const opts = [...String(body).matchAll(OPTION_LINE_RE)].filter(m => !/^\s*\d+\s*x\b/i.test(m[0])).map(m => ({ name: m[1].trim(), size: m[2].trim(), price: parseFloat(m[3].replace(/,/g, '')) }))
+    .filter(o => { const ml = mlOfC(o.size + ' ' + o.name); if (minMlC && ml && ml < minMlC - 10) { console.log('[cta] stand-in ' + JSON.stringify(o.name + ' ' + o.size) + ' NOT offered — the customer asked for ' + minMlC + ' mL or larger'); return false; } return true; });
   const has = a => e.actions.includes(a);
   const base = { stateLabel: label, corporate: !!((context && context.kitchen_location) || st.lastProposalUrl || st.savedClientName), orderStarted: !!st.orderStep, prevCta: st.ctaPrevId || null };
   let items = []; try { items = JSON.parse(st.lastLineItems || '[]'); } catch (x) {}
@@ -1537,7 +1558,7 @@ function ctaTurn(st, body, question, msg, context) {
 // In-stock stand-in for an item the customer named that isn't available: the same product search
 // without the size; offered only when the top result carries the item's own brand words (never an
 // unrelated product). Capped at 5 s — the reply goes out with the generic sub.offer_search otherwise.
-async function findSubstitute(name, zip, email) {
+async function findSubstitute(name, zip, email, minMl) {
   const words = n => String(n || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\b\d+(?:\.\d+)?\s*(?:ml|l|oz|cl)\b/g, ' ').split(/[^a-z0-9']+/).filter(w => w.length >= 3 && !/^(vodka|tequila|rum|gin|whiskey|whisky|bourbon|wine|beer|bottle|bottles|the|and)$/.test(w));
   const key = words(name).slice(0, 2);
   if (!key.length || !zip) { console.log('[cta] substitute lookup skipped for ' + JSON.stringify(name) + (zip ? ' (no brand words)' : ' (no zip)')); return null; }
@@ -1557,6 +1578,9 @@ async function findSubstitute(name, zip, email) {
       const pw = ' ' + words(pr.name).join(' ') + ' ';
       if (!key.every(k => pw.includes(' ' + k + ' '))) return false;
       if (mixerOnly && DTs.typeOf(pr)) { console.log('[cta] substitute for mixer ' + JSON.stringify(name) + ' NOT offered: ' + pr.name + ' (' + DTs.typeOf(pr) + ', alcoholic)'); return false; }
+      // "only 750 mL or above" (Nov 25): a smaller bottle of the same product is never the offered stand-in
+      if (minMl) { const mm = (String(pr.name) + ' ' + String(pr.sizeStr || pr.size || '')).toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l)\b/); const ml = mm ? (mm[2] === 'ml' ? +mm[1] : +mm[1] * 1000) : 0;
+        if (ml && ml < minMl - 10) { console.log('[cta] substitute for ' + JSON.stringify(name) + ' NOT offered: ' + pr.name + ' — under the ' + minMl + ' mL the customer asked for'); return false; } }
       return true;
     });
     if (!p) { console.log('[cta] no same-brand substitute in stock for ' + JSON.stringify(name) + ' (searched ' + JSON.stringify(q) + ': ' + prods.map(x => x.name).join(' | ') + ')'); return null; }
@@ -2313,6 +2337,36 @@ app.post('/chat', async (req, res) => {
       } else {
         const rest = textLeft && !/^(here|this is|attached|see attached|my order|order|list|photo|image|pdf|file)\b[^\n]{0,30}$/i.test(textLeft) ? textLeft : '';
         // Email: the typed request first (address, date, "place the order"), then the list. Elsewhere the list leads, as before.
+        // A file + typed CHANGES to it ("take this one.. but make the following changes: remove X / add 25 Y / 50 -> 30"): the
+        // file's list is built first, exactly as printed, and the typed changes then run as their own turn on that basket — the
+        // edit reader / quote edits / the model's edit tools, as for any change (Nov 25, DC on Slack, Compass Group: list + changes
+        // in one message kept both Josh Cellars wines and the 50 Prosecco). Every /chat channel; not an email order command
+        // (that one has its own follow-up below).
+        const FILE_EDITS = /\b(?:remove|take (?:out|off)|drop|delete|add|reduce|increase|decrease|lower|raise|change|changes|swap|switch|replace|instead|make (?:it|that|the)|from \d+ to \d+|already have)\b/i;
+        const fileFollow = rest && FILE_EDITS.test(rest) && !/\b(?:place|create|submit)\s+(?:the\s+|an?\s+|my\s+)?order\b|\bpayment link\b/i.test(rest) && !req.body.file_followup_of;
+        if (fileFollow) {
+          const skF = session_id || `${context?.account_id || 'anon'}-${context?.kitchen_location || 'noloc'}`;   // = sessionKey (defined below)
+          message = lines.join('\n');
+          // a minimum bottle size typed with the file ("only 750 mL or above for wines") holds for the file's list too
+          try { const mbF = require('./bottle-size.js').minBottleMlIn(rest); if (mbF) { flowState[skF] = flowState[skF] || {}; flowState[skF].minBottleMl = mbF; console.log('[bottle-size] ' + mbF + ' mL or larger kept for the conversation (typed with the file)'); } } catch (e) {}
+          console.log('[order-file] the message also asks for changes — the file\'s ' + lines.length + ' line(s) are built first, then the changes run as their own turn: ' + JSON.stringify(rest.slice(0, 100)));
+          const _jFF = res.json.bind(res);
+          res.json = async (payload) => {
+            try {
+              const stFF = flowState[skF] || {}; let nFF = 0; try { nFF = JSON.parse(stFF.lastLineItems || '[]').length; } catch (e) {}
+              if (!payload || typeof payload.text !== 'string' || !nFF) { console.log('[order-file] the file\'s list was not built (' + nFF + ' lines) — the changes are not run'); return _jFF(payload); }
+              const body2 = Object.assign({}, req.body, { message: rest, images: null, files: null, request_id: undefined, file_followup_of: String(req.body.request_id || Date.now()) });
+              const r2 = await fetch('http://127.0.0.1:' + PORT + '/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body2) });
+              const p2 = await r2.json();
+              const t2 = p2 && (p2.text || p2.response);
+              if (!t2) { console.log('[order-file] the changes turn gave no reply — the list reply stands'); return _jFF(payload); }
+              console.log('[order-file] the changes ran on the file\'s list (' + nFF + ' lines)');
+              const head = String(payload.text).replace(/\n+(?:Want me to|Would you like|Anything else|Shall I)[^\n]*\??\s*$/i, '').trim();
+              const merged = Object.assign({}, p2, { text: head + '\n\n— Now your changes —\n\n' + t2, response: head + '\n\n— Now your changes —\n\n' + t2 });
+              return _jFF(merged);
+            } catch (e) { console.log('[order-file] the changes turn failed: ' + e.message + ' — the list reply stands'); return _jFF(payload); }
+          };
+        } else
         message = isEmailF ? (rest ? rest + '\n\n' : '') + lines.join('\n') : lines.join('\n') + (rest ? '\n' + rest : '');
         const names = [...new Set(read)];
         const photoOnly = read.length === visual.length && visual.every(f => OF.kindOf(f) === 'image');   // Slack/WhatsApp photos keep their old reply
@@ -4200,7 +4254,7 @@ app.post('/chat', async (req, res) => {
       else if (ansR.action === 'replace') {
         const rA0 = await applyBasketSubstitute(sessionKey, email, ansR.line.name, pp.name, pp.price, pp.size);
         if (!(rA0 && rA0.success === false)) {
-          const kq0 = ansR.line.qty || ansR.line.quantity || 1;
+          const kq0 = (rA0 && Number(rA0.qty) > 0 ? Number(rA0.qty) : 0) || ansR.line.qty || ansR.line.quantity || 1;
           console.log('[add-item] replaced ' + JSON.stringify(ansR.line.name) + ' with ' + JSON.stringify(pp.name) + ' qty ' + kq0 + ' - reason: the customer chose that line');
           retirePendingFor(state, pp.name); events.action('updated_basket');
           const tA0 = 'Got it — ' + kq0 + 'x ' + pp.name + ' (replacing ' + ansR.line.name + ').' + basketAfterChange(state) + '\n\nAnything else, or ready to place the order?';
@@ -4431,6 +4485,18 @@ app.post('/chat', async (req, res) => {
       const rd = ctxR.basket.length ? await ER.read(message, ctxR).catch(() => null) : null;
       const v = rd ? ER.validate(rd, ctxR.basket, message) : null;
       if (rd && !v.ok) console.log('[edit-reader] reading NOT used — ' + v.why + ' — the code\'s readers decide');
+      // "They already have 7 cases of White Claw + 15 cases of Yuengling, so remove these" (Nov 25, DC on Slack): the removals of
+      // lines they did NOT name were refused (on-hand.js removalAllowed). Said in code — the model claimed "both beers removed".
+      if (rd && v.ok && (rd.onHandKept || []).length) {
+        const ohN = require('./on-hand.js').inlineOnHand(message).map(o => (o.qty ? o.qty + ' cases of ' : '') + o.name);
+        const keptTxt = 'You already have ' + ohN.join(' + ') + ' — ' + (ohN.length > 1 ? 'none of those is' : 'that isn\'t') + ' in your order, so I didn\'t remove anything for it. ' + rd.onHandKept.join(', ') + (rd.onHandKept.length > 1 ? ' stay' : ' stays') + ' as they are.';
+        console.log('[on-hand] said in code — nothing removed for stock the customer has; kept: ' + JSON.stringify(rd.onHandKept));
+        if (!v.ops.length && !(rd.also || []).length && !rd.regenerate_proposal) {
+          const rOH = keptTxt + basketAfterChange(state) + '\n\nAnything else to change, or shall I place the order or send you a PDF proposal?';
+          return res.json({ text: rOH, response: rOH });
+        }
+        state.replyNote = (state.replyNote ? state.replyNote + '\n\n' : '') + keptTxt;
+      }
       if (rd && v.ok && v.ops.length) {
         const rv = ER.regexView(message, ctxR.basket, ctxR.lastReply);
         const nzR = x => String(x || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -5073,7 +5139,7 @@ app.post('/chat', async (req, res) => {
             if (turn.kind === 'item_unavailable' && !turn.substitute && turn.unmatchedName) {
               // sub.offer_named needs a real in-stock candidate: look it up, then send (the caller only returns res).
               const tt = t;
-              findSubstitute(turn.unmatchedName, st.zip, email).then(sub => {
+              findSubstitute(turn.unmatchedName, st.zip, email, st.minBottleMl || 0).then(sub => {
                 turn.substitute = sub;
                 finishCta(st, turn, tt, orig, payload);
                 _jC(payload);
@@ -5879,7 +5945,7 @@ app.post('/chat', async (req, res) => {
             const rr2 = await applyBasketSubstitute(sessionKey, email, targetA.name, pr.name, price, size);
             if (!(rr2 && rr2.success === false)) {
               retirePendingFor(state, pr.name);
-              const kq = targetA.qty || targetA.quantity || 1;
+              const kq = (rr2 && Number(rr2.qty) > 0 ? Number(rr2.qty) : 0) || targetA.qty || targetA.quantity || 1;
               console.log('[add-item] replaced ' + JSON.stringify(targetA.name) + ' with ' + JSON.stringify(pr.name) + ' qty ' + kq + ' - reason: ' + decA.reason);
               const rT = 'Got it — ' + kq + 'x ' + labelR + ' (replacing ' + targetA.name + ').' + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
               return res.json({ text: rT, response: rT });
@@ -6856,6 +6922,11 @@ app.post('/chat', async (req, res) => {
     // QA never hit it: QA identities have no saved basket, so they always took the list path.
     const emailListAsk = (/^email-/.test(sessionKey) || !!(context && context.email_subject))
       && String(message).split(/\n/).filter(l => /^\s*(?:[-•*·]|\d+\s*(?:x|×)\s+\S)/i.test(l) || /\S.*\s[–—-]\s*\d{1,4}\s*(?:x\s*)?(?:bottles?|btls?|cans?|cases?|packs?)\b/i.test(l)).length >= 3;   // "Sauvignon Blanc – 10 bottles" too (Nov 14, Eterra)
+    // A complaint that mentions the proposal is not a proposal ask (Nov 25, DC on Slack: "you read wrong from the pdf proposal
+    // attached" got "What is the client or company name?"). feedback.js unhappyIn = the complaint wording.
+    if (isProposalTrigger && !state.proposalStep && require('./feedback.js').unhappyIn(message) && !/\b(?:send|make|create|generate|regenerate|redo|new|updated?|revised?)\b[^.?!\n]{0,30}\b(?:proposal|pdf|quote)\b/i.test(message)) {
+      console.log('[proposal] NOT a proposal ask — the message is a complaint: ' + JSON.stringify(String(message).slice(0, 100))); isProposalTrigger = false;
+    }
     if (isProposalTrigger && editReaderPdf) { console.log('[proposal] the edit reader already regenerated the PDF this turn — no second proposal flow'); isProposalTrigger = false; }
     if (isProposalTrigger && emailListAsk && !state.proposalStep) { console.log('[proposal] email with its own item list — the quote path builds it (no step-by-step flow)'); isProposalTrigger = false; }
     // A proposal ask that also changes the basket ("Change Corona Light to 1 case ... then regenerate the KPMG proposal") or
@@ -7764,12 +7835,22 @@ app.post('/chat', async (req, res) => {
             }
             if (!fromAddList) try {
               const VARS = ['sauvignon','blanc','pinot','noir','grigio','gris','chardonnay','cabernet','merlot','rose','riesling','malbec','syrah','shiraz','zinfandel','champagne','prosecco','cava','tequila','vodka','gin','rum','bourbon','whiskey','whisky','scotch','mezcal','sparkling'];
-              const nv = x => new Set(String(x||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').split(/[^a-z]+/).filter(w => VARS.includes(w)));
+              // Grapes of two words are ONE varietal (Nov 25, DC on Slack: DAOU Sauvignon Blanc, offered for the Kim Crawford Sauvignon
+              // Blanc, replaced the 50x Josh Cellars CABERNET Sauvignon — the single word "sauvignon" matched it first).
+              const PHR = /\b(sauvignon blanc|cabernet sauvignon|cabernet franc|pinot noir|pinot grigio|pinot gris|pinot blanc|chenin blanc|blanc de blancs|blanc de noirs|petite sirah|sauv blanc|cab sauv)\b/g;
+              const nv = x => { let t = String(x||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,''); const out = new Set();
+                t = t.replace(PHR, m0 => { out.add(m0.replace('sauv blanc', 'sauvignon blanc').replace('cab sauv', 'cabernet sauvignon').replace(' ', '_')); return ' '; });
+                for (const w of t.split(/[^a-z]+/)) if (VARS.includes(w) && !['blanc', 'noir', 'sauvignon'].includes(w)) out.add(w);
+                return out; };
               const heading = (lastAssistantTextGate.replace(/\*/g,'').match(/([A-Z][^\n:]{2,60}?)\s+(?:options|alternatives|is available|comes in)/) || [])[1] || '';
               const pv = nv(heading + ' ' + picked.name);
               const items0 = JSON.parse(state.lastLineItems || '[]');
               const nk0 = x => String(x||'').toLowerCase().replace(/[^a-z0-9]/g,'');
-              if (pv.size) replTarget = items0.find(it => { const iv = nv(it.name); return [...pv].some(v => iv.has(v)) && nk0(it.name) !== nk0(picked.name); }) || null;
+              const cands = pv.size ? items0.filter(it => { const iv = nv(it.name); return [...pv].some(v => iv.has(v)) && nk0(it.name) !== nk0(picked.name); }) : [];
+              // several lines of that varietal: the one Rachel's last message named ("alternatives to the Kim Crawford"), else the first
+              const lastN = nk0(lastAssistantTextGate);
+              replTarget = cands.find(it => { const w = String(it.name || '').toLowerCase().split(/[^a-z0-9]+/).filter(x => x.length >= 4).slice(0, 2); return w.length && w.every(x => lastN.includes(x)); }) || cands[0] || null;
+              if (cands.length > 1) console.log('[pick-list] ' + cands.length + ' basket lines share the varietal — replacing ' + JSON.stringify(replTarget.name));
             } catch (e) {}
             const subFor = replTarget ? null : pendingSubFor(state, sessionKey, picked.name, lastAssistantTextGate);
             if (subFor) {
@@ -7793,7 +7874,7 @@ app.post('/chat', async (req, res) => {
             if (fromAddList && replTarget && !(r && r.success === false)) console.log('[add-item] replaced ' + JSON.stringify(replTarget.name) + ' with ' + JSON.stringify(picked.name) + ' qty ' + (replTarget.qty || replTarget.quantity || 1) + ' - reason: ' + fromAddList.reason + ' (picked from the add-item list)');
             else if (fromAddList && r && r.success !== false && !r.replaced) console.log('[add-item] added as new line - ' + fromAddList.reason + ' (picked from the add-item list: ' + picked.name + ')');
             if (replTarget && !(r && r.success === false)) {
-              const keptQty = replTarget.qty || replTarget.quantity || 1;
+              const keptQty = (r && Number(r.qty) > 0 ? Number(r.qty) : 0) || replTarget.qty || replTarget.quantity || 1;   // the qty actually set (a bigger bottle keeps the volume: 100 x 375 -> 50 x 750)
               const rR = 'Got it — ' + keptQty + 'x ' + picked.name + (picked.size ? ' — ' + picked.size : '') + ' — $' + picked.price.toFixed(2) + ' (replacing ' + replTarget.name + ').' + basketAfterChange(state) + '\n\nWould you like to see the estimated full price, place the order, generate a PDF proposal, or make any changes?';
               return res.json({ text: rR, response: rR });
             }

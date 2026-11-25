@@ -1318,6 +1318,34 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   total is the basket's REAL count (DC: "state the real count"; package-facts.js — was dpp x guests, 180 drinks read "about
   200"; per person stays a whole number; Voiceflow's own BuildPackage.js still prints dpp x guests). Catalog data: La Crema Sonoma Coast Pinot Noir is $8.39 in the 98004 catalog (market ~$20+, catalog data).
 
+- Nov 25 Slack review (DC, Compass Group, Jacksonville 32216: the Nov 19 proposal PDF attached with Slack-italic change
+  bullets), every /chat channel. (1) The file reader (server.js transcribeOrderImages) was given the message and APPLIED the
+  edits while transcribing ("Invoice ... with user-requested modifications applied", Prosecco 197, beer counts it worked out);
+  then the typed edits ran again. It no longer sees the message — the file is copied as printed ([vision] the message text ...
+  is not shown). A file + typed CHANGES (remove / add / reduce / change / "from 50 to 30" / already have; not an order command)
+  = the file's list is built alone, then the typed text runs as its own /chat turn on that basket (internal POST,
+  file_followup_of) and the reply is both, "— Now your changes —" between ([order-file] the changes ran on the file's list).
+  (2) original-compare.js notAProductLine: markdown stripped before the instruction test, 16+ words or "they/we ... have /
+  need / decided" = prose — "_Remove Josh Cellars Chardonnay from proposal_" was re-added as 1x Josh etc. (3) on-hand.js
+  inlineOnHand / removalAllowed: "they already have 7 cases of White Claw + 15 cases of Yuengling, so remove these" removes only
+  a line that IS one of those or that the message names — edit-reader validate and the model's update_quantity qty 0 both
+  ([edit-reader] remove L.. NOT applied / [update_quantity] remove ... NOT applied); all refused = said in code ([on-hand] said
+  in code). (4) pick-list replace-in-varietal reads two-word grapes as one (Sauvignon Blanc != Cabernet Sauvignon; DAOU SB had
+  replaced the Josh Cabernet); several lines of the varietal = the one Rachel's last message named. (5) A bigger bottle in place
+  of a smaller line keeps the volume (100 x 375 mL -> 50 x 750 mL; [confirm-substitute] volume kept on a bigger bottle) and the
+  pick replies say the qty set. (6) "only suggest 750 ML or above" on lists / alternatives / searches too (min_bottle_ml on
+  custom_list, alternatives candidates, state.minBottleMl, buildPackage never the same bottle smaller, the CTA stand-in never
+  smaller). (7) A complaint naming the proposal ("you read wrong from the pdf proposal attached") is not a proposal ask
+  ([proposal] NOT a proposal ask) and is recorded as unhappy feedback (feedback.js "you <verb> ... wrong"). Edit reader: an add
+  of a product not shown drops only that op (-> also search), and "another 167 bottles ... from 50 to 30" = set_qty 197.
+  Slack "reset" / "start over" are not logged by the bot (they looked like Rachel dropping the chat). Scenarios 187-190
+  (slack, plain, email), qa/unit/compass-nov25.test.js, fixture qa/fixtures/compass-proposal-nov19.pdf.
+  Same day (smoke conversational-after-basket / event-serving-mix, failing since Nov 24 nightly): a generic "Beer" event line
+  picked Chimay Première Red 4 x 11 OZ with 3 in stock; stock.js similar() needs the same pack and read "Red" as red wine (it
+  searched "red wine"), so the line stayed at 3 packs = 12 servings for 30-40. Now a short BEER pick with no same-pack stand-in
+  takes another beer pack (its own "beer" search; no cider / seltzer / NA / flavoured) with enough, counted in bottles / cans
+  ([stock] SWAPPED (beer, by units): 10 x 4-pack -> 7 x 6-pack).
+
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
   so PDFs sent before Oct 15 still open (ask DC first; nginx).
