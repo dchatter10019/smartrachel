@@ -64,6 +64,10 @@ function parseRequest(text, onHand) {
       // "2 btls of Woodford Reserve" / "3 bottles of Prosecco" / "6 cans of ..." are counts too (Nov 10, DC's iCapital menu
       // on Claude Code: read as 1 of "1 btl of Frangelico", which no longer matched the LLM's "Frangelico" line, so it was
       // re-added as a mixer -> Bloody Mary Mix, and "3 btls of Prosecco" added a 2nd prosecco).
+      // "3 1L btls of Bourbon" = 3 one-litre bottles (Nov 25, DC on Slack: the size between the count and "btls" hid the count —
+      // read as 1 L of bourbon -> 2 x 750 mL). The size is kept on the name.
+      const qmS = part.match(/^\s*(\d{1,4})\s+(\d+(?:\.\d+)?\s*(?:ml|l|lt|oz))\s+(?:btls?|bts?|bottles?|cans?)\.?\s+(?:of\s+)?(?=[A-Za-z])/i);
+      if (qmS) part = qmS[1] + ' x ' + part.slice(qmS[0].length) + ' ' + qmS[2].replace(/\s+/g, '');
       const qm = part.match(/^\s*(\d+)\s*[x×]\s*/i) || part.match(/^\s*(\d{1,4})\s+(?:btls?|bts?|bottles?|cans?|units?)\.?\s+(?:of\s+)?(?=[A-Za-z])/i);
       // A trailing count too: "Tito's 750ml x 2" (Oct 15 nightly: read as 750 mL of Tito's -> 1 bottle).
       // "Whispering Angel 750ml — qty 2" / "qty: 2" / "quantity 2" too (F-0098, Oct 28 claude.ai: the count stayed in the
@@ -293,7 +297,8 @@ function cleanPastedLine(line0) {
 
 function namedFromListLine(line0) {
   let line = cleanPastedLine(String(line0 || '').trim().replace(/^\s*[-•*·]\s*/, '')), m;
-  if ((m = line.match(/^(\d{1,4}|a|an|one)\s+(cases?)\s+(?:of\s+)?(.+)$/i))) line = (/^\d/.test(m[1]) ? m[1] : 1) + ' x ' + m[3] + ' case';
+  if ((m = line.match(/^(\d{1,4})\s+(\d+(?:\.\d+)?\s*(?:ml|l|lt|oz))\s+(?:btls?|bts?|bottles?|cans?)\.?\s+(?:of\s+)?(.+)$/i))) line = m[1] + ' x ' + m[3] + ' ' + m[2].replace(/\s+/g, '');   // "3 1L btls of Bourbon"
+  else if ((m = line.match(/^(\d{1,4}|a|an|one)\s+(cases?)\s+(?:of\s+)?(.+)$/i))) line = (/^\d/.test(m[1]) ? m[1] : 1) + ' x ' + m[3] + ' case';
   else if ((m = line.match(/^(\d{1,4})\s*(?:[x×]\s*)?(?!\d|ml\b|l\b|oz\b|pk\b|pack)(.+)$/i)) && !/^\s*(?:ml|l|oz|liters?|litres?)\b/i.test(m[2])) line = m[1] + ' x ' + m[2].replace(/^\s*(?:bottles?|btls?|bts?|cans?)\.?\s+of\s+/i, '');
   else if ((m = line.match(/^(.+?)\s*[x×]\s*(\d{1,4})\s*$/i))) line = m[2] + ' x ' + m[1];
   // a trailing count (Nov 11, DC's iCapital brief): "Sancerre 5 btls" = 5 x Sancerre, "Stella 1 case" = 1 x Stella case

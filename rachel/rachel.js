@@ -555,6 +555,8 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           };
           saInput.named_products = splitMergedNamedProducts(saInput.named_products);
           try { for (const l of require('./original-compare.js').reconcileNamed(saInput.named_products, customerMessage)) console.log('[list-reconcile] ' + l); } catch (e) { console.log('[list-reconcile] error: ' + e.message); }
+          // "Bourbon (Woodford / Makers Mark)" = ONE line, the first brand carried (brand-choice.js, Nov 25) — never every brand at the full count
+          try { for (const l of require('./brand-choice.js').collapse(saInput.named_products, [customerMessage, customerSaid, sessionState && sessionState.originalRequest])) console.log('[brand-choice] ' + l); } catch (e) { console.log('[brand-choice] error: ' + e.message); }
           if (saInput._ohAvoid) saInput.named_products.forEach(np => { if (np && !np.avoid) np.avoid = saInput._ohAvoid; });   // lines added by the reconcile too
           // Beer counted in single bottles / cans ("IPA – 48 bottles/cans", "48 cans of Stella"): the count is UNITS, and the
           // builder turns it into packs (np.unit_count). Real (Nov 14, Eterra Kitchen): the model sent {IPA, qty 48} and the

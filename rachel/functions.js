@@ -987,6 +987,25 @@ async function buildPackage(iv) {
     // A bare "Wine" line becomes Red Wine + White Wine (the wine share split between them). Real bug
     // (event-serving-mix, Sep 27): the LLM sent one generic "Wine" line and a 40-guest party
     // got 16 bottles of a single Chardonnay and no red.
+    // A brand CHOICE line ("Bourbon (Woodford / Makers Mark)", brand-choice.js): the first brand the store carries, in the
+    // customer's order (Nov 25, DC on Slack: every brand had been added at the full count).
+    for (var cI=0;cI<namedProducts.length;cI++) {
+      var npC=namedProducts[cI];
+      if (!npC || !Array.isArray(npC.choices) || !npC.choices.length) continue;
+      var candsC=[npC.name].concat(npC.choices), pickedC=null;
+      for (var cj=0;cj<candsC.length && !pickedC;cj++) {
+        var bw=String(candsC[cj]).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/['’]/g,'').split(/[^a-z0-9]+/).filter(function(w){return w.length>=2 && !/^(\d+(?:ml|l)?|ml|l|oz|bourbon|vodka|tequila|gin|rum|whiske?y|scotch|mezcal|wine|beer|liqueur|blanco|reposado|anejo)$/.test(w);});
+        var rsC=await doSearch(candsC[cj], npC.category);
+        var szC=(String(candsC[cj]).match(/\b(\d+(?:\.\d+)?)\s*(ml|l)\b/i)||[])[0];
+        var hitC=(rsC||[]).find(function(p){ var pn=String(p.name||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/['’]/g,''); return bw.length && bw.every(function(w){return pn.indexOf(w)>=0;}) && (!szC || productHasSize(p, normalizeSizeStr(szC))); });
+        if (hitC) pickedC=candsC[cj];
+      }
+      if (pickedC && pickedC!==npC.name) console.log('[buildPackage] brand choice: '+JSON.stringify(npC.name)+' not carried — '+JSON.stringify(pickedC)+' (the customer\'s next choice)');
+      else if (pickedC) console.log('[buildPackage] brand choice: '+JSON.stringify(npC.name)+' carried (first choice)');
+      else console.log('[buildPackage] brand choice: none of '+JSON.stringify(candsC)+' carried as asked — the first choice goes on as usual');
+      if (pickedC) npC.name=pickedC;
+      delete npC.choices;
+    }
     namedProducts = namedProducts.reduce(function(acc, np){
       if (/^\s*wines?\s*$/i.test(String(np.name||'')) && String(np.category||'').toLowerCase()==='wine') {
         var q=parseInt(np.qty)||0, rq=q?Math.round(q*0.6):0;
@@ -2049,8 +2068,12 @@ async function buildPackage(iv) {
       if (sparkB>0) plan.push({term:"Sparkling Wine",slot:"sparkling",qty:sparkB,target:wineTarget,min:wMin,max:wMax,label:"Sparkling Wine",cat:"wine",uniq:2});
     }
     if (beerCases>0) {
-      plan.push({term:"Beer",slot:"beer",qty:beerCases,target:beerTarget,min:bMin,max:bMax,label:"Beer",cat:"beer",uniq:2});
-      if (hardSeltzer) plan.push({term:"Hard Seltzer",slot:"seltzer",qty:Math.max(1,Math.round(beerCases/2)),target:beerTarget,min:0,max:999999,label:"Hard Seltzer",cat:"beer",uniq:2});
+      // Seltzer asked for: the beer drinks are SHARED with it (half each), never added on top (Nov 25, DC on Slack: "Happy Hour
+      // with Beer/Seltzers" — the slot was never built; when it was, it added 50% more cans than the event needed).
+      var seltzerBrandsP=(categoryBrands&&(categoryBrands.seltzer||categoryBrands.hard_seltzer||categoryBrands.rtd))||[];
+      var beerQ=hardSeltzer?Math.max(1,Math.ceil(beerCases/2)):beerCases, seltzerQ=hardSeltzer?Math.max(1,beerCases-beerQ):0;
+      plan.push({term:"Beer",slot:"beer",qty:beerQ,target:beerTarget,min:bMin,max:bMax,label:"Beer",cat:"beer",uniq:2});
+      if (hardSeltzer) { plan.push({term:"Hard Seltzer",slot:"seltzer",qty:seltzerQ,target:beerTarget,min:0,max:999999,label:"Hard Seltzer",cat:"beer",uniq:2,brands:seltzerBrandsP}); console.log('[buildPackage] hard seltzer asked for: beer '+beerQ+' + seltzer '+seltzerQ+' of '+beerCases+' beer-share unit(s)'); }
       if (naBeer) plan.push({term:"Non Alcoholic Beer",slot:"nabeer",qty:Math.max(1,Math.round(beerCases/2)),target:beerTarget,min:0,max:999999,label:"Non-Alcoholic Beer",cat:"beer",uniq:2});
     }
     // Servings each category must supply — checked against the FINAL package (after the

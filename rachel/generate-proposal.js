@@ -30,8 +30,13 @@ const CATEGORY_KEYWORDS = {
 // Keywords match WHOLE words. Real bug (Sep 30, DC's proposal): "rum" inside "ConundRUM White" filed a white wine
 // under Spirits (also "gin" in Virginia, "ale" in Pale-, "rose" in Rosemount).
 const kwRe = kw => new RegExp('(^|[^a-z])' + kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '($|[^a-z])');
+// Hard seltzers and canned ready-to-drink cocktails are their own section, before the spirit / beer words (Nov 25, DC on
+// Slack: "White Claw Hard Seltzer and High Noon Sun Sips Vodka Hard Seltzer should be under Hard Seltzer or RTD" — they
+// printed under Beer and Spirits ("vodka" in High Noon's name), and the model said the PDF couldn't change).
+const RTD_RE = /\b(?:hard seltzer|seltzer|white claw|high noon|truly|vizzy|bud light seltzer|topo chico hard|simply spiked|cutwater|nutrl|sun sips|canned cocktail|ready[- ]to[- ]drink|rtd|hard lemonade|hard tea|twisted tea|mike'?s hard|smirnoff ice|monaco|on the rocks|loverboy|ranch rider|surfside|beatbox|happy dad)\b/;
 function classifyByName(name) {
   const nameLower = (name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (RTD_RE.test(nameLower) && !/\b(?:non[- ]?alcoholic|sparkling water|mineral water)\b/.test(nameLower)) return 'hard seltzer';
   for (const cat of ['mixer', 'beer', 'wine', 'spirits']) {
     if (CATEGORY_KEYWORDS[cat].some(kw => kwRe(kw).test(nameLower))) return cat;
   }
@@ -44,6 +49,7 @@ function classifyByName(name) {
   return null;
 }
 
+const catLabel = c => c === 'hard seltzer' ? 'Hard Seltzer / RTD' : c.charAt(0).toUpperCase() + c.slice(1);
 function groupByCategory(lineItems) {
   const groups = {};
   const categoryOrder = ['wine', 'spirits', 'beer', 'hard seltzer', 'soju', 'mixer', 'other'];
@@ -71,7 +77,7 @@ function groupByCategory(lineItems) {
       console.log('[generate-proposal] category ' + JSON.stringify(item.category || '') + ' not a section, no type word in ' + JSON.stringify(item.name || item.label) + ' -> Other');
       cat = 'other';
     }
-    const displayCat = cat.charAt(0).toUpperCase() + cat.slice(1);
+    const displayCat = catLabel(cat);
     if (!groups[displayCat]) groups[displayCat] = [];
     groups[displayCat].push(item);
   });
@@ -79,7 +85,7 @@ function groupByCategory(lineItems) {
   // Sort by category order
   const sorted = {};
   categoryOrder.forEach(c => {
-    const key = c.charAt(0).toUpperCase() + c.slice(1);
+    const key = catLabel(c);
     if (groups[key]) sorted[key] = groups[key];
   });
   Object.keys(groups).forEach(k => { if (!sorted[k]) sorted[k] = groups[k]; });

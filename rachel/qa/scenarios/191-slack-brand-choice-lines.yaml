@@ -1,0 +1,21 @@
+name: slack-brand-choice-lines
+# Nov 25, DC on Slack (Bushburg, 80 Pine St 10005): "• 3 1L btls of Bourbon (Woodford / Makers Mark)" etc. The count was read as
+# 1 L of bourbon (2 x 750 mL), and after "they have asked for 1 L bottles" the model put EVERY brand in at the full count (3
+# Woodford + 3 Maker's, 2 Ketel + 2 Grey Goose, Lalo + Don Fulano + Don Julio) — $1,149.83 for a $570 list. A brand choice is ONE
+# line: the first brand the store carries (brand-choice.js).
+tags: [lists]
+format: slack
+turns:
+  - send: reset
+  - send: "Need some bottles"
+    expect: {contains: ["21"]}
+  - send: "yes"
+  - send: "80 pine street New York NY 10005"
+  - send: "• 3 1L btls of Bourbon (Woodford / Makers Mark) \n• 2 1L bottles of Vodka (Ketel One / Grey Goose)\n• 2 btls of St Germain\n• 2 1L btls of Tequila (Lalo, Don Fulano, G4)\n• 2 1L btls of Cointreau"
+    expect:
+      matches: "(?i)3x [^\\n]*(woodford|maker)[^\\n]*1 ?l"
+      not_matches: "(?i)(woodford[\\s\\S]*maker'?s mark|maker'?s mark[\\s\\S]*woodford)[^\\n]*1 ?l|ketel one[\\s\\S]{0,400}grey goose vodka|btls of"
+      log_contains: ["[brand-choice]"]
+  - send: "show my basket"
+    expect:
+      not_matches: "(?i)(woodford[^\\n]*\\n[\\s\\S]*maker'?s mark)|(don fulano[\\s\\S]*don julio)"

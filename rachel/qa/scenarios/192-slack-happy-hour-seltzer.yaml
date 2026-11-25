@@ -1,0 +1,18 @@
+name: slack-happy-hour-seltzer
+# Nov 25, DC on Slack (ezCater - Google, 2000 N Shoreline Blvd 94043): "Menu: Happy Hour with Beer/Seltzers ... Headcount: 80" was
+# built as beer only and Rachel said "No hard seltzers were available at this location" (White Claw / High Noon on the shelf):
+# menu_build's "hard_seltzer" category never reached the builder. "Event Date &amp; Time: 12/9, 4:00 PM" got "I haven't done this
+# one yet". The PDF later filed White Claw under Beer and High Noon under Spirits (now "Hard Seltzer / RTD").
+tags: [events]
+format: slack
+turns:
+  - send: reset
+  - send: "Need drinks for a happy hour"
+    expect: {contains: ["21"]}
+  - send: "yes"
+  - send: "2000 N Shoreline Blvd Mountain View, California 94043"
+  - send: "• *Menu*: Happy Hour with Beer/Seltzers\n• *Event Date &amp; Time:* 12/9, 4:00 PM\n• *Headcount*: 80\n• budget: 15 a person\n• 2 hours"
+    expect:
+      matches: "(?i)(seltzer|white claw|high noon|truly)"
+      not_matches: "(?i)no (hard )?seltzers? (were|are|is) (available|carried)|haven't done this one yet"
+      log_contains: ["[buildPackage] hard seltzer asked for"]

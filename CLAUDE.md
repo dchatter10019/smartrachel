@@ -1346,6 +1346,18 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   takes another beer pack (its own "beer" search; no cider / seltzer / NA / flavoured) with enough, counted in bottles / cans
   ([stock] SWAPPED (beer, by units): 10 x 4-pack -> 7 x 6-pack).
 
+- Nov 25 evening Slack review (DC: Bushburg 80 Pine St 10005; ezCater - Google 2000 N Shoreline 94043). (1) "3 1L btls of Bourbon"
+  = 3 one-litre bottles (original-compare.js parseRequest / namedFromListLine; was read as 1 L -> 2 x 750 mL). (2) A brand CHOICE
+  line ("Bourbon (Woodford / Makers Mark)", "Tequila (Lalo, Don Fulano, G4)") is ONE line: rachel/brand-choice.js collapse runs
+  after [list-reconcile] on every custom_list (customer message + originalRequest) — the named_products answering it become the
+  first brand at the line's count with the rest as np.choices; buildPackage takes the first one carried ([brand-choice],
+  [buildPackage] brand choice). The model had put every brand in at the full count ($1,149.83 for a $570 list). (3) menu_build
+  "hard_seltzer" / seltzer / RTD categories (or category_brands seltzer) now pass hard_seltzer to buildPackage — the seltzer slot
+  had never run on the normal path ("No hard seltzers were available" with White Claw / High Noon on the shelf); the beer share
+  is split beer / seltzer, never added on top ([buildPackage] hard seltzer asked for). (4) instructions.js: "Event Date &amp;
+  Time:" is a brief field. (5) generate-proposal.js: a "Hard Seltzer / RTD" section (White Claw, High Noon, Truly, Cutwater...;
+  checked before the spirit words — High Noon "Vodka" was under Spirits). Scenarios 191, 192; qa/unit/brand-choice.test.js.
+
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
   so PDFs sent before Oct 15 still open (ask DC first; nginx).

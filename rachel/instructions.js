@@ -77,7 +77,8 @@ function unaddressed(instrs, reply, before, after) {
   const FIELD = /^\s*(?:[-•*]\s*)?(?:head ?count|guests?|guest count|number of (?:guests|people)|people|attendees|budget|duration|length|event (?:date|time|length)|date|delivery (?:time|date|address|window|contact)|address|time|location|venue|occasion|event type|client|company|(?:on-?site |delivery )?contact|phone(?: number)?|cell|mobile|tel|e-?mail|name|po(?: number)?|window|requests?|special requests?|notes?|menu|drinks?|beverages?|theme|style|preferences?|crowd|demographics?|comments?|details)\s*:/i;
   return instrs.filter(instr => {
     if (APPROVAL.test(String(instr))) return false;
-    if (FIELD.test(String(instr).replace(/\*/g, ''))) return false;
+    // Slack sends "&" as "&amp;" ("Event Date &amp; Time: 12/9, 4:00 PM" was a task, Nov 25); "Date & Time" is a date field
+    if (FIELD.test(String(instr).replace(/\*/g, '').replace(/&amp;/g, '&').replace(/\b(date|time)\s*(?:&|and|\/)\s*(?:date|time)\b/i, '$1'))) return false;
     // A basket line pasted back as Rachel prints it ("4x New Amsterdam Gluten Free Vodka - 750 ML — $16.67 ea = $66.68"),
     // unchanged, is what the customer is asking ABOUT, not a task (Nov 20, DC on Slack: two pasted lines + "are these the
     // ingredients for vodka lemon drop" got "I haven't done these yet: • 4x New Amsterdam ... Want me to go ahead with both?").

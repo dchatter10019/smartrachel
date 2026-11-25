@@ -738,7 +738,11 @@ async function executeTool(name, input) {
       spirit_types: input.spirit_types || null,   // rachel/event-prefs.js: the spirits the customer asked for (Oct 9)
       wine_lean: input.wine_lean || '',            // rachel/event-wishes.js: "more white than red" (Oct 21)
       mix_bias: input.mix_bias || '',              // rachel/event-wishes.js: "more beer than wine", "heavy on the spirits"
-      beer_style: input.beer_style || null        // rachel/event-prefs.js: the beer style asked for, closest family first
+      beer_style: input.beer_style || null,       // rachel/event-prefs.js: the beer style asked for, closest family first
+      // "Beer/Seltzers", "hard_seltzer", "RTDs" (Nov 25, DC on Slack: categories ["beer","hard_seltzer"] built beer only and
+      // the reply said no seltzers were carried — the flag was never passed, White Claw / High Noon were on the shelf)
+      hard_seltzer: (Array.isArray(input.categories) && input.categories.some(c => /seltzer|rtd|ready[ _-]?to[ _-]?drink|claw|high ?noon/i.test(String(c))))
+        || (() => { try { const cb = typeof input.category_brands === 'string' ? JSON.parse(input.category_brands || '{}') : (input.category_brands || {}); return !!(cb.seltzer || cb.hard_seltzer || cb.rtd); } catch (e) { return false; } })() ? 'true' : ''
     });
     { const outage = catalogOutage(failBefore, result); if (outage) return outage; }
     if (result.success !== 'true') return { success: false, error: result.error };
