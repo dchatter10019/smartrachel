@@ -13,4 +13,6 @@ turns:
     # Sauvignon Blanc or rosé existed near $20 (the NYC store has dozens). They must stay product_query.
     expect: {judge: "lists alternative wine options with prices, grouped by category or numbered", log_not_contains: ["RECOMMENDATION ROUTING: product_query", "[alternatives] \""]}
   - send: "Sauvignon Blanc 1, Pinot Noir 1, rosé 1"
-    expect: {contains: ["Updated basket", "5x", "3x", "2x"], not_contains: ["could not resolve"], matches: "replacing|no alternatives were listed"}
+    # Nov 25: the edit reader (model reads, code acts) now handles a per-section pick before the multi-pick resolver — either
+    # reader's wording is accepted; the quantities and the replacement are what is checked
+    expect: {contains: ["5x", "3x", "2x"], not_contains: ["could not resolve"], matches: "(?i)(updated basket[\\s\\S]*(replacing|no alternatives were listed))|(replaced:[\\s\\S]*→ 5x[\\s\\S]*→ 3x[\\s\\S]*→ 2x)"}

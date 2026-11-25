@@ -30,13 +30,17 @@ function choicesIn(line0) {
 
 const brandHit = (name, brand) => { const n = ' ' + nz(name) + ' ', b = nz(brand); return !!b && n.indexOf(' ' + b + ' ') >= 0; };
 
-function collapse(namedProducts, texts) {
+// modelChoices: the fact reader's brand_choices for this message (the model's reading, first — Nov 25, DC: "move all the command
+// parsing to LLM"); the customer's own lines in `texts` are read by choicesIn too (earlier messages / the original request).
+function collapse(namedProducts, texts, modelChoices) {
   const log = [];
   if (!Array.isArray(namedProducts) || !namedProducts.length) return log;
   const lines = [].concat(texts || []).filter(Boolean).join('\n').split('\n');
+  const fromModel = (Array.isArray(modelChoices) ? modelChoices : []).filter(c => c && c.type && Array.isArray(c.brands) && c.brands.length >= 2)
+    .map(c => ({ qty: +c.qty > 0 ? +c.qty : null, size: String(c.size || '').replace(/\s+/g, ''), type: String(c.type).trim(), brands: c.brands.map(b => String(b).trim()).filter(Boolean), text: c.type + ' (' + c.brands.join(' / ') + ')', via: 'model' }));
+  const parsed = lines.map(choicesIn).filter(Boolean).filter(c => !fromModel.some(m => m.brands.some(b => c.brands.map(nz).includes(nz(b)))));
   const seen = new Set();
-  for (const l of lines) {
-    const c = choicesIn(l);
+  for (const c of fromModel.concat(parsed)) {
     if (!c || seen.has(nz(c.text))) continue;
     seen.add(nz(c.text));
     const idx = [];
@@ -55,7 +59,7 @@ function collapse(namedProducts, texts) {
     keep.choices = c.brands.filter(b => !brandHit(keep.name, b)).map(nameFor);
     if (c.qty) { keep.qty = c.qty; keep.qty_from_customer = true; delete keep.volume_ml; }
     for (const i of idx.filter(i => i !== keepI).sort((a, b) => b - a)) namedProducts.splice(i, 1);
-    log.push(JSON.stringify(c.text) + ' is ONE line, a choice of ' + c.brands.join(' / ') + ': ' + JSON.stringify(before) + ' -> ' + keep.qty + ' x ' + keep.name
+    log.push((c.via ? '[model] ' : '') + JSON.stringify(c.text) + ' is ONE line, a choice of ' + c.brands.join(' / ') + ': ' + JSON.stringify(before) + ' -> ' + keep.qty + ' x ' + keep.name
       + (keep.choices.length ? ' (else ' + keep.choices.join(', ') + ')' : '') + (many ? '' : ' [first brand found: ' + first + ']'));
   }
   return log;

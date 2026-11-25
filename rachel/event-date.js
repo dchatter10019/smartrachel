@@ -90,7 +90,8 @@ function normalizeEventDate(raw, now = new Date()) {
 // null. Applied in code and the PDF regenerated (server.js); before Oct 1 this went to the LLM, which had no
 // record of the in-code PDF and asked for the client and date again.
 function parseProposalFieldEdit(msg, savedDate, now = new Date()) {
-  const s = String(msg || '');
+  // Slack bold ("*Client:* Compass Group" -> "* Compass Group") and a note after an arrow are not part of a value (Nov 25)
+  const s = String(msg || '').replace(/[*_~`]/g, '').replace(/[ \t]*(?:→|->|-&gt;|=>)[^\n]*/g, '');
   const out = {};
   // Every client statement; the LAST one wins. Real bug (Oct 1, DC's Goody quote): DC pasted the PDF's wrong
   // "Billed To:\nGoody Dipanjan Chatterjee CEO |" and wrote "it should be just Goody" under it — the pasted

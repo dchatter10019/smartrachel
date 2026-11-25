@@ -92,8 +92,9 @@ function inlineOnHand(text) {
 }
 const GENERIC = new Set(['beer', 'beers', 'lager', 'ale', 'ipa', 'pils', 'pilsner', 'seltzer', 'seltzers', 'wine', 'wines', 'red', 'white', 'rose',
   'sparkling', 'prosecco', 'spirits', 'cans', 'can', 'bottles', 'bottle', 'pack', 'brut', 'reserve', 'classic', 'original', 'premium', 'light', 'ultra', 'brown']);
-function removalAllowed(message, lineName) {
-  const oh = inlineOnHand(message);
+// modelOnHand: the fact reader's on_hand (the model's reading, primary since Nov 25); the pattern only when it has none
+function removalAllowed(message, lineName, modelOnHand) {
+  const oh = Array.isArray(modelOnHand) && modelOnHand.length ? modelOnHand.filter(o => o && o.name).map(o => ({ name: String(o.name), qty: +o.qty || null })) : inlineOnHand(message);
   if (!oh.length) return { ok: true };
   if (isOnHand(lineName, oh)) return { ok: true, why: 'the line is stock the customer has' };
   const msgW = new Set(words(String(message || '').replace(/[*_~`]/g, '')));

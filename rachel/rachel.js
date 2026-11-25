@@ -473,6 +473,10 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             if (mbL) { saInput.min_bottle_ml = mbL; if (sessionState && !sessionState.minBottleMl) sessionState.minBottleMl = mbL; console.log('[bottle-size] ' + saInput.intent + ': wine / spirit bottles of ' + mbL + ' mL or larger (the customer asked)'); }
           } catch (e) { console.log('[bottle-size] error: ' + e.message); }
         }
+        // the customer's drink rate = drinks per person for the whole event (drink-rate.js, Nov 25 DC: "its the total drinks.. not by hour")
+        if ((saInput.intent === 'menu_build' || (saInput.intent === 'custom_list' && saInput.guests)) && sessionState && sessionState.drinkRate && !(+saInput.drinks_per_person > 0)) {
+          saInput.drinks_per_person = sessionState.drinkRate.dpp; console.log('[drink-rate] ' + saInput.intent + ': drinks_per_person ' + saInput.drinks_per_person + ' (the customer\'s rate for the whole event)');
+        }
         if (saInput.intent === 'menu_build') {
           try {
             const MX = require('./mixers.js');
@@ -556,7 +560,10 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           saInput.named_products = splitMergedNamedProducts(saInput.named_products);
           try { for (const l of require('./original-compare.js').reconcileNamed(saInput.named_products, customerMessage)) console.log('[list-reconcile] ' + l); } catch (e) { console.log('[list-reconcile] error: ' + e.message); }
           // "Bourbon (Woodford / Makers Mark)" = ONE line, the first brand carried (brand-choice.js, Nov 25) — never every brand at the full count
-          try { for (const l of require('./brand-choice.js').collapse(saInput.named_products, [customerMessage, customerSaid, sessionState && sessionState.originalRequest])) console.log('[brand-choice] ' + l); } catch (e) { console.log('[brand-choice] error: ' + e.message); }
+          try {
+            const bcModel = ((await require('./fact-reader.js').factsFor(customerMessage).catch(() => null)) || {}).brand_choices || null;
+            for (const l of require('./brand-choice.js').collapse(saInput.named_products, [customerMessage, customerSaid, sessionState && sessionState.originalRequest], bcModel)) console.log('[brand-choice] ' + l);
+          } catch (e) { console.log('[brand-choice] error: ' + e.message); }
           if (saInput._ohAvoid) saInput.named_products.forEach(np => { if (np && !np.avoid) np.avoid = saInput._ohAvoid; });   // lines added by the reconcile too
           // Beer counted in single bottles / cans ("IPA – 48 bottles/cans", "48 cans of Stella"): the count is UNITS, and the
           // builder turns it into packs (np.unit_count). Real (Nov 14, Eterra Kitchen): the model sent {IPA, qty 48} and the
@@ -770,15 +777,16 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
           // A removal (qty 0) of a line the message neither names nor says the customer already has is not made (Nov 25, DC on
           // Slack: "they already have 7 cases of White Claw + 15 cases of Yuengling, so remove these" -> all four beer lines 0).
           const OHq = require('./on-hand.js'), kept = [];
+          const ohModel = ((await require('./fact-reader.js').factsFor(customerMessage).catch(() => null)) || {}).on_hand || null;   // the model's reading first
           const ups = (saInput.quantity_updates || []).filter(u => {
             if (!u || Number(u.qty) !== 0) return true;
-            const ra = OHq.removalAllowed(customerMessage, u.item);
+            const ra = OHq.removalAllowed(customerMessage, u.item, ohModel);
             if (ra.ok) return true;
             console.log('[update_quantity] remove "' + u.item + '" NOT applied - ' + ra.why); kept.push(u.item); return false;
           });
-          if (kept.length && !ups.length) return { success: false, not_removed: kept, note: 'Nothing was removed: the customer said they already HAVE ' + OHq.inlineOnHand(customerMessage).map(o => o.name).join(' + ') + ', and those products are not in the basket. Tell the customer that, and that the other lines stay as they are. Do not remove lines the customer did not name.' };
+          if (kept.length && !ups.length) return { success: false, not_removed: kept, note: 'Nothing was removed: the customer said they already HAVE ' + ((ohModel && ohModel.length) ? ohModel : OHq.inlineOnHand(customerMessage)).map(o => o.name).join(' + ') + ', and those products are not in the basket. Tell the customer that, and that the other lines stay as they are. Do not remove lines the customer did not name.' };
           const r0 = (await onUpdateQuantity(ups)) || { success: false };
-          if (kept.length && r0 && typeof r0 === 'object') { r0.not_removed = kept; r0.note = 'NOT removed (the customer did not name them; they said they already have ' + OHq.inlineOnHand(customerMessage).map(o => o.name).join(' + ') + ', which are not basket lines): ' + kept.join(', ') + '. Say so plainly.'; }
+          if (kept.length && r0 && typeof r0 === 'object') { r0.not_removed = kept; r0.note = 'NOT removed (the customer did not name them; they said they already have ' + ((ohModel && ohModel.length) ? ohModel : OHq.inlineOnHand(customerMessage)).map(o => o.name).join(' + ') + ', which are not basket lines): ' + kept.join(', ') + '. Say so plainly.'; }
           return r0;
         }
         if (saInput.intent === 'show_basket') {

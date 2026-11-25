@@ -1,0 +1,17 @@
+name: slack-drink-rate-total
+# Nov 25, DC on Slack (Compass Group, 1000 guests / 2 h): "Your consumption rate was approx 1.5 drinks" — the model computed
+# 1,000 x 2 h x 1.5 = 3,000 drinks and trimmed the beer from that. DC: "its the total drinks.. not by hour" (drink-rate.js).
+tags: [events]
+format: slack
+turns:
+  - send: reset
+  - send: "Need drinks"
+    expect: {contains: ["21"]}
+  - send: "yes"
+  - send: "6426 Bowden Rd, Jacksonville, FL 32216"
+  - send: "11 x Michelob Ultra 24x12oz Cans\n42 x Stella Artois 6x11oz Bottles\n42 x Bold City Duke's Cold Nose Brown Ale 6x12oz Cans"
+    expect: {contains: ["Michelob Ultra"]}
+  - send: "Beer — the consumption rate was approx 1.5 drinks per person. They already have 7 cases of White Claw + 15 cases of Yuengling. The event is 1000 guests for 2 hours. How many drinks do we need in total?"
+    expect:
+      not_matches: "(?i)3,?000 (?:total )?drinks|1\\.5 drinks?(?: per person)? per hour|× ?2 ?h"
+      log_contains: ["[drink-rate]"]

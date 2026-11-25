@@ -6,7 +6,9 @@ const ok = (label, cond) => { if (!cond) failed++; console.log((cond ? '  ✓ ' 
 ok('reads a message with a price / date / fee / client / address / bottles-not-cases',
   ['The wines should not be more than $15', 'nothing pricier than twenty bucks a bottle', 'delivery is Thursday, November 19th', 'service fee 8 percent',
    'the client is Acme', 'deliver to 1335 6th Ave', 'we need 48 bottles not 48 cases'].every(FR.wants));
-ok('never on a short reply or a plain pick', !['yes', '2', 'place the order', 'sounds good thanks', 'Kim Crawford please'].some(FR.wants));
+// Nov 25 (DC: "move all the command parsing to LLM"): every message of real content is read; a short reply / bare pick is not
+ok('never on a short reply or a plain pick', !['yes', '2', '1, 4, 7', 'ok thanks', '__greeting__'].some(FR.wants));
+ok('every message of real content is read', ['place the order', 'Kim Crawford please', 'they already have 7 cases of White Claw'].every(FR.wants));
 const f = FR.feesShape({ tip_amount: 0, delivery_fee: 0, service_percent: 8 });
 ok('fees -> tax-command shape', f.tip_amount === 0 && f.delivery_fee === 0 && f.service_rate === 0.08 && !('tax_rate' in f));
 ok('tax exempt -> tax_rate 0', FR.feesShape({ tax_exempt: true }).tax_rate === 0 && FR.feesShape({ tax_percent: 8.875 }).tax_rate === 0.08875);

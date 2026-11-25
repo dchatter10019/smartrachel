@@ -266,6 +266,11 @@ function generateHTML(proposal) {
 }
 
 async function generateProposal(proposal, outputPath) {
+  // Markdown / bullet marks around the client are never printed (Nov 19-25, Slack: "Billed To: * Compass Group")
+  if (proposal && typeof proposal.client_name === 'string') {
+    const cn = proposal.client_name.replace(/^[\s*•·_~`:\-–—]+|[\s*_~`]+$/g, '').trim();
+    if (cn !== proposal.client_name) { console.log('[generate-proposal] client cleaned: ' + JSON.stringify(proposal.client_name) + ' -> ' + JSON.stringify(cn)); proposal.client_name = cn; }
+  }
   const html = generateHTML(proposal);
   const browser = await chromium.launch();
   // Letter = 816 x 1056 CSS px; 20px margins leave 776 x 1016. Render at that width, measure, and scale the page down

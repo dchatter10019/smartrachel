@@ -45,4 +45,18 @@ function qtyFor(ops, removed, items) {
   return parseInt(removed && (removed.qty || removed.quantity), 10) || 1;
 }
 
-module.exports = { replacementIn, fitting, qtyFor };
+// "Add 25 bottles of “Banshee” Cabernet" -> [{ qty: 25, want: 'Banshee Cabernet' }] — bottles / no unit only (a case / pack count
+// is left to the pick paths, which know pack sizes). Nov 25 (DC, Slack): the edit reader read the add, nothing was shown, and the
+// model asked "Shall I add 25 bottles?" on one run and added it twice on another.
+function addsIn(message) {
+  const m = String(message || '').replace(/[*_`]/g, ' ').replace(/[“”"‘’']/g, '');
+  const out = [];
+  for (const x of m.matchAll(/\badd\s+(\d{1,4})\s*(?:x\s+)?(?:(?:more\s+)?(?:bottles?|btls?|bts?)\s+)?(?:of\s+)?(?:the\s+)?([a-z][^.,;!?\n]{1,60}?)\s*(?=[.,;!?\n]|\band\b|\balso\b|\bplease\b|$)/gi)) {
+    if (/^(?:cases?|packs?|cans?)\b/i.test(x[2])) continue;
+    const want = x[2].replace(/\s+(?:to|on|in(?:to)?)\s+(?:the\s+)?(?:proposal|order|basket|cart|list)\b.*$/i, '').trim();
+    if (wordsOf(want).length) out.push({ qty: +x[1], want });
+  }
+  return out;
+}
+
+module.exports = { replacementIn, fitting, qtyFor, addsIn };

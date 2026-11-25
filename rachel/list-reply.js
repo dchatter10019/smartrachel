@@ -63,8 +63,23 @@ function compose({ items, unmatched, llmText }) {
   const coveredGeneric = generic.filter(g => blocks.some(b => brandWordsLoose(g).some(w => norm(b.intro + ' ' + b.lines.join(' ')).includes(w))));
   for (const g of generic.filter(x => !coveredGeneric.includes(x))) text += '\n\nI couldn\'t find a match for ' + g + ' at this store.';
   for (const b of blocks) text += '\n\n' + (b.intro ? b.intro + '\n' : '') + b.lines.join('\n');
+  // The model's own question about something ELSE in the message ("To calculate how many beer cases ... could you share the
+  // headcount?") is kept — the list reply dropped it (Nov 25, DC on Slack: the Beer / Seltzers bullet got no answer at all).
+  const priceLine = /\$\s*\d|^\s*\d+\s*x\s/im;
+  const modelQs = String(llmText || '').split(/\n{2,}/).map(x => x.trim())
+    .filter(pg => /\?\s*[*_]*\s*$/.test(pg) && !priceLine.test(pg) && pg.length <= 600 && !/^I haven't done/i.test(pg)
+      && !/\b(?:place the order|pdf proposal|keep these|swap any|anything else|which one would you like|which would you like from|swap|sizes?|options?|alternatives?|instead|one of (?:these|those|the)|above|substitute)\b/i.test(pg)
+      && !named.concat(generic).some(n => { const bw = brandWords(n).slice(0, 2); return bw.length && bw.every(w => norm(pg).includes(w)); }))
+    .slice(-2);
+  if (modelQs.length) console.log('[list-reply] the model\'s own question(s) kept: ' + JSON.stringify(modelQs.map(x => x.slice(0, 80))));
   if (blocks.length) text += '\n\n' + (blocks.length === 1 ? 'Which one would you like?' : 'Which would you like from each list?');
+  else if (modelQs.length) text += '\n\n' + modelQs.join('\n\n');
   else if (inexact.length && !named.length) text += '\n\nWant me to keep these, or swap any of them?';
+
+  // The "I haven't done this one yet" block (instructions.js, added to the model's text) is kept — the list reply replaced it
+  // (Nov 25, DC on Slack: the Beer / Seltzers bullet was flagged in the log and never reached the customer).
+  const notDone = (String(llmText || '').match(/\n*I haven't done (?:this one|these) yet:[\s\S]*$/) || [''])[0].trim();
+  if (notDone) text += '\n\n' + notDone;
   const log = '[list-reply] composed in code: ' + items.length + ' line(s), total ' + money(total) +
     (named.length ? ', unavailable named: ' + JSON.stringify(named) : '') + (generic.length ? ', unmatched generic: ' + JSON.stringify(generic) : '') +
     (inexact.length ? ', ' + inexact.length + ' not-exact line(s) shown with reasons' : '') +

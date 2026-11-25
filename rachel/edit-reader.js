@@ -57,9 +57,12 @@ const YES = /^\W*(?:yes|yeah|yep|yup|sure|ok(?:ay)?|sounds good|looks good|perfe
 const OFFER = /\b(?:swap|switch|replace|substitut|go with|use|change|instead|in place of|add)\w*\b[^?\n]*\?/i;
 function wants(message, ctx = {}) {
   const m = String(message || '').trim();
-  if (!m || m.length > 1500 || !(ctx.basket || []).length) return false;
+  if (!m || m.length > 4000 || !(ctx.basket || []).length) return false;
   if (/^[\d\s,.#&+-]*(?:and)?[\d\s,.#&+-]*$/i.test(m)) return false;   // a bare pick ("2", "1, 4, 7") — the pick paths
-  return EDIT_WORDS.test(m) || (YES.test(m) && OFFER.test(String(ctx.lastReply || '')));
+  if (YES.test(m) && OFFER.test(String(ctx.lastReply || ''))) return true;
+  // Nov 25 (DC: "move all the command parsing to LLM"): with a basket, every message of 3+ words is read by the model (the code
+  // still validates every op); a short "yes" / "ok" / "thanks" with no offer keeps its own path.
+  return EDIT_WORDS.test(m) || m.split(/\s+/).filter(Boolean).length >= 3;
 }
 
 const money = n => '$' + (Number(n) || 0).toFixed(2);
@@ -159,7 +162,7 @@ function validate(reading, basket, message) {
       const pi = (parseInt(o.product, 10) || 0) - 1;
       // An ADD of a product not shown yet ("Add 25 bottles of Banshee Cabernet") is a search for the model — the reading's other
       // ops still stand (Nov 25, DC on Slack: the whole reading — two removals + Prosecco 197 — was dropped for that one add).
-      if ((pi < 0 || pi >= shown.length) && kind === 'add') { console.log('[edit-reader] add P' + o.product + ' NOT applied - no such shown product; left to the model as a search'); reading.also = [...new Set([].concat(reading.also || [], 'search'))]; continue; }
+      if ((pi < 0 || pi >= shown.length) && kind === 'add') { console.log('[edit-reader] add P' + o.product + ' NOT applied - no such shown product; left to the model as a search'); reading.also = [...new Set([].concat(reading.also || [], 'search'))]; reading.unshownAdds = (reading.unshownAdds || []).concat({ qty: parseInt(o.qty, 10) || 0 }); continue; }
       if (pi < 0 || pi >= shown.length) return { ok: false, why: kind + ': no shown product P' + o.product };
       product = shown[pi];
       if (kind === 'replace' && nz(product.name) === nz(basket[index].name)) return { ok: false, why: 'replace: P' + o.product + ' is already line L' + o.line };
@@ -193,7 +196,7 @@ function validate(reading, basket, message) {
     }
     // "They already have White Claw + Yuengling, so remove these" removes nothing else (Nov 25, on-hand.js removalAllowed).
     if (kind === 'remove') {
-      const ra = require('./on-hand.js').removalAllowed(message, basket[index].name);
+      const ra = require('./on-hand.js').removalAllowed(message, basket[index].name, reading.onHandModel);
       if (!ra.ok) { console.log('[edit-reader] remove L' + o.line + ' NOT applied - ' + ra.why); reading.onHandKept = (reading.onHandKept || []).concat(basket[index].name); continue; }
     }
     if (kind === 'replace' && qty === 0) qty = null;

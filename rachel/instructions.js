@@ -117,6 +117,25 @@ function unaddressed(instrs, reply, before, after) {
       const asks = sents.some(l => /\?|\b(which|let me know|would you like|do you want|prefer)\b/i.test(l));
       if (claimed && !asks) return true;   // said it was done, basket untouched: not done
     }
+    // "can you adjust the beer menu accordingly?" — a CATEGORY to be adjusted is done only when a line of it changed (or the
+    // reply asks about it), never because the reply lists beers (Nov 25, DC on Slack, Compass Group: marked handled, nothing
+    // changed, nothing asked; DC had to send it again).
+    if (/\b(?:adjust|recalculate|re-?calculate|re-?size|right-?size|scale|reduce|increase|lower|trim|cut back|account for)\b/i.test(String(instr))) {
+      const CATW = { beer: /^(?:beers?|lagers?|ales?|ipas?|seltzers?|hard seltzers?|rtds?)$/, wine: /^(?:wines?|reds?|whites?|rose|sparkling|prosecco|champagne)$/, spirits: /^(?:spirits?|liquors?|bar)$/ };
+      const catOf = it => { const c = String(it.category || '').toLowerCase(); return /beer|seltzer|rtd/.test(c) ? 'beer' : /wine|sparkling|champagne/.test(c) ? 'wine' : /spirit|liquor/.test(c) ? 'spirits' : ''; };
+      const kwC = keywords(String(instr).replace(/\bwhite claw\b|\bred stripe\b|\bblue moon\b|\bwhite rascal\b/gi, ' '));   // brand words are not a category
+      const cats = Object.keys(CATW).filter(c => kwC.some(w => CATW[c].test(w)));
+      if (cats.length) {
+        if (changed.some(it => cats.includes(catOf(it)) || matches(it))) return false;
+        const gone = (before || []).filter(it => cats.includes(catOf(it)) && !(after || []).some(a => key(a) === key(it)));
+        if (gone.length) return false;
+        // asked about: a question in a paragraph (or a "*Beer adjustment:*" section) that names the category
+        const asksC = String(reply || '').split(/\n{2,}(?=\S)(?![-•*]\s)/).some(pg => /\?/.test(pg) && kwC.some(w => CATW[cats[0]] && CATW[cats[0]].test(w) && has(norm(pg), w)))
+          || /\b(?:beer|wine|spirits?)\s+adjustment\b[\s\S]{0,600}\?/i.test(String(reply || ''))
+          || String(reply || '').split(/\n{2,}/).some(pg => kwC.some(w => CATW[cats[0]] && CATW[cats[0]].test(w) && has(norm(pg), w)) && /\b(?:share|send|tell me|let me know|need|what(?:'s| is)|how many|pending)\b[^.!?\n]{0,40}\b(?:guests?|guest count|head ?count|people|hours?|count)\b/i.test(pg));
+        return !asksC;
+      }
+    }
     if (kw.some(w => has(r, w))) return false;
     return !changed.some(matches);
   });

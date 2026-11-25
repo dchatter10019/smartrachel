@@ -226,13 +226,13 @@ async function transcribeOrderImages(images, caption) {
 Copy what the FILE shows, exactly as printed: every drink line with its printed quantity. Never add, remove or change a line or a quantity because of anything else — any changes the customer wants are handled separately.
 If it contains a list of drinks to order (handwritten, printed, an invoice, a receipt, an order form), transcribe it as a shopping list — ONE item per line, in the form "<qty> x <product name> <size if shown>". Use the quantities shown; if a quantity is missing, use 1 — except on an order form that lists products with a quantity column: skip the rows whose quantity is blank or 0. Correct obvious misspellings of well-known brands. When a line is a category rather than a brand, write it as a clean search phrase with the distinctive term first and NO parentheses — e.g. "2 x Burgundy red wine 750 mL", "1 x Napa Cabernet 750 mL", "6 x IPA beer". Ignore prices, totals, dates, and non-drink lines.
 If it is NOT a list of drinks to order (a menu photo, a bottle photo, a screenshot, something unrelated), do not invent a list.
-Reply ONLY with JSON: {"is_order": true|false, "list": "<lines joined with \\n, or empty>", "note": "<one short sentence about what the image is, or what was unclear>"}` });
+Reply ONLY with JSON: {"is_order": true|false, "list": "<lines joined with \\n, or empty>", "note": "<one short sentence about what the image is, or what was unclear>", "client": "<the client / company the document is billed or prepared for, exactly as printed, or empty>", "event_date": "<the event or delivery date exactly as printed, or empty>"}` });
     const r = await vc.messages.create({ model: 'claude-sonnet-4-6', max_tokens: 4000, messages: [{ role: 'user', content }] });   // 800 cut a 40-line order PDF
     require('./ai-spend.js').record('image', 'claude-sonnet-4-6', r.usage);
     const txt = (r.content || []).filter(b => b.type === 'text').map(b => b.text).join('').trim();
     const m = txt.match(/\{[\s\S]*\}/); const j = m ? JSON.parse(m[0]) : null;
     if (!j) return { is_order: false, list: '', note: 'could not read the image' };
-    return { is_order: !!j.is_order && !!(j.list || '').trim(), list: String(j.list || '').trim(), note: String(j.note || '').trim() };
+    return { is_order: !!j.is_order && !!(j.list || '').trim(), list: String(j.list || '').trim(), note: String(j.note || '').trim(), client: String(j.client || '').trim().slice(0, 80), event_date: String(j.event_date || '').trim().slice(0, 40) };
   } catch (e) { console.log('[vision] error:', e.message); return { is_order: false, list: '', note: 'error reading the image' }; }
 }
 async function geocodeAddress(text) {
@@ -958,7 +958,16 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
           // the LLM re-sent "Ruffino -> La Marca" after the swap and 44x La Marca became 1x (the PDF showed 1 bottle).
           // Another basket line swapped INTO a product already in the basket adds its bottles. Real (Nov 14, Eterra Kitchen):
           // 15 Pinot Noir were 10 Belle Glos + 5 Etude; both -> Underwood gave 10, then the merge SET 5 (PDF: 5x Underwood).
-          ex.qty = originalItem ? (removedLine ? (ex.qty || ex.quantity || 1) + (qtyToUse || 1) : qtyKnown ? qtyToUse : (ex.qty || ex.quantity || 1)) : ((ex.qty || ex.quantity || 1) + (qtyToUse || 1));
+          // The SAME add twice in one turn is one add (Nov 25, DC on Slack: "Add 25 bottles of Banshee" — the model's list build
+          // added 25, then its confirm_substitute merged another 25 into that new line -> 50).
+          let sameAddThisTurn = false;
+          try {
+            const b0 = (events.ctx() && events.ctx().basket0) || null;
+            const inAtStart = b0 && String(b0.sig || '').split('|').some(k => k.replace(/x\d+$/, '') === String(ex.product_id || ex.name));
+            sameAddThisTurn = !originalItem && b0 && !inAtStart && Number(ex.qty || ex.quantity) === Number(qtyToUse);
+          } catch (e) {}
+          if (sameAddThisTurn) console.log('[confirm-substitute] ' + ex.name + ' was already added this turn at ' + qtyToUse + ' — NOT added again');
+          ex.qty = sameAddThisTurn ? Number(ex.qty || ex.quantity) : originalItem ? (removedLine ? (ex.qty || ex.quantity || 1) + (qtyToUse || 1) : qtyKnown ? qtyToUse : (ex.qty || ex.quantity || 1)) : ((ex.qty || ex.quantity || 1) + (qtyToUse || 1));
           if (originalItem && !qtyKnown) console.log('[confirm-substitute] ' + JSON.stringify(originalItem) + ' is not in the basket and ' + ex.name + ' already is — its qty ' + ex.qty + ' is kept');
           ex.quantity = ex.qty; ex.subst_at = Date.now();
           if (rp) ex.price = rp;
@@ -1725,6 +1734,7 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
   // as fact; the LLM explains it and offers the fixes, it does not work it out (Oct 2, DC's Goody thread).
   if (stateForEmail.codeDoneThisTurn && stateForEmail.codeDoneThisTurn.length) {
     channelNote += '\n\n## ALREADY DONE IN CODE THIS TURN (the basket already has these; the customer is told above your reply — do not redo, re-offer, re-ask or call a tool for them; answer only the customer\'s other notes)\n' + stateForEmail.codeDoneThisTurn.map(d => '- ' + d).join('\n');
+    stateForEmail.codeDoneForCheck = stateForEmail.codeDoneThisTurn.slice();   // the not-done check reads it after the reply (instructions.js)
     delete stateForEmail.codeDoneThisTurn;
   }
   if (stateForEmail.originalRequest && /\b(?:original|initial|first|earlier)\s+(?:request|order|list|ask|email)\b|\bwhat i (?:asked|requested)\b|\bmatch(?:es)?\s+(?:my|the)\s+(?:request|list|order)\b/i.test(message)) {
@@ -2124,7 +2134,16 @@ async function callRachel({ sessionKey, message, context, format, gbrainContext,
   } catch (e) { console.log('[arrow-swap] error (reply unchanged): ' + e.message); }
   if (instrs.length) {
     let basketAfter = []; try { basketAfter = JSON.parse(getState(sessionKey).lastLineItems || '[]'); } catch (e) {}
-    const missed = require('./instructions.js').unaddressed(instrs, numbered, basketBefore, basketAfter);
+    let missed = require('./instructions.js').unaddressed(instrs, numbered, basketBefore, basketAfter);
+    // done IN CODE before the model ran (edit reader "removed Josh Cellars Chardonnay"): not "I haven't done this one yet" (Nov 25)
+    { const stCD = getState(sessionKey), cd = (stCD.codeDoneForCheck || []).map(x => String(x).toLowerCase()); delete stCD.codeDoneForCheck;
+      if (cd.length && missed.length) {
+        const KW = require('./instructions.js').keywords;
+        const before0 = missed.length;
+        const namesCD = basketAfter.map(it => String(it.name || '').toLowerCase()).join(' | ');
+        missed = missed.filter(x => { const kw = KW(x).filter(w => !/^(remove|add|from|proposal|order|basket|bottles?|the)$/.test(w)); return !(kw.length && cd.some(d => kw.filter(w => d.includes(w)).length >= Math.min(2, kw.length) || kw.some(w => w.length >= 5 && d.includes(w) && namesCD.includes(w)))); });
+        if (missed.length < before0) console.log('[instructions] ' + (before0 - missed.length) + ' line(s) were done in code this turn — not listed as not done');
+      } }
     if (missed.length) {
       console.log('[instructions] UNADDRESSED by the reply — asked about, not dropped: ' + JSON.stringify(missed));
       numbered += '\n\nI haven\'t done ' + (missed.length === 1 ? 'this one' : 'these') + ' yet:\n' + missed.map(x => '• ' + x).join('\n') + '\nWant me to go ahead' + (missed.length === 1 ? '' : ' with ' + (missed.length === 2 ? 'both' : 'all of them')) + '?';
@@ -2319,6 +2338,18 @@ app.post('/chat', async (req, res) => {
         console.log('[vision] is_order=' + t.is_order + ' lines=' + (t.list ? t.list.split('\n').length : 0) + ' | ' + t.note);
         if (t.is_order) {
           lines.push(...t.list.split('\n').map(x => x.trim()).filter(Boolean));
+          // The client / event date printed on the file (a Bevvi proposal) are kept for the proposal (Nov 25, DC on Slack: "Compass
+          // Group → you should have read it from the pdf", "December 17, 2026 → this was also in the pdf"). Never over a value the
+          // conversation set.
+          try {
+            const skV = session_id || `${context?.account_id || 'anon'}-${context?.kitchen_location || 'noloc'}`;
+            const stV = flowState[skV] = flowState[skV] || {};
+            t.client = String(t.client || '').replace(/^[\s*•·_~`:\-–—]+|[\s*_~`]+$/g, '').trim();   // the Nov 19 PDF itself printed "* Compass Group"
+            if (t.client && !stV.savedClientName && !/bevvi/i.test(t.client)) { stV.savedClientName = t.client; console.log('[order-file] client read from the file: ' + JSON.stringify(t.client)); }
+            const nV = t.event_date ? require('./event-date.js').normalizeEventDate(t.event_date) : null;
+            const dV = nV && nV.date ? nV.text : '';
+            if (dV && !stV.savedEventDate) { stV.savedEventDate = dV; stV.eventDateNone = false; console.log('[order-file] event date read from the file: ' + JSON.stringify(dV)); }
+          } catch (e) { console.log('[order-file] client/date from the file not kept: ' + e.message); }
           read.push(...visual.map(f => f.name || (OF.kindOf(f) === 'pdf' ? 'your PDF' : 'your photo')));
         } else console.log('[order-file] ' + visual.length + ' PDF/photo(s) with no drinks list: ' + t.note);
       }
@@ -2577,7 +2608,7 @@ app.post('/chat', async (req, res) => {
     if (!/^__/.test(String(message || '')) && /\$\s?\d|\b(?:bucks|dollars|usd)\b/i.test(String(message || ''))) {
       const lfB = FR.bottleShape(((await FR.factsFor(message, { qa: isQA })) || {}).bottle_price, message);
       if (!bp && lfB) { bp = lfB; FR.gap('bottle_price', 'missed', null, lfB, frCtx); }
-      else if (bp && lfB && (bp.max !== lfB.max || bp.category !== lfB.category)) FR.gap('bottle_price', 'disagree', { category: bp.category, max: bp.max }, { category: lfB.category, max: lfB.max }, frCtx);
+      else if (bp && lfB && (bp.max !== lfB.max || bp.category !== lfB.category)) { FR.gap('bottle_price', 'disagree', { category: bp.category, max: bp.max }, { category: lfB.category, max: lfB.max }, frCtx); console.log('[fact-reader] bottle_price: the model\'s reading is used (Nov 25: the model reads, the code acts)'); bp = lfB; }
     }
     if (bp && !/^__/.test(String(message || ''))) {
       const stBP = getState(sessionKey);
@@ -3749,6 +3780,17 @@ app.post('/chat', async (req, res) => {
         }
       } else {
         let cats = eventDrinkCats(message);
+        // The model reads which kinds of drinks are asked for (fact reader drink_types; Nov 25 staging: "7 cases of White Claw"
+        // made the pattern ask "white or beer?"). Seltzer counts with beer here; stock they already have is never asked about.
+        if (cats) {
+          const dtM = ((await FR.factsFor(message, { qa: isQA }).catch(() => null)) || {}).drink_types;
+          if (Array.isArray(dtM)) {
+            const mapped = [...new Set(dtM.map(t => t === 'seltzer' ? 'beer' : t === 'cocktails' ? 'spirits' : t).filter(t => ['wine', 'beer', 'spirits'].includes(t)))];
+            const order = ['wine', 'beer', 'spirits'].filter(k => mapped.includes(k));
+            if (order.join('+') !== cats.join('+')) { console.log('[menu] drink kinds read by the model: ' + JSON.stringify(dtM) + ' (pattern read ' + cats.join(' + ') + ')'); FR.gap('drink_types', 'disagree', cats, order, frCtx); }
+            cats = order.length >= 2 ? order : null;
+          }
+        }
         // Drinks already counted (3+ "2 btls of X" / "Sancerre 5 btls" / "Stella 1 case" lines): a list to price, never the
         // mix question (Nov 11, DC: the iCapital brief was asked "prosecco, beer or spirits?" twice). serving-mix.js.
         if (cats && isCountedList(message)) { console.log('[menu] serving-mix question NOT asked — the drinks are already counted (' + countedLines(message).length + ' line(s)): ' + JSON.stringify(countedLines(message).slice(0, 3))); state.eventParams = Object.assign({}, state.eventParams || {}, { serving_mix: null, serving_mix_text: null }); cats = null; }
@@ -4463,8 +4505,15 @@ app.post('/chat', async (req, res) => {
       } else if (itD.length && !state.orderStep && !state.proposalStep && !isInternalMsgEarly(message) && DCk.asks(message)) {
         const ep = state.eventParams || {}, ef = state.eventFacts || {}, st = DCk.statedIn(message);
         const usersD = (sessions[sessionKey] || []).filter(m => m && m.role === 'user' && typeof m.content === 'string').slice(-12).map(m => m.content);
-        const guestsD = st.guests || parseInt(ef.guests || ep.guests, 10) || 0, hoursD = st.hours || parseFloat(ef.hours || ep.hours) || 0;
-        const ck = DCk.check(itD, { guests: guestsD, hours: hoursD, fixedCategories: DCk.fixedIn([message].concat(usersD)) });
+        const frGH = (await FR.factsFor(message, { qa: isQA }).catch(() => null)) || {};
+        const guestsD = (+frGH.guests > 0 ? +frGH.guests : 0) || st.guests || parseInt(ef.guests || ep.guests, 10) || 0, hoursD = (+frGH.hours > 0 ? +frGH.hours : 0) || st.hours || parseFloat(ef.hours || ep.hours) || 0;
+        const frD = (await FR.factsFor(message, { qa: isQA }).catch(() => null)) || {};
+        const rateD = (frD.drink_rate && +frD.drink_rate.per_person > 0 && !frD.drink_rate.per_hour ? { dpp: +frD.drink_rate.per_person } : null) || require('./drink-rate.js').rateIn(message) || state.drinkRate || null;
+        if (frD.drink_rate && +frD.drink_rate.per_person > 0 && !frD.drink_rate.per_hour) state.drinkRate = { dpp: +frD.drink_rate.per_person, said: 'model' };
+        if (rateD) console.log('[drink-rate] drinks check uses the customer\'s rate: ' + rateD.dpp + ' drinks per person for the event');
+        const ohD = (Array.isArray(frD.on_hand) && frD.on_hand.length ? frD.on_hand : null) || state.onHandModel || null;
+        if (ohD) state.onHandModel = ohD;
+        const ck = DCk.check(itD, { guests: guestsD, hours: hoursD, dpp: rateD ? rateD.dpp : 0, onHand: ohD, fixedCategories: DCk.fixedIn([message].concat(usersD)) });
         if (ck.topUp) { state.pendingDrinksTopUp = { at: Date.now(), changes: ck.topUp.map(t => ({ name: t.name, from: t.from, to: t.to })) }; state.pendingAddOffer = null; state.lastCta = null; saveFlowState(); }
         console.log('[drinks-check] answered in code: ' + ck.delivered + ' drinks vs ' + ck.target + ' (' + guestsD + ' guests, ' + hoursD + ' h)' + (ck.topUp ? ' — top-up offered: ' + JSON.stringify(ck.topUp.map(t => t.name + ' ' + t.from + '->' + t.to)) : ''));
         recordTurn(sessionKey, message, ck.text, false);
@@ -4483,12 +4532,13 @@ app.post('/chat', async (req, res) => {
     if (!erList && !state.orderStep && !state.proposalStep && !state.emailReplace && !state.replacingOrder && !isInternalMsgEarly(message) && !(state.orderData && message === state.orderData.delivery_datetime) && !state.pendingStock) {
       const ctxR = erCtx();
       const rd = ctxR.basket.length ? await ER.read(message, ctxR).catch(() => null) : null;
+      if (rd) { try { rd.onHandModel = (((await FR.factsFor(message, { qa: isQA }).catch(() => null)) || {}).on_hand) || null; } catch (e) {} }
       const v = rd ? ER.validate(rd, ctxR.basket, message) : null;
       if (rd && !v.ok) console.log('[edit-reader] reading NOT used — ' + v.why + ' — the code\'s readers decide');
       // "They already have 7 cases of White Claw + 15 cases of Yuengling, so remove these" (Nov 25, DC on Slack): the removals of
       // lines they did NOT name were refused (on-hand.js removalAllowed). Said in code — the model claimed "both beers removed".
       if (rd && v.ok && (rd.onHandKept || []).length) {
-        const ohN = require('./on-hand.js').inlineOnHand(message).map(o => (o.qty ? o.qty + ' cases of ' : '') + o.name);
+        const ohN = ((rd.onHandModel && rd.onHandModel.length) ? rd.onHandModel : require('./on-hand.js').inlineOnHand(message)).map(o => (o.qty ? o.qty + ' ' + (o.unit || 'cases') + ' of ' : '') + o.name);
         const keptTxt = 'You already have ' + ohN.join(' + ') + ' — ' + (ohN.length > 1 ? 'none of those is' : 'that isn\'t') + ' in your order, so I didn\'t remove anything for it. ' + rd.onHandKept.join(', ') + (rd.onHandKept.length > 1 ? ' stay' : ' stays') + ' as they are.';
         console.log('[on-hand] said in code — nothing removed for stock the customer has; kept: ' + JSON.stringify(rd.onHandKept));
         if (!v.ops.length && !(rd.also || []).length && !rd.regenerate_proposal) {
@@ -4575,6 +4625,32 @@ app.post('/chat', async (req, res) => {
             } catch (e) { console.log('[replace-with] search failed (' + e.message + ') — left to the model'); }
           }
         }
+        // "Add 25 bottles of Banshee Cabernet" with nothing shown: searched HERE; exactly one fitting product = added at that count
+        // (replace-with.js addsIn), never left to the model to offer or to add twice (Nov 25, DC on Slack).
+        // the model's adds first (fact reader), the pattern when it gave none (Nov 25, DC: "move all the command parsing to LLM")
+        const addsM = ((((await FR.factsFor(message, { qa: isQA }).catch(() => null)) || {}).adds) || []).filter(a => a && a.product && +a.qty > 0 && (!a.unit || a.unit === 'bottles')).map(a => ({ qty: +a.qty, want: String(a.product).trim() }));
+        const addsL = addsM.length ? addsM : require('./replace-with.js').addsIn(message);
+        if (!addsM.length && addsL.length) FR.gap('adds', 'missed', addsL, null, { session: sessionKey, said: message, qa: isQA });
+        if (addsL.length && state.zip) {
+          const RW2 = require('./replace-with.js');
+          for (const ad of addsL) {
+            try {
+              let itNow = []; try { itNow = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+              if (RW2.fitting(itNow, ad.want).length) { console.log('[edit-reader] add "' + ad.want + '": already a basket line — not added again'); continue; }
+              const rowsA = await catalogSearch(state.zip, ad.want, '');
+              const fitsA = RW2.fitting(rowsA, ad.want);
+              if (fitsA.length !== 1) { console.log('[edit-reader] add "' + ad.want + '": ' + fitsA.length + ' fitting product(s) — left to the model\'s search'); continue; }
+              const rA = await applyBasketSubstitute(sessionKey, email, '', fitsA[0].name, parseFloat(fitsA[0].salePrice || fitsA[0].price) || 0, fitsA[0].sizeStr || fitsA[0].size || '', { add: true, qty: ad.qty, newLine: true });
+              if (rA && rA.success !== false) {
+                done.push('added ' + (rA.qty || ad.qty) + 'x ' + fitsA[0].name);
+                state.pendingAddOffer = null;
+                console.log('[edit-reader] add "' + ad.want + '" -> ' + fitsA[0].name + ' x' + (rA.qty || ad.qty) + ' (searched in code, one match at this store)');
+              }
+            } catch (e) { console.log('[edit-reader] add "' + ad.want + '" search failed (' + e.message + ') — left to the model'); }
+          }
+          if (done.some(d => /^added /.test(d)) && addsL.every(ad => { let itN = []; try { itN = JSON.parse(state.lastLineItems || '[]'); } catch (e) {} return RW2.fitting(itN, ad.want).length; })) rd.also = (rd.also || []).filter(a => a !== 'search');
+          try { itR = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
+        }
         editReaderDone = done.length > 0;
         console.log('[edit-reader] APPLIED in code: ' + JSON.stringify(done) + (failed.length ? ' | NOT done: ' + JSON.stringify(failed) : '') + ' | also: ' + JSON.stringify(rd.also));
         const diffs = ER.disagreement(v.ops, rv);
@@ -4606,6 +4682,19 @@ app.post('/chat', async (req, res) => {
         if (coverNoteR) partsR.push(coverNoteR);
         const doneLine = done.length ? 'Done \u2014 here are the changes:\n\n' + partsR.join('\n\n') : '';
         const failLine = failed.length ? (doneLine ? '\n\n' : '') + 'I couldn\'t make this change: ' + failed.join('; ') + '.' : '';
+        // A line of the message the reading did not cover ("Beer / Seltzers — ... can you adjust the beer menu accordingly?") is
+        // not dropped by a reply written in code: the rest of the flow (the model) answers it, told what was done (Nov 25, DC on Slack)
+        if (!rest.length) {
+          try {
+            const INs = require('./instructions.js'), ins = INs.splitInstructions(message);
+            if (ins.length >= 2) {
+              const doneL = done.map(d => String(d).toLowerCase());
+              const namesL = (itR || []).concat(ctxR.basket || []).map(it => String(it.name || '').toLowerCase()).join(' | ');
+              const left = INs.unaddressed(ins, doneLine, ctxR.basket, itR).filter(x => { const kw = INs.keywords(x).filter(w => !/^(remove|add|from|proposal|order|basket|bottles?|the)$/.test(w)); return !(kw.length && doneL.some(d => kw.filter(w => d.includes(w)).length >= Math.min(2, kw.length) || kw.some(w => w.length >= 5 && d.includes(w) && namesL.includes(w)))); });
+              if (left.length) { console.log('[edit-reader] NOT answered in code — ' + left.length + ' line(s) of the message are not covered by the changes, the model answers them: ' + JSON.stringify(left.map(x => x.slice(0, 80)))); rest.push('other'); }
+            }
+          } catch (e) { console.log('[edit-reader] uncovered-lines check failed: ' + e.message); }
+        }
         if (!rest.length) {
           const listR = nItems >= 2 ? basketAfterChange(state) : (nItems === 1 ? '\n\nYour order now: ' + (itR[0].qty || 1) + 'x ' + itR[0].name + ' — ' + usd(itR[0].price) + ' ea' : '\n\nYour cart is empty now.');
           if (askQtyR) state.pendingQtyFor = askQtyR;
@@ -5675,6 +5764,10 @@ app.post('/chat', async (req, res) => {
     // A message that is only a product list is built from that list (order-wording.js listItems -> callRachel's in-code
     // build), whatever the classifier said. Oct 28 staging: "Rebuild it with only: A x2, B x1. ... Show me the basket and
     // total first." was routed show_basket (0.72) and the old basket was shown, unchanged.
+    // A plain proposal ask is the proposal flow's, never show_basket (Nov 25 staging: "create the proposal" -> show_basket 0.72,
+    // the basket came back and no PDF)
+    if (clsIntent === 'show_basket' && (((await FR.factsFor(message, { qa: isQA }).catch(() => null)) || {}).proposal_request)) { console.log('[classify] show_basket NOT routed — the model read a proposal request'); clsIntent = null; clsRef = ''; }
+    if (clsIntent === 'show_basket' && /\b(?:generate|create|make|send|build|prepare|draft|redo|regenerate)\b[^.?!\n]{0,24}?\b(?:proposal|porposal|propsal|pdf|quote)\b|^\W*(?:the\s+|a\s+)?(?:proposal|pdf)(?:\s+please)?\W*$/i.test(message) && !/\b(?:show|see|view|list|what'?s in)\b|\b(?:no|not|don'?t)\b[^.?!\n]{0,15}\b(?:proposal|pdf)\b/i.test(message)) { console.log('[classify] show_basket NOT routed — the message asks for a proposal'); clsIntent = null; clsRef = ''; }
     if (clsIntent && OW.listItems(message, { emptyBasket: cartEmpty(state) })) { console.log('[classify] ' + clsIntent + ' NOT routed — the message is a product list (built from the list)'); clsIntent = null; clsRef = ''; }
     // Not a checkout (order-wording.js, Oct 27 connector): a negated order phrase, or a message carrying its own item list.
     const orderNegated = OW.orderNegated(message);
@@ -6924,8 +7017,14 @@ app.post('/chat', async (req, res) => {
       && String(message).split(/\n/).filter(l => /^\s*(?:[-•*·]|\d+\s*(?:x|×)\s+\S)/i.test(l) || /\S.*\s[–—-]\s*\d{1,4}\s*(?:x\s*)?(?:bottles?|btls?|cans?|cases?|packs?)\b/i.test(l)).length >= 3;   // "Sauvignon Blanc – 10 bottles" too (Nov 14, Eterra)
     // A complaint that mentions the proposal is not a proposal ask (Nov 25, DC on Slack: "you read wrong from the pdf proposal
     // attached" got "What is the client or company name?"). feedback.js unhappyIn = the complaint wording.
-    if (isProposalTrigger && !state.proposalStep && require('./feedback.js').unhappyIn(message) && !/\b(?:send|make|create|generate|regenerate|redo|new|updated?|revised?)\b[^.?!\n]{0,30}\b(?:proposal|pdf|quote)\b/i.test(message)) {
-      console.log('[proposal] NOT a proposal ask — the message is a complaint: ' + JSON.stringify(String(message).slice(0, 100))); isProposalTrigger = false;
+    // The model reads whether this is a complaint / a proposal ask (fact reader, Nov 25 — DC: "move all the command parsing to
+    // LLM"); the patterns decide only when the model gave no reading.
+    { const frP = (await FR.factsFor(message, { qa: isQA }).catch(() => null)) || null;
+      const complaintP = frP ? !!frP.complaint : !!require('./feedback.js').unhappyIn(message);
+      const askP = frP ? !!frP.proposal_request : isProposalTrigger;
+      if (isProposalTrigger && !state.proposalStep && complaintP && !askP) { console.log('[proposal] NOT a proposal ask — the message is a complaint' + (frP ? ' (model)' : '') + ': ' + JSON.stringify(String(message).slice(0, 100))); isProposalTrigger = false; }
+      else if (frP && isProposalTrigger && !askP && !state.proposalStep) { console.log('[proposal] NOT a proposal ask — the model read no request for a proposal: ' + JSON.stringify(String(message).slice(0, 100))); FR.gap('proposal_request', 'disagree', true, false, frCtx); isProposalTrigger = false; }
+      else if (frP && !isProposalTrigger && askP && !state.proposalStep && !state.orderStep) { console.log('[proposal] proposal ask read by the model: ' + JSON.stringify(String(message).slice(0, 100))); FR.gap('proposal_request', 'missed', false, true, frCtx); isProposalTrigger = true; }
     }
     if (isProposalTrigger && editReaderPdf) { console.log('[proposal] the edit reader already regenerated the PDF this turn — no second proposal flow'); isProposalTrigger = false; }
     if (isProposalTrigger && emailListAsk && !state.proposalStep) { console.log('[proposal] email with its own item list — the quote path builds it (no step-by-step flow)'); isProposalTrigger = false; }
@@ -7030,7 +7129,7 @@ app.post('/chat', async (req, res) => {
     } else if (feeCmd) {
       const fsM = FR.feesShape(((await FR.factsFor(message, { qa: isQA })) || {}).fees);
       const diff = fsM ? Object.keys(feeCmd).filter(k => fsM[k] != null && Math.abs(fsM[k] - feeCmd[k]) > 1e-9) : [];
-      if (diff.length) FR.gap('fees', 'disagree', feeCmd, fsM, frCtx);
+      if (diff.length) { FR.gap('fees', 'disagree', feeCmd, fsM, frCtx); for (const k of diff) feeCmd[k] = fsM[k]; console.log('[fact-reader] fees: the model\'s reading is used for ' + diff.join(', ')); }
       // Part of the fees read by the code, the rest only by the model ("service 8% and no gratuity"): the rest is added.
       const extra = fsM ? Object.keys(fsM).filter(k => feeCmd[k] == null && !(k === 'tip_rate' && feeCmd.tip_amount != null) && !(k === 'tip_amount' && feeCmd.tip_rate != null) && !(k === 'tax_rate' && taxCmd)) : [];
       if (extra.length) { const add = {}; for (const k of extra) add[k] = fsM[k]; FR.gap('fees', 'missed', feeCmd, add, frCtx); Object.assign(feeCmd, add); }
@@ -7160,8 +7259,9 @@ app.post('/chat', async (req, res) => {
         {
           const lfP = (await FR.factsFor(message, { qa: isQA })) || {};
           const dM = lfP.event_date ? require('./event-date.js').normalizeEventDate(String(lfP.event_date), new Date()) : null;
-          if (lfP.client && !(reqF && reqF.client)) { reqF = Object.assign({}, reqF || {}, { client: String(lfP.client).trim() }); FR.gap('client', 'missed', null, reqF.client, frCtx); }
-          if (dM && dM.date && !(reqF && reqF.date)) { reqF = Object.assign({}, reqF || {}, { date: dM.text }); FR.gap('event_date', 'missed', null, dM.text, frCtx); }
+          // the model's reading wins where both read one (Nov 25, DC: "move all the command parsing to LLM"); disagreements logged
+          if (lfP.client && String(lfP.client).trim() !== String((reqF && reqF.client) || '').trim()) { FR.gap('client', reqF && reqF.client ? 'disagree' : 'missed', reqF && reqF.client || null, String(lfP.client).trim(), frCtx); reqF = Object.assign({}, reqF || {}, { client: String(lfP.client).trim() }); }
+          if (dM && dM.date && dM.text !== ((reqF && reqF.date) || '')) { FR.gap('event_date', reqF && reqF.date ? 'disagree' : 'missed', reqF && reqF.date || null, dM.text, frCtx); reqF = Object.assign({}, reqF || {}, { date: dM.text }); }
         }
         if (reqF) {
           if (reqF.client) state.savedClientName = reqF.client;
@@ -7257,6 +7357,10 @@ app.post('/chat', async (req, res) => {
         message = String(message).replace(/[,;.]?\s*(?:and\s+)?(?:with\s+)?(?:a\s+)?\d+(?:\.\d+)?\s*%\s*(?:service(?:\s+(?:charge|fee))?|tax|tip)\b[^,;\n]*$/i, '').replace(/[,;.]?\s*(?:and\s+)?(?:the\s+|a\s+|with\s+(?:a\s+)?)?(?:service(?:\s+(?:charge|fee))?|sales\s+tax|tax|tip|gratuity|delivery(?:\s+(?:fee|charge|cost))?)\b[^,;\n]*$/i, '').trim() || message;
         console.log('[proposal] fee in the ' + state.proposalStep + ' answer (' + saidPF + ') — the answer read as ' + JSON.stringify(message));
       }
+      // Slack bold and a note after an arrow are not the answer (Nov 25, DC on Slack: "Compass Group → you should have read it
+      // from the pdf" was billed as the client, and "*Client:* Compass Group" printed "* Compass Group")
+      { const cutA = String(message || '').replace(/[*_~`]/g, '').replace(/\s*(?:→|->|-&gt;|=>|—>)\s*.*$/s, '').trim();
+        if (cutA && cutA !== String(message).trim()) { console.log('[proposal] answer cleaned: ' + JSON.stringify(String(message).trim().slice(0, 80)) + ' -> ' + JSON.stringify(cutA)); message = cutA; } }
       const unl = String(message || '').replace(/^\s*(?:(?:the\s+)?(?:event\s+)?date|client(?:\s+name)?|company(?:\s+name)?)\s*(?:is\s*:?|:|-|–)\s*/i, '');
       if (unl !== message && unl.trim()) { console.log('[proposal] answer label removed: ' + JSON.stringify(message.trim()) + ' -> ' + JSON.stringify(unl.trim())); message = unl; }
     }
@@ -8318,6 +8422,19 @@ app.post('/chat', async (req, res) => {
       // Inject the persisted event parameters so a single-parameter change (new budget,
       // new headcount) can rebuild using everything else already known — even after a
       // restart wiped the LLM's conversation memory.
+      // The customer's drink rate (drink-rate.js): drinks per person for the WHOLE event, kept for the conversation (Nov 25, DC)
+      try {
+        const stDR = getState(sessionKey), frDR = ((await FR.factsFor(message, { qa: isQA }).catch(() => null)) || {}).drink_rate;
+        // the model reads the rate (whole event vs per hour); the pattern only when the model gave none (logged)
+        let rNow = frDR && +frDR.per_person > 0 && !frDR.per_hour ? { dpp: +frDR.per_person, said: 'model' } : null;
+        if (!rNow && !(frDR && frDR.per_hour)) { rNow = require('./drink-rate.js').rateIn(message); if (rNow) FR.gap('drink_rate', 'missed', rNow, null, { session: sessionKey, said: message, qa: isQA }); }
+        if (rNow && (!stDR.drinkRate || stDR.drinkRate.dpp !== rNow.dpp)) { stDR.drinkRate = rNow; console.log('[drink-rate] ' + rNow.dpp + ' drinks per person for the whole event (not per hour), kept: ' + JSON.stringify(rNow.said)); }
+        if (stDR.drinkRate) fullAddrRule += '\n\n' + require('./drink-rate.js').note(stDR.drinkRate);
+        // stock they already have (the fact reader's on_hand): counted toward the drinks, never ordered (Nov 25, DC)
+        const ohN = (((await FR.factsFor(message, { qa: isQA }).catch(() => null)) || {}).on_hand) || null;
+        if (Array.isArray(ohN) && ohN.length) stDR.onHandModel = ohN;
+        if (Array.isArray(stDR.onHandModel) && stDR.onHandModel.length) fullAddrRule += '\n\n## STOCK THE CUSTOMER ALREADY HAS (read in code)\n' + stDR.onHandModel.map(o => '- ' + (o.qty ? o.qty + ' ' + (o.unit || 'cases') + ' of ' : '') + o.name).join('\n') + '\nNever add these to the order. They count toward the drinks needed (a case of beer / seltzer = 24 drinks): drinks still needed = total drinks - these.';
+      } catch (e) { console.log('[drink-rate] error: ' + e.message); }
       try {
         const stEP = getState(sessionKey);
         if (stEP.eventParams) {

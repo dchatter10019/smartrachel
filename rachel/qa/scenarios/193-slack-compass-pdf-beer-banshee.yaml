@@ -1,0 +1,24 @@
+name: slack-compass-pdf-beer-banshee
+# Nov 25 21:19, DC on Slack (Compass Group, Jacksonville 32216), after the PDF fixes went live: the Nov 19 proposal PDF + five
+# change bullets. "Add 25 bottles of Banshee" went in at 50 (the model's list build added 25, its confirm_substitute merged 25
+# more); the Beer / Seltzers bullet ("can you adjust the beer menu accordingly?") was marked handled with nothing changed or
+# asked; "create the proposal" asked for the client and the date the PDF prints; "Compass Group → you should have read it from
+# the pdf" was billed as the client.
+tags: [lists]
+format: slack
+turns:
+  - send: reset
+  - send: "Need drinks for an event"
+    expect: {contains: ["21"]}
+  - send: "yes"
+  - send: "6426 Bowden Rd, Jacksonville, FL 32216"
+  - send: "• _Remove Josh Cellars Chardonnay from proposal_\n• _Remove Josh Cellars Cabernet from proposal_\n• _Add 25 bottles of “Banshee” Cabernet_\n• _Beer / Seltzers — factoring in the 1.5 drink consumption rate, and a new update that they confirmed they already have 7 cases of White Claw + 15 cases of Yuengling, can you adjust the beer menu accordingly? (based on the consumption &amp; current cases they already have)_\n• _PROSECCO — They decided to pre-pour a welcome drink at the door. I will need 1000 pours of Prosecco plus more for the bar. If we assume a smaller pour (4oz?) that puts another 167 bottles on the order. Let’s slightly reduce the number of Prosecco bottles for the bar from 50 to 30._"
+    image: compass-proposal-nov19.pdf
+    expect:
+      matches: "(?i)25x [^\\n]*banshee[\\s\\S]*(haven't done this one yet[\\s\\S]*beer|(beer|cases|head ?count|guest)[^\\n]*\\?)"
+      not_matches: "(?i)50x [^\\n]*banshee"
+      log_contains: ["[order-file] client read from the file"]
+  - send: "create the proposal"
+    expect:
+      contains: ["Compass Group"]
+      not_matches: "(?i)client:\\*\\s+\\*\\s*compass|what is the client|what is the event date"

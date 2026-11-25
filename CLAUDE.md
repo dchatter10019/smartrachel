@@ -1357,6 +1357,34 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   is split beer / seltzer, never added on top ([buildPackage] hard seltzer asked for). (4) instructions.js: "Event Date &amp;
   Time:" is a brief field. (5) generate-proposal.js: a "Hard Seltzer / RTD" section (White Claw, High Noon, Truly, Cutwater...;
   checked before the spirit words — High Noon "Vodka" was under Spirits). Scenarios 191, 192; qa/unit/brand-choice.test.js.
+- Nov 25 21:19 Slack (DC, Compass Group PDF + bullets, after the PDF fixes). (1) "Add 25 bottles of Banshee" went in at 50 —
+  the model's list build added 25, its confirm_substitute merged 25 more: a same-turn duplicate add (no original, the line not in
+  the turn's starting basket, same qty) is not added again ([confirm-substitute] ... NOT added again); and the edit-reader block
+  now does "add N bottles of X" with nothing shown IN CODE (replace-with.js addsIn -> catalog search, exactly one fitting product,
+  [edit-reader] add "X" -> ... searched in code). (2) The Beer / Seltzers bullet was marked handled, nothing changed or asked:
+  instructions.js — a category to "adjust / reduce / recalculate" is done only when a line of it changed or the reply asks about it
+  (brand words like White Claw are not a category); list-reply.js keeps the "I haven't done this one yet" block and the model's
+  own question about something else (the code list reply dropped both); a reply the edit reader would write in code is not, when
+  a line of the message is uncovered — the model answers it ([edit-reader] NOT answered in code); lines done in code this turn
+  (codeDoneForCheck) are never listed as not done. (3) Client / event date read from an attached proposal PDF (the reader's JSON
+  client / event_date -> savedClientName / savedEventDate when empty; [order-file] client read from the file) — DC: "you should have
+  read it from the pdf". (4) "Compass Group → you should have read it from the pdf" billed as the client: the proposal answers and
+  parseProposalFieldEdit drop Slack bold and an arrow note; generate-proposal.js never prints "* " around the client (the Nov 19 PDF
+  read "* Compass Group"). (5) "create the proposal" routed show_basket (0.72) is not routed. Scenario 193.
+- MODEL READS, CODE ACTS — all command parsing (DC, Nov 25: "can we move all the command parsing to LLM? ... lets not be careful..
+  lets make the changes"). rachel/fact-reader.js now runs on EVERY message of real content (wants(): not a bare pick / short reply)
+  and reads, beside its earlier keys: guests, hours, drink_rate {per_person, per_hour} (a "consumption rate" with no hour word =
+  drinks per person for the WHOLE event — DC: "its the total drinks.. not by hour"), drink_types (White Claw = seltzer, never wine),
+  on_hand, brand_choices, adds, complaint, proposal_request. Its reading comes FIRST: bottle price, fees, proposal client / date
+  (the model's value wins a disagreement, logged reader_gap), drink rate (state.drinkRate -> ## DRINK RATE note, drinks-check
+  target = rate x guests, menu_build / custom_list drinks_per_person), drink kinds for the mixed-event question, on_hand
+  (removalAllowed, ## STOCK THE CUSTOMER ALREADY HAS note, drinks-check subtracts it: a case = 24), brand choices
+  (brand-choice.js collapse modelChoices), counted adds (edit-reader block), complaint / proposal ask (proposal trigger and the
+  show_basket guard). The patterns (drink-rate.js, on-hand.js inlineOnHand, brand-choice.js choicesIn, replace-with.js addsIn,
+  feedback.js unhappyIn, serving-mix.js eventDrinkCats...) are the fallback when the model gives no reading; a pattern-only
+  reading is recorded as a reader_gap. edit-reader.js wants(): every basket message of 3+ words (validate() still checks each op).
+  Mechanical reading stays in code (Slack markup, "3 1L btls" counts, sizes, prices, totals, age, order placement).
+  Scenario 194, qa/unit/drink-rate.test.js; fact-reader.test.js updated to the every-message gate.
 
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
