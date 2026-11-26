@@ -503,6 +503,11 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             if (wl) saInput.wine_lean = wl;
             if (mb) saInput.mix_bias = mb;
             if (wl || mb) console.log('[event-wishes] from the customer\'s words:' + (wl ? ' wine lean ' + wl : '') + (mb ? ' mix bias ' + mb : ''));
+            // The brand chosen for a spirit type, anywhere in the conversation ("use high west for bourbon"; F-0288: a
+            // rebuild put Woodford back). Tequila stays with the Mi Campo rule (mi-campo.js).
+            const sbr = require('./spirit-brands.js').brandsIn(String(customerSaid || '') + '\n' + String(customerMessage || ''));
+            delete sbr.tequila;
+            if (Object.keys(sbr).length) { saInput.spirit_brands = sbr; console.log('[spirit-brands] menu_build: ' + Object.keys(sbr).map(k => k + ' = ' + sbr[k]).join(', ') + ' (the customer chose it)'); }
             if (sp || bs) console.log('[event-prefs] from the customer\'s words: ' + (sp ? 'spirits ' + sp.types.join(', ') + ' (' + sp.why + ')' : '') + (sp && bs ? ' · ' : '') + (bs ? 'beer ' + bs.label : ''));
           } catch (e) { console.log('[event-prefs] error: ' + e.message); }
         }

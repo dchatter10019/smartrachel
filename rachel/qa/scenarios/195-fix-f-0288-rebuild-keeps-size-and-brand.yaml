@@ -1,0 +1,29 @@
+name: fix-f-0288-rebuild-keeps-size-and-brand
+# F-0288 (Nov 18, DC on Slack, Foodie For All, 140 guests): after "Use only 750 ml bottles… use high west for bourbon"
+# a later rebuild of the event package put Belvedere 1.75 L and Woodford Reserve 1.75 L back — both instructions undone.
+# The size is remembered (state.bottleSizeOnly -> exact_bottle_ml); the bourbon brand must be too (spirit_brands).
+tags: [events]
+format: plain
+turns:
+  - send: reset
+  - send: "Need wine + beer + spirits for 140 people. Budget 25 to 30 a person"
+    expect: {contains: ["21"]}
+  - send: "yes"
+    expect: {matches: "(?i)address"}
+  - send: "300 Park Avenue ny, ny"
+    expect:
+      matches: "(?i)drink most"
+  - send: "2 hours"
+    expect:
+      matches: "(?i)drink most"
+  - send: "Even"
+    expect:
+      contains: ["Product total"]
+  - send: "Use only 750 ml bottles… use high west for bourbon"
+    expect:
+      contains: ["High West"]
+  - send: "We now have 160 guests, update the menu"
+    expect:
+      contains: ["High West"]
+      not_matches: "(?i)woodford|1\\.75 ?l"
+      log_contains: ["[spirit-brands]"]

@@ -736,6 +736,7 @@ async function executeTool(name, input) {
       exact_bottle_ml: input.exact_bottle_ml || 0, // rachel/bottle-only.js: "use only 750 ml bottles" (Nov 18)
       no_wine_types: input.no_wine_types || null,   // rachel/wine-coverage.js: "no sparkling, only red and white" (Nov 18)
       spirit_types: input.spirit_types || null,   // rachel/event-prefs.js: the spirits the customer asked for (Oct 9)
+      spirit_brands: input.spirit_brands || null, // rachel/spirit-brands.js: "use high west for bourbon" kept on a rebuild (F-0288)
       wine_lean: input.wine_lean || '',            // rachel/event-wishes.js: "more white than red" (Oct 21)
       mix_bias: input.mix_bias || '',              // rachel/event-wishes.js: "more beer than wine", "heavy on the spirits"
       beer_style: input.beer_style || null,       // rachel/event-prefs.js: the beer style asked for, closest family first

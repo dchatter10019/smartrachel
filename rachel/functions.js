@@ -2118,6 +2118,20 @@ async function buildPackage(iv) {
       if (mcStd) { plM.miCampo=mcStd; console.log('[buildPackage] Mi Campo for the '+plM.label+' slot: '+mcStd.name+' $'+mcStd.price); }
       else console.log('[buildPackage] Mi Campo for the '+plM.label+' slot: not carried here'+(capSpiritMin||capSpiritMax?' (within the customer\'s caps)':'')+' — usual tequila pick');
     }
+    // The brand the customer chose for a spirit type ("use high west for bourbon"; rachel/spirit-brands.js, F-0288): that
+    // slot takes the brand's bottles when the store carries them (the size / flavour filters below still apply); else the
+    // usual pick, logged. A rebuild had put Woodford Reserve back after the customer chose High West.
+    var spBrands=(iv.spirit_brands&&typeof iv.spirit_brands==='object')?iv.spirit_brands:{};
+    for (var sbI=0; sbI<plan.length; sbI++) {
+      var plB=plan[sbI], brB=plB.cat==="spirits"&&plB.slot!=="mixer"&&!plB.miCampo?spBrands[plB.slot]:'';
+      if (!brB) continue;
+      var nzSB=function(x){return String(x||'').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g,'').replace(/[^a-z0-9 ]/g,'');};
+      var brWords=nzSB(brB).split(/\s+/).filter(Boolean);
+      var brRows=[].concat(await rawSearch(brB+' '+plB.slot)||[], await rawSearch(brB)||[]), brSeen={};
+      brRows=brRows.filter(function(p){ var k=p.product_id||p.name; if (brSeen[k]) return false; brSeen[k]=1; var n=nzSB(p.name); return brWords.every(function(w){return n.split(' ').indexOf(w)>=0;}) && (SPIRIT_KW[plB.slot]?classifyOk(plB.slot,p):!isMini(p)); });
+      if (brRows.length) { resAll[sbI]=brRows; console.log('[spirit-brands] '+plB.slot+' slot: '+brB+' as the customer chose — '+brRows.slice(0,3).map(function(p){return p.name;}).join(' | ')); }
+      else console.log('[spirit-brands] '+plB.slot+' slot: '+brB+' NOT CARRIED here — usual '+plB.slot+' pick');
+    }
     // The beer the customer asked for (event-prefs.js beerStyleIn: "beer (Oktoberfest selections)", "German beers"): the
     // style's own words first, then its family (Oktoberfest -> German brands), each hit must carry the word in its name.
     // None here -> the usual beer, and the customer is told plainly (beer_note). Oct 7: never passed — Stella + Goose Island.
