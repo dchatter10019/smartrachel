@@ -39,6 +39,7 @@ fixer:
   model: claude-opus-5-5     # pinned (DC, Oct 3) — the fixer never runs on the CLI's default model
   max_turns: 150           # Oct 4: 60 ran out mid-fix; the $5 per-fix cap still bounds the cost
   minutes_per_finding: 45
+  auto_deploy: true         # DC, Nov 26: a fix that passed staging goes live with no ✅ (ops/deploy-fix.sh); false = wait for ✅
 
 # Nightly conversation review (ops/conversation-review.py, DC Oct 7): reads the day's customer conversations
 # (logs/transcripts.jsonl), flags where Rachel let a customer down -> findings -> fixer. Runs in qa/nightly.sh.

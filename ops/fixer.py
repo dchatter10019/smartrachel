@@ -5,7 +5,10 @@ it as a QA scenario, fix it and commit; then PROVE it here, independently of wha
   the new scenario FAILS on staging from the base, PASSES on staging from the branch, and the smoke set passes on the branch;
   the branch touches no protected path/region (scope.yaml).
 Result -> logs/fixer/<id>.json (+ the agent transcript <id>.log), a review post (Slack #rachel-ops once OPS_SLACK_CHANNEL is
-set; until then logs/fixer/<id>.post.txt). Nothing is deployed here — ops/deploy-fix.sh does that on DC's ✅ (Part D).
+set; until then logs/fixer/<id>.post.txt). AUTO-DEPLOY (DC, Nov 26: "once you have moved to staging and the tests are
+successful, move to prod, you dont need my approval"): a fix whose proof passed is put live right away by ops/deploy-fix.sh
+(staging smoke again -> prod restart -> prodcheck -> automatic rollback on failure) and the result is posted in the fix's
+thread. fixer.auto_deploy: false in ops/monitor.yaml (or a --dry-post / --seed run) = the old way, waiting for DC's ✅.
 
   ops/fixer.py                     nightly: open findings, up to fixer.max_per_night
   ops/fixer.py --finding F-0007    just that one
@@ -300,7 +303,7 @@ def voiceflow_warning(files):
             "in Voiceflow so it picks up the change.\n")
 
 # ── posting ─────────────────────────────────────────────────────────────────────────────────────────────────────────
-def post(f, res, proof, dry, scope=None, cost=None):
+def post(f, res, proof, dry, scope=None, cost=None, auto=False):
     scope = scope or {}
     meaning, todo = PLAIN.get(f['detector'], (f['summary'], ''))
     if res.get('outcome') == 'fixed' and proof.get('ok'):
@@ -314,8 +317,11 @@ def post(f, res, proof, dry, scope=None, cost=None):
                 f"With my fix it no longer does, and all of Rachel's everyday checks still pass. Customers haven't seen any change yet.\n"
                 f"*Risk:* {risk}. {plain(res, 'plain_risk', '')}".rstrip() + "\n"
                 + voiceflow_warning(proof.get('files', [])) +
-                f"👉 React ✅ to put it live (it is tested once more first, takes about 5 minutes, and is undone automatically if anything fails), "
-                f"❌ to throw it away, or reply here with questions.\n"
+                (f"👉 Putting it live now, no approval needed (DC, Nov 26): it is tested once more on the test copy first, takes "
+                   f"about 5 minutes, and is undone automatically if anything fails. The result follows in this thread.\n" if auto else
+                   f"👉 React ✅ to put it live (it is tested once more first, takes about 5 minutes, and is undone automatically if anything fails), "
+                   f"❌ to throw it away, or reply here with questions.\n") +
+                f""
                 + tech_footer(f, 'changed: %s · branch fix/%s · log logs/fixer/%s.log%s' % (', '.join(proof.get('files', [])), f['id'], f['id'],
                                                                                             ' · cost $%.2f' % cost if cost is not None else '')
                                 + ('\n_cause: %s_\n_change: %s_' % (res.get('cause', '')[:300], res.get('summary', '')[:400])
@@ -333,12 +339,12 @@ def post(f, res, proof, dry, scope=None, cost=None):
     open(OUT + '/' + f['id'] + '.post.txt', 'w').write(text)
     return slack_post(text, dry, f['id'])
 
-def slack_post(text, dry, what):
+def slack_post(text, dry, what, thread_ts=None):
     e = MON.env_file(); tok = e.get('SLACK_BOT_TOKEN'); ch = e.get('OPS_TEST_CHANNEL' if dry else 'OPS_SLACK_CHANNEL')
     if tok and ch:
         import urllib.request
         try:
-            req = urllib.request.Request('https://slack.com/api/chat.postMessage', data=json.dumps({'channel': ch, 'text': text}).encode(),
+            req = urllib.request.Request('https://slack.com/api/chat.postMessage', data=json.dumps(dict({'channel': ch, 'text': text}, **({'thread_ts': thread_ts} if thread_ts else {}))).encode(),
                                          headers={'Authorization': 'Bearer ' + tok, 'Content-Type': 'application/json'})
             r = json.loads(urllib.request.urlopen(req, timeout=10).read()); log('posted %s to %s (ts %s)' % (what, 'test channel' if dry else '#rachel-ops', r.get('ts')))
             return r.get('ts')
@@ -377,6 +383,20 @@ def already_waiting(f, items):
     waiting = [g for g in items if g is not f and g.get('status') == 'review' and g.get('detector') == 'qa_fail']
     covered = set().union(*[failed_scenarios(g) for g in waiting]) if waiting else set()
     return [g['id'] for g in waiting if failed_scenarios(g) & mine], mine - covered
+
+def auto_deploy(f, ts):
+    """Put a proven fix live with ops/deploy-fix.sh (the same script DC's ✅ runs: scope re-check, fast-forward only,
+    precheck --deploy --stage-first, push; rollback + master reset on failure) and post its one-line result in the fix's
+    thread. A refusal (uncommitted work in the main tree, master moved on) leaves the finding in review for a ✅."""
+    log('%s: proof passed — auto-deploying (fixer.auto_deploy)' % f['id'])
+    try:
+        r = subprocess.run([OPS + '/deploy-fix.sh', f['id']], cwd='/home/ubuntu', capture_output=True, text=True, timeout=3600)
+        line = (r.stdout.strip().splitlines() or ['⛔ %s: the deploy printed nothing (exit %s)' % (f['id'], r.returncode)])[-1]
+    except subprocess.TimeoutExpired:
+        line = '⛔ %s: the deploy did not finish within an hour — check logs/fixer/%s.deploy.log' % (f['id'], f['id'])
+    log('%s auto-deploy: %s' % (f['id'], line))
+    if not line.startswith('🚀'): line += ' It is waiting in review — react ✅ on the post above to try again.'
+    slack_post(line, False, f['id'] + ' deploy result', thread_ts=ts)
 
 def main():
     ap = argparse.ArgumentParser()
@@ -433,11 +453,14 @@ def main():
         rec = {'finding': f, 'result': res, 'proof': proof, 'cost_usd': cost, 'cost_estimated': est, 'at': utcnow().isoformat() + 'Z'}
         if a.seed: rec['permission_test'] = {'denials_in_transcript': len(re.findall(r'permission|not allowed|denied', raw, re.I))}
         json.dump(rec, open(OUT + '/' + f['id'] + '.json', 'w'), indent=1, default=str)
-        ts = post(f, res, proof, a.dry_post, scope, cost)
-        f['status'] = 'review' if (res.get('outcome') == 'fixed' and proof['ok']) else ('diagnosed' if res.get('outcome') == 'diagnosed' else 'open')
+        ready = res.get('outcome') == 'fixed' and proof['ok']
+        auto = ready and fx.get('auto_deploy', True) and not a.dry_post and not a.seed
+        ts = post(f, res, proof, a.dry_post, scope, cost, auto)
+        f['status'] = 'review' if ready else ('diagnosed' if res.get('outcome') == 'diagnosed' else 'open')
         if ts: f['slack_ts'] = ts
         store._save()
         log('%s -> %s (proof ok: %s, $%.2f)' % (f['id'], f['status'], proof['ok'], cost))
+        if auto: auto_deploy(f, ts)   # deploy-fix.sh writes the new status; the Store merge keeps it (f unchanged since this save)
     rep = spend_report(budget)
     log('done: %d agent run(s) this pass; %s' % (runs, rep.replace('*', '')))
     open(OUT + '/spend-report.txt', 'w').write(rep + '\n')

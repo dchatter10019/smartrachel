@@ -393,7 +393,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
    working tree, so check `git status` and stash or hold anything unapproved first. A deploy that happens by mistake is
    reported in the FIRST LINE of the next message (what went live, when, how). Nov 20: the saved-basket fix's deploy at
    15:42 UTC (7876ca6) also shipped the uncommitted search-normalize work before DC had approved it.
-   (The fixer's Slack ✅ / deploy-fix.sh is DC's approval of that fix.)
+   (The fixer's Slack ✅ / deploy-fix.sh is DC's approval of that fix.) EXCEPTION — the overnight fixer (DC, Nov 26: "once you
+   have moved to staging and the tests are successful, move to prod, you dont need my approval"): a fixer fix whose proof
+   passed on staging (repro fails on base, passes on the branch, smoke passes) is deployed by fixer.py itself via
+   ops/deploy-fix.sh, no ✅. This covers only fixer branches (protected scope still refused), never work in an interactive session.
 
 ## Debug-and-fix loop (spec: "Rachel — Automated Debug-and-Fix Loop", Sep 29)
 - Step 1 staging: done (see Staging above). Step 2 monitor: ops/monitor.py (thresholds ops/monitor.yaml) reads the logs,
@@ -428,7 +431,10 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
 - logs/findings.jsonl has several writers (monitor service, fixer, deploy-fix.sh, Slack ❌, by hand). Store merges per item:
   an item this process changed since its last sync wins, others take the file's version (before Oct 3 the monitor's stale
   copy won, reverting every outside status change — the fixer would have re-fixed, and re-paid for, the same finding).
-- Step 4 deploy (ops/deploy-fix.sh <id>): ✅ by an approver on the fixer post (rachel_slack_bot.py reaction_added), or a TYPED
+- Step 4 deploy (ops/deploy-fix.sh <id>). AUTOMATIC since Nov 26 (DC): fixer.py runs it right after a fix's proof passes
+  (fixer.auto_deploy in ops/monitor.yaml, default true; --dry-post / --seed runs never deploy) and posts the 🚀 / ⛔ line in the
+  "Fix ready" thread; a refused deploy (uncommitted work in the main tree, master moved on, final checks failed -> rolled back)
+  stays in review for a ✅. Otherwise: ✅ by an approver on the fixer post (rachel_slack_bot.py reaction_added), or a TYPED
   ✅/❌ ("approve", "F-0016 ✅", in the post's thread or as a new #rachel-ops message -> the named / threaded / only waiting
   fix; several waiting = asked which; handle_ops_message, [fix-review] log; Oct 5: DC's typed ✅ was ignored) →
   scope re-check, fast-forward-only, precheck --deploy --stage-first, push; rollback + master reset on failure; ❌ discards.
