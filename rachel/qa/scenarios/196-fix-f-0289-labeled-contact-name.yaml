@@ -1,0 +1,26 @@
+name: fix-f-0289-labeled-contact-name
+# F-0289 (Nov 20, DC on Slack, WAT order 33071): to "Ordering as Dipanjan Chatterjee, 917..., ... — tell me if any of that
+# should change" the customer sent a labeled form ("Name: Abby WAT / Phone: (954) 778-8787 / email: ..."). The phone and
+# email were taken, the "Name: Abby WAT" line was not (customer-contacts.js contactChangeIn did not strip the "Name:" label),
+# so the order went out under Dipanjan Chatterjee. The contact is offered again here by re-asking for the order at the date
+# step (the conversation's own contact; QA identities never get a saved one). Same /chat order flow on every channel.
+format: plain
+tags: [orders]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "need a kim crawford"
+  - send: "1"
+  - send: "2"
+  - send: "place the order"
+  - send: "QA Tester"
+  - send: "same"
+  - send: "9175550100"
+  - send: "place the order"
+    expect: {contains: ["Ordering as QA Tester"]}
+  - send: "Name: Abby WAT\nPhone: (954) 778-8787\nemail: rachel_qa@getbevvi.com"
+    expect:
+      contains: ["ordering as Abby WAT"]
+      not_contains: ["QA Tester"]
+      log_contains: ["\"name\":\"Abby WAT\""]

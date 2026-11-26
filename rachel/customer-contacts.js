@@ -64,7 +64,9 @@ function recipientNameIn(m) {
 // Real (Nov 16, DC on Slack): "Frank Acosta, 6466103382, <mailto:x@y.com|x@y.com>, tomorrow 3 pm EST" — only the time was
 // read and the order went out under the prefilled Slack name and phone.
 function contactChangeIn(m) {
-  const t = String(m || '').replace(/<mailto:[^|>]+\|([^>]+)>/gi, '$1').replace(/<tel:[^|>]+\|([^>]+)>/gi, '$1');
+  // A form's lines can arrive flattened to one line ("Name: Abby WAT Phone: ... email: ..."): each contact label starts a part.
+  const t = String(m || '').replace(/<mailto:[^|>]+\|([^>]+)>/gi, '$1').replace(/<tel:[^|>]+\|([^>]+)>/gi, '$1')
+    .replace(/\s+(?=[*_]*(?:phone(?:\s+number)?|mobile|cell|tel|telephone|e-?mail(?:\s+address)?|(?:full\s+|contact\s+|customer\s+)?name)[*_]*\s*:)/gi, '\n');
   const out = {}; let rest = t;
   const em = t.match(/\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+\b/);
   if (em) { out.email = em[0].toLowerCase(); rest = rest.replace(em[0], ' '); }
@@ -73,8 +75,13 @@ function contactChangeIn(m) {
   // A name = a comma / newline part that is 2-4 capitalized words (or "name is X" / "for X"), never time words.
   const TIMEW = /\b(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december|am|pm|est|edt|et|pt|pst|ct|cst|mt|noon|same|none|please|thanks)\b/i;
   for (const part of rest.split(/\s*[,;\n]\s*/)) {
-    const p0 = part.trim().replace(/^(?:(?:no|nope)[,.!]?\s*)?(?:(?:the\s+)?name\s+(?:is|should\s+be)|it'?s\s+for|for|under|use)\s+/i, '').replace(/[.!]+$/, '');
+    // A labeled form line ("Name: Abby WAT", "*Full name:* X", "Contact name - X") — the label is not the name (F-0289, Nov 20:
+    // the phone + email of such a form were taken, the name line was not, and the order went out under the old name).
+    const LABEL = /^[*_\s]*(?:(?:full|contact|customer|recipient|first\s+and\s+last|first\s+name\s+and\s+last)\s+)?name[*_]*\s*[:\-–][*_\s]*/i;
+    const labeled = LABEL.test(part.trim());
+    const p0 = part.trim().replace(LABEL, '').replace(/^(?:(?:no|nope)[,.!]?\s*)?(?:(?:the\s+)?name\s+(?:is|should\s+be)|it'?s\s+for|for|under|use)\s+/i, '').replace(/[.!]+$/, '');
     if (/^[A-Z][A-Za-zà-ÿ'.-]+(?:\s+[A-Z][A-Za-zà-ÿ'.-]+){1,3}$/.test(p0) && !TIMEW.test(p0) && !/\b(same|email|account|bevvi|my|me)\b/i.test(p0)) {
+      if (labeled) console.log('[contacts] name read from a labeled line: ' + JSON.stringify(part.trim()) + ' -> ' + JSON.stringify(p0));
       out.name = p0; rest = rest.replace(part, ' '); break;
     }
   }

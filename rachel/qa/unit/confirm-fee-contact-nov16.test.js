@@ -12,4 +12,11 @@ const c = C.contactChangeIn('Frank Acosta, 6466103382, <mailto:dipanjan@getbevvi
 assert.deepStrictEqual(c, { email: 'dipanjan@getbevvi.com', phone: '6466103382', name: 'Frank Acosta', rest: 'tomorrow 3 pm EST' });
 for (const m of ['tomorrow 3 pm EST', 'Nov 18 at 2pm ET', 'Next Tuesday 3 PM', 'same']) assert.strictEqual(C.contactChangeIn(m), null, m);
 assert.strictEqual(C.contactChangeIn('use Jane Doe, tomorrow at 4 pm ET').name, 'Jane Doe');
+// F-0289 (Nov 20, Slack): a labeled form — the "Name:" line was ignored, the order went out under the old name.
+const f = C.contactChangeIn('Name: Abby WAT\nPhone: <tel:9547788787|(954) 778-8787>\nemail: <mailto:dipanjan@getbevvi.com|dipanjan@getbevvi.com>');
+assert.strictEqual(f.name, 'Abby WAT'); assert.strictEqual(f.phone, '(954) 778-8787'); assert.strictEqual(f.email, 'dipanjan@getbevvi.com');
+const g = C.contactChangeIn('Name: Abby WAT Phone: (954) 778-8787 email: rachel_qa@getbevvi.com');   // the same form, newlines flattened
+assert.strictEqual(g.name, 'Abby WAT'); assert.strictEqual(g.phone, '(954) 778-8787');
+assert.strictEqual(C.contactChangeIn('*Full name:* Diana Maranzano').name, 'Diana Maranzano');
+assert.strictEqual(C.contactChangeIn('Contact name - Jane Doe, tomorrow 3 pm ET').name, 'Jane Doe');
 console.log('confirm-fee-contact-nov16: ok');
