@@ -1,0 +1,36 @@
+name: fix-f-0290-hide-address-typo
+# Nov 19, DC (Slack, Equinix proposal): "take out the delivery address from the poposal" ("poposal" typo) missed the
+# in-code address command (it knew "propsal" / "proposal" only), went to the model, which made a new PDF that still
+# printed "Delivery: 16435 Military Rd S"; "No delivery address on proposal" then got "I'm not able to suppress it,
+# contact support". Both wordings must leave the address off in code and regenerate the PDF.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "332 Pine St, San Francisco, CA 94104"
+  - send: "need La Marca Prosecco 750ml"
+    expect: {contains: ["La Marca Prosecco - 750 ML"]}
+  - send: "La Marca Prosecco - 750 ML"
+  - send: "12"
+    expect: {matches: "(?i)12\\s*x\\s*La Marca Prosecco"}
+  - send: "need to get a proposal"
+    expect: {contains: ["client"]}
+  - send: "Equinix Inc"
+  - send: "None"
+    expect:
+      contains: ["Download proposal"]
+      pdf_contains: ["332 Pine St"]
+  - send: "take out the delivery address from the poposal"
+    expect:
+      contains: ["delivery address is left off the proposal", "Download proposal"]
+      not_contains: ["support"]
+      log_contains: ["[tax/address] the delivery address is left off the proposal"]
+      pdf_not_contains: ["332 Pine"]
+  - send: "put the address back on the proposal"
+    expect:
+      contains: ["delivery address is back on the proposal"]
+      pdf_contains: ["332 Pine St"]
+  - send: "its showing Delivery: 332 Pine St, San Francisco, CA 94104. No delivery address on proposal"
+    expect:
+      contains: ["delivery address is left off the proposal", "Download proposal"]
+      not_contains: ["support"]
+      pdf_not_contains: ["332 Pine"]
