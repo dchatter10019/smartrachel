@@ -10,7 +10,7 @@ successful, move to prod, you dont need my approval"): a fix whose proof passed 
 (staging smoke again -> prod restart -> prodcheck -> automatic rollback on failure) and the result is posted in the fix's
 thread. fixer.auto_deploy: false in ops/monitor.yaml (or a --dry-post / --seed run) = the old way, waiting for DC's ✅.
 
-  ops/fixer.py                     nightly: open findings, up to fixer.max_per_night
+  ops/fixer.py                     nightly: open findings, as many as fixer.nightly_budget_usd allows
   ops/fixer.py --finding F-0007    just that one
   ops/fixer.py --dry-post          post to OPS_TEST_CHANNEL (or the file) instead of #rachel-ops
   ops/fixer.py --seed synonym      acceptance test: plant a known bug on a throwaway base branch + a matching finding, fix it
@@ -431,7 +431,8 @@ def main():
         if waiting_ids and not uncovered:
             f['status'] = 'diagnosed'; f['note'] = 'Same failing tests as %s, whose fix is waiting for approval — not fixed again.' % ', '.join(waiting_ids)
             store._save(); log('%s: every failing scenario already has a fix waiting (%s) — skipped, no agent run' % (f['id'], ', '.join(waiting_ids))); continue
-        if fixes >= fx.get('max_per_night', 3): log('nightly fix budget reached — the rest wait'); break
+        mpn = int(fx.get('max_per_night') or 0)   # 0 / unset = no count limit, only the dollar budget (DC, Nov 27)
+        if mpn and fixes >= mpn: log('nightly fix count limit (%d) reached — the rest wait' % mpn); break
         if not budget: log('no fixer.nightly_budget_usd in ops/monitor.yaml — DC sets it before the agent runs; %s waits' % f['id']); continue
         if spent + cap > budget: log('$%.2f of the $%s nightly budget spent — another fix could cost $%.2f; stopping' % (spent, budget, cap)); break
         f['status'] = 'fixing'; f['fix_attempts'] = f.get('fix_attempts', 0) + 1; store._save()

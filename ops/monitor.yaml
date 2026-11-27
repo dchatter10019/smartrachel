@@ -35,7 +35,7 @@ critical_immediate: true
 fixer:
   nightly_budget_usd: 15    # per UTC day, across all runs; a fix starts only if the full per-fix cap still fits
   per_fix_usd: 5            # hard cap per agent run (claude --max-budget-usd); a run with no reported cost is charged this
-  max_per_night: 3
+  max_per_night: 0          # 0 = no count limit (DC, Nov 27: "fix as many bugs as possible within the budget"); the $15 budget decides
   model: claude-opus-5-5     # pinned (DC, Oct 3) — the fixer never runs on the CLI's default model
   max_turns: 150           # Oct 4: 60 ran out mid-fix; the $5 per-fix cap still bounds the cost
   minutes_per_finding: 45

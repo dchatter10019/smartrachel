@@ -29,7 +29,7 @@ if [ -n "$QA_SLACK_CHANNEL" ] && [ -n "$SLACK_BOT_TOKEN" ]; then
     -d "$(python3 -c 'import json,sys; print(json.dumps({"channel": sys.argv[1], "text": sys.argv[2]}))' "$QA_SLACK_CHANNEL" "$TEXT")" > /dev/null
 fi
 # Auto-fixer (debug-and-fix loop step 3, scheduled by DC Oct 3): the monitor records this run's failures as findings, then
-# the fixer works the open ones within ops/monitor.yaml fixer: limits ($15/UTC day, $5/fix, 3 fixes). Kill switch: ops/PAUSE.
+# the fixer works the open ones within ops/monitor.yaml fixer: limits ($15/UTC day, $5/fix, no count limit since Nov 27). Kill switch: ops/PAUSE.
 # Its review posts go to OPS_SLACK_CHANNEL (until set: logs/fixer/<id>.post.txt). After the QA post, so QA isn't delayed.
 export PATH="/home/ubuntu/.npm-global/bin:$PATH"   # the claude CLI (systemd's PATH lacks it)
 python3 /home/ubuntu/ops/monitor.py --once >> /home/ubuntu/logs/monitor.log 2>&1
