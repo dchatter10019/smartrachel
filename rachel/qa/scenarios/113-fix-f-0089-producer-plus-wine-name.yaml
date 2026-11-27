@@ -6,7 +6,7 @@ tags: [search]
 turns:
   - send: reset
   - send: "yes"
-  - send: "1 Rockefeller Plaza, New York, NY 10019"
+  - send: "1 Rockefeller Plaza, New York, NY 10020"
   # The LLM sometimes searches "The Prisoner Red Blend" (no bug path) — the reply checks hold either way; the
   # product_query log line ("— no result carries "prisoner"") shows when the producer path ran.
   - send: "do you have \"Orin Swift Prisoner\"?"

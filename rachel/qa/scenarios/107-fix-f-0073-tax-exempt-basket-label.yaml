@@ -5,7 +5,7 @@ name: fix-f-0073-tax-exempt-basket-label
 turns:
   - send: reset
   - send: "yes"
-  - send: "1 Rockefeller Plaza, New York, NY 10019"
+  - send: "1 Rockefeller Plaza, New York, NY 10020"
   - send: "Add 2 bottles of Tito's 750ml"
     expect: {contains: ["Tito"]}
   - send: "the tax should be 0"

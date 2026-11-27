@@ -3261,6 +3261,17 @@ app.post('/chat', async (req, res) => {
       } else if (normA(message) === normA(mm.typed)) {
         console.log('[addr] zip mismatch — customer sent the same address again, keeping what they typed: ' + JSON.stringify(mm.typed));
         addrMismatchKept = true;
+      } else if (['addr', 'addr_new'].includes(state.step) && !require('./address-extract.js').findAddress(message)
+          && !/\b\d{1,6}\s+(?:[A-Za-z0-9'.-]+\s+){0,4}?(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Dr|Drive|Ln|Lane|Way|Pl|Place|Ct|Court|Pkwy|Plaza|Broadway)\b/i.test(message)
+          && message.trim().split(/\s+/).length >= 3) {
+        // A request instead of an answer ("I need 500 bottles of Tito's 750 ML"): held for after the address and the question
+        // asked again (Nov 27 nightly, stock-limits: it was geocoded as an address -> "I couldn't find that address", request lost).
+        state.addrMismatch = mm;
+        state.pendingIntent = state.pendingIntent ? state.pendingIntent + '\n' + message : message; saveFlowState();
+        console.log('[addr] zip mismatch — a request, not an answer: held for after the address, question asked again: ' + JSON.stringify(message.slice(0, 70)));
+        const bM2 = format === 'slack' ? '*' : '';
+        const rM2 = 'Happy to help with that — first, the address: I found ' + bM2 + mm.formatted + bM2 + ', which is in ' + mm.zip + '. Is that the right place? Reply "yes" to use it, send the same address again to keep it as you typed it, or send the correct street address.';
+        return res.json({ text: rM2, response: rM2 });
       }
     }
     const STREET_W = /\b\d{1,6}\s+(?:[A-Za-z0-9'.-]+\s+){0,4}?(?:St|Street|Ave|Avenue|Rd|Road|Blvd|Boulevard|Dr|Drive|Ln|Lane|Way|Pl|Place|Ct|Court|Pkwy|Parkway|Ter|Terrace|Sq|Square|Hwy|Highway|Cir|Circle|Plaza|Row|Wharf|Pier|Broadway|Bowery)\b\.?/i;
@@ -4691,6 +4702,13 @@ app.post('/chat', async (req, res) => {
               const doneL = done.map(d => String(d).toLowerCase());
               const namesL = (itR || []).concat(ctxR.basket || []).map(it => String(it.name || '').toLowerCase()).join(' | ');
               const left = INs.unaddressed(ins, doneLine, ctxR.basket, itR).filter(x => { const kw = INs.keywords(x).filter(w => !/^(remove|add|from|proposal|order|basket|bottles?|the)$/.test(w)); return !(kw.length && doneL.some(d => kw.filter(w => d.includes(w)).length >= Math.min(2, kw.length) || kw.some(w => w.length >= 5 && d.includes(w) && namesL.includes(w)))); });
+              // a list heading ("Please remove the following") is not a task, and a removal line is covered by a removal that
+              // fits it ("remove all beer in bottles" -> Corona Extra 12 x 12 OZ Bottles removed) (Nov 27, email-quote-edits)
+              const STOPW = /^(?:remove|removing|take|out|drop|delete|please|additionally|also|order|cannot|can't|have|that|from|all|the|any|items?|basket|quote|proposal)$/;
+              const left2 = left.filter(x => !/\b(?:following|below)\b\W*$/i.test(x)
+                && !(/\b(?:remove|take out|drop|delete)\b/i.test(x) && doneL.some(d => /^removed /.test(d) && (String(x).toLowerCase().match(/[a-z']+/g) || []).some(w => w.length > 3 && !STOPW.test(w) && d.includes(w.replace(/s$/, ''))))));
+              if (left2.length < left.length) console.log('[edit-reader] covered: ' + JSON.stringify(left.filter(x => !left2.includes(x)).map(x => x.slice(0, 60))));
+              left.length = 0; left.push(...left2);
               if (left.length) { console.log('[edit-reader] NOT answered in code — ' + left.length + ' line(s) of the message are not covered by the changes, the model answers them: ' + JSON.stringify(left.map(x => x.slice(0, 80)))); rest.push('other'); }
             }
           } catch (e) { console.log('[edit-reader] uncovered-lines check failed: ' + e.message); }
@@ -7024,6 +7042,17 @@ app.post('/chat', async (req, res) => {
       const askP = frP ? !!frP.proposal_request : isProposalTrigger;
       if (isProposalTrigger && !state.proposalStep && complaintP && !askP) { console.log('[proposal] NOT a proposal ask — the message is a complaint' + (frP ? ' (model)' : '') + ': ' + JSON.stringify(String(message).slice(0, 100))); isProposalTrigger = false; }
       else if (frP && isProposalTrigger && !askP && !state.proposalStep) { console.log('[proposal] NOT a proposal ask — the model read no request for a proposal: ' + JSON.stringify(String(message).slice(0, 100))); FR.gap('proposal_request', 'disagree', true, false, frCtx); isProposalTrigger = false; }
+      // A model-only reading starts the step-by-step flow only when the message names a proposal / quote / PDF and carries
+      // no item list of its own (Nov 27 nightly, 12 scenarios): "Please send a quote for the items below" + lines (email: the
+      // [quote-pdf] path builds + attaches it), "Rebuild it with only: ..." (the list builder; the model read complaint +
+      // proposal), "create a beverage menu/package" + a brief (the build) all got "How many bottles?" / "client name?".
+      else if (frP && !isProposalTrigger && askP && !state.proposalStep && !state.orderStep
+        && (!/\b(?:propos\w*|porposal|propsal|proposl|pdf|quote|quotation)\b/i.test(message) || OW.ownListCount(message) >= 2 || (frP.adds || []).length >= 2
+            // bare product lines too (Sean's "Menu:" list of ALL-CAPS lines, no bullets or counts): 4+ short lines that are
+            // not a question, a greeting / sign-off or a "Label: value" field
+            || String(message).split(/\r?\n/).map(l => l.trim()).filter(l => l && l.split(/\s+/).length <= 9 && !/[?:]\s*$|^\S[^:]{0,30}:\s|^(?:hi|hello|hey|dear|thanks|thank you|best|regards|cheers)\b/i.test(l) && /[a-z]{3}/i.test(l)).length >= 4)) {
+        console.log('[proposal] model read a proposal ask — NOT started in code: ' + (/\b(?:propos\w*|porposal|propsal|proposl|pdf|quote|quotation)\b/i.test(message) ? 'the message carries its own item list (built first)' : 'no proposal / quote / PDF word in the message') + ': ' + JSON.stringify(String(message).slice(0, 100)));
+      }
       else if (frP && !isProposalTrigger && askP && !state.proposalStep && !state.orderStep) { console.log('[proposal] proposal ask read by the model: ' + JSON.stringify(String(message).slice(0, 100))); FR.gap('proposal_request', 'missed', false, true, frCtx); isProposalTrigger = true; }
     }
     if (isProposalTrigger && editReaderPdf) { console.log('[proposal] the edit reader already regenerated the PDF this turn — no second proposal flow'); isProposalTrigger = false; }

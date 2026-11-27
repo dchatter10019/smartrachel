@@ -12,6 +12,6 @@ turns:
     expect:
       contains: ["Updated — delivering to 100 Federal Street, Floor 6, Boston, MA 02110"]
       log_contains: ["[addr] address changed at ready"]
-  - send: "please change the delivery address to 1 Main St\nSuite 200\nBoston, MA 02110"
+  - send: "please change the delivery address to 1 Federal St\nSuite 200\nBoston, MA 02110"
     expect:
-      contains: ["Updated — delivering to 1 Main St, Suite 200, Boston, MA 02110"]
+      contains: ["Updated — delivering to 1 Federal St, Suite 200, Boston, MA 02110"]

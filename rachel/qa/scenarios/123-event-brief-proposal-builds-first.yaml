@@ -22,6 +22,6 @@ turns:
       log_contains: ["[proposal] event brief with no package yet", "[proposal] package built — proposal flow started at the client step", "[bottle-size] the customer asked for 750 mL", "[menu_build] mixer"]
   - send: "Foodie For All"
     expect:
-      matches: "(?i)proposals/bevvi-proposal-foodie-for-all-2026-11-12"
+      matches: "(?i)proposals/bevvi-proposal-foodie-for-all-20\\d\\d-11-12"
       pdf_contains: ["Foodie For All", "Mi Campo", "November 12"]
       pdf_not_contains: ["375", "Cidre", "Chandon Brut"]

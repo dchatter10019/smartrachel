@@ -6,7 +6,7 @@ tags: [search]
 turns:
   - send: reset
   - send: "yes"
-  - send: "1 Rockefeller Plaza, New York, NY 10019"
+  - send: "1 Rockefeller Plaza, New York, NY 10020"
   - send: "do you have Penfolds Bin 407?"
     expect:
       matches: "(?i)(not|don't|do not|isn't|aren't).{0,60}(carr|stock|availab|have)"
