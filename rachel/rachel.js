@@ -337,6 +337,22 @@ async function executeTool(toolName, toolInput, onPackageBuilt, channelFormat, o
             delete saInput.queries;
           }
         }
+        // Beer STYLES the customer named ("lagers/pilsners, IPAs, wheat beers or Kölsches, and a stout or porter"): a beer
+        // recommendation with no occasion/query gets the customer's words, so the shopping-agent searches each style; a
+        // product_query of only beer-style phrases becomes that recommendation (Nov 27 nightly, slack-bellevue: the model sent
+        // {category:"beer"} alone, then product_query "wheat beer kolsch" found nothing and the customer heard "no Kölsch").
+        try {
+          const BSr = require('./beer-styles.js');
+          const stylesR = BSr.stylesIn(String(customerMessage || '')).filter(x => x.key !== 'na');
+          if (stylesR.length && saInput.intent === 'recommendation' && !saInput.occasion && !saInput.query && (!saInput.category || /beer/i.test(saInput.category))) {
+            saInput.query = String(customerMessage || '').slice(0, 400); saInput.category = 'beer';
+            console.log('[recommendation] beer styles from the customer\'s words: ' + stylesR.map(x => x.label).join(', '));
+          } else if (stylesR.length && saInput.intent === 'product_query' && Array.isArray(saInput.queries) && saInput.queries.length
+              && saInput.queries.every(q => q && q.name && BSr.stylesIn(q.name).length && !/\b(?:[A-Z][a-z]+'s|brewing|brewery|co\.)\b/.test(String(q.name)) && String(q.name).replace(/\b(?:beers?|ales?|and|or|\/|,)\b/gi, ' ').split(/\s+/).filter(Boolean).length <= 4)) {
+            console.log('[recommendation] product_query of beer styles only -> recommendation: ' + saInput.queries.map(q => q.name).join(' | '));
+            saInput.intent = 'recommendation'; saInput.category = 'beer'; saInput.query = saInput.queries.map(q => q.name).join(', '); delete saInput.queries;
+          }
+        } catch (e) { console.log('[recommendation] beer-style routing failed: ' + e.message); }
         // The customer's per-bottle price (bottle-price.js, server.js state.bottlePrice): every build picks generic lines
         // inside it and every wine search stays under it (Nov 13, DC's Eterra emails: "$15 a bottle" got $37 and $71 wines).
         if (sessionState && sessionState.bottlePrice && sessionState.bottlePrice.max) {

@@ -94,6 +94,13 @@ function similar(line, rows, need, opts = {}) {
     if (!r || !r.name || skip.has(nz(r.name)) || seen.has(nz(r.name))) return false;
     seen.add(nz(r.name));
     if (k && kindOf(r) !== k) return false;
+    // whiskey is one type, but a bourbon / rye / scotch / Irish line stays that (Nov 27: short Evan Williams bourbon ->
+    // Redemption RYE for a "bourbon and tequila bar")
+    // a beer STYLE line ("Oktoberfest Beer") stays that style (Nov 27: Brooklyn Oktoberfest short -> Brooklyn Lager)
+    if (line && line.style_label) { const sw = String(line.style_label).toLowerCase().split(/[^a-z]+/).filter(w => w.length > 2 && !/^(?:beers?|ales?|the|and|any|some)$/.test(w));
+      const rn = String(r.name || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, ''); if (sw.length && !sw.some(w => rn.includes(w))) return false; }
+    if (k === 'spirit:whiskey') { const wk = x => { const n = String((x && x.name) || '').toLowerCase() + ' ' + String((x && x.label) || '').toLowerCase(); return /bourbon/.test(n) ? 'bourbon' : /\brye\b/.test(n) ? 'rye' : /scotch|single malt|islay|speyside|highland/.test(n) ? 'scotch' : /irish/.test(n) ? 'irish' : /japanese|suntory|nikka|hibiki/.test(n) ? 'japanese' : ''; };
+      const wl = wk(line); if (wl && wk(r) !== wl) return false; }
     if (sz && sizeKey(r) !== sz) return false;
     if (DT.isNA(r) !== na) return false;
     if (FLAV.test(String(r.name || '')) && !FLAV.test(String(line.name || ''))) return false;
@@ -151,8 +158,25 @@ async function enforce(lines, { rowFor, search }) {
       const isBeerPack = r => /\b\d+\s*x\s*\d+(?:\.\d+)?\s*oz\b/i.test(String(r.name || '') + ' ' + String(r.sizeStr || r.size || '')) && !DT.typeOf(r)
         && !/\b(?:cider|cidre|sidra|seltzer|cocktail|margarita|spritz|wine)\b/i.test(String(r.name || '')) && (!(r.category || r.subCategory) || /beer|ale|lager/i.test(String(r.category || '') + ' ' + String(r.subCategory || '')));
       // its own "beer" search: the line's type can read as another kind ("Chimay Première RED" = red wine -> "red wine" was searched)
-      const rowsB = /beer/.test(termFor(Object.assign({}, row, li)).toLowerCase()) ? rows : await search('beer').catch(() => []);
-      const cands = (rowsB || []).filter(r => r && r.name && nz(r.name) !== nz(li.name) && isBeerPack(r) && !DT.isNA(r) && !FLAV.test(String(r.name)) && Number(r.price) > 0
+      let rowsB = /beer/.test(termFor(Object.assign({}, row, li)).toLowerCase()) ? rows : await search('beer').catch(() => []);
+      // A STYLE line keeps its style (Nov 27 nightly, email-beer-units: "IPA" short of stock -> 4x Budweiser 12 x 12 OZ Bottles)
+      const BS = require('./beer-styles.js');
+      // the line's own style, else the picked beer's (a generic "Beer" line labeled "Beer" that picked an IPA for an "IPA" ask)
+      const stL = BS.stylesIn(String(li.style_label || li.label || '')).filter(st => st.key !== 'na');
+      // a style beer-styles.js doesn't list ("Oktoberfest Beer"): only packs that carry its word
+      const styleWords = String(li.style_label || '').toLowerCase().split(/[^a-z]+/).filter(w => w.length > 2 && !/^(?:beers?|ales?|the|and|any|some)$/.test(w));
+      const styles = stL.length ? stL : BS.stylesIn(String(li.name || '')).filter(st => st.key !== 'na');
+      const foldB = x => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      const styleOk = r => (!styles.length || styles.some(st => st.name.test(foldB(r.name)))) && (stL.length || !styleWords.length || styleWords.some(w => foldB(r.name).includes(w)));
+      if (!stL.length && styleWords.length) { let rowsW = []; for (const w of styleWords) rowsW = rowsW.concat(await search(w).catch(() => [])); if (rowsW.length) rowsB = rowsW; }
+      if (styles.length) {
+        let rowsS = []; for (const st of styles) for (const t of st.terms) rowsS = rowsS.concat(await search(t).catch(() => []));
+        // a style from the line's label is kept strictly; one read off the pick falls back to any beer when none has enough
+        if (stL.length || rowsS.some(r => r && styleOk(r) && isBeerPack(r) && enough(r, Math.ceil(units / packOf(r))))) rowsB = rowsS;
+        else console.log('[stock] ' + li.name + ': no other ' + styles.map(st => st.label).join('/') + ' pack with enough — any beer pack');
+      }
+      const styleOn = rowsB.some(r => r && styleOk(r));
+      const cands = (rowsB || []).filter(r => r && r.name && nz(r.name) !== nz(li.name) && isBeerPack(r) && (!styleOn || styleOk(r)) && !DT.isNA(r) && !FLAV.test(String(r.name)) && Number(r.price) > 0
         && enough(r, Math.ceil(units / packOf(r))))   // unknown = enough (house rule); a known count first
         .sort((a, b) => ((inv(a) === null) - (inv(b) === null)) || Math.abs(Number(a.price) / packOf(a) - (Number(li.price) || 0) / packOf(li)) - Math.abs(Number(b.price) / packOf(b) - (Number(li.price) || 0) / packOf(li)));
       if (cands.length) {
@@ -164,7 +188,7 @@ async function enforce(lines, { rowFor, search }) {
         out.push(nl);
         continue;
       }
-      console.log('[stock] ' + li.name + ': no other beer pack with enough for ' + units + ' units (' + (rowsB || []).length + ' beer row(s) searched)');
+      console.log('[stock] ' + li.name + ': no other ' + (styles.length ? styles.map(st => st.label).join('/') + ' ' : '') + 'beer pack with enough for ' + units + ' units (' + (rowsB || []).length + ' beer row(s) searched)');
     }
     if (whole.length) {
       const r = whole[0];

@@ -201,6 +201,11 @@ function validate(reading, basket, message) {
     }
     if (kind === 'replace' && qty === 0) qty = null;
     // A revised list repeats lines that keep their count ("Red – Pinot Noir 6" on a 6x line): no change, not "6 -> 6" (Nov 16).
+    // A new count the customer never stated is not applied (Nov 27 nightly, cart-cleared-idle: "need a kim crawford" with 2 in the
+    // cart was read as set_qty 3 — the options list never showed and the pick "2" got "How many bottles?").
+    if (kind === 'set_qty' && message && !/\d/.test(message) && !/\b(?:another|more|extra|less|fewer|double|twice|half|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|dozen|twenty|thirty|forty|fifty)\b/i.test(message)) {
+      console.log('[edit-reader] set_qty L' + o.line + ' to ' + qty + ' NOT applied - no count in the message'); continue;
+    }
     if (kind === 'set_qty' && index >= 0 && qty === parseInt(basket[index].qty || basket[index].quantity || 0, 10)) { console.log('[edit-reader] set_qty L' + o.line + ' to ' + qty + ' skipped — already ' + qty); continue; }
     ops.push({ op: kind, index, item: index >= 0 ? basket[index] : null, product, qty });
   }

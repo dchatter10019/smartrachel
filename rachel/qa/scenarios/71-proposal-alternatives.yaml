@@ -21,7 +21,7 @@ turns:
     expect:
       contains: ["proposal is ready", "Options listed in the PDF"]
       log_contains: ["[options] listed in the PDF"]
-      pdf_contains: ["Options", "CHANGE", "in this proposal: Kim Crawford Prosecco"]
+      pdf_contains: ["Options", "CHANGE", "Prosecco 750ml — in this proposal:", "in this proposal: Cloudy Bay Sauvignon Blanc"]   # Nov 27: KC Prosecco left 10001 (Mionetto stands in)
   - send: "please send the proposal again without the options"
     expect:
       contains: ["proposal is ready"]

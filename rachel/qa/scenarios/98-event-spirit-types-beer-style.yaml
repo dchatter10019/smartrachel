@@ -11,7 +11,9 @@ turns:
   - send: "Oktoberfest party for 150 guests, 3 hours, $1500 budget. Wine, beer (Oktoberfest selections), and a bourbon and tequila bar."
   - send: "equal parts beer, wine and spirits"
     expect:
-      contains: ["Bourbon", "Tequila", "Product total", "no Oktoberfest beers"]
+      contains: ["Bourbon", "Tequila", "Product total"]
+      # Nov 27: the store carries Oktoberfest beers now (Brooklyn Oktoberfest, Hofbräu) — one of them, or the "no Oktoberfest" note
+      matches: "(?i)Oktoberfest|no Oktoberfest beers"
       not_matches: "(?i)\\b(vodka|gin|rum)\\b[^\\n]*\\$|egg nog|zinfandel bourbon|non alcoholic|\\bstella\\b|goose island"
       # The LLM sends custom_list ("Oktoberfest Beer" / "Bourbon" / "Tequila" lines) or menu_build (event-prefs) — either way:
       log_contains: ["beer style"]

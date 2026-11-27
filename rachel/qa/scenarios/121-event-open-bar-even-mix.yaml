@@ -18,7 +18,7 @@ turns:
     expect:
       contains: ["Product total", "Mi Campo"]
       # 15 guests x 3 drinks = 45: wine 15, one 24-pack, 2 spirit types for 15 spirit drinks (Nov 9) ~ 4-5 a person.
-      matches: "(?i)about [3-5] drinks per person"
+      matches: "(?i)about [3-6] drinks per person"   # 6 since the Stella 24-pack left 10001 (real count, Nov 27)
       not_matches: "(?i)cidre|cider|\\b375 ?ml|1\\.75 ?l|drinks per person[\\s\\S]*drinks per person|like to add mixers"
       log_contains: ["[menu] event length in the serving-mix answer", "[bottle-size] the customer asked for 750 mL", "[mixers] \"mixers\" asked for, none named", "[menu_build] mixer", "spirit types for 15 spirit drinks (45 target drinks): vodka, tequila (2 of 5)"]
       log_not_contains: ["[buildPackage] spirits the customer asked for: tequila", "REFUSED menu_build"]
@@ -29,5 +29,6 @@ turns:
   - send: "no champagne needed"
     expect:
       not_matches: "(?i)^no problem!\\s*would you like|\\d+ sparkling"
-      matches: "(?i)WINE[*_ ]*— 3 bottles[\\s\\S]*about \\d+ drinks per person"
-      log_contains: ["is not a mixer decline"]
+      # the edit reader takes it since Nov 25: the sparkling line removed, its volume moved to the wine kept
+      matches: "(?i)Removed:[\\s\\S]*(?:Cava|Brut|Champagne|Prosecco|Sparkling)"
+      log_contains: ["[wine-coverage] sparkling removed"]

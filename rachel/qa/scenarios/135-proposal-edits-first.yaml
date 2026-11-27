@@ -27,9 +27,10 @@ turns:
       not_contains: ["This Sunday"]
   - send: "Change Corona Light to 1 and replace the Veuve with a prosecco around $30 per bottle, 2 bottles, then regenerate the proposal."
     expect:
+      # since Nov 25 the edit reader makes the Corona change + the PDF in code and the model offers the proseccos (Nov 27)
       not_contains: ["I haven't shown you any options"]
-      log_contains: ["[proposal] in-code PDF NOT made"]
-      log_not_contains: ["[options] the proposal will list the options shown"]
+      matches: "(?i)Corona Light[^\\n]*(?:3 → 1|1x)[\\s\\S]*prosecco"
+      log_not_contains: ["[options] the proposal will list the options shown", "[price-swap] reply written in code"]
   - send: "take out the alternatives"
     expect:
       not_contains: ["Not in the quote, so nothing to change: alternatives"]

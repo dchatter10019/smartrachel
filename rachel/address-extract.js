@@ -59,7 +59,14 @@ function findAddress(text) {
     // "Send 2 cases of Stella to 425 W 53rd St, ..." — the street starts after the last "to/at <number>", not at the "2".
     // Also "to address <number>" / "address: <number>" (Oct 15 nightly: "delivery date is 12/5 to address 1460 Broadway"
     // was saved as "5 to address 1460 Broadway, ...").
-    const a = m[1].replace(/\s+/g, ' ').replace(/\s*,\s*/g, ', ').trim().replace(/^.*\b(?:(?:to|at)(?:\s+(?:the\s+)?(?:delivery\s+)?(?:address|location|venue))?|address(?:\s+is)?)\s*:?\s+(?=\d{1,6}\s+[A-Za-z])/i, '');
+    let a = m[1].replace(/\s+/g, ' ').replace(/\s*,\s*/g, ', ').trim().replace(/^.*\b(?:(?:to|at)(?:\s+(?:the\s+)?(?:delivery\s+)?(?:address|location|venue))?|address(?:\s+is)?)\s*:?\s+(?=\d{1,6}\s+[A-Za-z])/i, '');
+    // Order count lines in front of the street are never the address ("Stella 1 case\nCorona 1 case\nDelivery address: 425 W
+    // 53rd St ..." read as "1 case, Corona 1 case, 425 W 53rd St, ..." -> the replayed request lost the Corona; Nov 27 nightly,
+    // kept-proposal-resumed): leading comma parts are dropped while they are a count or have no street number.
+    { const QTYP = /^\d{1,6}\s+(?:x\b|cases?\b|btls?\b|bottles?\b|cans?\b|packs?\b|pk\b|ct\b)/i;
+      const parts = a.split(', '); let k = 0;
+      while (k < parts.length - 2 && (QTYP.test(parts[k]) || !/^\d{1,6}[a-z]?\s+[A-Za-z]/i.test(parts[k]))) k++;
+      if (k && /^\d{1,6}[a-z]?\s+[A-Za-z]/i.test(parts[k])) a = parts.slice(k).join(', '); }
     // A sentence break inside = two sentences, not an address: retry from the next word.
     if (/[.!?]\s+[A-Z]/.test(a) || /¶/.test(a)) { RE.lastIndex = m.index + 1; continue; }
     found.push({ a, cue: CUE.test(t.slice(Math.max(0, m.index - 40), m.index)) });
@@ -104,7 +111,7 @@ function splitAddress(text) {
   const rest = cut.replace(/^[\s.,;:!-]+/, '').replace(/\b(deliver(?:ed|y)?\s+(?:to|at)|ship(?:ped)?\s+to|address(?: is)?:?)\s*(?=,|\.|\s+on\b|\s*$)/i, '').trim();
   // "Send 2 cases of Stella to <address>" -> "Send 2 cases of Stella"; "deliver to <address> please" -> nothing left.
   const r2 = rest.replace(/\b(?:deliver(?:ed|y)?(?:\s+it)?\s+(?:to|at)|ship(?:ped)?\s+to)\s*(?=\s|$)/ig, ' ').replace(/\b(?:please|thanks|thank you|pls)\b[.!]*/ig, ' ')
-    .replace(/\s+(?:to|at)\s*[.,]?\s*$/i, '').replace(/^[\s.,;:!-]+|[\s,;:-]+$/g, '').trim();
+    .replace(/\s+(?:to|at)\s*[.,]?\s*$/i, '').replace(/\s*\bdelivery(?:\s+address)?\s*:?\s*$/i, '').replace(/^[\s.,;:!-]+|[\s,;:-]+$/g, '').trim();
   return { address: addrF, rest: r2.replace(/\s+/g, ' ').length > 8 ? r2 : null };
 }
 

@@ -1395,6 +1395,27 @@ Rachel sends from rachelai@getbevvi.com. Repo: github.com/dchatter10019/smartrac
   structured inputs, so no reader runs there; rachel_proposal_from_list applies brand-choice.js collapse to its lines (Nov 25).
   reprice-multipick turn 5 allows the alternatives intent (the right tool for "find alternative wines around $20").
 
+- Nov 27 nightly triage (42 failing; DC: "if it works in staging move it to prod"). Every /chat channel. (1) The fact reader's
+  proposal_request (Nov 25) no longer STARTS the step-by-step proposal flow on its own when the message has no proposal /
+  quote / PDF word or carries its own item list (counted lines, the reader's adds, or 4+ bare product lines) — quote emails
+  had got "How many bottles would you like on the proposal?", "Rebuild it with only ..." / menu briefs "client name?"
+  ([proposal] model read a proposal ask — NOT started in code). (2) A request sent in reply to the zip-mismatch question is
+  held and the question asked again ([addr] zip mismatch — a request, not an answer). (3) address-extract findAddress drops
+  count lines in front of the street ("Stella 1 case\nCorona 1 case\nDelivery address: 425 W 53rd St"). (4) A pick whose qty
+  comes from a line removed earlier converts that line's packs, not the request line's (8x -> 4x 12-packs). (5) Edit reader:
+  no set_qty without a count in the message; a list heading / a removal line its removals cover is not "uncovered".
+  (6) PRICE SWAPS never run when the price is for a named replacement ("replace the Veuve with a prosecco around $30");
+  price-swap onlyPriceAsk checks a sentence's other asks with the price taken out. (7) stock.js: a short beer keeps its
+  style (label, else the pick's: IPA stays IPA), a short whiskey keeps bourbon / rye / scotch / Irish. functions.js
+  QUANTITY-FIRST never downgrades a beer STYLE line to another style (Oktoberfest -> Budweiser). (8) instructions.js:
+  forward headers, a sign-off name, a bare date/window line and "We would like to submit a new ... order" are not tasks.
+  (9) A counted list that asks to be sized for an event ("create a menu for 100 people ... only beer and wine") gets the
+  mix question / list_scale again (the Nov 11 counted-list guard had caught it); the list's own drink kinds are kept when
+  the customer limits them in words. (10) proposal-options matches a group to the line LABELED with it (a stand-in line).
+  (11) rachel.js: a beer recommendation with no query gets the customer's words when they name beer styles; a
+  product_query of only style phrases becomes that recommendation. Stale tests fixed for catalog / date drift (1 Rockefeller
+  Plaza is 10020; no Cakebread Chardonnay in NYC; Hess Allomi Cab carried; Budweiser 30/36 gone at 02110; past dates).
+
 ## Open items
 - After Nov 14, 2026: remove /proposals/ from the http://3.138.180.46 nginx sites (rachel, bevvi-support) — kept 30 days
   so PDFs sent before Oct 15 still open (ask DC first; nginx).

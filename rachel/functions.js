@@ -1835,7 +1835,7 @@ async function buildPackage(iv) {
       }
       packNote='';
       if (match.kind!=='exact') console.log('[buildPackage] NOT EXACT ('+match.kind+'): '+JSON.stringify(np.name)+' -> '+best.name+' — '+match.note);
-      lineItems.push({label:np.name,name:best.name,qty:qty,price:best.price,size:best.sizeStr,url:best.url,product_id:best.product_id,upc:best.upc||"",establishmentId:best.establishmentId||"",category:catN,role:pq.mod?"modifier":undefined,match:match,customer_qty:pq.hasExplicitQty?true:undefined});
+      lineItems.push({label:np.name,style_label:np._styleLine?(np.label||undefined):undefined,name:best.name,qty:qty,price:best.price,size:best.sizeStr,url:best.url,product_id:best.product_id,upc:best.upc||"",establishmentId:best.establishmentId||"",category:catN,role:pq.mod?"modifier":undefined,match:match,customer_qty:pq.hasExplicitQty?true:undefined});
     }
     // Supply check for an event built from generic lines (no customer-stated quantities), as
     // menu_build does — the custom_list path logged nothing, so under-supply went unseen.
@@ -2300,6 +2300,9 @@ async function buildPackage(iv) {
               var slotS=String(li.label||'').toLowerCase();
               if(li.category==='spirits'&&SPIRIT_KW[slotS]&&!classifyOk(slotS,p)) return false;
               if(li.category==='beer'&&String(li.label||'').toLowerCase()==='beer'&&!classifyOk('beer',p)) return false;
+              // A beer STYLE line keeps its style word ("Oktoberfest beer" -> Budweiser, then an IPA; Nov 27, event-spirit-types)
+              if(/beer/i.test(String(li.category||''))){var styleW=String(li.style_label||(li.label&&!/^beers?$/i.test(li.label)?li.label:'')).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').split(/[^a-z]+/).filter(function(w){return w.length>2&&!/^(beer|beers|ale|ales|the|and|any|some|cans?|bottles?|pack|case)$/.test(w);});
+                if(styleW.length){var pn=String(p.name||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');if(!styleW.some(function(w){return pn.indexOf(w)>=0;})) return false;}}
               if(li.category==='wine'){
                 // Never a sake/port/sherry/vermouth etc. in a table-wine slot.
                 if(isNotTableWine(p.name)) return false;

@@ -13,15 +13,15 @@ turns:
   - send: "need a kim crawford"
   - send: "1"
   - send: "2"
-  - send: "do you have Macallan 18?"
+  - send: "do you have Macallan 18 Double Cask?"   # Nov 27: "Macallan 18" now finds two (Sherry Oak too) — one result is what this tests
     expect:
       matches: "Macallan 18"
       not_contains: ["Added"]
       log_contains: ["[product-discussed] NOT captured"]
   - send: "1"
     expect:
-      matches: "Macallan"
-      log_contains: ["[add-confirm] accepted"]
+      # the one-result offer now asks "How many would you like?" (stock shown) and "1" is that count — added either way
+      matches: "(?i)1x [^\\n]*Macallan[^\\n]*added|Macallan[^\\n]*added"
   - send: "show my basket"
     expect:
       contains: ["Macallan", "Kim Crawford"]

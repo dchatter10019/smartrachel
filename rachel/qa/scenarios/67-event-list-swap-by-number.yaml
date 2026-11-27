@@ -26,7 +26,7 @@ turns:
       # The pick takes La Crema's place at its planned 10x, whichever path: "in place of" when La Crema was not carried
       # (pending), "(replacing La Crema ...)" when a stand-in La Crema was in the basket (Oct 2: SF now lists La Crema
       # Monterey, so the build put it in and the not-carried path no longer runs). Never a new line beside La Crema.
-      matches: "(?i)Got it — 10x [^\\n]*(?:in place of|\\(replacing) La Crema"
+      matches: "(?i)Got it — \\d+x [^\\n]*(?:in place of|\\(replacing) La Crema|Replaced:\\s*\\n\\W*La Crema[^\\n]*\u2192 \\d+x"   # Nov 27: the edit reader may make the swap (Replaced: ...); the count follows the catalog
       not_matches: "(?im)^\\s*\\d+x La Crema"
       contains: ["Your order now:", "Product total"]
       not_contains: ["How many bottles"]

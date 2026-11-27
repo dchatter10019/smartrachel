@@ -10,4 +10,5 @@ turns:
   - send: "do you have Hess Cabernet?"
     expect:
       not_contains: ["Treo"]
-      log_contains: ["NOT FOUND \"Hess Cabernet\""]
+      # Nov 27: 10038 now carries Hess Allomi Cabernet Sauvignon — the right answer; Treo (a red blend) never is
+      matches: "(?i)Hess[^\\n]*Cabernet Sauvignon|NOT|don't|isn't"

@@ -822,11 +822,15 @@ async function applyBasketSubstitute(sessionKey, email, originalItem, replacemen
             // A smaller bottle makes up the volume asked for (DC, Oct 1: "smaller bottles are fine but they should add
             // up to 1 L"). "Lemon Juice 1L" x1 -> Master of Mixes 375 mL x3.
             const vol = x => { const m = String(x || '').toLowerCase().match(/(\d+(?:\.\d+)?)\s*(ml|l|liter|litre|oz)\b/); return m ? +m[1] * (m[2] === 'ml' ? 1 : m[2] === 'oz' ? 29.5735 : 1000) : 0; };
-            const vO = vol(originalItem), vR = vol(replacementSize) || vol(replacementName);
-            if (parsePack(originalItem)) packFrom = originalItem;   // a pack: units carry over below, not bottle volume
+            // A qty taken from a line removed earlier counts THAT line's packs / bottles, not the request line's (Nov 27 nightly,
+            // pack-standin: 4 x 12-pack removed, its 4 read as 4 x 24-pack of the request line -> 8 x 12-pack).
+            const fromRm = !!(recRm && qtyToUse === recRm.qty && recRm.name);
+            const origRef = fromRm ? recRm.name : originalItem;
+            const vO = vol(origRef), vR = vol(replacementSize) || vol(replacementName);
+            if (parsePack(origRef)) packFrom = origRef;   // a pack: units carry over below, not bottle volume
             else if (vO && vR && vR < vO * 0.9) {
               const qv = Math.ceil(((qtyToUse || 1) * vO) / vR - 0.02);
-              console.log('[confirm-substitute] volume: ' + (qtyToUse || 1) + ' x ' + JSON.stringify(originalItem) + ' = ' + Math.round((qtyToUse || 1) * vO) + ' mL -> ' + qv + ' x ' + Math.round(vR) + ' mL of ' + replacementName);
+              console.log('[confirm-substitute] volume: ' + (qtyToUse || 1) + ' x ' + JSON.stringify(origRef) + ' = ' + Math.round((qtyToUse || 1) * vO) + ' mL -> ' + qv + ' x ' + Math.round(vR) + ' mL of ' + replacementName);
               qtyToUse = qv;
             }
           }
@@ -3799,12 +3803,22 @@ app.post('/chat', async (req, res) => {
             const mapped = [...new Set(dtM.map(t => t === 'seltzer' ? 'beer' : t === 'cocktails' ? 'spirits' : t).filter(t => ['wine', 'beer', 'spirits'].includes(t)))];
             const order = ['wine', 'beer', 'spirits'].filter(k => mapped.includes(k));
             if (order.join('+') !== cats.join('+')) { console.log('[menu] drink kinds read by the model: ' + JSON.stringify(dtM) + ' (pattern read ' + cats.join(' + ') + ')'); FR.gap('drink_types', 'disagree', cats, order, frCtx); }
-            cats = order.length >= 2 ? order : null;
+            // "only beer and wine" under a list that has spirits: the model reads the kinds WANTED (wine + beer); the list's own
+            // kinds stay so the mix sets the rest to 0% and the reply says what was left out (Nov 27, event-list-mix-stated-swap)
+            const subsetOnly = order.length >= 2 && order.every(k => cats.includes(k)) && order.length < cats.length
+              && /\b(?:only|just|no)\b[^.\n]{0,25}\b(?:beer|wine|liquor|spirits|cocktails)\b/i.test(message);
+            if (subsetOnly) console.log('[menu] kept the list\'s kinds ' + cats.join(' + ') + ' — the customer limited them in words (the mix leaves the rest out)');
+            else cats = order.length >= 2 ? order : null;
           }
         }
         // Drinks already counted (3+ "2 btls of X" / "Sancerre 5 btls" / "Stella 1 case" lines): a list to price, never the
         // mix question (Nov 11, DC: the iCapital brief was asked "prosecco, beer or spirits?" twice). serving-mix.js.
-        if (cats && isCountedList(message)) { console.log('[menu] serving-mix question NOT asked — the drinks are already counted (' + countedLines(message).length + ' line(s)): ' + JSON.stringify(countedLines(message).slice(0, 3))); state.eventParams = Object.assign({}, state.eventParams || {}, { serving_mix: null, serving_mix_text: null }); cats = null; }
+        // ...unless the message asks to SIZE the list for an event ("can you create a menu for 100 people for a 3 hour event, but
+        // only beer and wine.. make it equal" under 10 counted lines): the listed products sized for it (list_scale). The guard
+        // had caught these since Nov 11 (Nov 27 nightly: event-list-scaled / -mix-stated-swap / -swap-by-number).
+        const SIZE_FOR_EVENT = /\b(?:create|make|build|plan|put together|design)\b[^.\n]{0,30}\b(?:menu|package|bar)\b[^.\n]{0,30}\bfor\s+\d{1,5}\s*(?:people|guests|ppl|persons|attendees)\b|\bchange the quantities\b|\b(?:scale|size)\s+(?:it|this|them|the list|the quantities)\b/i;
+        if (cats && isCountedList(message) && SIZE_FOR_EVENT.test(message)) console.log('[menu] counted list asked to be sized for an event — the mix question / list scale apply: ' + JSON.stringify((message.match(SIZE_FOR_EVENT) || [''])[0]));
+        else if (cats && isCountedList(message)) { console.log('[menu] serving-mix question NOT asked — the drinks are already counted (' + countedLines(message).length + ' line(s)): ' + JSON.stringify(countedLines(message).slice(0, 3))); state.eventParams = Object.assign({}, state.eventParams || {}, { serving_mix: null, serving_mix_text: null }); cats = null; }
         if (cats) {
           const stated = parseServingMix(message, cats, true);
           state.eventParams = Object.assign({}, state.eventParams || {}, { serving_mix: stated ? JSON.stringify(stated.mix) : null, serving_mix_text: null });   // a new event never inherits an old mix (or its words)
@@ -4375,6 +4389,9 @@ app.post('/chat', async (req, res) => {
         let sItems = []; try { sItems = JSON.parse(state.lastLineItems || '[]'); } catch (e) {}
         const over = bpS && sItems.length ? PS.overLimit(sItems, bpS) : [];
         if (over.length && PS.asksForOptions(message)) { console.log('[price-swap] NOT swapped — the customer asked to see alternatives/options (the model lists them)'); over.length = 0; }
+        // The price belongs to a replacement the customer names ("replace the Veuve with a prosecco around $30 per bottle"): not a
+        // cap on every line (Nov 27 nightly, proposal-edits-first: both wine lines "kept", the Corona change + the PDF lost).
+        if (over.length && /\b(?:replace|swap|switch|instead\s+of|in\s+place\s+of)\b[^.!?\n]{0,80}\b(?:with|for|to)\b[^.!?\n]{0,40}\$\s?\d/i.test(message)) { console.log('[price-swap] NOT swapped — the price is for the replacement the customer named'); over.length = 0; }
         if (over.length) {
           const swaps = [], kept = [];
           for (const i of over) {
@@ -4568,7 +4585,9 @@ app.post('/chat', async (req, res) => {
           const r = await applyBasketSubstitute(sessionKey, email, o.op === 'replace' ? o.item.name : '', o.product.name, o.product.price, o.product.size,
             // an add with no count: no opts, so the pick paths' own reading runs (a not-carried line it stands in for, the
             // customer's list count) — and if nothing knows the count, the customer is asked
-            o.op === 'add' ? (o.qty ? { add: true, qty: o.qty } : undefined) : (o.qty ? { qty: o.qty } : (o.item ? { qty: Number(o.item.qty || o.item.quantity) || 1 } : {})));
+            // a replace with no count takes the line's own qty inside applyBasketSubstitute — passing it as opts.qty skipped the
+            // bigger-bottle volume rule (8 x 375 mL -> 8 x 750 mL; Nov 27, event-list-mix-stated-swap)
+            o.op === 'add' ? (o.qty ? { add: true, qty: o.qty } : undefined) : (o.qty ? { qty: o.qty } : {}));
           if (!r || r.success === false) { failed.push(o.product.name + ' (' + ((r && r.error) || 'could not be added') + ')'); continue; }
           retirePendingFor(state, o.product.name);
           if (o.op === 'add' && !o.qty && !r.qty_known && !r.replaced) askQtyR = o.product.name;
@@ -4686,7 +4705,7 @@ app.post('/chat', async (req, res) => {
         } else if (done.length && (rd.regenerate_proposal || (rd.also || []).includes('proposal')) && !state.lastProposalUrl) rest.push('proposal');
         // the reply lists the changes like the quote edits do (Removed / Quantity changed / Replaced / Added / fees)
         const grpR = [['Removed', d => /^removed /.test(d), d => d.replace(/^removed /, '')], ['Quantity changed', d => / -> \d+$/.test(d) && !/^(?:replaced|added|put) /.test(d), d => d.replace(/ -> (\d+)$/, ' \u2192 $1')],
-          ['Replaced', d => /^(?:replaced|put) /.test(d), d => d.replace(/^replaced (.+) with (.+)$/, '$1 \u2192 $2').replace(/^put (.+) in place of (.+)$/, '$2 \u2192 $1')], ['Added', d => /^added /.test(d), d => d.replace(/^added /, '')]];
+          ['Replaced', d => /^(?:replaced|put) /.test(d), d => d.replace(/^replaced (.+?) with (\d+x .+)$/, '$1 \u2192 $2').replace(/^replaced (.+) with (.+)$/, '$1 \u2192 $2').replace(/^put (.+) in place of (.+)$/, '$2 \u2192 $1')], ['Added', d => /^added /.test(d), d => d.replace(/^added /, '')]];
         const partsR = grpR.map(([h, t, f]) => { const ds = done.filter(t); return ds.length ? h + ':\n' + ds.map(d => '\u2022 ' + f(d)).join('\n') : ''; }).filter(Boolean);
         const feeDone = done.filter(d => / on the proposal$/.test(d));
         if (feeDone.length) partsR.push(feeDone.map(d => d.charAt(0).toUpperCase() + d.slice(1) + '.').join(' '));

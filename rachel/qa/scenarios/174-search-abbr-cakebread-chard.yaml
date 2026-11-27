@@ -5,8 +5,8 @@ tags: [ux, search-normalize]
 turns:
   - send: reset
   - send: "yes"
-  - send: "425 W 53rd St, New York, NY 10019"
-    expect: {contains: ["10019"]}
+  - send: "332 Pine St, San Francisco, CA 94104"   # Nov 27: no Cakebread Chardonnay in the NYC stores any more
+    expect: {contains: ["94104"]}
   - send: "cakebread chard"
     expect:
       contains: ["Cakebread"]

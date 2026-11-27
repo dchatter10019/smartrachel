@@ -50,7 +50,16 @@ function splitInstructions(message) {
   // A heading ("Couple of changes / questions:") or a reason ("we have some leftover titos on hand so it may make sense
   // ...") is not an instruction — both came back as "I haven't done these yet" (Oct 2, DC).
   const REQ = /\b(?:add|remove|take out|drop|delete|swap|switch|replace|change|need|want|send|include|increase|reduce|bump|order|update|should be|instead)\b|\b\d+\s*(?:x|bottles?|cases?|packs?|cans?)\b|\?\s*$|^\s*\d/i;
-  const kept = lines.filter(l => !/:\s*$/.test(l) && !isHeading(l) && !(/^(?:we|i|it|this|that|because|since|as|so|they|there)\b/i.test(l) && !REQ.test(l.replace(/^(?:we|i)\s+(?:have|had)\b/i, ''))));
+  // A forward's header lines, a sign-off name and a bare date / delivery-window line are never tasks (Nov 27 nightly,
+  // email-swap-and-remove: "I haven't done these yet: • ---- Forwarded message ---- • From: ... • Subject: ... • Sean").
+  const FWD = /^-{2,}\s*(?:forwarded|original)\s+message|^(?:from|to|cc|bcc|sent|date|subject)\s*:/i;
+  const lastI = lines.length - 1;
+  // the order's intro sentence ("We would like to submit a new beverage order for delivery on Tuesday, November 17.")
+  const INTRO = /^(?:we|i)\s+(?:would like|want|'d like)\s+to\s+(?:submit|place|put in)\b[^0-9]*\border\b/i;
+  const kept = lines.filter((l, i) => !FWD.test(l) && !INTRO.test(l) && !(i === lastI && /^[A-Z][a-z]{1,20}[.!]?$/.test(l))
+    && !(/^(?:mon|tues?|wed(?:nes)?|thu(?:rs)?|fri|sat(?:ur)?|sun)[a-z]*\.?,?\s+\d{1,2}\/\d{1,2}\b/i.test(l)
+      && !l.replace(/^\S+\s+\d{1,2}\/\d{1,2}(?:\/\d{2,4})?/, '').toLowerCase().replace(/\d+\s*(?:am|pm)\b|\b(?:am|pm|et|est|edt|pt|pst|pdt|ct|cst|mt|to)\b/g, '').replace(/[^a-z]/g, ''))
+    && !/:\s*$/.test(l) && !isHeading(l) && !(/^(?:we|i|it|this|that|because|since|as|so|they|there)\b/i.test(l) && !REQ.test(l.replace(/^(?:we|i)\s+(?:have|had)\b/i, ''))));
   return kept.length >= 2 && kept.length <= 12 ? kept : [];
 }
 

@@ -9,18 +9,18 @@ turns:
   - send: reset
   - send: "yes"
   - send: "100 Federal St, Boston, MA 02110"
-  - send: "- 2 x Michelob Ultra 30 x 12 OZ Cans\n- 1 x Budweiser 30 x 12 OZ Cans\n- 1 x RumChata Liqueur 1.75L"
+  - send: "- 2 x Michelob Ultra 30 x 12 OZ Cans\n- 1 x Budweiser 18 x 12 OZ Cans\n- 1 x RumChata Liqueur 1.75L"
     expect:
       contains: ["RumChata Original", "Michelob Ultra", "Budweiser"]
       not_contains: ["RumChata Liqueur 1.75L isn't available", "Limón"]
       matches: "2x RumChata Original Cream Liqueur"
       log_contains: ["[buildPackage] size: \"RumChata Liqueur 1.75L\""]
-  - send: "also change 1x Budweiser 30 x 12 OZ Cans — $29.99 ea = $29.99 to 1x Budweiser 36 x 12 OZ Cans"
+  - send: "also change 1x Budweiser 18 x 12 OZ Cans — $19.99 ea = $19.99 to 1x Budweiser 24 x 12 OZ Cans"   # Nov 27: the 30 and 36 packs left the 02110 catalog
     expect:
-      contains: ["2x Michelob Ultra 30 x 12 OZ Cans", "Budweiser 36 x 12 OZ Cans"]
-      not_contains: ["Budweiser 30 x 12 OZ Cans —"]
+      contains: ["2x Michelob Ultra 30 x 12 OZ Cans", "Budweiser 24 x 12 OZ Cans"]
+      not_contains: ["Budweiser 18 x 12 OZ Cans —"]
       log_not_contains: ["[confirm-substitute] line replaced: \"Michelob Ultra"]
   - send: "show me the basket"
     expect:
-      contains: ["2x Michelob Ultra 30 x 12 OZ Cans", "1x Budweiser 36 x 12 OZ Cans", "2x RumChata Original"]
-      not_contains: ["Budweiser 30 x 12 OZ Cans"]
+      contains: ["2x Michelob Ultra 30 x 12 OZ Cans", "1x Budweiser 24 x 12 OZ Cans", "2x RumChata Original"]
+      not_contains: ["Budweiser 18 x 12 OZ Cans"]

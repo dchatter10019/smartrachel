@@ -9,6 +9,8 @@ turns:
   - send: "425 W 53rd St, New York, NY 10019"
   - send: "2 Grey Goose Vodka 3.5 L\n3 Tito's Handmade Vodka 750ml"
     expect:
-      matches: "(?i)Grey Goose[^\\n]*is in stock at \\$\\d+\\.\\d\\d — swap it in\\?\\s*$"
+      # Nov 17 rule (DC): the same spirit in another size stands in at the volume asked — 2 x 3.5 L = 4 x 1.75 L, said
+      matches: "4x Grey Goose Vodka - 1\\.75 L"
+      contains: ["3.5L isn't carried"]
       not_contains: ["find a substitute", "Would you like to substitute", "just say the word"]
-      log_contains: ["[list-reply] composed in code", "[cta] item_unavailable -> sub.offer_named"]
+      log_contains: ["[list-reply] composed in code", "[buildPackage] size:"]

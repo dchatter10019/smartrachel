@@ -61,7 +61,10 @@ function buildOptions(shown, items, lineFor = require('./basket-line.js')) {
   if (!shown || !Array.isArray(shown.groups)) return [];
   const out = [];
   for (const g of shown.groups) {
-    const ix = lineFor(items || [], g.label);
+    // the basket line LABELED with the group's ask first (a stand-in: "Kim Crawford Prosecco 750ml" -> Mionetto Prosecco never
+    // matched by name, so its options lost "in this proposal" and the CHANGE column; Nov 27 nightly, proposal-alternatives)
+    let ix = (items || []).findIndex(it => it && it.label && norm(it.label) === norm(g.label));
+    if (ix < 0) ix = lineFor(items || [], g.label);
     const sel = ix >= 0 ? items[ix] : null;
     let alts = g.products.filter(p => !(sel && (p.product_id && p.product_id === sel.product_id || norm(p.name) === norm(sel.name))));
     // Only what the reply actually listed (the LLM may show fewer than the search returned), when it named any.

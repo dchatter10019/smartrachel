@@ -85,7 +85,10 @@ const OTHER = /\b(?:add|remove|take out|drop|delete|swap|replace|change|instead|
 function onlyPriceAsk(message, bp) {
   const said = fold(bp && bp.said).slice(0, 40);
   const sents = String(message || '').replace(/\r/g, '').replace(/([^\n])\n(?=[^\n])/g, '$1 ').split(/\n+|(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
-  return sents.every(s => (said && fold(s).includes(said.slice(0, 25))) || /\$\s?\d/.test(s) || !OTHER.test(s.replace(/\b(?:proposal|pdf|quote|options?|alternatives?)\b/gi, '')));
+  // A sentence with the price in it still counts its OTHER asks ("Change Corona Light to 1 and replace the Veuve ... $30") —
+  // only the price and proposal words are taken out before the check (Nov 27 nightly, proposal-edits-first).
+  void said;
+  return sents.every(s => !OTHER.test(s.replace(/\$\s?\d[\d,.]*/g, '').replace(/\b(?:proposal|pdf|quote|options?|alternatives?)\b/gi, '')));
 }
 
 // Asking to SEE choices ("find alternative wines around $20", "show me options under $15", "what do you have under $15?")
