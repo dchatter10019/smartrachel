@@ -1,0 +1,21 @@
+name: fix-f-0325-fee-wording
+# F-0325 (Nov 25-26, DC on Slack): "Add $25 as delivery" (amount before the fee word) and "and the tax as 8.8875" (a tax rate
+# with no % sign) were read only by the fact reader's model — the code's fee reader (tax-command.js fees) read nothing, so
+# every such message logged "[fact-reader] code MISSED fees". Both are now read in code.
+tags: [ux]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "1460 Broadway, New York, NY 10036"
+  - send: "2 bottles of Tito's 750ml and 3 bottles of Josh Cellars Cabernet"
+    expect: {contains: ["Tito", "Josh"]}
+  - send: "Add $25 as delivery"
+    expect:
+      log_contains: ["[fees] proposal fees set"]
+      log_not_contains: ["code MISSED fees"]
+  - send: "and the tax as 8.8875"
+    expect:
+      log_contains: ["[fees] proposal fees set"]
+      log_not_contains: ["code MISSED fees"]
+  - send: "show my basket"
+    expect: {contains: ["Estimated tax (8.8875%)"]}

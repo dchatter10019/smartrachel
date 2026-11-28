@@ -45,6 +45,10 @@ function fees(msg) {
   const PCT = '[ \\t]*(?:%|percent\\b|pct\\b)[ \\t]*';
   if ((m = t.match(new RegExp('\\b(?:sales\\s+)?tax(?:\\s+rate)?\\b' + SET + NUM + '\\s*(?:%|percent\\b|pct\\b)', 'i')))
     || (m = t.match(new RegExp('\\b' + NUM + PCT + '(?:sales\\s+)?tax\\b', 'i')))) out.tax_rate = parseFloat(m[1]) / 100;
+  // A tax RATE with no % sign ("and the tax as 8.8875", "tax to 8.875"; F-0325, Nov 26 DC on Slack — only the model read it):
+  // an explicit to/as/be/is/at/= before a number above 0 and up to 25 that ends the clause (no $, no further digits/words).
+  else if ((m = t.match(new RegExp('\\b(?:sales\\s+)?tax(?:\\s+rate)?\\b' + '(?:(?!\\b(?:tip|gratuity|service|delivery)\\b)[^.?!\\n$%\\d]){0,30}?(?:\\bto|\\bbe|\\bas|\\bis|\\bat|=|:)\\s*' + NUM + '(?=\\s*(?:$|[,;!\\n]|\\.(?!\\d)|\\s+and\\b|\\s+please\\b))', 'i')))
+    && parseFloat(m[1]) > 0 && parseFloat(m[1]) <= 25) { out.tax_rate = parseFloat(m[1]) / 100; console.log('[tax-command] tax ' + m[1] + ' with no % read as a rate'); }
   if ((m = t.match(new RegExp('\\bservice(?:\\s+(?:charge|fee))?\\b' + SET + NUM + '\\s*(?:%|percent\\b|pct\\b)', 'i')))
     || (m = t.match(new RegExp('\\b' + NUM + PCT + 'service(?:\\s+(?:charge|fee))?\\b', 'i')))) out.service_rate = parseFloat(m[1]) / 100;
   else if (/\b(?:no|remove|drop|waive|take\s+(?:out|off))\s+(?:the\s+)?service\s+(?:charge|fee)\b/i.test(t)) out.service_rate = 0;
@@ -54,6 +58,8 @@ function fees(msg) {
     || (m = t.match(new RegExp('\\b' + NUM + PCT + '(?:tip|gratuity)\\b', 'i')))) out.tip_rate = parseFloat(m[1]) / 100;
   else if (/\b(?:no|remove|drop|waive|take\s+(?:out|off))\s+(?:the\s+)?(?:tip|gratuity)\b/i.test(t)) out.tip_rate = 0;
   if ((m = t.match(new RegExp('\\bdelivery(?:\\s+(?:fee|charge|cost))?\\b' + SET + '\\$\\s*(\\d[\\d,]*(?:\\.\\d+)?)', 'i')))) out.delivery_fee = parseFloat(m[1].replace(/,/g, ''));
+  // The amount first: "Add $25 as delivery", "$25 for the delivery fee", "$15 delivery charge" (F-0325, Nov 25 DC on Slack).
+  else if ((m = t.match(/\$[ \t]*(\d[\d,]*(?:\.\d+)?)[ \t]+(?:(?:as|for)[ \t]+(?:the[ \t]+|a[ \t]+)?delivery\b(?![ \t]+(?:on|to|at|by)\b)|delivery[ \t]+(?:fee|charge|cost)\b)/i))) out.delivery_fee = parseFloat(m[1].replace(/,/g, ''));
   else if ((m = t.match(new RegExp('\\bdelivery\\s+(?:fee|charge|cost)\\b' + SET + NUM + '\\b(?!\\s*%)', 'i')))) out.delivery_fee = parseFloat(m[1]);
   // A bare amount that ENDS the message ("make the delivery to 0", "make the delivery to be 0", "set delivery to zero";
   // Nov 16, DC on Slack at the order summary: neither was read and the order went out with $25). Up to 3 digits only and
