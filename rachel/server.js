@@ -2608,7 +2608,7 @@ app.post('/chat', async (req, res) => {
   };
   if (!/^__/.test(String(message || ''))) { try { ER.read(message, erCtx()).catch(() => null); } catch (e) {} }
   try {
-    let bp = require('./bottle-price.js').read(message);
+    let bp = require('./bottle-price.js').read(message, { context: String((lastRepliesBySession[sessionKey] || []).slice(-1)[0] || '') });
     if (!/^__/.test(String(message || '')) && /\$\s?\d|\b(?:bucks|dollars|usd)\b/i.test(String(message || ''))) {
       const lfB = FR.bottleShape(((await FR.factsFor(message, { qa: isQA })) || {}).bottle_price, message);
       if (!bp && lfB) { bp = lfB; FR.gap('bottle_price', 'missed', null, lfB, frCtx); }

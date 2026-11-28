@@ -1,0 +1,17 @@
+name: fix-f-0313-short-price-reply
+# F-0313 (Nov 25, DC on Slack): after Rachel showed Sauvignon Blanc picks, "any under $15" was a per-bottle wine limit only
+# the model read — the code's reader needs a wine / bottle word in the SAME sentence, so a short price-only reply was a
+# "code MISSED bottle_price" gap every time. bottle-price.js now reads a short price-only reply against Rachel's last reply.
+format: slack
+tags: [lists]
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "425 W 53rd St, New York, NY 10019"
+  - send: "I need 2 bottles of Sauvignon Blanc"
+    expect:
+      matches: "(?i)Sauvignon Blanc"
+  - send: "any under $15"
+    expect:
+      log_contains: ["[bottle-price] wine up to $15 a bottle"]
+      log_not_contains: ["[fact-reader] code MISSED bottle_price"]

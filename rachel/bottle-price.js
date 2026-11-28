@@ -22,10 +22,22 @@ function sentences(t) {
   return String(t || '').replace(/\r/g, '').replace(/([^\n])\n(?=[^\n])/g, '$1 ').split(/\n+|(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
 }
 
-function read(text) {
+// A short reply that is only a price limit ("any under $15", "something below $20?") answers what Rachel just showed /
+// asked about: read against her last reply (opts.context) when that names wine / bottles (F-0313, Nov 25, DC on Slack:
+// "any under $15" after Sauvignon Blanc picks was read only by the model — no wine word in the sentence itself).
+const SHORT_PRICE = /^(?:(?:ok(?:ay)?|and|but|maybe|hmm+|what about|how about|do you have|got|show me|anything|any(?:thing)?|something|ones?|one|those|options?|cheaper|less expensive)[\s,]+){0,4}(?:under|below|less than|up to|at most|no more than|not more than|max(?:imum)?(?: of)?|around|about|~)\s*\$\s?\d{1,4}(?:\.\d{1,2})?(?:\s*(?:a|per|each)\s*(?:bottle|btl))?\s*(?:or (?:so|less|under|cheaper))?\s*(?:please|pls|\?|!|\.)*$/i;
+
+function read(text, opts) {
   let found = null;
+  const ctx = String((opts && opts.context) || '');
   for (const s of sentences(text)) {
-    if (!BOTTLE_CTX.test(s) || NOT_BOTTLE.test(s)) continue;
+    let ctxCat = null;
+    // a bare "under $500" after a package is more likely a total budget than a bottle price: context reads stop at $150
+    if (!BOTTLE_CTX.test(s) && SHORT_PRICE.test(s) && ctx && BOTTLE_CTX.test(ctx) && !NOT_BOTTLE.test(s) && parseFloat((s.match(/\$\s?(\d+(?:\.\d+)?)/) || [])[1]) <= 150) {
+      ctxCat = SPIRIT.test(ctx) && !/\b(?:wines?|prosecco|champagne|sparkling|pinot|cab(?:ernet)?|chard(?:onnay)?|sauv(?:ignon)?|merlot|ros[eé]|riesling|malbec|zinfandel)\b/i.test(ctx) ? 'spirits' : 'wine';
+      console.log('[bottle-price] short price reply "' + s.slice(0, 60) + '" read as a ' + ctxCat + ' bottle price — Rachel\'s last reply was about ' + ctxCat);
+    }
+    if ((!BOTTLE_CTX.test(s) && !ctxCat) || NOT_BOTTLE.test(s)) continue;
     let m = s.match(CAP), kind = 'cap';
     if (!m) { m = s.match(AROUND); kind = 'around'; }
     if (!m) continue;
@@ -33,7 +45,7 @@ function read(text) {
     if (!(v >= 5 && v <= 2000)) continue;
     let isSpirit = SPIRIT.test(s);
     if (!isSpirit) { try { isSpirit = !!require('./spirit-type.js').spiritType(s); } catch (e) {} }
-    const category = isSpirit && !/\b(?:wines?|prosecco|champagne|pinot|cab|chard|sauv)\b/i.test(s) ? 'spirits' : 'wine';
+    const category = ctxCat ? ctxCat : isSpirit && !/\b(?:wines?|prosecco|champagne|pinot|cab|chard|sauv)\b/i.test(s) ? 'spirits' : 'wine';
     // "around / average $15": at or under the figure (DC: "I told you the average price ... $15" when $17 was picked,
     // then "should not exceed $15") with a floor so it is not the cheapest bottle on the shelf.
     found = kind === 'cap' ? { category, max: v, min: 0, said: s.slice(0, 100) } : { category, max: v, min: Math.round(v * 0.6 * 100) / 100, said: s.slice(0, 100) };
