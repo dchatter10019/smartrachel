@@ -2507,8 +2507,20 @@ app.post('/chat', async (req, res) => {
     if (st0 && message !== '__greeting__' && !/^email-/.test(sessionKey) && (idleH > IDLE_HOURS || forced)) {
       console.log(`[session] idle ${forced ? '(simulated)' : idleH.toFixed(1) + 'h'} > ${IDLE_HOURS}h — fresh conversation for ${sessionKey} (was step=${st0.step}${st0.orderStep ? ' orderStep=' + st0.orderStep : ''}${st0.proposalStep ? ' proposalStep=' + st0.proposalStep : ''})`);
       const fnI = freshStartNote(st0, idleH);
+      // F-0328 (Nov 26, DC on Slack): "save this basket" 19h after building an 11-item cart opened a fresh conversation and
+      // the cart was gone — the save was never done. A SAVE command that opens the fresh conversation keeps the earlier cart
+      // (and its address) for that save only; it comes back after the age question (sbRestoreForSave).
+      let keptForSave = null;
+      try {
+        const cS = require('./saved-baskets.js').parse(message), itS = JSON.parse(st0.lastLineItems || '[]');
+        if (cS && cS.kind === 'save' && Array.isArray(itS) && itS.length && st0.address && st0.zip) {
+          keptForSave = { at: Date.now(), items: st0.lastLineItems, address: st0.address, zip: st0.zip, client: st0.savedClientName || '', proposalOpts: st0.proposalOpts || null, taxExempt: !!st0.taxExempt };
+          console.log('[saved-basket] fresh start on a save command — the earlier cart is kept for it: ' + itS.length + ' line(s), ' + st0.address);
+        } else if (cS && cS.kind === 'save') console.log('[saved-basket] fresh start on a save command — earlier cart NOT kept (' + (itS.length ? 'no address' : 'it was empty') + ')');
+      } catch (e) { console.log('[saved-basket] keep-for-save check failed: ' + e.message); }
       resetState(sessionKey, email);
-      if (fnI) flowState[sessionKey].freshNote = fnI;
+      if (fnI) flowState[sessionKey].freshNote = keptForSave ? fnI.replace(/ — your earlier cart[^.]*/, ' — I kept your earlier cart so I can save it') : fnI;
+      if (keptForSave) flowState[sessionKey].keptCartForSave = keptForSave;
       try { if (email) clearBasket(email, format || 'slack'); } catch (e) {}   // the saved last basket too, else checkout reloads it
     } else if (st0 && message !== '__greeting__' && !/^email-/.test(sessionKey) && idleH > BASKET_IDLE_HOURS && !st0.newOrderAddrAsk) {
       // DC (Oct 28): "if it's idle for 1 hour you clear the basket" — the conversation (age, address) goes on.
@@ -3103,6 +3115,20 @@ app.post('/chat', async (req, res) => {
         if (state.step !== 'ready') {
           const heldL = [state.pendingIntent, stripAgeAnswer(message)].find(t => t && sbAdoptAddress(t));
           if (heldL) { state.pendingIntent = null; message = heldL; msgLower = message.toLowerCase().trim(); saveFlowState(); console.log('[saved-basket] held load replayed after the age question'); }
+        }
+        // F-0328: the save command that opened this fresh conversation — the earlier cart kept for it comes back (with its
+        // address) and the save runs at the ready step below (it asks the name when none was given).
+        if (state.step !== 'ready' && state.keptCartForSave) {
+          const kc = state.keptCartForSave; state.keptCartForSave = null;
+          const heldS = [state.pendingIntent, stripAgeAnswer(message)].find(t => { try { const c = t && require('./saved-baskets.js').parse(t); return c && c.kind === 'save'; } catch (e) { return false; } });
+          if (heldS && Date.now() - (kc.at || 0) < 60 * 60000) {
+            state.lastLineItems = kc.items; state.address = kc.address; state.zip = kc.zip; state.addrConfirmed = true; state.step = 'ready';
+            if (kc.client && !state.savedClientName) state.savedClientName = kc.client;
+            if (kc.proposalOpts && !(state.proposalOpts && Object.keys(state.proposalOpts).length)) state.proposalOpts = kc.proposalOpts;
+            if (kc.taxExempt) state.taxExempt = true;
+            state.pendingIntent = null; message = heldS; msgLower = message.toLowerCase().trim(); saveFlowState();
+            console.log('[saved-basket] earlier cart restored for the held save: ' + JSON.parse(kc.items || '[]').length + ' line(s), delivering to ' + kc.address);
+          } else { saveFlowState(); console.log('[saved-basket] earlier cart kept for a save NOT restored — ' + (heldS ? 'kept over an hour ago' : 'no save command held')); }
         }
         // The yes may carry the whole request ("yes I'm over 21, deliver to 425 W 53rd St, NY
         // 10019, I need 2 Tito's"). Real bug: the entire sentence was stored as the ADDRESS and

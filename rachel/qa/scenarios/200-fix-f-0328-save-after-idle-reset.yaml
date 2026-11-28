@@ -1,0 +1,30 @@
+name: fix-f-0328-save-after-idle-reset
+# F-0328 (Nov 26, DC on Slack): 19h after building an 11-item basket, "save this basket" -> fresh start ("your earlier
+# cart ... isn't carried over") -> "are you 21?" -> "yes" -> "What is your delivery address?" — the cart the customer
+# meant was gone and the save was never done. A save command that opens a fresh conversation keeps the earlier cart
+# for that save: after the age yes the cart (and its address) comes back and the save runs.
+tags: [basket]
+format: plain
+turns:
+  - send: reset
+  - send: "I need 2 bottles of Tito's 750ml"
+    expect: {matches: "(?i)21"}
+  - send: "yes"
+    expect: {matches: "(?i)address"}
+  - send: "1 Rockefeller Plaza, New York, NY 10020"
+    expect: {matches: "(?i)tito"}
+  - send: "save this basket"
+    idle: 19
+    expect:
+      contains: ["since we last talked", "21"]
+      log_contains: ["[saved-basket] fresh start on a save command — the earlier cart is kept for it"]
+  - send: "yes"
+    expect:
+      matches: "(?i)what would you like to call this basket"
+      not_matches: "(?i)what is your delivery address|new order, or load"
+      log_contains: ["[saved-basket] earlier cart restored for the held save"]
+  - send: "QA Reset Save"
+    expect:
+      contains: ["Saved your basket as", "QA Reset Save", "Tito"]
+  - send: "delete saved basket QA Reset Save"
+    expect: {contains: ["Deleted your saved basket"]}
