@@ -1,0 +1,20 @@
+name: fix-f-0326-descriptor-word-not-a-brand
+format: plain
+# F-0326 (nightly Nov 26-28, email-order-not-the-poc and other Corona scenarios): Corona Extra left the NYC 10001 store.
+# "2 x Corona Extra 12 pack" was then given 2 x Guinness Extra Stout 22 OZ (single bottles) — the "two brands' words,
+# the later one names the product" rule (Remy Cointreau = Cointreau) took "extra", a plain descriptor, as a brand.
+# The Corona 12-pack the store carries must stay the pick. Remy Cointreau is still Cointreau.
+turns:
+  - send: reset
+  - send: "yes"
+  - send: "132 W 32nd St, New York, NY 10001"
+  - send: "Here is what I want to order:\n- 2 x Corona Extra 12 pack\n- 2 x Josh Cellars Cabernet Sauvignon"
+    expect:
+      contains: ["Corona", "Josh Cellars"]
+      not_contains: ["Guinness"]
+      log_not_contains: ["(the later word) names the product"]
+  - send: "start over"
+  - send: "yes"
+  - send: "Here is what I want to order:\n- 1 x Remy Cointreau 750ml\n- 1 x Tito's 750ml"
+    expect:
+      contains: ["Cointreau"]

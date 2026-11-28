@@ -5,6 +5,8 @@
 
 const PM = require('./product-match.js');
 const CORE_FIRST = require('../store-agent/core-first.js');   // a brand's core expression before another line of it
+// Version / descriptor words that are never a brand of their own in a split request (F-0326).
+const SPLIT_DESCRIPTOR = new Set(['extra', 'premier', 'premium', 'light', 'lite', 'special', 'original', 'classic', 'reserve', 'select', 'gold', 'silver', 'black', 'ultra', 'export', 'golden', 'dark', 'pale']);
 const CATALOG = require('./catalog-api.js');   // the catalog search (legacy searchCorpProducts or getProducts)   // request -> product fit, per list line (buildPackage named products)
 
 // ─── GET PRODUCT URL ─────────────────────────────────────────────────────────
@@ -1806,6 +1808,13 @@ async function buildPackage(iv) {
       if (match.kind==='closest') {
         var bw=PM.brandWords(reqForFit), fB=PM.fit(reqForFit,best);
         var missB=fB.missing.filter(function(w){return bw.indexOf(w)>=0;});
+        // A plain descriptor ("Extra", "Premier", "Light"...) is a version word, never a second brand: "Corona Extra 12
+        // pack" with no Corona Extra at the store became 2 x Guinness Extra Stout singles (F-0326, Nov 26).
+        var descB=missB.filter(function(w){return SPLIT_DESCRIPTOR.has(w);});
+        if (descB.length) {
+          console.log('[buildPackage] split request '+JSON.stringify(np.name)+': "'+descB.join(' ')+'" is a descriptor, not a brand — not searched on its own');
+          missB=missB.filter(function(w){return !SPLIT_DESCRIPTOR.has(w);});
+        }
         if (missB.length && bw.some(function(w){return fB.missing.indexOf(w)<0;})) {
           // ONE search for the missing brand words together ("cointreau", "juice force"), a hit must have all of them —
           // a word searched alone found unrelated rows ("juice" -> a juice mixer for Voodoo Ranger Juice Force).
